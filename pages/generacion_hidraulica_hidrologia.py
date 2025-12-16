@@ -1,14 +1,20 @@
-from dash import dcc, html, Input, Output, State, dash_table, ALL, callback, register_page
-import dash_bootstrap_components as dbc
+
+def get_plotly_modules():
+    """Importar plotly solo cuando se necesite"""
+    import plotly.express as px
+    import plotly.graph_objects as go
+    return px, go
+
+from dash import dcc, html, Input, Output, State, callback, register_page, dash
+import dash_table
 import plotly.express as px
+import dash_bootstrap_components as dbc
 import pandas as pd
-import datetime as dt
 from datetime import date, timedelta, datetime
 import warnings
 import sys
 import os
 import time
-import traceback
 from flask import Flask, jsonify
 import dash
 # Use the installed pydataxm package instead of local module
@@ -17,19 +23,26 @@ try:
     PYDATAXM_AVAILABLE = True
 except ImportError:
     PYDATAXM_AVAILABLE = False
-    print("⚠️ pydataxm no está disponible. Algunos datos pueden no cargarse correctamente.")
+    # logger no está disponible aún aquí, se loggea después
 
 # NOTA IMPORTANTE SOBRE UNIDADES DE MEDIDA:
-# La métrica 'AporCaudal' de XM representa aportes de caudal por río
-# Su unidad de medida es m³/s (metros cúbicos por segundo), NO GWh
-# Los caudales son medidas volumétricas, no energéticas
+# La métrica 'AporEner' de XM representa aportes de energía por río
+# Su unidad de medida es kWh (kilovatio-hora), convertida a GWh para visualización
+# Los aportes energéticos representan la energía potencial de los caudales
 
 # Imports locales para componentes uniformes
-from .components import crear_header, crear_navbar, crear_sidebar_universal, crear_boton_regresar
-from .config import COLORS
+from utils.components import crear_navbar_horizontal, crear_boton_regresar, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
+from utils.config import COLORS
+from utils.embalses_coordenadas import REGIONES_COORDENADAS, obtener_coordenadas_region
+from utils.logger import setup_logger
+from utils.validators import validate_date_range, validate_string
+from utils.exceptions import DateRangeError, InvalidParameterError, DataNotFoundError
 # from .api_fallback import create_fallback_data, create_api_status_message, save_api_status
 
 warnings.filterwarnings("ignore")
+
+# Configurar logger para este módulo
+logger = setup_logger(__name__)
 
 register_page(
     __name__,
@@ -69,25 +82,78 @@ def format_date(date_value):
         return date_value
 
 
-# Inicializar API XM con fallback
-import traceback
+# Inicializar API XM de forma perezosa usando el helper
+from utils._xm import get_objetoAPI, obtener_datos_desde_sqlite, obtener_datos_inteligente
 API_STATUS = None
-try:
-    if PYDATAXM_AVAILABLE:
-        objetoAPI = ReadDB()
-        print("✅ API XM inicializada correctamente en generacion_hidraulica.py")
-        print(f"🔍 objetoAPI = {objetoAPI}")
-        API_STATUS = {'status': 'online', 'message': 'API XM funcionando correctamente'}
-    else:
-        objetoAPI = None
-        API_STATUS = {'status': 'offline', 'message': 'pydataxm no está disponible'}
-        print("⚠️ API XM no disponible - pydataxm no instalado")
-except Exception as e:
-    print(f"❌ Error al inicializar API XM: {e}")
-    traceback.print_exc()
-    objetoAPI = None
-    API_STATUS = {'status': 'offline', 'message': f'Error de API XM: {e}'}
-    print("⚠️ API XM no disponible")
+
+# Verificar si la API está disponible al inicializar el módulo
+_temp_api = get_objetoAPI()
+if _temp_api is not None:
+    logger.info("✅ API XM inicializada correctamente (lazy)")
+    API_STATUS = {'status': 'online', 'message': 'API XM funcionando correctamente'}
+else:
+    API_STATUS = {'status': 'offline', 'message': 'pydataxm no está disponible'}
+    logger.warning("⚠️ API XM no disponible (pydataxm no está disponible)")
+
+
+# ============================================================================
+# CACHE DE GEOJSON A NIVEL DE MÓDULO (Solo archivos estáticos)
+# ============================================================================
+_GEOJSON_CACHE = {
+    'colombia_geojson': None,
+    'regiones_config': None,
+    'departamentos_a_regiones': None,
+    'loaded': False
+}
+
+def _cargar_geojson_cache():
+    """Carga los archivos GeoJSON UNA SOLA VEZ (son archivos estáticos que no cambian)."""
+    if _GEOJSON_CACHE['loaded']:
+        return _GEOJSON_CACHE
+    
+    try:
+        import json
+        
+        logger.info("📂 Cargando archivos GeoJSON estáticos en cache...")
+        
+        # Rutas a archivos locales
+        geojson_path = os.path.join(os.path.dirname(__file__), '..', 'utils', 'departamentos_colombia.geojson')
+        regiones_path = os.path.join(os.path.dirname(__file__), '..', 'utils', 'regiones_naturales_colombia.json')
+        
+        # Cargar GeoJSON de departamentos
+        with open(geojson_path, 'r', encoding='utf-8') as f:
+            _GEOJSON_CACHE['colombia_geojson'] = json.load(f)
+        
+        # Cargar mapeo de regiones naturales
+        with open(regiones_path, 'r', encoding='utf-8') as f:
+            _GEOJSON_CACHE['regiones_config'] = json.load(f)
+        
+        # Crear diccionario inverso: departamento -> región
+        departamentos_a_regiones = {}
+        for region_key, region_data in _GEOJSON_CACHE['regiones_config']['regiones'].items():
+            for depto in region_data['departamentos']:
+                departamentos_a_regiones[depto] = {
+                    'region': region_data['nombre'],
+                    'color': region_data['color'],
+                    'border': region_data['border']
+                }
+        
+        _GEOJSON_CACHE['departamentos_a_regiones'] = departamentos_a_regiones
+        _GEOJSON_CACHE['loaded'] = True
+        
+        logger.info(f"✅ GeoJSON cargado en memoria: {len(_GEOJSON_CACHE['regiones_config']['regiones'])} regiones, "
+                   f"{len(departamentos_a_regiones)} departamentos")
+        
+        return _GEOJSON_CACHE
+        
+    except Exception as e:
+        logger.error(f"❌ Error cargando GeoJSON en cache: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+# Cargar cache al importar el módulo (solo una vez)
+_cargar_geojson_cache()
 
 
 # --- VALIDACIÓN DE FECHAS Y MANEJO DE ERRORES ---
@@ -110,18 +176,13 @@ def validar_rango_fechas(start_date, end_date):
         fecha_maxima = datetime.now()
         
         if start_dt < fecha_minima:
-            return False, f"⚠️ La fecha de inicio es muy antigua. La API de XM solo permite consultas desde {fecha_minima.strftime('%Y-%m-%d')} aproximadamente. Para datos históricos más antiguos, contacte directamente a XM."
+            return False, f"La fecha de inicio es muy antigua. La API de XM solo permite consultas desde {fecha_minima.strftime('%Y-%m-%d')} aproximadamente. Para datos históricos más antiguos, contacte directamente a XM."
         
         if end_dt > fecha_maxima:
-            return False, f"⚠️ La fecha final no puede ser futura. Fecha máxima permitida: {fecha_maxima.strftime('%Y-%m-%d')}"
+            return False, f"La fecha final no puede ser futura. Fecha máxima permitida: {fecha_maxima.strftime('%Y-%m-%d')}"
         
         if start_dt > end_dt:
-            return False, "⚠️ La fecha de inicio debe ser anterior a la fecha final."
-        
-        # Validar que el rango no sea demasiado amplio (más de 1 año)
-        dias_diferencia = (end_dt - start_dt).days
-        if dias_diferencia > 365:
-            return False, "⚠️ El rango de fechas es muy amplio. Por favor, seleccione un período de máximo 1 año para optimizar el rendimiento."
+            return False, "La fecha de inicio debe ser anterior a la fecha final."
         
         return True, "Rango de fechas válido"
         
@@ -135,7 +196,15 @@ def manejar_error_api(error, operacion="consulta"):
     error_str = str(error).lower()
     
     if "400" in error_str and "json" in error_str and "text/plain" in error_str:
-        return f"🔄 La API de XM retornó un error para esta {operacion}. Esto suele ocurrir cuando:\n\n• Las fechas seleccionadas están fuera del rango disponible\n• Los datos para el período solicitado no están disponibles\n• Hay mantenimiento en los servidores de XM\n\n💡 Recomendaciones:\n• Intente con fechas más recientes (últimos 6 meses)\n• Reduzca el rango de fechas\n• Verifique el estado de la API de XM en www.xm.com.co"
+        message = f"🔄 La API de XM retornó un error para esta {operacion}. Esto suele ocurrir cuando:" + "\n"
+        message += "• Las fechas seleccionadas están fuera del rango disponible\n"
+        message += "• Los datos para el período solicitado no están disponibles\n"
+        message += "• Hay mantenimiento en los servidores de XM\n"
+        message += "Recomendaciones:\n"
+        message += "• Intente con fechas más recientes (últimos 6 meses)\n"
+        message += "• Reduzca el rango de fechas\n"
+        message += "• Verifique el estado de la API de XM en www.xm.com.co"
+        return message
     
     elif "timeout" in error_str or "connection" in error_str:
         return f"🌐 Error de conexión con la API de XM. Verifique su conexión a internet y vuelva a intentar."
@@ -144,7 +213,7 @@ def manejar_error_api(error, operacion="consulta"):
         return f"🔐 Error de autorización con la API de XM. Contacte al administrador del sistema."
     
     else:
-        return f"❌ Error inesperado en la {operacion}: {str(error)[:200]}..."
+        return f"Error inesperado en la {operacion}: {str(error)[:200]}..."
 
 
 def get_reservas_hidricas(fecha):
@@ -158,15 +227,14 @@ def get_reservas_hidricas(fecha):
     Returns:
         tuple: (porcentaje, valor_GWh) o (None, None) si hay error
     """
-    print(f"[DEBUG] get_reservas_hidricas llamada con fecha: {fecha}")
+# REMOVED DEBUG:     print(f"[DEBUG] get_reservas_hidricas llamada con fecha: {fecha}")
     
     # Usar la función unificada para el cálculo nacional
     resultado = calcular_volumen_util_unificado(fecha)
     if resultado:
         return resultado['porcentaje'], resultado['volumen_gwh']
     else:
-        print("[DEBUG] Función unificada falló, usando valores simulados")
-        return 82.48, 14139.8265  # Valores de ejemplo basados en XM
+        return None, None
 
 
 def get_aportes_hidricos(fecha):
@@ -181,12 +249,8 @@ def get_aportes_hidricos(fecha):
     Returns:
         tuple: (porcentaje, valor_GWh) o (None, None) si hay error
     """
-    print(f"[DEBUG] get_aportes_hidricos llamada con fecha: {fecha}")
-    print(f"[DEBUG] objetoAPI está disponible: {objetoAPI is not None}")
-
-    if not objetoAPI:
-        print("[HIDROLOGIA] ❌ API XM no disponible - no se pueden obtener Aportes Hídricos")
-        return None, None
+    # Usar fetch_metric_data que tiene cache con datos históricos
+# REMOVED DEBUG:     print(f"[DEBUG] get_aportes_hidricos llamada con fecha: {fecha}")
 
     try:
         # Calcular el rango desde el primer día del mes hasta la fecha final
@@ -194,69 +258,56 @@ def get_aportes_hidricos(fecha):
         fecha_inicio = fecha_final.replace(day=1)
         fecha_inicio_str = fecha_inicio.strftime('%Y-%m-%d')
         fecha_final_str = fecha_final.strftime('%Y-%m-%d')
-        
-        print(f"[DEBUG] Calculando aportes acumulados desde {fecha_inicio_str} hasta {fecha_final_str}")
 
-        # Obtener aportes energía usando métrica principal de XM
-        print(f"[DEBUG] Obteniendo AporEner (Aportes Energía) del mes")
-        aportes_diarios = objetoAPI.request_data('AporEner', 'Sistema', fecha_inicio_str, fecha_final_str)
-        
+        # Obtener aportes energía usando métrica principal de XM desde SQLite
+        aportes_diarios, warning = obtener_datos_inteligente('AporEner', 'Sistema', fecha_inicio_str, fecha_final_str)
+
         # Si no funciona, intentar con métricas alternativas
         if aportes_diarios is None or aportes_diarios.empty:
             metricas_aportes = ['AportesDiariosEnergia', 'AportesEnergia']
             for metrica in metricas_aportes:
                 try:
-                    print(f"[DEBUG] Intentando métrica alternativa de aportes: {metrica}")
-                    aportes_diarios = objetoAPI.request_data(metrica, 'Sistema', fecha_inicio_str, fecha_final_str)
+                    aportes_diarios, warning = obtener_datos_inteligente(metrica, 'Sistema', fecha_inicio_str, fecha_final_str)
                     if aportes_diarios is not None and not aportes_diarios.empty:
-                        print(f"[DEBUG] ✅ Métrica {metrica} funcionó")
                         break
-                except Exception as e:
-                    print(f"[DEBUG] ❌ Métrica {metrica} falló: {e}")
+                except Exception:
                     continue
 
-        # Obtener media histórica usando métrica principal de XM
-        print(f"[DEBUG] Obteniendo AporEnerMediHist (Media Histórica) del mes")
-        media_historica = objetoAPI.request_data('AporEnerMediHist', 'Sistema', fecha_inicio_str, fecha_final_str)
-        
+        # Obtener media histórica usando métrica principal de XM desde SQLite
+        media_historica, warning = obtener_datos_inteligente('AporEnerMediHist', 'Sistema', fecha_inicio_str, fecha_final_str)
+
         # Si no funciona, intentar con métricas alternativas
         if media_historica is None or media_historica.empty:
             metricas_media = ['MediaHistoricaAportes', 'AportesMediaHistorica']
             for metrica in metricas_media:
                 try:
-                    print(f"[DEBUG] Intentando métrica alternativa de media histórica: {metrica}")
-                    media_historica = objetoAPI.request_data(metrica, 'Sistema', fecha_inicio_str, fecha_final_str)
+                    media_historica, warning = obtener_datos_inteligente(metrica, 'Sistema', fecha_inicio_str, fecha_final_str)
                     if media_historica is not None and not media_historica.empty:
-                        print(f"[DEBUG] ✅ Métrica {metrica} funcionó")
                         break
-                except Exception as e:
-                    print(f"[DEBUG] ❌ Métrica {metrica} falló: {e}")
+                except Exception:
                     continue
 
-        print(f"[DEBUG] Aportes data: {aportes_diarios.shape if aportes_diarios is not None and not aportes_diarios.empty else 'vacío'}")
-        print(f"[DEBUG] Media histórica data: {media_historica.shape if media_historica is not None and not media_historica.empty else 'vacío'}")
-
         if aportes_diarios is not None and not aportes_diarios.empty and media_historica is not None and not media_historica.empty:
-            # Calcular el promedio acumulado del mes hasta la fecha final (igual que XM)
-            aportes_valor = aportes_diarios['Value'].mean()
-            media_valor = media_historica['Value'].mean()
+            # CORRECCIÓN: Los aportes son ACUMULATIVOS, usar SUM no MEAN
+            # Los aportes energéticos se suman (total de energía del período)
+            aportes_valor = aportes_diarios['Value'].sum()
+            media_valor = media_historica['Value'].sum()
             
-            print(f"[DEBUG] Promedio aportes del mes: {aportes_valor} GWh")
-            print(f"[DEBUG] Promedio media histórica del mes: {media_valor} GWh")
+            logger.debug(f"Aportes hídricos calculados", extra={
+                'fecha': fecha,
+                'aportes_total_gwh': round(aportes_valor, 2),
+                'media_hist_gwh': round(media_valor, 2),
+                'registros_aportes': len(aportes_diarios),
+                'registros_media': len(media_historica)
+            })
             
             if media_valor > 0:
-                # Fórmula exacta de XM
                 porcentaje = round((aportes_valor / media_valor) * 100, 2)
-                print(f"[DEBUG] Aportes hídricos calculados: {porcentaje}%")
                 return porcentaje, aportes_valor
-
-        print("[DEBUG] Datos insuficientes para calcular aportes - usando valores simulados")
-        return 101.2, 208.28  # Valores de ejemplo basados en XM
-
+        return None, None
     except Exception as e:
-        print(f"[HIDROLOGIA] Error obteniendo aportes hídricos: {e}")
-        print("[DEBUG] Error en API, usando valores simulados basados en XM")
-        return 101.2, 208.28
+        logger.error(f"Error obteniendo aportes hídricos: {e}", exc_info=True)
+        return None, None
 
 
 # --- FUNCIÓN UNIFICADA PARA CÁLCULOS DE VOLUMEN ÚTIL ---
@@ -280,76 +331,74 @@ def calcular_volumen_util_unificado(fecha, region=None, embalse=None):
             'embalses': list      # Lista de embalses incluidos en el cálculo
         } o None si hay error
     """
-    print(f"[UNIFICADO] Calculando volumen útil - Fecha: {fecha}, Región: {region}, Embalse: {embalse}")
-    
-    if not objetoAPI:
-        print("[UNIFICADO] ❌ API XM no disponible")
-        return None
+    logger.debug(f"Calculando volumen útil - Fecha: {fecha}, Región: {region}, Embalse: {embalse}")
     
     try:
-        # Función para encontrar la fecha más reciente con datos
-        def encontrar_fecha_con_datos_unificada(fecha_inicial):
-            for dias_atras in range(7):  # Buscar hasta 7 días atrás
-                fecha_prueba = (datetime.strptime(fecha_inicial, '%Y-%m-%d') - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-                df_vol_test = objetoAPI.request_data('VoluUtilDiarEner', 'Embalse', fecha_prueba, fecha_prueba)
-                df_cap_test = objetoAPI.request_data('CapaUtilDiarEner', 'Embalse', fecha_prueba, fecha_prueba)
-                if (df_vol_test is not None and not df_vol_test.empty and 
-                    df_cap_test is not None and not df_cap_test.empty):
-                    print(f"[UNIFICADO] Usando fecha con datos: {fecha_prueba}")
-                    return fecha_prueba, df_vol_test, df_cap_test
-            return None, None, None
+        # Usar helper para buscar fecha con datos disponibles
+        fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
+        df_vol, fecha_vol = obtener_datos_desde_sqlite('VoluUtilDiarEner', 'Embalse', fecha_obj)
+        df_cap, fecha_cap = obtener_datos_desde_sqlite('CapaUtilDiarEner', 'Embalse', fecha_obj)
         
-        # Buscar fecha con datos disponibles
-        fecha_final, df_vol, df_cap = encontrar_fecha_con_datos_unificada(fecha)
-        
+        # Verificar que ambos tienen datos de la misma fecha
+        if df_vol is not None and df_cap is not None and fecha_vol == fecha_cap:
+            fecha_final = fecha_vol.strftime('%Y-%m-%d')
+            logger.debug(f"Usando fecha con datos: {fecha_final}")
+        else:
+            df_vol, df_cap, fecha_final = None, None, None
+
         if df_vol is None or df_vol.empty or df_cap is None or df_cap.empty:
-            print("[UNIFICADO] ❌ No se pudieron obtener datos de la API para ninguna fecha reciente")
+            logger.warning("No se pudieron obtener datos para calcular volumen útil")
             return None
-        
-        print(f"[UNIFICADO] Datos obtenidos: {len(df_vol)} registros de volumen, {len(df_cap)} registros de capacidad")
-        
+
+        logger.debug(f"Datos obtenidos: {len(df_vol)} registros de volumen, {len(df_cap)} registros de capacidad")
+
         # Obtener información de embalses y regiones
         today = datetime.now().strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        embalses_info = objetoAPI.request_data('ListadoEmbalses','Sistema', yesterday, today)
+        embalses_info, warning = obtener_datos_inteligente('ListadoEmbalses','Sistema', yesterday, today)
         embalses_info['Values_Name'] = embalses_info['Values_Name'].str.strip().str.upper()
-        embalses_info['Values_HydroRegion'] = embalses_info['Values_HydroRegion'].str.strip().str.title()
+        # ✅ FIX ERROR #3: Normalizar región a UPPER (no Title) para consistencia
+        embalses_info['Values_HydroRegion'] = embalses_info['Values_HydroRegion'].str.strip().str.upper()
         embalse_region_dict = dict(zip(embalses_info['Values_Name'], embalses_info['Values_HydroRegion']))
-        
+
         # Mapear región a cada embalse
-        df_vol['Region'] = df_vol['Name'].map(embalse_region_dict)
-        df_cap['Region'] = df_cap['Name'].map(embalse_region_dict)
-        
+        # ✅ FIX: obtener_datos_desde_sqlite retorna 'Embalse', NO 'Name'
+        df_vol['Region'] = df_vol['Embalse'].map(embalse_region_dict)
+        df_cap['Region'] = df_cap['Embalse'].map(embalse_region_dict)
+
         # Aplicar filtros según los parámetros
         if region:
-            region_normalized = region.strip().title()
+            # ✅ FIX ERROR #3: Normalizar a UPPER (no title)
+            region_normalized = region.strip().upper()
             df_vol = df_vol[df_vol['Region'] == region_normalized]
             df_cap = df_cap[df_cap['Region'] == region_normalized]
-            print(f"[UNIFICADO] Filtrado por región '{region_normalized}': {len(df_vol)} embalses con volumen, {len(df_cap)} con capacidad")
-        
+            logger.debug(f"Filtrado por región '{region_normalized}': {len(df_vol)} embalses con volumen, {len(df_cap)} con capacidad")
+
         if embalse:
-            df_vol = df_vol[df_vol['Name'] == embalse]
-            df_cap = df_cap[df_cap['Name'] == embalse]
-            print(f"[UNIFICADO] Filtrado por embalse '{embalse}': {len(df_vol)} registros de volumen, {len(df_cap)} de capacidad")
-        
+            df_vol = df_vol[df_vol['Embalse'] == embalse]
+            df_cap = df_cap[df_cap['Embalse'] == embalse]
+            logger.debug(f"Filtrado por embalse '{embalse}': {len(df_vol)} registros de volumen, {len(df_cap)} de capacidad")
+
         if df_vol.empty or df_cap.empty:
-            print(f"[UNIFICADO] ❌ Sin datos después del filtrado")
+            logger.warning("Sin datos después del filtrado")
             return None
-        
+
         # Calcular totales usando la fórmula exacta
-        # Convertir de Wh a GWh (las métricas de XM vienen en Wh)
+        # ✅ CORREGIDO: obtener_datos_desde_sqlite devuelve valores en Wh, convertir a GWh
+        # Nota: Si en el futuro se cambia a obtener_datos_inteligente, NO dividir por 1e9
         vol_total_gwh = df_vol['Value'].sum() / 1e9
         cap_total_gwh = df_cap['Value'].sum() / 1e9
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
-        embalses_incluidos = list(set(df_vol['Name'].tolist()) & set(df_cap['Name'].tolist()))
-        
-        print(f"[UNIFICADO] Totales calculados: Volumen = {vol_total_gwh:.2f} GWh, Capacidad = {cap_total_gwh:.2f} GWh")
-        print(f"[UNIFICADO] Embalses incluidos: {embalses_incluidos}")
-        
+
+        # ✅ FIX: Usar 'Embalse' en lugar de 'Name'
+        embalses_incluidos = list(set(df_vol['Embalse'].tolist()) & set(df_cap['Embalse'].tolist()))
+
+        logger.debug(f"Totales calculados: Volumen = {vol_total_gwh:.2f} GWh, Capacidad = {cap_total_gwh:.2f} GWh")
+        logger.debug(f"Embalses incluidos: {embalses_incluidos}")
+
         if cap_total_gwh > 0:
             porcentaje = round((vol_total_gwh / cap_total_gwh) * 100, 2)
-            print(f"[UNIFICADO] Porcentaje calculado: {porcentaje}%")
-            
+            logger.info(f"Porcentaje volumen útil calculado: {porcentaje}%")
+
             return {
                 'porcentaje': porcentaje,
                 'volumen_gwh': vol_total_gwh,
@@ -357,13 +406,11 @@ def calcular_volumen_util_unificado(fecha, region=None, embalse=None):
                 'embalses': embalses_incluidos
             }
         else:
-            print("[UNIFICADO] ❌ Capacidad total es 0")
+            logger.warning("Capacidad total es 0, no se puede calcular porcentaje")
             return None
-            
+
     except Exception as e:
-        print(f"[UNIFICADO] Error en cálculo: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error en cálculo de volumen útil: {e}", exc_info=True)
         return None
 
 
@@ -379,7 +426,7 @@ def get_reservas_hidricas_por_region(fecha, region):
     Returns:
         tuple: (porcentaje, valor_GWh) o (None, None) si hay error
     """
-    print(f"[DEBUG] get_reservas_hidricas_por_region llamada con fecha: {fecha}, región: {region}")
+# REMOVED DEBUG:     print(f"[DEBUG] get_reservas_hidricas_por_region llamada con fecha: {fecha}, región: {region}")
     
     resultado = calcular_volumen_util_unificado(fecha, region=region)
     if resultado:
@@ -400,11 +447,7 @@ def get_aportes_hidricos_por_region(fecha, region):
     Returns:
         tuple: (porcentaje, valor_GWh) o (None, None) si hay error
     """
-    print(f"[DEBUG] get_aportes_hidricos_por_region llamada con fecha: {fecha}, región: {region}")
-    
-    if not objetoAPI:
-        print("[HIDROLOGIA] ❌ API XM no disponible - no se pueden obtener Aportes Hídricos por región")
-        return None, None
+# REMOVED DEBUG:     print(f"[DEBUG] get_aportes_hidricos_por_region llamada con fecha: {fecha}, región: {region}")
     
     try:
         # Calcular el rango desde el primer día del mes hasta la fecha final
@@ -413,45 +456,47 @@ def get_aportes_hidricos_por_region(fecha, region):
         fecha_inicio_str = fecha_inicio.strftime('%Y-%m-%d')
         fecha_final_str = fecha_final.strftime('%Y-%m-%d')
         
-        # Obtener aportes energía por río (método XM)
-        aportes_data = objetoAPI.request_data('AporEner', 'Rio', fecha_inicio_str, fecha_final_str)
+        # Obtener aportes energía por río desde SQLite
+        aportes_data, warning = obtener_datos_inteligente('AporEner', 'Rio', fecha_inicio_str, fecha_final_str)
         
         if aportes_data is not None and not aportes_data.empty:
             # Asignar región a cada río
-            aportes_data['Region'] = aportes_data['Name'].map(RIO_REGION)
+            rio_region = ensure_rio_region_loaded()
+            aportes_data['Region'] = aportes_data['Name'].map(rio_region)
             
             # Filtrar por región específica (normalizar región)
-            region_normalized = region.strip().title()
+            # ✅ FIX ERROR #3: UPPER en lugar de title
+            region_normalized = region.strip().upper()
             aportes_region = aportes_data[aportes_data['Region'] == region_normalized]
             
             if not aportes_region.empty:
-                # Calcular promedio acumulado de aportes de la región (método XM)
-                aportes_total_region = aportes_region.groupby('Date')['Value'].sum().mean()
+                # CORRECCIÓN: Suma total del período (aportes acumulativos)
+                aportes_total_region = aportes_region['Value'].sum()
                 
                 # Obtener media histórica para la región
-                media_historica_data = objetoAPI.request_data('AporEnerMediHist', 'Rio', fecha_inicio_str, fecha_final_str)
+                media_historica_data, warning = obtener_datos_inteligente('AporEnerMediHist', 'Rio', fecha_inicio_str, fecha_final_str)
                 
                 if media_historica_data is not None and not media_historica_data.empty:
-                    media_historica_data['Region'] = media_historica_data['Name'].map(RIO_REGION)
+                    media_historica_data['Region'] = media_historica_data['Name'].map(rio_region)
                     media_historica_region = media_historica_data[media_historica_data['Region'] == region_normalized]
                     
                     if not media_historica_region.empty:
-                        # Promedio histórico de la región
-                        media_total_region = media_historica_region.groupby('Date')['Value'].sum().mean()
+                        # CORRECCIÓN: Suma total del período histórico
+                        media_total_region = media_historica_region['Value'].sum()
                         
-                        print(f"[DEBUG] Región {region_normalized}: Aportes = {aportes_total_region} GWh, Media histórica = {media_total_region} GWh")
+# REMOVED DEBUG:                         print(f"[DEBUG] Región {region_normalized}: Aportes = {aportes_total_region} GWh, Media histórica = {media_total_region} GWh")
                         
                         if media_total_region > 0:
                             # Fórmula exacta de XM por región
                             porcentaje = round((aportes_total_region / media_total_region) * 100, 2)
-                            print(f"[DEBUG] Aportes región {region}: {porcentaje}%")
+# REMOVED DEBUG:                             print(f"[DEBUG] Aportes región {region}: {porcentaje}%")
                             return porcentaje, aportes_total_region
         
-        print(f"[DEBUG] Sin datos suficientes para calcular aportes de región {region}")
+# REMOVED DEBUG:         print(f"[DEBUG] Sin datos suficientes para calcular aportes de región {region}")
         return None, None
         
     except Exception as e:
-        print(f"[HIDROLOGIA] Error obteniendo aportes hídricos por región: {e}")
+        logger.error(f"Error obteniendo aportes hídricos por región: {e}", exc_info=True)
         return None, None
 
 
@@ -466,15 +511,11 @@ def get_aportes_hidricos_por_rio(fecha, rio):
     Returns:
         tuple: (porcentaje, valor_m3s) o (None, None) si hay error
     """
-    print(f"[DEBUG] get_aportes_hidricos_por_rio llamada con fecha: {fecha}, río: {rio}")
-    
-    if not objetoAPI:
-        print("[HIDROLOGIA] ❌ API XM no disponible - no se pueden obtener Aportes Hídricos por río")
-        return None, None
+# REMOVED DEBUG:     print(f"[DEBUG] get_aportes_hidricos_por_rio llamada con fecha: {fecha}, río: {rio}")
     
     try:
-        # Obtener aportes del río específico
-        aportes_data = objetoAPI.request_data('AporCaudal', 'Rio', fecha, fecha)
+        # Obtener aportes del río específico desde SQLite
+        aportes_data, warning = obtener_datos_inteligente('AporEner', 'Rio', fecha, fecha)
         
         if aportes_data is not None and not aportes_data.empty:
             # Buscar el río específico
@@ -488,58 +529,103 @@ def get_aportes_hidricos_por_rio(fecha, rio):
                 
                 if media_total_rios > 0:
                     porcentaje = round((aportes_rio / media_total_rios) * 100, 2)
-                    print(f"[DEBUG] Aportes río {rio}: {porcentaje}% (valor: {aportes_rio} m³/s)")
+# REMOVED DEBUG:                     print(f"[DEBUG] Aportes río {rio}: {porcentaje}% (valor: {aportes_rio} m³/s)")
                     return porcentaje, aportes_rio
         
-        print(f"[DEBUG] Sin datos para el río {rio}")
+# REMOVED DEBUG:         print(f"[DEBUG] Sin datos para el río {rio}")
         return None, None
         
     except Exception as e:
-        print(f"[HIDROLOGIA] Error obteniendo aportes hídricos por río: {e}")
+        logger.error(f"Error obteniendo aportes hídricos por río: {e}", exc_info=True)
         return None, None
 
 
 # Obtener la relación río-región directamente desde la API XM
 def get_rio_region_dict():
     try:
-        # Usar fecha actual para obtener listado más reciente
+        # Usar fecha actual para obtener listado más reciente desde SQLite
         today = datetime.now().strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        df = objetoAPI.request_data('ListadoRios', 'Sistema', yesterday, today)
+        df, warning = obtener_datos_inteligente('ListadoRios', 'Sistema', yesterday, today)
         if 'Values_Name' in df.columns and 'Values_HydroRegion' in df.columns:
-            # Normalizar nombres igual que antes
-            df['Values_Name'] = df['Values_Name'].str.strip().str.upper()
-            df['Values_HydroRegion'] = df['Values_HydroRegion'].str.strip().str.title()
+            # ✅ USAR FUNCIONES DE NORMALIZACIÓN UNIFICADAS
+            df['Values_Name'] = normalizar_codigo(df['Values_Name'])
+            df['Values_HydroRegion'] = normalizar_region(df['Values_HydroRegion'])
             return dict(sorted(zip(df['Values_Name'], df['Values_HydroRegion'])))
         else:
             return {}
     except Exception as e:
-        print(f"Error obteniendo relación río-región desde la API: {e}")
+        logger.error(f"Error obteniendo relación río-región desde la API: {e}", exc_info=True)
         return {}
 
-RIO_REGION = get_rio_region_dict()
+# Inicializar como None, se cargará bajo demanda
+RIO_REGION = None
+
+# ============================================================================
+# FUNCIÓN DE NORMALIZACIÓN UNIFICADA
+# ============================================================================
+def normalizar_codigo(texto):
+    """Normaliza códigos/nombres de forma consistente en TODO el sistema.
+    
+    Args:
+        texto: String a normalizar o pandas Series
+        
+    Returns:
+        String normalizado en UPPERCASE sin espacios extra
+    """
+    if texto is None:
+        return None
+    if isinstance(texto, str):
+        return texto.strip().upper()
+    # Si es pandas Series
+    return texto.str.strip().str.upper()
+
+def normalizar_region(texto):
+    """Normaliza nombres de regiones de forma consistente.
+    
+    Args:
+        texto: String a normalizar o pandas Series
+        
+    Returns:
+        String normalizado en UPPER CASE (para coincidir con REGIONES_COORDENADAS)
+    """
+    if texto is None:
+        return None
+    if isinstance(texto, str):
+        return texto.strip().upper()
+    # Si es pandas Series
+    return texto.str.strip().str.upper()
+# ============================================================================
+
+def ensure_rio_region_loaded():
+    """Carga RIO_REGION bajo demanda si aún no se ha cargado."""
+    global RIO_REGION
+    if RIO_REGION is None:
+        RIO_REGION = get_rio_region_dict()
+    return RIO_REGION
 
 def get_region_options():
     """
-    Obtiene las regiones que tienen ríos con datos de caudal activos.
+    Obtiene las regiones que tienen ríos con datos de aportes energéticos activos.
     Filtra regiones que no tienen datos para evitar confusión al usuario.
     """
+    rio_region = ensure_rio_region_loaded()
     try:
-        # Obtener ríos con datos de caudal recientes
-        df = objetoAPI.request_data('AporCaudal', 'Rio', (date.today() - timedelta(days=30)).strftime('%Y-%m-%d'), date.today().strftime('%Y-%m-%d'))
+        # Obtener ríos con datos de energía recientes desde SQLite (30 días para cobertura completa)
+        df, warning = obtener_datos_inteligente('AporEner', 'Rio', (date.today() - timedelta(days=30)).strftime('%Y-%m-%d'), date.today().strftime('%Y-%m-%d'))
         if 'Name' in df.columns:
             rios_con_datos = set(df['Name'].unique())
             # Filtrar solo regiones que tienen ríos con datos
             regiones_con_datos = set()
-            for rio, region in RIO_REGION.items():
+            for rio, region in rio_region.items():
                 if rio in rios_con_datos:
                     regiones_con_datos.add(region)
             return sorted(regiones_con_datos)
         else:
-            return sorted(set(RIO_REGION.values()))
+            return sorted(set(rio_region.values()))
     except Exception as e:
-        print(f"Error filtrando regiones con datos: {e}")
-        return sorted(set(RIO_REGION.values()))
+        logger.error(f"Error filtrando regiones con datos: {e}", exc_info=True)
+        return sorted(set(rio_region.values()))
 
 
 
@@ -548,11 +634,9 @@ def get_region_options():
 
 # --- NUEVO: Función para obtener todos los ríos únicos desde la API ---
 def get_all_rios_api():
-    if objetoAPI is None:
-        return []
     try:
-        df = objetoAPI.request_data('AporCaudal', 'Rio', '2000-01-01', date.today().strftime('%Y-%m-%d'))
-        if 'Name' in df.columns:
+        df, warning = obtener_datos_inteligente('AporEner', 'Rio', '2000-01-01', date.today().strftime('%Y-%m-%d'))
+        if df is not None and 'Name' in df.columns:
             rios = sorted(df['Name'].dropna().unique())
             return rios
         else:
@@ -561,20 +645,18 @@ def get_all_rios_api():
         return []
 
 def get_rio_options(region=None):
-    if objetoAPI is None:
-        print("API XM no inicializada")
-        return []
     try:
-        df = objetoAPI.request_data('AporCaudal', 'Rio', (date.today() - timedelta(days=30)).strftime('%Y-%m-%d'), date.today().strftime('%Y-%m-%d'))
-        if 'Name' in df.columns:
+        df, warning = obtener_datos_inteligente('AporEner', 'Rio', (date.today() - timedelta(days=30)).strftime('%Y-%m-%d'), date.today().strftime('%Y-%m-%d'))
+        if df is not None and 'Name' in df.columns:
             rios = sorted(df['Name'].dropna().unique())
             if region:
-                rios = [r for r in rios if RIO_REGION.get(r) == region]
+                rio_region = ensure_rio_region_loaded()
+                rios = [r for r in rios if rio_region.get(r) == region]
             return rios
         else:
             return []
     except Exception as e:
-        print(f"Error obteniendo opciones de Río: {e}")
+        logger.error(f"Error obteniendo opciones de Río: {e}", exc_info=True)
         return []
 
 regiones = []  # Se cargarán dinámicamente
@@ -603,7 +685,7 @@ def crear_estilos_condicionales_para_tabla_estatica(start_date=None, end_date=No
         return estilos
         
     except Exception as e:
-        print(f"Error generando estilos condicionales: {e}")
+        logger.error(f"Error generando estilos condicionales: {e}", exc_info=True)
         return [
             {
                 "if": {"filter_query": "{Embalse} = \"TOTAL\""}, 
@@ -614,22 +696,682 @@ def crear_estilos_condicionales_para_tabla_estatica(start_date=None, end_date=No
         ]
 
 
+# ============================================================================
+# FUNCIONES PARA MAPA DE EMBALSES POR REGIÓN
+# ============================================================================
+
+def calcular_semaforo_embalse(participacion, volumen_pct):
+    """
+    Calcula el nivel de riesgo según la lógica del semáforo hidrológico de XM:
+    
+    Factor 1: Importancia Estratégica (participación > 10%)
+    Factor 2: Disponibilidad Hídrica (% volumen útil)
+    
+    RIESGO ALTO (🔴): Embalses estratégicos (>10%) con volumen crítico (<30%)
+    RIESGO MEDIO (🟡): Embalses estratégicos con volumen bajo (30-70%) o embalses pequeños con volumen crítico
+    RIESGO BAJO (🟢): Embalses con volumen adecuado (≥70%) independientemente de su tamaño
+    
+    Args:
+        participacion: % de participación en el sistema (0-100)
+        volumen_pct: % de volumen útil disponible (0-100)
+    
+    Returns:
+        tuple: (nivel_riesgo, color, mensaje)
+    """
+    es_estrategico = participacion >= 10
+    
+    if volumen_pct >= 70:
+        return 'BAJO', '#28a745', '✓'
+    elif volumen_pct >= 30:
+        if es_estrategico:
+            return 'MEDIO', '#ffc107', '!'
+        else:
+            return 'BAJO', '#28a745', '✓'
+    else:  # volumen_pct < 30
+        if es_estrategico:
+            return 'ALTO', '#dc3545', '⚠'
+        else:
+            return 'MEDIO', '#ffc107', '!'
+
+def obtener_datos_embalses_por_region():
+    """
+    Obtiene los datos de embalses agrupados por región hidrológica
+    
+    Returns:
+        dict: {region: {embalses: [...], riesgo_max: str, color: str, lat: float, lon: float}}
+    """
+    try:
+        # Obtener fecha actual y buscar últimos datos disponibles
+        fecha_hoy = date.today()
+        
+        # Usar helper para buscar datos en los últimos 7 días
+        df_vol, fecha_vol = obtener_datos_desde_sqlite('VoluUtilDiarEner', 'Embalse', fecha_hoy)
+        df_cap, fecha_cap = obtener_datos_desde_sqlite('CapaUtilDiarEner', 'Embalse', fecha_hoy)
+        df_listado, fecha_listado = obtener_datos_desde_sqlite('ListadoEmbalses', 'Sistema', fecha_hoy)
+        
+        # Verificar que todos tienen datos de la misma fecha
+        if (df_vol is not None and df_cap is not None and df_listado is not None and 
+            fecha_vol == fecha_cap == fecha_listado):
+            fecha_str = fecha_vol.strftime('%Y-%m-%d')
+            logger.info(f"Datos de embalses obtenidos para {fecha_str}")
+        else:
+            logger.error("No se pudieron obtener datos de embalses")
+            return None
+        
+        # Detectar nombre de columnas (mismo código que en las tablas)
+        col_value_vol = None
+        col_value_cap = None
+        col_name_vol = None
+        
+        # Buscar columna de valores
+        for col in ['Values_code', 'Value', 'Values_Code']:
+            if col in df_vol.columns:
+                col_value_vol = col
+                break
+        
+        for col in ['Values_code', 'Value', 'Values_Code']:
+            if col in df_cap.columns:
+                col_value_cap = col
+                break
+        
+        # Buscar columna de nombre/código
+        for col in ['Values_code', 'Values_Code', 'Name']:
+            if col in df_vol.columns:
+                col_name_vol = col
+                break
+        
+        if not col_value_vol or not col_value_cap or not col_name_vol:
+            logger.error(f"Columnas no encontradas. df_vol: {df_vol.columns.tolist()}")
+            return None
+        
+        logger.debug(f"Columnas detectadas - vol_value: {col_value_vol}, cap_value: {col_value_cap}, name: {col_name_vol}")
+        
+        # Crear diccionario de región por embalse
+        embalse_region = {}
+        col_name_listado = None
+        for col in ['Values_Code', 'Values_code', 'Name']:
+            if col in df_listado.columns:
+                col_name_listado = col
+                break
+        
+        if col_name_listado and 'Values_HydroRegion' in df_listado.columns:
+            for _, row in df_listado.iterrows():
+                codigo = row[col_name_listado]
+                region = row['Values_HydroRegion']
+                embalse_region[codigo] = region
+        else:
+            logger.error(f"Columnas del listado: {df_listado.columns.tolist()}")
+            return None
+        
+        # Hacer copias antes de renombrar para evitar modificar los originales
+        df_vol_copy = df_vol.copy()
+        df_cap_copy = df_cap.copy()
+        
+        # Renombrar columnas en las copias
+        df_vol_copy = df_vol_copy.rename(columns={col_value_vol: 'volumen_wh', col_name_vol: 'codigo'})
+        df_cap_copy = df_cap_copy.rename(columns={col_value_cap: 'capacidad_wh'})
+        
+        # Buscar columna de nombre/código en df_cap
+        col_name_cap = None
+        for col in ['Values_code', 'Values_Code', 'Name']:
+            if col in df_cap.columns:
+                col_name_cap = col
+                break
+        
+        df_cap_copy = df_cap_copy.rename(columns={col_name_cap: 'codigo'})
+        
+        logger.debug(f"Columnas df_vol_copy: {df_vol_copy.columns.tolist()}")
+        logger.debug(f"Columnas df_cap_copy: {df_cap_copy.columns.tolist()}")
+        
+        # Verificar que las columnas existen
+        if 'volumen_wh' not in df_vol_copy.columns or 'codigo' not in df_vol_copy.columns:
+            logger.error("Error: columnas faltantes en df_vol_copy")
+            return None
+        
+        if 'capacidad_wh' not in df_cap_copy.columns or 'codigo' not in df_cap_copy.columns:
+            logger.error("Error: columnas faltantes en df_cap_copy")
+            return None
+        
+        df_merged = pd.merge(
+            df_vol_copy[['codigo', 'volumen_wh']],
+            df_cap_copy[['codigo', 'capacidad_wh']],
+            on='codigo',
+            how='inner'
+        )
+        
+        # Calcular porcentajes
+        df_merged['volumen_pct'] = (df_merged['volumen_wh'] / df_merged['capacidad_wh']) * 100
+        capacidad_total = df_merged['capacidad_wh'].sum()
+        df_merged['participacion'] = (df_merged['capacidad_wh'] / capacidad_total) * 100
+        
+        # Agregar región
+        df_merged['region'] = df_merged['codigo'].map(embalse_region)
+        
+        # Agrupar por región
+        regiones_data = {}
+        for region in df_merged['region'].unique():
+            if pd.isna(region) or region not in REGIONES_COORDENADAS:
+                continue
+            
+            df_region = df_merged[df_merged['region'] == region]
+            
+            # Crear lista de embalses de la región
+            embalses_lista = []
+            riesgo_max = 'BAJO'
+            orden_riesgo = {'ALTO': 3, 'MEDIO': 2, 'BAJO': 1}
+            
+            for _, row in df_region.iterrows():
+                riesgo, color, icono = calcular_semaforo_embalse(row['participacion'], row['volumen_pct'])
+                
+                embalses_lista.append({
+                    'codigo': row['codigo'],
+                    'volumen_pct': row['volumen_pct'],
+                    'volumen_gwh': row['volumen_wh'] / 1e9,
+                    'capacidad_gwh': row['capacidad_wh'] / 1e9,
+                    'participacion': row['participacion'],
+                    'riesgo': riesgo,
+                    'color': color,
+                    'icono': icono
+                })
+                
+                # Actualizar riesgo máximo de la región
+                if orden_riesgo[riesgo] > orden_riesgo[riesgo_max]:
+                    riesgo_max = riesgo
+            
+            # Determinar color de la región según el riesgo máximo
+            color_region = {'ALTO': '#dc3545', 'MEDIO': '#ffc107', 'BAJO': '#28a745'}[riesgo_max]
+            
+            coords = REGIONES_COORDENADAS[region]
+            
+            regiones_data[region] = {
+                'embalses': embalses_lista,
+                'riesgo_max': riesgo_max,
+                'color': color_region,
+                'lat': coords['lat'],
+                'lon': coords['lon'],
+                'nombre': coords['nombre'],
+                'total_embalses': len(embalses_lista)
+            }
+        
+        return regiones_data
+    
+    except Exception as e:
+        logger.error(f"Error obteniendo datos para mapa por región: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        return None
+
+def crear_mapa_embalses_por_region():
+    """
+    Crea el mapa interactivo de Colombia con puntos por región hidrológica
+    """
+    import plotly.graph_objects as go
+    
+    regiones_data = obtener_datos_embalses_por_region()
+    
+    if regiones_data is None or len(regiones_data) == 0:
+        return dbc.Alert([
+            html.H5("⚠️ No hay datos disponibles", className="alert-heading"),
+            html.P("No se pudieron cargar los datos de los embalses. Intente nuevamente más tarde.")
+        ], color="warning")
+    
+    # Crear figura del mapa
+    fig = go.Figure()
+    
+    # Agregar puntos por región
+    for region, data in regiones_data.items():
+        # Crear texto del tooltip con lista de embalses
+        embalses_texto = "<br>".join([
+            f"• {emb['codigo']}: {emb['volumen_pct']:.1f}% {emb['icono']}"
+            for emb in sorted(data['embalses'], key=lambda x: x['volumen_pct'])[:10]  # Mostrar máximo 10
+        ])
+        
+        if data['total_embalses'] > 10:
+            embalses_texto += f"<br>... y {data['total_embalses'] - 10} más"
+        
+        hover_text = (
+            f"<b>{data['nombre']}</b><br>" +
+            f"Total embalses: {data['total_embalses']}<br>" +
+            f"Riesgo máximo: <b>{data['riesgo_max']}</b><br><br>" +
+            f"<b>Embalses:</b><br>{embalses_texto}"
+        )
+        
+        # Tamaño según cantidad de embalses
+        tamaño = min(15 + data['total_embalses'] * 3, 40)
+        
+        fig.add_trace(go.Scattergeo(
+            lon=[data['lon']],
+            lat=[data['lat']],
+            text=[data['nombre']],
+            mode='markers+text',
+            marker=dict(
+                size=tamaño,
+                color=data['color'],
+                line=dict(width=3, color='white'),
+                symbol='circle'
+            ),
+            textposition='top center',
+            textfont=dict(size=10, color='#2c3e50', family='Arial Black'),
+            name=f"{data['nombre']} ({data['riesgo_max']})",
+            hovertext=hover_text,
+            hoverinfo='text',
+            showlegend=True
+        ))
+    
+    # Configurar el mapa centrado en Colombia
+    fig.update_geos(
+        center=dict(lon=-74, lat=4.5),
+        projection_type='mercator',
+        showcountries=True,
+        countrycolor='lightgray',
+        showcoastlines=True,
+        coastlinecolor='gray',
+        showland=True,
+        landcolor='#f5f5f5',
+        showlakes=True,
+        lakecolor='lightblue',
+        showrivers=True,
+        rivercolor='lightblue',
+        lonaxis_range=[-79, -66],
+        lataxis_range=[-4.5, 13],
+        bgcolor='#e8f4f8'
+    )
+    
+    fig.update_layout(
+        title={
+            'text': '🗺️ Mapa de Embalses por Región Hidrológica',
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 18, 'color': COLORS['text_primary'], 'family': 'Arial Black'}
+        },
+        height=600,
+        margin=dict(l=0, r=0, t=60, b=0),
+        legend=dict(
+            title=dict(text='Regiones', font=dict(size=12, family='Arial Black')),
+            orientation='v',
+            yanchor='top',
+            y=0.98,
+            xanchor='left',
+            x=0.01,
+            bgcolor='rgba(255,255,255,0.9)',
+            bordercolor='gray',
+            borderwidth=1,
+            font=dict(size=10)
+        ),
+        hoverlabel=dict(
+            bgcolor='white',
+            font_size=11,
+            font_family='Arial'
+        )
+    )
+    
+    return dcc.Graph(figure=fig, config={'displayModeBar': True, 'displaylogo': False})
+
+def crear_tabla_embalses_por_region():
+    """
+    Crea la tabla detallada de embalses agrupada por región
+    """
+    regiones_data = obtener_datos_embalses_por_region()
+    
+    if regiones_data is None or len(regiones_data) == 0:
+        return dbc.Alert("No hay datos disponibles", color="warning")
+    
+    # Ordenar regiones por riesgo máximo
+    orden_riesgo = {'ALTO': 0, 'MEDIO': 1, 'BAJO': 2}
+    regiones_ordenadas = sorted(
+        regiones_data.items(),
+        key=lambda x: (orden_riesgo[x[1]['riesgo_max']], x[0])
+    )
+    
+    # Crear acordeón con una sección por región
+    acordeon_items = []
+    
+    for region, data in regiones_ordenadas:
+        # Ordenar embalses por volumen (menor a mayor)
+        embalses_ordenados = sorted(data['embalses'], key=lambda x: x['volumen_pct'])
+        
+        # Crear filas de tabla para esta región
+        filas_region = []
+        for emb in embalses_ordenados:
+            filas_region.append(
+                html.Tr([
+                    html.Td(html.Span(emb['icono'], style={'fontSize': '1.2rem'}), className="text-center"),
+                    html.Td(emb['codigo'], style={'fontWeight': '600'}),
+                    html.Td(f"{emb['volumen_pct']:.1f}%", 
+                           style={'color': emb['color'], 'fontWeight': '700'}),
+                    html.Td(f"{emb['volumen_gwh']:.0f} GWh"),
+                    html.Td(f"{emb['capacidad_gwh']:.0f} GWh"),
+                    html.Td(f"{emb['participacion']:.1f}%"),
+                    html.Td(emb['riesgo'], 
+                           style={
+                               'color': emb['color'],
+                               'fontWeight': 'bold',
+                               'backgroundColor': emb['color'] + '20',
+                               'padding': '5px 10px',
+                               'borderRadius': '4px'
+                           })
+                ])
+            )
+        
+        tabla_region = dbc.Table([
+            html.Thead([
+                html.Tr([
+                    html.Th("", className="text-center", style={'width': '50px'}),
+                    html.Th("Embalse"),
+                    html.Th("Volumen %"),
+                    html.Th("Volumen"),
+                    html.Th("Capacidad"),
+                    html.Th("Participación %"),
+                    html.Th("Riesgo")
+                ], style={'backgroundColor': data['color'], 'color': 'white', 'fontSize': '0.9rem'})
+            ]),
+            html.Tbody(filas_region)
+        ], bordered=True, hover=True, responsive=True, striped=True, size='sm')
+        
+        # Título del acordeón con color según riesgo
+        titulo_acordeon = html.Div([
+            html.Span(f"📍 {data['nombre']}", style={'fontWeight': '600', 'fontSize': '1.1rem'}),
+            html.Span(
+                f" ({data['total_embalses']} embalses - Riesgo {data['riesgo_max']})",
+                style={'color': data['color'], 'fontWeight': 'bold', 'marginLeft': '10px'}
+            )
+        ])
+        
+        acordeon_items.append(
+            dbc.AccordionItem(
+                tabla_region,
+                title=titulo_acordeon,
+                item_id=f"region-{region}"
+            )
+        )
+    
+    return dbc.Accordion(acordeon_items, start_collapsed=True, always_open=True)
+
+# ============================================================================
+# NUEVAS TABLAS JERÁRQUICAS SIMPLIFICADAS (usando dbc.Table directamente)
+# ============================================================================
+
+
+
+def build_embalses_hierarchical_view(regiones_totales, df_completo_embalses, expanded_regions):
+    """
+    Construye vista jerárquica de la tabla pequeña de embalses con expansión/contracción.
+    Similar a build_hierarchical_table_view() pero para la tabla de 4 columnas.
+    """
+    try:
+        if regiones_totales is None or regiones_totales.empty or df_completo_embalses.empty:
+            return dash_table.DataTable(
+                data=[],
+                columns=[
+                    {"name": "Embalse", "id": "embalse"},
+                    {"name": "Part.", "id": "participacion"},
+                    {"name": "Vol.", "id": "volumen"},
+                    {"name": "⚠️", "id": "riesgo"}
+                ]
+            )
+        
+        table_data = []
+        style_data_conditional = []
+        
+        # Ordenar regiones por participación descendente
+        regiones_sorted = regiones_totales.sort_values('Participación (%)', ascending=False)
+        
+        for _, row_region in regiones_sorted.iterrows():
+            region_name = row_region['Región']
+            participacion_region = row_region['Participación (%)']
+            volumen_region = row_region['Volumen Útil (%)']
+            
+            is_expanded = region_name in expanded_regions
+            button_icon = "⊟" if is_expanded else "⊞"
+            
+            # Clasificar riesgo de la región (usar el peor caso de sus embalses)
+            embalses_region = df_completo_embalses[df_completo_embalses['Región'] == region_name]
+            riesgos = []
+            for _, emb in embalses_region.iterrows():
+                riesgo = clasificar_riesgo_embalse(
+                    emb.get('Participación (%)', 0),
+                    emb.get('Volumen Útil (%)', 0)
+                )
+                riesgos.append(riesgo)
+            
+            # Determinar el peor riesgo de la región
+            if 'high' in riesgos:
+                riesgo_region = '🔴'
+            elif 'medium' in riesgos:
+                riesgo_region = '🟡'
+            else:
+                riesgo_region = '🟢'
+            
+            # Fila de región
+            row_index = len(table_data)
+            table_data.append({
+                "embalse": f"{button_icon} {region_name}",
+                "participacion": f"{participacion_region:.2f}%",
+                "volumen": f"{volumen_region:.1f}%",
+                "riesgo": riesgo_region
+            })
+            
+            # Estilo para fila de región
+            style_data_conditional.append({
+                'if': {'row_index': row_index},
+                'backgroundColor': '#e3f2fd',
+                'fontWeight': 'bold',
+                'cursor': 'pointer',
+                'border': '2px solid #2196f3'
+            })
+            
+            # Si está expandida, agregar embalses
+            if is_expanded:
+                embalses_sorted = embalses_region.sort_values('Participación (%)', ascending=False)
+                
+                for _, emb in embalses_sorted.iterrows():
+                    embalse_name = emb['Embalse']
+                    participacion_val = emb.get('Participación (%)', 0)
+                    volumen_val = emb.get('Volumen Útil (%)', 0)
+                    
+                    # Clasificar riesgo
+                    riesgo = clasificar_riesgo_embalse(participacion_val, volumen_val)
+                    if riesgo == 'high':
+                        riesgo_icon = '🔴'
+                    elif riesgo == 'medium':
+                        riesgo_icon = '🟡'
+                    else:
+                        riesgo_icon = '🟢'
+                    
+                    # Agregar fila de embalse
+                    emb_row_index = len(table_data)
+                    table_data.append({
+                        "embalse": f"    └─ {embalse_name}",
+                        "participacion": f"{participacion_val:.2f}%",
+                        "volumen": f"{volumen_val:.1f}%" if pd.notna(volumen_val) else "N/D",
+                        "riesgo": riesgo_icon
+                    })
+                    
+                    # Estilo condicional por riesgo
+                    if riesgo == 'high':
+                        bg_color = '#ffe6e6'
+                    elif riesgo == 'medium':
+                        bg_color = '#fff9e6'
+                    else:
+                        bg_color = '#e6ffe6'
+                    
+                    style_data_conditional.append({
+                        'if': {'row_index': emb_row_index},
+                        'backgroundColor': bg_color
+                    })
+        
+        # Agregar fila TOTAL
+        total_participacion = regiones_totales['Participación (%)'].sum()
+        
+        # Calcular volumen total ponderado
+        total_volumen_gwh = regiones_totales['Volumen Util (GWh)'].sum()
+        total_capacidad_gwh = regiones_totales['Total (GWh)'].sum()
+        promedio_volumen_general = (total_volumen_gwh / total_capacidad_gwh) * 100 if total_capacidad_gwh > 0 else 0
+        
+        total_row_index = len(table_data)
+        table_data.append({
+            "embalse": "TOTAL",
+            "participacion": "100.00%",
+            "volumen": f"{promedio_volumen_general:.1f}%",
+            "riesgo": "⚡"
+        })
+        
+        style_data_conditional.append({
+            'if': {'row_index': total_row_index},
+            'backgroundColor': '#e3f2fd',
+            'fontWeight': 'bold'
+        })
+        
+        # Crear DataTable
+        return dash_table.DataTable(
+            id="tabla-embalses-jerarquica",
+            data=table_data,
+            columns=[
+                {"name": "Embalse", "id": "embalse"},
+                {"name": "Part.", "id": "participacion"},
+                {"name": "Vol.", "id": "volumen"},
+                {"name": "⚠️", "id": "riesgo"}
+            ],
+            style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
+            style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
+            style_data_conditional=style_data_conditional,
+            page_action="none",
+            style_table={'maxHeight': '480px', 'overflowY': 'auto'}
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Error en build_embalses_hierarchical_view: {e}", exc_info=True)
+        return dash_table.DataTable(data=[], columns=[
+            {"name": "Embalse", "id": "embalse"},
+            {"name": "Part.", "id": "participacion"},
+            {"name": "Vol.", "id": "volumen"},
+            {"name": "⚠️", "id": "riesgo"}
+        ])
+
+
+def crear_tablas_jerarquicas_directas(regiones_totales):
+    """
+    Crea las tablas jerárquicas de Participación y Volumen Útil usando dbc.Table
+    (mismo patrón que la tabla que SÍ funciona)
+    
+    Args:
+        regiones_totales: DataFrame con datos de regiones (ya calculado)
+    """
+    try:
+        if regiones_totales is None or regiones_totales.empty:
+            return (
+                dbc.Alert("No hay datos de regiones disponibles", color="warning"),
+                dbc.Alert("No hay datos de regiones disponibles", color="warning")
+            )
+        
+        # TABLA 1: Participación Porcentual
+        filas_participacion = []
+        
+        # Ordenar regiones por participación descendente
+        regiones_sorted = regiones_totales.sort_values('Participación (%)', ascending=False)
+        
+        for _, row_region in regiones_sorted.iterrows():
+            region_name = row_region['Región']
+            participacion_region = row_region['Participación (%)']
+            
+            # Fila de región (colapsada inicialmente)
+            filas_participacion.append(
+                html.Tr([
+                    html.Td(
+                        html.Span(f"⊞ {region_name}", style={'fontWeight': 'bold', 'cursor': 'pointer'}),
+                        colSpan=2
+                    ),
+                    html.Td(f"{participacion_region:.2f}%", style={'fontWeight': 'bold', 'textAlign': 'right'})
+                ], style={'backgroundColor': '#e3f2fd'})
+            )
+        
+        # Fila TOTAL
+        filas_participacion.append(
+            html.Tr([
+                html.Td("TOTAL SISTEMA", colSpan=2, style={'fontWeight': 'bold'}),
+                html.Td("100.0%", style={'fontWeight': 'bold', 'textAlign': 'right'})
+            ], style={'backgroundColor': '#007bff', 'color': 'white'})
+        )
+        
+        tabla_participacion = dbc.Table([
+            html.Thead([
+                html.Tr([
+                    html.Th("Región / Embalse", colSpan=2),
+                    html.Th("Participación (%)", style={'textAlign': 'right'})
+                ], style={'backgroundColor': '#667eea', 'color': 'white'})
+            ]),
+            html.Tbody(filas_participacion)
+        ], bordered=True, hover=True, responsive=True, striped=True, size='sm', className="table-modern")
+        
+        # TABLA 2: Volumen Útil
+        filas_volumen = []
+        
+        # Ordenar regiones por volumen útil descendente
+        regiones_sorted_vol = regiones_totales.sort_values('Volumen Útil (%)', ascending=False)
+        
+        for _, row_region in regiones_sorted_vol.iterrows():
+            region_name = row_region['Región']
+            volumen_region = row_region['Volumen Útil (%)']
+            
+            # Fila de región
+            filas_volumen.append(
+                html.Tr([
+                    html.Td(
+                        html.Span(f"⊞ {region_name}", style={'fontWeight': 'bold', 'cursor': 'pointer'}),
+                        colSpan=2
+                    ),
+                    html.Td(f"{volumen_region:.1f}%", style={'fontWeight': 'bold', 'textAlign': 'right'})
+                ], style={'backgroundColor': '#e8f5e8'})
+            )
+        
+        # Calcular volumen útil total
+        total_volumen_gwh = regiones_totales['Volumen Util (GWh)'].sum()
+        total_capacidad_gwh = regiones_totales['Total (GWh)'].sum()
+        promedio_volumen_general = (total_volumen_gwh / total_capacidad_gwh) * 100 if total_capacidad_gwh > 0 else 0
+        
+        # Fila TOTAL
+        filas_volumen.append(
+            html.Tr([
+                html.Td("TOTAL SISTEMA", colSpan=2, style={'fontWeight': 'bold'}),
+                html.Td(f"{promedio_volumen_general:.1f}%", style={'fontWeight': 'bold', 'textAlign': 'right'})
+            ], style={'backgroundColor': '#28a745', 'color': 'white'})
+        )
+        
+        tabla_volumen = dbc.Table([
+            html.Thead([
+                html.Tr([
+                    html.Th("Región / Embalse", colSpan=2),
+                    html.Th("Volumen Útil (%)", style={'textAlign': 'right'})
+                ], style={'backgroundColor': '#28a745', 'color': 'white'})
+            ]),
+            html.Tbody(filas_volumen)
+        ], bordered=True, hover=True, responsive=True, striped=True, size='sm', className="table-modern")
+        
+        logger.info(f"✅ Tablas jerárquicas creadas exitosamente con {len(regiones_totales)} regiones")
+        return tabla_participacion, tabla_volumen
+        
+    except Exception as e:
+        logger.error(f"❌ Error creando tablas jerárquicas directas: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        return (
+            dbc.Alert(f"Error: {str(e)}", color="danger"),
+            dbc.Alert(f"Error: {str(e)}", color="danger")
+        )
+
+# ============================================================================
+
+
 def crear_fichas_sin_seguras(region=None, rio=None):
     """
     Versión segura de crear_fichas_sin para uso en layout inicial
     con soporte para filtros por región y río.
     """
     try:
-        print("🔍 [DEBUG] crear_fichas_sin_seguras ejecutándose...")
-        
-        # TEMPORAL: Datos de prueba mientras debuggeamos
-        if not objetoAPI:
-            print("⚠️ API no disponible - usando datos de prueba")
-            return crear_fichas_temporales()
-            
+        logger.debug("[DEBUG] crear_fichas_sin_seguras ejecutándose...")
         return crear_fichas_sin(region=region, rio=rio)
     except Exception as e:
-        print(f"❌ [ERROR] Error en crear_fichas_sin_seguras: {e}")
+# REMOVED DEBUG:         print(f"❌ [ERROR] Error en crear_fichas_sin_seguras: {e}")
         import traceback
         traceback.print_exc()
         
@@ -710,7 +1452,7 @@ def crear_fichas_sin(fecha=None, region=None, rio=None):
     # Determinar el contexto de los cálculos SOLO usando la fecha final
     if rio and rio != "__ALL__":
         contexto = f"Río {rio}"
-        print(f"🔍 [DEBUG] crear_fichas_sin llamada con fecha_calculo: {fecha_calculo} (RÍO: {rio})")
+# REMOVED DEBUG:         logger.debug(f"[DEBUG] crear_fichas_sin llamada con fecha_calculo: {fecha_calculo} (RÍO: {rio})")
         reservas_pct, reservas_gwh = None, None
         aportes_pct, aportes_m3s = get_aportes_hidricos_por_rio(fecha_calculo, rio)
         reservas_pct_str = "N/A"
@@ -719,7 +1461,7 @@ def crear_fichas_sin(fecha=None, region=None, rio=None):
         aportes_gwh_str = f"{aportes_m3s:,.1f} m³/s".replace(",", ".") if aportes_m3s is not None else "N/D"
     elif region and region != "__ALL_REGIONS__":
         contexto = f"Región {region}"
-        print(f"🔍 [DEBUG] crear_fichas_sin llamada con fecha_calculo: {fecha_calculo} (REGIÓN: {region})")
+# REMOVED DEBUG:         logger.debug(f"[DEBUG] crear_fichas_sin llamada con fecha_calculo: {fecha_calculo} (REGIÓN: {region})")
         reservas_pct, reservas_gwh = get_reservas_hidricas_por_region(fecha_calculo, region)
         aportes_pct, aportes_gwh = get_aportes_hidricos_por_region(fecha_calculo, region)
         reservas_pct_str = f"{reservas_pct:.2f}%" if reservas_pct is not None else "N/D"
@@ -728,7 +1470,7 @@ def crear_fichas_sin(fecha=None, region=None, rio=None):
         aportes_gwh_str = f"{aportes_gwh:,.0f} GWh".replace(",", ".") if aportes_gwh is not None else "N/D"
     else:
         contexto = "SIN Completo"
-        print(f"🔍 [DEBUG] crear_fichas_sin llamada con fecha_calculo: {fecha_calculo} (SIN COMPLETO)")
+# REMOVED DEBUG:         logger.debug(f"[DEBUG] crear_fichas_sin llamada con fecha_calculo: {fecha_calculo} (SIN COMPLETO)")
         reservas_pct, reservas_gwh = get_reservas_hidricas(fecha_calculo)
         aportes_pct, aportes_gwh = get_aportes_hidricos(fecha_calculo)
         reservas_pct_str = f"{reservas_pct:.2f}%" if reservas_pct is not None else "N/D"
@@ -795,17 +1537,10 @@ def crear_fichas_sin(fecha=None, region=None, rio=None):
     ], className="mb-4")
 
 layout = html.Div([
-    # Sidebar desplegable
-    crear_sidebar_universal(),
+    # Navbar horizontal
+    crear_navbar_horizontal(),
     
-    # Header uniforme
-    # Header específico para generación hidráulica
-    crear_header(
-        titulo_pagina="Generación Hidráulica",
-        descripcion_pagina="Monitoreo de recursos hídricos y análisis de generación hidroeléctrica",
-        icono_pagina="fas fa-water",
-        color_tema=COLORS['energia_hidraulica']
-    ),
+    html.Div(style={'maxWidth': '100%', 'padding': '5px'}, children=[
     # Barra de navegación eliminada
     
     # Container principal
@@ -818,7 +1553,8 @@ layout = html.Div([
             dbc.Col([
                 # Panel de controles en tabs
                 dbc.Tabs([
-                    dbc.Tab(label="🌊 Consulta de Caudales", tab_id="tab-consulta"),
+                    dbc.Tab(label="⚡ Aportes de Energía", tab_id="tab-consulta"),
+                    dbc.Tab(label="📅 Comparación Anual", tab_id="tab-comparacion-anual"),
                 ], id="hidro-tabs", active_tab="tab-consulta", className="mb-4"),
                 
                 # Contenido dinámico
@@ -826,6 +1562,7 @@ layout = html.Div([
             ], width=12)  # Ahora ocupa todo el ancho
         ])
     ], fluid=True)
+    ])
 ], style={'backgroundColor': COLORS['bg_main'], 'minHeight': '100vh'})
 
 # Modal global para tablas de datos
@@ -837,102 +1574,354 @@ modal_rio_table = dbc.Modal([
     ]),
 ], id="modal-rio-table", is_open=False, size="xl", backdrop=True, centered=True, style={"zIndex": 2000})
 
-# Agregar modal al layout final
-layout_with_modal = html.Div([layout, modal_rio_table])
+# Modal de información de la ficha KPI
+modal_info_ficha_kpi = dbc.Modal([
+    dbc.ModalHeader(dbc.ModalTitle("Indicador de Aportes Energéticos"), close_button=True),
+    dbc.ModalBody([
+        html.H6("¿Qué mide?", className="fw-bold mb-2"),
+        html.P("Compara los aportes energéticos actuales del año 2025 con el promedio histórico de los últimos 5 años."),
+        
+        html.H6("Cálculo:", className="fw-bold mb-2 mt-3"),
+        html.Ul([
+            html.Li("Período: Últimos 365 días"),
+            html.Li("Datos reales: Suma de aportes energéticos (GWh) de todos los ríos del SIN"),
+            html.Li("Media histórica: Promedio de los últimos 5 años (2020-2024) para el mismo período"),
+            html.Li([
+                "Fórmula: ",
+                html.Code("[(Aportes Reales / Media Histórica) × 100] - 100")
+            ])
+        ]),
+        
+        html.H6("Interpretación:", className="fw-bold mb-2 mt-3"),
+        html.Ul([
+            html.Li([
+                html.I(className="fas fa-arrow-up", style={'color': '#28a745'}),
+                " Positivo (+): Más aportes que el promedio histórico (favorable)"
+            ]),
+            html.Li([
+                html.I(className="fas fa-arrow-down", style={'color': '#dc3545'}),
+                " Negativo (-): Menos aportes que el promedio histórico (crítico)"
+            ])
+        ]),
+        
+        html.H6("Colores:", className="fw-bold mb-2 mt-3"),
+        html.Ul([
+            html.Li([
+                html.Span("●", style={'color': '#28a745', 'fontSize': '1.2rem'}),
+                " Verde: ≥100% del histórico (excelente - abundancia hídrica)"
+            ]),
+            html.Li([
+                html.Span("●", style={'color': '#17a2b8', 'fontSize': '1.2rem'}),
+                " Azul: 90-100% del histórico (normal - cerca del promedio)"
+            ]),
+            html.Li([
+                html.Span("●", style={'color': '#dc3545', 'fontSize': '1.2rem'}),
+                " Rojo: <90% del histórico (crítico - déficit hídrico)"
+            ])
+        ])
+    ])
+], id="modal-info-ficha-kpi", is_open=False, size="lg", centered=True)
+
+# Agregar modales al layout final
+layout_with_modal = html.Div([layout, modal_rio_table, modal_info_ficha_kpi])
 layout = layout_with_modal
 
 # Layout del panel de controles (lo que antes estaba en el layout principal)
 def crear_panel_controles():
     return dbc.Card([
         dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-sliders-h me-2", style={"color": COLORS['primary']}),
-                html.Strong("Panel de Consulta de Caudales", style={"fontSize": "1.1rem", "color": COLORS['text_primary']})
-            ], className="mb-3 d-flex align-items-center"),
-            
-            dbc.Alert([
-                html.I(className="fas fa-exclamation-circle me-2"),
-                html.Strong("📅 Limitaciones de fechas: "),
-                "La API de XM funciona mejor con fechas recientes (últimos 2 años). Fechas muy antiguas pueden generar errores o no tener datos disponibles."
-            ], color="info", className="mb-3", style={"fontSize": "0.85rem"}),
-            
+            # TODOS LOS FILTROS EN UNA SOLA FILA HORIZONTAL
             dbc.Row([
+                # Región
                 dbc.Col([
-                    html.Label([
-                        html.I(className="fas fa-map-marked-alt me-2"),
-                        "Región Hidrológica"
-                    ], className="fw-bold mb-2 d-flex align-items-center"),
+                    html.Label("REGIÓN:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
                     dcc.Dropdown(
                         id="region-dropdown",
-                        options=[{"label": "🌍 Todas las regiones", "value": "__ALL_REGIONS__"}],
-                        placeholder="Selecciona una región hidrológica...",
+                        options=[{"label": "Todas las regiones", "value": "__ALL_REGIONS__"}],
+                        placeholder="Región...",
                         className="form-control-modern mb-0",
-                        style={"fontSize": "0.95rem"}
+                        style={"fontSize": "0.75rem", "minHeight": "28px"}
                     )
-                ], lg=3, md=6, sm=12),
+                ], lg=2, md=6, sm=12),
                 
+                # Río
                 dbc.Col([
-                    html.Label([
-                        html.I(className="fas fa-water me-2"),
-                        "Río para Análisis"
-                    ], className="fw-bold mb-2 d-flex align-items-center"),
+                    html.Label("RÍO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
                     dcc.Dropdown(
                         id="rio-dropdown",
-                        options=[],  # Se cargarán dinámicamente según la región
-                        placeholder="Selecciona un río para consultar...",
+                        options=[],
+                        placeholder="Río...",
                         className="form-control-modern mb-0",
-                        style={"fontSize": "0.95rem"}
-                    )
-                ], lg=3, md=6, sm=12),
-                
-                dbc.Col([
-                    html.Label([
-                        html.I(className="fas fa-calendar-alt me-2"),
-                        "Fecha de Inicio"
-                    ], className="fw-bold mb-2 d-flex align-items-center"),
-                    dcc.DatePickerSingle(
-                        id="start-date",
-                        date=date.today() - timedelta(days=30),
-                        display_format="DD/MM/YYYY",
-                        className="form-control-modern",
-                        style={"width": "100%"}
+                        style={"fontSize": "0.75rem", "minHeight": "28px"}
                     )
                 ], lg=2, md=6, sm=12),
                 
+                # Rango
                 dbc.Col([
-                    html.Label([
-                        html.I(className="fas fa-calendar-check me-2"),
-                        "Fecha Final"
-                    ], className="fw-bold mb-2 d-flex align-items-center"),
-                    dcc.DatePickerSingle(
-                        id="end-date",
-                        date=date.today(),
-                        display_format="DD/MM/YYYY",
-                        className="form-control-modern",
-                        style={"width": "100%"}
+                    html.Label("RANGO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
+                    dcc.Dropdown(
+                        id='rango-fechas-hidrologia',
+                        options=[
+                            {'label': 'Último mes', 'value': '1m'},
+                            {'label': 'Últimos 6 meses', 'value': '6m'},
+                            {'label': 'Último año', 'value': '1y'},
+                            {'label': 'Últimos 2 años', 'value': '2y'},
+                            {'label': 'Últimos 5 años', 'value': '5y'},
+                            {'label': 'Personalizado', 'value': 'custom'}
+                        ],
+                        value='1y',
+                        clearable=False,
+                        style={'fontSize': '0.75rem', 'minHeight': '28px'}
                     )
                 ], lg=2, md=6, sm=12),
                 
+                # Fecha inicio (oculta)
                 dbc.Col([
-                    html.Label("\u00A0", className="d-block"),
-                    dbc.Button([
-                        html.I(className="fas fa-chart-line me-2"),
-                        "Consultar Caudales"
-                    ],
-                    id="query-button",
-                    color="primary",
-                    className="w-100 btn-modern",
-                    style={"marginTop": "0.5rem", "background": f"linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%)", "border": "none"}
-                    ),
-                    # Mensaje informativo sobre tiempo de carga
-                    html.Small([
-                        html.I(className="fas fa-info-circle me-1"),
-                        "La consulta puede tomar unos segundos dependiendo del rango de fechas"
-                    ], className="text-muted d-block mt-1", style={"fontSize": "0.75rem"})
+                    html.Label("INICIO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
+                    dcc.DatePickerSingle(
+                        id='fecha-inicio-hidrologia',
+                        date=(date.today() - timedelta(days=365)).strftime('%Y-%m-%d'),
+                        display_format='DD/MM/YYYY',
+                        style={'fontSize': '0.75rem'}
+                    )
+                ], id='container-fecha-inicio-hidrologia', lg=2, md=6, sm=12, style={'display': 'none'}),
+                
+                # Fecha fin (oculta)
+                dbc.Col([
+                    html.Label("FIN:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
+                    dcc.DatePickerSingle(
+                        id='fecha-fin-hidrologia',
+                        date=date.today().strftime('%Y-%m-%d'),
+                        display_format='DD/MM/YYYY',
+                        style={'fontSize': '0.75rem'}
+                    )
+                ], id='container-fecha-fin-hidrologia', lg=2, md=6, sm=12, style={'display': 'none'}),
+                
+                # Botón
+                dbc.Col([
+                    html.Label("\u00A0", style={'fontSize': '0.65rem', 'marginBottom': '1px', 'display': 'block'}),
+                    dbc.Button(
+                        [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
+                        id="btn-actualizar-hidrologia",
+                        color="primary",
+                        className="w-100",
+                        style={'fontSize': '0.75rem', 'height': '28px'}
+                    )
                 ], lg=2, md=12, sm=12)
-            ], className="g-3 align-items-end")
-        ], className="p-4")
+            ], className="g-2 align-items-end")
+        ], className="p-1")
     ], className="shadow-sm")
+
+# Función para generar la ficha KPI
+def crear_ficha_kpi_inicial():
+    """Genera la ficha KPI con datos del último año"""
+    try:
+        logger.info("🚀 INICIANDO crear_ficha_kpi_inicial()")
+        # Calcular fechas: último año
+        fecha_fin = date.today()
+        fecha_inicio = fecha_fin - timedelta(days=365)
+        start_date_str = fecha_inicio.strftime('%Y-%m-%d')
+        end_date_str = fecha_fin.strftime('%Y-%m-%d')
+        logger.info(f"📅 Fechas: {start_date_str} a {end_date_str}")
+        
+        # Obtener datos
+        data, _ = obtener_datos_inteligente('AporEner', 'Rio', start_date_str, end_date_str)
+        if data is None or data.empty:
+            logger.warning("⚠️ FICHA INICIAL: No hay datos de AporEner")
+            return html.Div()
+        
+        total_real = data['Value'].sum()
+        logger.info(f"📊 Total real: {total_real:.2f} GWh")
+        
+        # Obtener media histórica usando el mismo rango de fechas
+        media_hist_data, _ = obtener_datos_inteligente('AporEnerMediHist', 'Rio', start_date_str, end_date_str)
+        
+        if media_hist_data is not None and not media_hist_data.empty:
+            total_historico = media_hist_data['Value'].sum()
+            porcentaje_vs_historico = (total_real / total_historico * 100) if total_historico > 0 else None
+            logger.info(f"📊 Histórico: {total_historico:.2f} GWh, Porcentaje: {porcentaje_vs_historico:.1f}%")
+        else:
+            logger.warning("⚠️ FICHA INICIAL: No hay media histórica")
+            return html.Div()
+        
+        if porcentaje_vs_historico is None:
+            logger.warning("⚠️ FICHA INICIAL: porcentaje_vs_historico es None")
+            return html.Div()
+        
+        logger.info(f"✅ FICHA INICIAL CREADA: {porcentaje_vs_historico - 100:+.1f}%")
+        # Crear ficha
+        return dbc.Card([
+            dbc.CardBody([
+                # Botón de información en esquina superior derecha
+                html.Button(
+                    "ℹ",
+                    id="btn-info-ficha-kpi",
+                    style={
+                        'width': '28px', 
+                        'height': '28px', 
+                        'borderRadius': '50%',
+                        'backgroundColor': '#F2C330',
+                        'color': '#2C3E50',
+                        'fontSize': '16px',
+                        'fontWeight': 'bold',
+                        'border': '2px solid #2C3E50',
+                        'cursor': 'pointer',
+                        'position': 'absolute', 
+                        'top': '6px', 
+                        'right': '6px',
+                        'zIndex': '10',
+                        'boxShadow': '0 4px 12px rgba(0,0,0,0.4), 0 0 0 2px rgba(242,195,48,0.3)',
+                        'transition': 'all 0.3s ease',
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'justifyContent': 'center',
+                        'animation': 'pulse 2s ease-in-out infinite'
+                    },
+                    title="Información del indicador"
+                ),
+                
+                html.Div([
+                    html.I(className="fas fa-tint", style={'color': "#28a745" if porcentaje_vs_historico >= 100 
+                                                       else "#dc3545" if porcentaje_vs_historico < 90
+                                                       else "#17a2b8", 'fontSize': '1.2rem', 'marginRight': '8px'}),
+                    html.Div([
+                        html.Span("Estado 2025", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.8rem', 'display': 'block'}),
+                        html.Span(
+                            f"{porcentaje_vs_historico - 100:+.1f}%",
+                            style={'fontWeight': 'bold', 'fontSize': '1.6rem', 
+                                   'color': "#28a745" if porcentaje_vs_historico >= 100 
+                                           else "#dc3545" if porcentaje_vs_historico < 90
+                                           else "#17a2b8", 'display': 'block', 'lineHeight': '1.2'}),
+                        html.Span("vs Histórico", style={'color': '#666', 'fontSize': '0.75rem', 'display': 'block'})
+                    ], style={'display': 'flex', 'flexDirection': 'column', 'alignItems': 'flex-start'})
+                ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center'})
+            ], style={'padding': '0.5rem', 'position': 'relative'})
+        ], className="shadow-sm border-0", style={"borderLeft": "4px solid " + (
+            "#28a745" if porcentaje_vs_historico >= 100 
+            else "#dc3545" if porcentaje_vs_historico < 90
+            else "#17a2b8"
+        ), "height": "100%"})
+    except Exception as e:
+        logger.error(f"❌ Error creando ficha KPI inicial: {e}")
+        return html.Div()
+
+# Registrar callback del filtro de fechas
+registrar_callback_filtro_fechas('hidrologia')
+
+# Callback para actualizar SOLO la ficha KPI (eficiente - no re-renderiza el panel)
+@callback(
+    Output("ficha-kpi-container", "children"),
+    Input("btn-actualizar-hidrologia", "n_clicks"),
+    Input('rango-fechas-hidrologia', 'value'),
+    State('fecha-inicio-hidrologia', 'date'),
+    State('fecha-fin-hidrologia', 'date'),
+    prevent_initial_call=False
+)
+def update_ficha_kpi(n_clicks, rango, start_date, end_date):
+    """Actualiza solo la ficha KPI sin tocar el resto del layout"""
+    # Calcular fechas según el rango seleccionado
+    fecha_fin = date.today()
+    
+    if rango == '1m':
+        fecha_inicio = fecha_fin - timedelta(days=30)
+    elif rango == '6m':
+        fecha_inicio = fecha_fin - timedelta(days=180)
+    elif rango == '1y':
+        fecha_inicio = fecha_fin - timedelta(days=365)
+    elif rango == '2y':
+        fecha_inicio = fecha_fin - timedelta(days=730)
+    elif rango == '5y':
+        fecha_inicio = fecha_fin - timedelta(days=1825)
+    elif rango == 'custom' and start_date and end_date:
+        fecha_inicio = datetime.strptime(start_date, '%Y-%m-%d').date()
+        fecha_fin = datetime.strptime(end_date, '%Y-%m-%d').date()
+    else:
+        # Por defecto: último año
+        fecha_inicio = fecha_fin - timedelta(days=365)
+    
+    start_date_str = fecha_inicio.strftime('%Y-%m-%d')
+    end_date_str = fecha_fin.strftime('%Y-%m-%d')
+    
+    try:
+        # Calcular porcentaje vs histórico
+        data, _ = obtener_datos_inteligente('AporEner', 'Rio', start_date_str, end_date_str)
+        if data is None or data.empty:
+            logger.warning(f"⚠️ Ficha KPI: No hay datos para {start_date_str} a {end_date_str}")
+            return html.Div()
+        
+        total_real = data['Value'].sum()
+        
+        # Obtener media histórica usando el mismo rango de fechas
+        media_hist_data, _ = obtener_datos_inteligente('AporEnerMediHist', 'Rio', start_date_str, end_date_str)
+        
+        if media_hist_data is not None and not media_hist_data.empty:
+            total_historico = media_hist_data['Value'].sum()
+            porcentaje_vs_historico = (total_real / total_historico * 100) if total_historico > 0 else None
+        else:
+            logger.warning(f"⚠️ Ficha KPI: No hay media histórica")
+            porcentaje_vs_historico = None
+        
+        if porcentaje_vs_historico is None:
+            logger.warning(f"⚠️ Ficha KPI: porcentaje_vs_historico es None")
+            return html.Div()
+        
+        logger.info(f"✅ Ficha KPI actualizada: {porcentaje_vs_historico - 100:+.1f}%")
+        # Crear ficha compacta CON BOTÓN DE INFORMACIÓN
+        return dbc.Card([
+            dbc.CardBody([
+                # Botón de información en esquina superior derecha
+                html.Button(
+                    "ℹ",
+                    id="btn-info-ficha-kpi",
+                    style={
+                        'width': '28px', 
+                        'height': '28px', 
+                        'borderRadius': '50%',
+                        'backgroundColor': '#F2C330',
+                        'color': '#2C3E50',
+                        'fontSize': '16px',
+                        'fontWeight': 'bold',
+                        'border': '2px solid #2C3E50',
+                        'cursor': 'pointer',
+                        'position': 'absolute', 
+                        'top': '6px', 
+                        'right': '6px',
+                        'zIndex': '10',
+                        'boxShadow': '0 4px 12px rgba(0,0,0,0.4), 0 0 0 2px rgba(242,195,48,0.3)',
+                        'transition': 'all 0.3s ease',
+                        'display': 'flex',
+                        'alignItems': 'center',
+                        'justifyContent': 'center',
+                        'animation': 'pulse 2s ease-in-out infinite'
+                    },
+                    title="Información del indicador"
+                ),
+                
+                html.Div([
+                    html.I(className="fas fa-tint", style={'color': "#28a745" if porcentaje_vs_historico >= 100 
+                                                       else "#dc3545" if porcentaje_vs_historico < 90
+                                                       else "#17a2b8", 'fontSize': '1.2rem', 'marginRight': '8px'}),
+                    html.Div([
+                        html.Span("Estado 2025", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.8rem', 'display': 'block'}),
+                        html.Span(
+                            f"{porcentaje_vs_historico - 100:+.1f}%",
+                            style={'fontWeight': 'bold', 'fontSize': '1.6rem', 
+                                   'color': "#28a745" if porcentaje_vs_historico >= 100 
+                                           else "#dc3545" if porcentaje_vs_historico < 90
+                                           else "#17a2b8", 'display': 'block', 'lineHeight': '1.2'}),
+                        html.Span("vs Histórico", style={'color': '#666', 'fontSize': '0.75rem', 'display': 'block'})
+                    ], style={'display': 'flex', 'flexDirection': 'column', 'alignItems': 'flex-start'})
+                ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center'})
+            ], style={'padding': '0.5rem', 'position': 'relative'})
+        ], className="shadow-sm border-0", style={"borderLeft": "4px solid " + (
+            "#28a745" if porcentaje_vs_historico >= 100 
+            else "#dc3545" if porcentaje_vs_historico < 90
+            else "#17a2b8"
+        ), "height": "100%"})
+        
+    except Exception as e:
+        logger.error(f"❌ Error actualizando ficha KPI: {e}")
+        return html.Div()
 
 # Callback para manejar tabs
 @callback(
@@ -940,29 +1929,30 @@ def crear_panel_controles():
     Input("hidro-tabs", "active_tab")
 )
 def render_hidro_tab_content(active_tab):
+    logger.info(f"🎯 render_hidro_tab_content ejecutándose: active_tab={active_tab}")
     if active_tab == "tab-consulta":
         # Mostrar por defecto la gráfica y tablas de embalse junto con las fichas KPI
-        # Usar el rango por defecto: últimos 30 días
+        # Usar el rango por defecto: 1 año (365 días) para coincidir con dropdown
         fecha_final = date.today()
-        fecha_inicio = fecha_final - timedelta(days=30)
+        fecha_inicio = fecha_final - timedelta(days=365)  # 1 año - coincide con dropdown value='1y'
         fecha_inicio_str = fecha_inicio.strftime('%Y-%m-%d')
         fecha_final_str = fecha_final.strftime('%Y-%m-%d')
         # Importante: show_default_view requiere start_date y end_date
-        from dash import no_update
         try:
             # Usar la función auxiliar definida en update_content
             # Debemos replicar la lógica aquí para obtener el contenido por defecto
             def show_default_view(start_date, end_date):
+                objetoAPI = get_objetoAPI()
                 es_valido, mensaje = validar_rango_fechas(start_date, end_date)
                 if not es_valido:
-                    return dbc.Alert([
-                        html.H6("Fechas no válidas", className="alert-heading"),
-                        html.P(mensaje),
-                        html.Hr(),
-                        html.P("Ajuste el rango de fechas y vuelva a intentar.", className="mb-0")
-                    ], color="warning", className="text-start")
+                    return dbc.Alert(mensaje, color="warning", className="text-start")
                 try:
-                    data = objetoAPI.request_data('AporCaudal', 'Rio', start_date, end_date)
+                    # ✅ OPTIMIZADO: Consulta inteligente SQLite (>=2020) vs API (<2020)
+                    # La conversión kWh→GWh se hace automáticamente
+                    data, warning_msg = obtener_datos_inteligente('AporEner', 'Rio', start_date, end_date)
+                    if warning_msg:
+                        logger.info(f"⚠️ {warning_msg}")
+                    
                     if data is None or data.empty:
                         return dbc.Alert([
                             html.H6("Sin datos", className="alert-heading"),
@@ -970,15 +1960,80 @@ def render_hidro_tab_content(active_tab):
                             html.Hr(),
                             html.P("Intente con fechas más recientes.", className="mb-0")
                         ], color="warning", className="text-start")
-                    data['Region'] = data['Name'].map(RIO_REGION)
+                    rio_region = ensure_rio_region_loaded()
+                    data['Region'] = data['Name'].map(rio_region)
                     if 'Name' in data.columns and 'Value' in data.columns:
                         region_df = data.groupby(['Region', 'Date'])['Value'].sum().reset_index()
                         region_df = region_df[region_df['Region'].notna()]
-                        # Aquí deberías llamar a la función que genera la gráfica y la tabla de embalses
-                        # Si tienes una función como get_tabla_regiones_embalses, úsala aquí
-                        # Por simplicidad, devolvemos un placeholder
+                        
+                        # Obtener datos de embalses para vista inicial
+                        embalses_df_fresh = get_embalses_capacidad(None, start_date, end_date)
+                        
+                        # CORRECCIÓN: Pasar datos originales (con columna Name) para que la función
+                        # create_total_timeline_chart pueda obtener media histórica por río
+                        
+                        # LAYOUT HORIZONTAL COMPACTO INICIAL: 58%-17%-25%
                         return html.Div([
-                            html.H4("[Gráfica y tablas de embalse aquí]", style={"color": COLORS['primary']})
+                            html.H5("🇨🇴 Evolución Temporal de Aportes de Energía", className="text-center mb-2"),
+                            html.P("Vista general: Gráfica temporal, mapa y tablas de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
+                            
+                            dbc.Row([
+                                # COLUMNA 1: Gráfica Temporal (58%)
+                                dbc.Col([
+                                    dbc.Card([
+                                        dbc.CardBody([
+                                            html.H6("📈 Evolución Temporal", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                            create_total_timeline_chart(data, "Aportes nacionales")
+                                        ], className="p-1")
+                                    ], className="h-100")
+                                ], md=7),
+                                
+                                # COLUMNA 2: Mapa de Colombia (17%)
+                                dbc.Col([
+                                    dbc.Card([
+                                        dbc.CardBody([
+                                            html.H6("🗺️ Mapa de Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                            html.Div([
+                                                crear_mapa_embalses_directo(
+                                                    region_df.groupby('Region')['Value'].sum().reset_index(),
+                                                    embalses_df_fresh
+                                                )
+                                            ])
+                                        ], className="p-1")
+                                    ], className="h-100")
+                                ], md=2),
+                                
+                                # COLUMNA 3: Tabla de Embalses (25%)
+                                dbc.Col([
+                                    dbc.Card([
+                                        dbc.CardBody([
+                                            html.H6("📊 Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                            html.Div([
+                                                dash_table.DataTable(
+                                                    id="tabla-embalses-inicial",
+                                                    data=get_embalses_completa_para_tabla(None, start_date, end_date),
+                                                    columns=[
+                                                        {"name": "Embalse", "id": "Embalse"},
+                                                        {"name": "Part.", "id": "Participación (%)"},
+                                                        {"name": "Vol.", "id": "Volumen Útil (%)"},
+                                                        {"name": "⚠️", "id": "Riesgo"}
+                                                    ],
+                                                    style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
+                                                    style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
+                                                    style_data_conditional=[
+                                                        {'if': {'filter_query': '{Riesgo} = "🔴"'}, 'backgroundColor': '#ffe6e6'},
+                                                        {'if': {'filter_query': '{Riesgo} = "🟡"'}, 'backgroundColor': '#fff9e6'},
+                                                        {'if': {'filter_query': '{Riesgo} = "🟢"'}, 'backgroundColor': '#e6ffe6'},
+                                                        {'if': {'filter_query': '{Embalse} = "TOTAL"'}, 'backgroundColor': '#e3f2fd', 'fontWeight': 'bold'}
+                                                    ],
+                                                    page_action="none",
+                                                    style_table={'maxHeight': '480px', 'overflowY': 'auto'}
+                                                )
+                                            ])
+                                        ], className="p-2")
+                                    ], className="h-100")
+                                ], md=3)
+                            ])
                         ])
                 except Exception as e:
                     return dbc.Alert([
@@ -992,14 +2047,19 @@ def render_hidro_tab_content(active_tab):
                 html.P(str(e)),
             ], color="danger", className="text-start")
         return html.Div([
-            crear_panel_controles(),
+            # LAYOUT HORIZONTAL: Panel de controles (70%) + Ficha KPI dinámica (30%)
+            dbc.Row([
+                dbc.Col([crear_panel_controles()], md=9),
+                dbc.Col([html.Div(id="ficha-kpi-container", children=[crear_ficha_kpi_inicial()])], md=3)
+            ], className="g-2 mb-3 align-items-start"),
+            
+            # Contenido dinámico (gráficas, mapas, tablas)
             dcc.Loading(
                 id="loading-hidro",
                 type="circle",
                 children=html.Div([
-                    html.Div(id="fichas-kpi-container", children=crear_fichas_sin_seguras()),
-                    html.Div(id="hidro-results-content-dynamic", className="mt-4", children=resultados_embalse)
-                ], id="hidro-results-content", className="mt-4"),
+                    html.Div(id="hidro-results-content-dynamic", className="mt-2", children=resultados_embalse)
+                ], id="hidro-results-content", className="mt-2"),
                 color=COLORS['primary'],
                 loading_state={'is_loading': False}
             )
@@ -1016,22 +2076,87 @@ def render_hidro_tab_content(active_tab):
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
-                                    html.H6("📊 Análisis de Variabilidad", className="mb-3"),
-                                    html.P("Análisis estadístico de variabilidad de caudales por región y temporada.", className="text-muted")
+                                    html.H6("Análisis de Variabilidad", className="mb-3"),
+                                    html.P("Análisis estadístico de variabilidad de aportes energéticos por región y temporada.", className="text-muted")
                                 ])
                             ], className="h-100")
                         ], md=6),
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
-                                    html.H6("⚡ Correlaciones Energéticas", className="mb-3"),
-                                    html.P("Relación entre caudales y generación hidroeléctrica en Colombia.", className="text-muted")
+                                    html.H6("Correlaciones Energéticas", className="mb-3"),
+                                    html.P("Contribución energética de cada región a la generación hidroeléctrica del país.", className="text-muted")
                                 ])
                             ], className="h-100")
                         ], md=6)
                     ])
                 ])
             ], className="shadow-sm")
+        ])
+    elif active_tab == "tab-comparacion-anual":
+        # Nueva sección de Comparación Anual - ESTRUCTURA IDÉNTICA A GENERACIÓN
+        return html.Div([
+            
+            # FILTRO MULTISELECTOR DE AÑOS (optimizado horizontalmente)
+            dbc.Card([
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([
+                            html.Small("Selecciona los años a comparar:", className="mb-1", 
+                                   style={'fontWeight': '600', 'color': '#2c3e50', 'fontSize': '0.7rem'}),
+                            dcc.Dropdown(
+                                id='years-multiselector-hidro',
+                                options=[{'label': str(y), 'value': y} for y in range(2021, 2026)],
+                                value=[2024, 2025],
+                                multi=True,
+                                placeholder="Selecciona uno o más años...",
+                                clearable=False
+                            ),
+                            html.Small("Nota: Datos disponibles desde 2021 (año completo)", 
+                                      className="text-muted", style={'fontSize': '0.7rem'})
+                        ], md=9),
+                        dbc.Col([
+                            dbc.Button(
+                                "Actualizar Comparación",
+                                id='btn-actualizar-comparacion-hidro',
+                                color="primary",
+                                className="w-100",
+                                style={'height': '38px'}
+                            )
+                        ], md=3, className="d-flex align-items-center")
+                    ])
+                ], className="p-2")
+            ], className="mb-3"),
+            
+            # LAYOUT HORIZONTAL: Gráfica de líneas (70%) + Fichas por año (30%)
+            dbc.Row([
+                # COLUMNA IZQUIERDA: Gráfica de líneas temporales
+                dbc.Col([
+                    dcc.Loading(
+                        id="loading-grafica-lineas-hidro",
+                        type="default",
+                        children=html.Div([
+                            html.H6("Evolución Temporal de Volúmenes de Embalses por Año", className="text-center mb-2",
+                                   style={'fontWeight': '600', 'color': '#2c3e50', 'fontSize': '0.85rem'}),
+                            dcc.Graph(id='grafica-lineas-temporal-hidro', config={'displayModeBar': False})
+                        ])
+                    )
+                ], md=8, className="pe-2"),
+                
+                # COLUMNA DERECHA: Fichas por año (scroll vertical si hay muchos años)
+                dbc.Col([
+                    html.H6("Resumen por Año", className="text-center mb-2",
+                           style={'fontWeight': '600', 'color': '#2c3e50', 'fontSize': '0.85rem'}),
+                    dcc.Loading(
+                        id="loading-embalses-anuales",
+                        type="default",
+                        children=html.Div(
+                            id='contenedor-embalses-anuales',
+                            style={'maxHeight': '500px', 'overflowY': 'auto'}
+                        )
+                    )
+                ], md=4, className="ps-2")
+            ], className="mb-4")
         ])
     elif active_tab == "tab-tendencias":
         return html.Div([
@@ -1045,7 +2170,7 @@ def render_hidro_tab_content(active_tab):
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
-                                    html.H6("🌡️ Variabilidad Climática", className="mb-3"),
+                                    html.H6("Variabilidad Climática", className="mb-3"),
                                     html.P("Análisis de patrones climáticos y su impacto en los recursos hídricos.", className="text-muted")
                                 ])
                             ], className="h-100")
@@ -1085,56 +2210,298 @@ def update_rio_options(region):
     return options
 
 
-# Nuevo callback para actualizar las fichas KPI cuando cambian los filtros, incluyendo la fecha final como Input
-@callback(
-    Output("fichas-kpi-container", "children"),
-    [Input("region-dropdown", "value"),
-     Input("rio-dropdown", "value"),
-     Input("end-date", "date")]
-)
-def update_fichas_kpi(region, rio, end_date):
-    """
-    Actualiza las fichas KPI según los filtros seleccionados, usando la fecha final del filtro
-    """
-    print(f"🔄 [DEBUG] Actualizando fichas KPI: región={region}, río={rio}, fecha_final={end_date}")
-    # Usar la fecha FINAL seleccionada o fecha de ayer como fallback
-    fecha_final = end_date if end_date else (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-    region_filtro = None if region == "__ALL_REGIONS__" else region
-    rio_filtro = None if rio == "__ALL__" else rio
-    return crear_fichas_sin(fecha=fecha_final, region=region_filtro, rio=rio_filtro)
+# ===== CALLBACK ELIMINADO - Las fichas KPI ahora están en la página de Generación =====
+# El callback update_fichas_kpi ha sido removido ya que las fichas de 
+# Reservas Hídricas y Aportes Hídricos ahora se muestran en pages/generacion.py
+# ===================================================================================
+
+
+# ============================================================================
+# FUNCIÓN PARA CREAR MAPA DE EMBALSES (Nivel de módulo - accesible globalmente)
+# ============================================================================
+def crear_mapa_embalses_directo(regiones_totales, df_completo_embalses):
+    """Crea el mapa mostrando CADA EMBALSE como un círculo/bolita individual de color sobre mapa real de Colombia."""
+    try:
+        import plotly.graph_objects as go
+        import random
+        from math import sin, cos, radians
+        
+        if regiones_totales is None or regiones_totales.empty:
+            return dbc.Alert("No hay datos de regiones disponibles", color="warning")
+        
+        if df_completo_embalses is None or df_completo_embalses.empty:
+            return dbc.Alert("No hay datos de embalses disponibles", color="warning")
+        
+        logger.info("Creando mapa con bolitas individuales por embalse sobre mapa real de Colombia...")
+        logger.debug(f"Total embalses en df_completo_embalses: {len(df_completo_embalses)}")
+        
+        # Crear figura con mapa base de Colombia
+        fig = go.Figure()
+        
+        # Usar cache de GeoJSON (archivos estáticos cargados UNA vez)
+        try:
+            cache = _cargar_geojson_cache()
+            
+            if cache is None or not cache['loaded']:
+                logger.error("❌ Cache de GeoJSON no disponible")
+                # Continuar sin mapa base
+                colombia_geojson = None
+                DEPARTAMENTOS_A_REGIONES = {}
+            else:
+                # Obtener datos del cache (ya cargados en memoria)
+                colombia_geojson = cache['colombia_geojson']
+                regiones_config = cache['regiones_config']
+                DEPARTAMENTOS_A_REGIONES = cache['departamentos_a_regiones']
+                
+                logger.info(f"✅ Usando cache de GeoJSON: {len(regiones_config['regiones'])} regiones")
+            
+            # Solo dibujar mapa base si tenemos los datos
+            if colombia_geojson and DEPARTAMENTOS_A_REGIONES:
+                # Agregar el mapa de Colombia como fondo con colores por región natural
+                departamentos_dibujados = 0
+                for feature in colombia_geojson['features']:
+                    # Obtener nombre del departamento y normalizarlo
+                    nombre_dpto_original = feature['properties'].get('NOMBRE_DPT', '')
+                    nombre_dpto = nombre_dpto_original.upper().strip()
+                    
+                    # Normalizar nombres especiales
+                    if 'BOGOTA' in nombre_dpto or 'D.C' in nombre_dpto:
+                        nombre_dpto = 'CUNDINAMARCA'
+                    elif 'SAN ANDRES' in nombre_dpto:
+                        nombre_dpto = 'SAN ANDRES Y PROVIDENCIA'
+                    elif 'NARIÑO' in nombre_dpto_original:
+                        nombre_dpto = 'NARIÑO'
+                    elif 'BOYACÁ' in nombre_dpto_original:
+                        nombre_dpto = 'BOYACA'
+                    elif 'CÓRDOBA' in nombre_dpto_original:
+                        nombre_dpto = 'CORDOBA'
+                    
+                    # Determinar color según región natural
+                    if nombre_dpto in DEPARTAMENTOS_A_REGIONES:
+                        info_region = DEPARTAMENTOS_A_REGIONES[nombre_dpto]
+                        fillcolor = info_region['color']
+                        bordercolor = info_region['border']
+                        region_nombre = info_region['region']
+                        hovertext = f"<b>{nombre_dpto_original}</b><br>{region_nombre}"
+                    else:
+                        fillcolor = 'rgba(220, 220, 220, 0.2)'
+                        bordercolor = '#999999'
+                        hovertext = f"<b>{nombre_dpto_original}</b>"
+                    
+                    # Manejar Polygon y MultiPolygon
+                    geometry_type = feature['geometry']['type']
+                    coords_list = []
+                    
+                    if geometry_type == 'Polygon':
+                        coords_list = [feature['geometry']['coordinates'][0]]
+                    elif geometry_type == 'MultiPolygon':
+                        coords_list = [poly[0] for poly in feature['geometry']['coordinates']]
+                    
+                    # Dibujar cada polígono del departamento
+                    for coords in coords_list:
+                        lons = [c[0] for c in coords]
+                        lats = [c[1] for c in coords]
+                        
+                        fig.add_trace(go.Scattergeo(
+                            lon=lons,
+                            lat=lats,
+                            mode='lines',
+                            line=dict(width=1.5, color=bordercolor),
+                            fill='toself',
+                            fillcolor=fillcolor,
+                            hoverinfo='text',
+                            hovertext=hovertext,
+                            showlegend=False
+                        ))
+                    
+                    departamentos_dibujados += 1
+                
+                logger.info(f"Mapa de Colombia cargado: {departamentos_dibujados} departamentos")
+                
+        except Exception as e:
+            logger.warning(f"Error al cargar mapa base: {e}")
+        
+        # Procesar embalses
+        leyenda_mostrada = {'ALTO': False, 'MEDIO': False, 'BAJO': False}
+        embalses_mapeados = 0
+        
+        for idx, row in df_completo_embalses.iterrows():
+            nombre_embalse = str(row.get('Embalse', '')).strip()
+            region_embalse = str(row.get('Región', '')).strip()
+            
+            if not nombre_embalse or not region_embalse:
+                continue
+            
+            region_normalizada = region_embalse.upper()
+            
+            if region_normalizada not in REGIONES_COORDENADAS:
+                continue
+            
+            participacion = float(row.get('Participación (%)', 0))
+            volumen_pct = float(row.get('Volumen Útil (%)', 0))
+            
+            riesgo, color, icono = calcular_semaforo_embalse(participacion, volumen_pct)
+            
+            coords_region = REGIONES_COORDENADAS[region_normalizada]
+            lat_centro = coords_region['lat']
+            lon_centro = coords_region['lon']
+            
+            # Posición aleatoria pero consistente
+            seed_value = hash(nombre_embalse + region_normalizada) % 100000
+            random.seed(seed_value)
+            
+            radio_lat = 0.5
+            radio_lon = 0.6
+            
+            angulo = random.uniform(0, 360)
+            distancia = random.uniform(0.4, 1.0)
+            
+            offset_lat = distancia * radio_lat * sin(radians(angulo))
+            offset_lon = distancia * radio_lon * cos(radians(angulo))
+            
+            lat_embalse = lat_centro + offset_lat
+            lon_embalse = lon_centro + offset_lon
+            
+            hover_text = (
+                f"<b>{nombre_embalse}</b><br>"
+                f"Región: {coords_region['nombre']}<br>"
+                f"Participación: {participacion:.2f}%<br>"
+                f"Volumen Útil: {volumen_pct:.1f}%<br>"
+                f"<b>Riesgo: {riesgo}</b> {icono}"
+            )
+            
+            tamaño = max(12, min(10 + participacion * 0.8, 35))
+            
+            mostrar_leyenda = not leyenda_mostrada[riesgo]
+            if mostrar_leyenda:
+                leyenda_mostrada[riesgo] = True
+                nombre_leyenda = f"{icono} Riesgo {riesgo}"
+            else:
+                nombre_leyenda = nombre_embalse
+            
+            fig.add_trace(go.Scattergeo(
+                lon=[lon_embalse],
+                lat=[lat_embalse],
+                mode='markers',
+                marker=dict(
+                    size=tamaño,
+                    color=color,
+                    line=dict(width=2, color='white'),
+                    symbol='circle',
+                    opacity=0.9
+                ),
+                name=nombre_leyenda,
+                hovertext=hover_text,
+                hoverinfo='text',
+                showlegend=mostrar_leyenda,
+                legendgroup=riesgo
+            ))
+            
+            embalses_mapeados += 1
+        
+        if embalses_mapeados == 0:
+            return dbc.Alert("No se pudieron mapear los embalses", color="warning")
+        
+        # Configurar el mapa
+        fig.update_geos(
+            projection_type='mercator',
+            scope='south america',
+            center=dict(lon=-73.5, lat=4.5),
+            showcoastlines=True,
+            coastlinecolor='#333333',
+            coastlinewidth=2,
+            showland=True,
+            landcolor='#f5f5f5',
+            showcountries=True,
+            countrycolor='#000000',
+            countrywidth=2.5,
+            showlakes=True,
+            lakecolor='#b3d9ff',
+            lonaxis_range=[-79.5, -66.5],
+            lataxis_range=[-4.5, 13],
+            bgcolor='#ffffff',
+            resolution=50
+        )
+        
+        fig.update_layout(
+            height=455,
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor='white',
+            geo=dict(projection_scale=2.8),
+            legend=dict(
+                title=dict(text='Nivel de Riesgo', font=dict(size=10)),
+                orientation='v',
+                yanchor='top',
+                y=0.98,
+                xanchor='left',
+                x=0.01,
+                bgcolor='rgba(255,255,255,0.95)',
+                bordercolor='#cccccc',
+                borderwidth=2,
+                font=dict(size=9)
+            ),
+            hoverlabel=dict(
+                bgcolor='white',
+                font_size=12,
+                font_family='Arial',
+                bordercolor='#666666'
+            )
+        )
+        
+        logger.info(f"Mapa creado exitosamente: {embalses_mapeados} embalses")
+        return dcc.Graph(
+            figure=fig, 
+            config={
+                'displayModeBar': True, 
+                'displaylogo': False,
+                'scrollZoom': True,
+                'modeBarButtonsToRemove': ['lasso2d', 'select2d']
+            },
+            style={'height': '100%', 'touchAction': 'auto'}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creando mapa: {e}", exc_info=True)
+        return dbc.Alert(f"Error al crear el mapa: {str(e)}", color="danger")
 
 
 # Callback principal para consultar y mostrar datos filtrando por río y fechas
 @callback(
     Output("hidro-results-content-dynamic", "children"),
-    [Input("query-button", "n_clicks")],
+    [Input("btn-actualizar-hidrologia", "n_clicks")],
     [State("rio-dropdown", "value"),
-     State("start-date", "date"),
-     State("end-date", "date"),
+     State("fecha-inicio-hidrologia", "date"),
+     State("fecha-fin-hidrologia", "date"),
      State("region-dropdown", "value")]
 )
 def update_content(n_clicks, rio, start_date, end_date, region):
     # Debug básico del callback
     if n_clicks and n_clicks > 0:
-        print(f"� Consultando datos: región={region}, río={rio}, fechas={start_date} a {end_date}")
+        print(f"📊 Consultando datos: región={region}, río={rio}, fechas={start_date} a {end_date}")
 
-    # Normalizar el valor de la región para evitar problemas de formato/case
-    region_normalized = region.strip().title() if region and region != "__ALL_REGIONS__" else region
+    # ✅ FIX CRÍTICO: Normalizar región con .upper() para coincidir con RIO_REGION
+    region_normalized = region.strip().upper() if region and region != "__ALL_REGIONS__" else region
+    
+    # ===== FUNCIÓN MOVIDA A NIVEL DE MÓDULO (ver línea ~1918) =====
+    # La función crear_mapa_embalses_directo ahora está definida a nivel de módulo
+    # para que sea accesible desde múltiples callbacks (update_content y render_hidro_tab_content)
+    # ===============================================================
     
     # Función auxiliar para mostrar la vista por defecto (panorámica nacional)
     def show_default_view(start_date, end_date):
+        objetoAPI = get_objetoAPI()
         # Validar rango de fechas
         es_valido, mensaje = validar_rango_fechas(start_date, end_date)
         if not es_valido:
-            return dbc.Alert([
-                html.H6("Fechas no válidas", className="alert-heading"),
-                html.P(mensaje),
-                html.Hr(),
-                html.P("Ajuste el rango de fechas y vuelva a intentar.", className="mb-0")
-            ], color="warning", className="text-start")
+            return dbc.Alert(mensaje, color="warning", className="text-start")
         
         try:
-            data = objetoAPI.request_data('AporCaudal', 'Rio', start_date, end_date)
+            # ✅ OPTIMIZADO: Consulta inteligente SQLite (>=2020) vs API (<2020)
+            # La conversión kWh→GWh se hace automáticamente
+            data, warning_msg = obtener_datos_inteligente('AporEner', 'Rio', start_date, end_date)
+            if warning_msg:
+                logger.info(f"⚠️ {warning_msg}")
+            
             if data is None or data.empty:
                 return dbc.Alert([
                     html.H6("Sin datos", className="alert-heading"),
@@ -1142,163 +2509,275 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                     html.Hr(),
                     html.P("Intente con fechas más recientes.", className="mb-0")
                 ], color="warning", className="text-start")
+            # Calcular porcentaje vs histórico para la ficha KPI
+            porcentaje_vs_historico = None
+            total_real = None
+            total_historico = None
+            try:
+                # CORRECCIÓN: Sumar todos los aportes del período (acumulativo)
+                daily_totals_real = data.groupby('Date')['Value'].sum().reset_index()
+                total_real = daily_totals_real['Value'].sum()  # SUMA TOTAL, no promedio
+                
+                # Obtener media histórica y agrupar por fecha
+                media_hist_data, _ = obtener_datos_inteligente('AporEnerMediHist', 'Rio', start_date, end_date)
+                if media_hist_data is not None and not media_hist_data.empty:
+                    # Agrupar media histórica por fecha y sumar
+                    daily_totals_hist = media_hist_data.groupby('Date')['Value'].sum().reset_index()
+                    total_historico = daily_totals_hist['Value'].sum()  # SUMA TOTAL, no promedio
+                    if total_historico > 0:
+                        # ✅ FIX CRÍTICO: Convertir a float Python nativo inmediatamente después del cálculo
+                        # Esto previene que numpy.float64 cause problemas en f-strings
+                        porcentaje_vs_historico = float((total_real / total_historico) * 100)
+                        logger.debug(f"Ficha KPI - Comparación: Real total={float(total_real):.2f} GWh vs Histórico={float(total_historico):.2f} GWh ({porcentaje_vs_historico:.1f}%)")
+            except Exception as e:
+                logger.warning(f"No se pudo calcular porcentaje vs histórico: {e}")
+            
             # Agregar información de región
-            data['Region'] = data['Name'].map(RIO_REGION)
+            rio_region = ensure_rio_region_loaded()
+            data['Region'] = data['Name'].map(rio_region)
             if 'Name' in data.columns and 'Value' in data.columns:
                 # Agrupar por región y fecha para crear series temporales
                 region_df = data.groupby(['Region', 'Date'])['Value'].sum().reset_index()
                 region_df = region_df[region_df['Region'].notna()]
-                # Usar solo la fecha final para la tabla de embalses
-                fecha_embalse = end_date
+                
+                # 🔍 Buscar la última fecha con datos reales de embalses (no usar end_date ciegamente)
+                fecha_embalse_obj = None
+                try:
+                    # Intentar con la fecha solicitada primero
+                    df_vol_test, fecha_encontrada = obtener_datos_desde_sqlite('VoluUtilDiarEner', 'Embalse', 
+                                                                                datetime.strptime(end_date, '%Y-%m-%d').date())
+                    if fecha_encontrada:
+                        fecha_embalse_obj = fecha_encontrada
+                        logger.info(f"✅ Fecha real con datos de embalses: {fecha_embalse_obj}")
+                    else:
+                        # Si no hay datos para end_date, buscar hacia atrás
+                        fecha_embalse_obj = datetime.strptime(end_date, '%Y-%m-%d').date() - timedelta(days=1)
+                        logger.warning(f"⚠️ No hay datos para {end_date}, usando fecha anterior: {fecha_embalse_obj}")
+                except Exception as e:
+                    logger.error(f"❌ Error buscando fecha con datos: {e}")
+                    fecha_embalse_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+                
+                fecha_embalse = fecha_embalse_obj.strftime('%Y-%m-%d') if fecha_embalse_obj else end_date
+                
+                # Llamar a las funciones sin precarga
                 regiones_totales, df_completo_embalses = get_tabla_regiones_embalses(fecha_embalse, fecha_embalse)
+                
+                # Obtener datos de embalses para vista inicial
+                embalses_df_fresh = get_embalses_capacidad(None, start_date, end_date)
+                
+                # CREAR FICHA KPI (para colocarla junto al panel de controles)
+                ficha_kpi = dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.Div([
+                                html.I(className="fas fa-tint", style={'color': "#28a745" if porcentaje_vs_historico and porcentaje_vs_historico >= 100 
+                                                                   else "#dc3545" if porcentaje_vs_historico and porcentaje_vs_historico < 90
+                                                                   else "#17a2b8", 'fontSize': '1.2rem', 'marginRight': '8px'}),
+                                html.Div([
+                                    html.Span("Estado 2025", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.8rem', 'display': 'block'}),
+                                    html.Span(
+                                        porcentaje_vs_historico is not None and f"{porcentaje_vs_historico - 100:+.1f}%" or "...",
+                                        style={'fontWeight': 'bold', 'fontSize': '1.6rem', 
+                                               'color': "#28a745" if porcentaje_vs_historico and porcentaje_vs_historico >= 100 
+                                                       else "#dc3545" if porcentaje_vs_historico and porcentaje_vs_historico < 90
+                                                       else "#17a2b8", 'display': 'block', 'lineHeight': '1.2'}),
+                                    html.Span("vs Histórico", style={'color': '#666', 'fontSize': '0.75rem', 'display': 'block'})
+                                ], style={'display': 'flex', 'flexDirection': 'column', 'alignItems': 'flex-start'})
+                            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center'})
+                        ], style={'padding': '0.5rem'})
+                    ], className="shadow-sm border-0", style={"borderLeft": "4px solid " + (
+                        "#28a745" if porcentaje_vs_historico and porcentaje_vs_historico >= 100 
+                        else "#dc3545" if porcentaje_vs_historico and porcentaje_vs_historico < 90
+                        else "#17a2b8"
+                    ), "height": "100%"})
+                ], md=3) if porcentaje_vs_historico is not None else None
+                
                 return html.Div([
-                    html.H5("🇨🇴 Contribución Energética por Región Hidrológica de Colombia", className="text-center mb-2"),
-                    html.P("Vista panorámica nacional: Series temporales comparativas de aportes de caudal por región hidrológica. Haga clic en cualquier punto para ver el detalle agregado diario de la región. Los datos incluyen todos los ríos monitoreados en el período seleccionado, agrupados por región para análisis comparativo nacional.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
+                    html.H5("🇨🇴 Contribución Energética por Región Hidrológica de Colombia", className="text-center mb-1", style={"fontSize": "1rem"}),
+                    html.P("Vista general: Gráfica temporal, mapa y tablas de embalses.", className="text-center text-muted mb-0", style={"fontSize": "0.75rem"}),
                     
+                    # LAYOUT HORIZONTAL COMPACTO: Gráfica (58%) + Mapa (17%) + Tablas (25%)
                     dbc.Row([
+                        # COLUMNA 1: Gráfica Temporal (58%) - ✅ CON LOADING INDICATOR
                         dbc.Col([
-                            create_total_timeline_chart(data, "Aportes totales nacionales")
-                        ], md=12)
+                            dbc.Card([
+                                dbc.CardBody([
+                                    # Encabezado con botón de info
+                                    html.Div([
+                                        html.H6("📈 Evolución Temporal", className="text-center mb-1", style={'fontSize': '0.9rem', 'display': 'inline-block', 'marginRight': '8px'}),
+                                        html.Button(
+                                            "ℹ",
+                                            id="btn-info-humedad",
+                                            style={
+                                                'width': '26px',
+                                                'height': '26px',
+                                                'borderRadius': '50%',
+                                                'backgroundColor': '#F2C330',
+                                                'color': '#2C3E50',
+                                                'fontSize': '14px',
+                                                'fontWeight': 'bold',
+                                                'border': '2px solid #2C3E50',
+                                                'cursor': 'pointer',
+                                                'boxShadow': '0 4px 12px rgba(0,0,0,0.4), 0 0 0 2px rgba(242,195,48,0.3)',
+                                                'transition': 'all 0.3s ease',
+                                                'display': 'inline-flex',
+                                                'alignItems': 'center',
+                                                'justifyContent': 'center',
+                                                'verticalAlign': 'middle',
+                                                'animation': 'pulse 2s ease-in-out infinite'
+                                            },
+                                            title="Información del sistema de humedad"
+                                        )
+                                    ], style={'textAlign': 'center', 'marginBottom': '4px'}),
+                                    create_total_timeline_chart(data, "Aportes nacionales")
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=7),
+                        
+                        # COLUMNA 2: Mapa de Colombia (17%)
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    # Encabezado compacto con fecha y botón de info
+                                    html.Div([
+                                        html.Div([
+                                            html.Small([
+                                                html.I(className="fas fa-calendar-alt me-1", style={'fontSize': '0.65rem'}),
+                                                f"Datos: {fecha_embalse}",
+                                                html.Span(" | ", style={'color': '#999'}),
+                                                html.I(className="fas fa-water me-1", style={'fontSize': '0.65rem'}),
+                                                "25 Embalses"
+                                            ], style={'fontSize': '0.65rem', 'color': '#666', 'fontWeight': '500'})
+                                        ], style={'flex': '1'}),
+                                        html.Div([
+                                            html.Button(
+                                                "ℹ",
+                                                id="btn-info-semaforo",
+                                                style={
+                                                    'width': '28px',
+                                                    'height': '28px',
+                                                    'borderRadius': '50%',
+                                                    'backgroundColor': '#F2C330',
+                                                    'color': '#2C3E50',
+                                                    'fontSize': '16px',
+                                                    'fontWeight': 'bold',
+                                                    'border': '2px solid #2C3E50',
+                                                    'cursor': 'pointer',
+                                                    'boxShadow': '0 4px 12px rgba(0,0,0,0.4), 0 0 0 2px rgba(242,195,48,0.3)',
+                                                    'transition': 'all 0.3s ease',
+                                                    'display': 'flex',
+                                                    'alignItems': 'center',
+                                                    'justifyContent': 'center',
+                                                    'animation': 'pulse 2s ease-in-out infinite'
+                                                },
+                                                title="Información del semáforo de riesgo"
+                                            )
+                                        ])
+                                    ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '4px'}),
+                                    # Mapa sin loading indicator
+                                    html.Div([
+                                        crear_mapa_embalses_directo(regiones_totales, df_completo_embalses)
+                                    ])
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=2),
+                        
+                        # COLUMNA 3: Tabla Jerárquica de Embalses (25%)
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("📊 Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    html.P("Haga clic en ⊞/⊟ para expandir/contraer regiones", 
+                                           className="text-muted text-center mb-1", 
+                                           style={'fontSize': '0.65rem'}),
+                                    html.Div(
+                                        id="tabla-embalses-jerarquica-container",
+                                        children=[build_embalses_hierarchical_view(regiones_totales, df_completo_embalses, [])]
+                                    )
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=3)
                     ]),
+                    
                     dcc.Store(id="region-data-store", data=data.to_dict('records')),
                     dcc.Store(id="embalses-completo-data", data=df_completo_embalses.to_dict('records')),
+                    dcc.Store(id="embalses-regiones-data", data=regiones_totales.to_dict('records')),
+                    dcc.Store(id="embalses-expandidos-store", data=[]),
+                    
+                    # Modal con información del Sistema Semáforo
+                    dbc.Modal([
+                        dbc.ModalHeader(dbc.ModalTitle("Sistema Semáforo de Riesgo Hidrológico"), close_button=True),
+                        dbc.ModalBody([
+                            html.P("Sistema que analiza cada embalse combinando dos factores críticos:"),
+                            
+                            html.H6("Factores de Análisis:", className="fw-bold mb-2 mt-3"),
+                            html.Ul([
+                                html.Li([
+                                    html.Strong("Importancia Estratégica: "),
+                                    "Participación en el sistema energético nacional. Embalses >10% son estratégicos."
+                                ]),
+                                html.Li([
+                                    html.Strong("Disponibilidad Hídrica: "),
+                                    "Volumen útil disponible por encima del nivel mínimo técnico."
+                                ])
+                            ]),
+                            
+                            html.H6("Clasificación:", className="fw-bold mb-2 mt-3"),
+                            html.Ul([
+                                html.Li([
+                                    html.Span("●", style={'color': '#dc3545', 'fontSize': '1.2rem'}),
+                                    " Riesgo Alto: Embalses estratégicos con volumen crítico (<30%)"
+                                ]),
+                                html.Li([
+                                    html.Span("●", style={'color': '#ffc107', 'fontSize': '1.2rem'}),
+                                    " Riesgo Medio: Embalses estratégicos con volumen bajo (30-70%)"
+                                ]),
+                                html.Li([
+                                    html.Span("●", style={'color': '#198754', 'fontSize': '1.2rem'}),
+                                    " Riesgo Bajo: Embalses con volumen adecuado (≥70%)"
+                                ])
+                            ])
+                        ])
+                    ], id="modal-semaforo", is_open=False, size="lg"),
+                    
+                    # Modal con información del Sistema de Humedad
+                    dbc.Modal([
+                        dbc.ModalHeader(dbc.ModalTitle("Sistema de Humedad vs Media Histórica"), close_button=True),
+                        dbc.ModalBody([
+                            html.P("La línea punteada de colores compara los aportes energéticos actuales con el promedio histórico del mismo período."),
+                            
+                            html.H6("Código de Colores:", className="fw-bold mb-2 mt-3"),
+                            html.Ul([
+                                html.Li([
+                                    html.Span("●", style={'color': '#28a745', 'fontSize': '1.2rem'}),
+                                    " Verde: ≥100% del histórico (condiciones húmedas)"
+                                ]),
+                                html.Li([
+                                    html.Span("●", style={'color': '#17a2b8', 'fontSize': '1.2rem'}),
+                                    " Cyan: 90-100% del histórico (condiciones normales)"
+                                ]),
+                                html.Li([
+                                    html.Span("●", style={'color': '#ffc107', 'fontSize': '1.2rem'}),
+                                    " Amarillo: 70-90% del histórico (moderadamente seco)"
+                                ]),
+                                html.Li([
+                                    html.Span("●", style={'color': '#dc3545', 'fontSize': '1.2rem'}),
+                                    " Rojo: <70% del histórico (muy seco)"
+                                ])
+                            ]),
+                            
+                            html.H6("Cómo Interpretar:", className="fw-bold mb-2 mt-3"),
+                            html.Ul([
+                                html.Li("La línea negra con puntos muestra los aportes reales de energía."),
+                                html.Li("La línea punteada de colores es la media histórica del mismo período."),
+                                html.Li("El color indica si estamos por encima (verde/cyan) o por debajo (amarillo/rojo) de lo normal."),
+                                html.Li("Pasa el cursor sobre la línea para ver detalles de la comparación.")
+                            ])
+                        ])
+                    ], id="modal-humedad", is_open=False, size="lg"),
+                    
                     html.Hr(),
-                    html.H5("⚡ Capacidad Útil Diaria de Energía por Región Hidrológica", className="text-center mt-4 mb-2"),
-                    html.P("📋 Interfaz jerárquica expandible: Haga clic en cualquier región para desplegar sus embalses. Cada región muestra dos tablas lado a lado con participación porcentual y capacidad detallada en GWh. Los datos están ordenados de mayor a menor valor. Los símbolos ⊞ indican regiones contraídas y ⊟ regiones expandidas.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
-                    
-                    # Leyenda del Sistema de Semáforo
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Alert([
-                                html.H6([
-                                    html.I(className="fas fa-traffic-light me-2"),
-                                    "🚦 Sistema Inteligente de Semáforo de Riesgo Hidrológico"
-                                ], className="alert-heading mb-3"),
-                                html.P("Este sistema analiza automáticamente cada embalse combinando dos factores críticos para determinar su nivel de riesgo operativo:", className="mb-3", style={"fontSize": "0.95rem"}),
-                                
-                                # Explicación de los factores
-                                dbc.Row([
-                                    dbc.Col([
-                                        html.Div([
-                                            html.H6("📊 Factor 1: Importancia Estratégica", className="text-primary mb-2"),
-                                            html.P("Participación del embalse en el sistema energético nacional. Los embalses con mayor participación (>10%) son considerados estratégicos para la estabilidad del sistema.", 
-                                                  className="mb-2", style={"fontSize": "0.85rem"})
-                                        ])
-                                    ], md=6),
-                                    dbc.Col([
-                                        html.Div([
-                                            html.H6("💧 Factor 2: Disponibilidad Hídrica", className="text-info mb-2"),
-                                            html.P("Porcentaje de volumen útil disponible. Indica cuánta agua tiene el embalse por encima de su nivel mínimo técnico para generar energía.", 
-                                                  className="mb-2", style={"fontSize": "0.85rem"})
-                                        ])
-                                    ], md=6)
-                                ], className="mb-3"),
-                                
-                                html.Hr(),
-                                html.H6("🎯 Lógica de Clasificación de Riesgo:", className="mb-2"),
-                                dbc.Row([
-                                    dbc.Col([
-                                        html.Div([
-                                            html.Span("🔴 RIESGO ALTO", className="fw-bold", style={"color": "#dc3545", "fontSize": "1rem"}),
-                                            html.Br(),
-                                            html.Small("Embalses estratégicos (participación ≥10%) con volumen crítico (<30%)", 
-                                                     className="text-muted", style={"fontSize": "0.8rem"}),
-                                            html.Br(),
-                                            html.Small("⚠️ Requiere atención inmediata - Riesgo de desabastecimiento", 
-                                                     className="text-danger", style={"fontSize": "0.75rem", "fontWeight": "bold"})
-                                        ], className="p-2 border-start border-danger border-3")
-                                    ], md=4),
-                                    dbc.Col([
-                                        html.Div([
-                                            html.Span("🟡 RIESGO MEDIO", className="fw-bold", style={"color": "#ffc107", "fontSize": "1rem"}),
-                                            html.Br(),
-                                            html.Small("Embalses estratégicos con volumen bajo (30-70%) o embalses pequeños con volumen crítico", 
-                                                     className="text-muted", style={"fontSize": "0.8rem"}),
-                                            html.Br(),
-                                            html.Small("⚡ Monitoreo continuo - Situación de precaución", 
-                                                     className="text-warning", style={"fontSize": "0.75rem", "fontWeight": "bold"})
-                                        ], className="p-2 border-start border-warning border-3")
-                                    ], md=4),
-                                    dbc.Col([
-                                        html.Div([
-                                            html.Span("🟢 RIESGO BAJO", className="fw-bold", style={"color": "#198754", "fontSize": "1rem"}),
-                                            html.Br(),
-                                            html.Small("Embalses con volumen adecuado (≥70%) independientemente de su tamaño", 
-                                                     className="text-muted", style={"fontSize": "0.8rem"}),
-                                            html.Br(),
-                                            html.Small("✅ Situación estable - Operación normal", 
-                                                     className="text-success", style={"fontSize": "0.75rem", "fontWeight": "bold"})
-                                        ], className="p-2 border-start border-success border-3")
-                                    ], md=4)
-                                ], className="mb-3"),
-                                
-                                html.Hr(),
-                                html.Div([
-                                    html.Strong("💡 Nota Técnica: ", className="text-primary"),
-                                    html.Span("El sistema prioriza la seguridad energética nacional. Un embalse pequeño con bajo volumen puede ser menos crítico que un embalse estratégico en la misma condición.", 
-                                             style={"fontSize": "0.85rem"})
-                                ], className="bg-light p-2 rounded")
-                            ], color="info", className="mb-3")
-                        ], md=12)
-                    ]),
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardHeader([
-                                    html.I(className="bi bi-pie-chart me-2", style={"color": "#667eea"}),
-                                    html.Strong("📊 Participación Porcentual por Región")
-                                ], style={"background": "linear-gradient(135deg, #e3f2fd 0%, #f3f4f6 100%)",
-                                         "border": "none", "borderRadius": "8px 8px 0 0"}),
-                                dbc.CardBody([
-                                    html.P("Distribución porcentual de la capacidad energética entre regiones y sus embalses. Haga clic en los botones [+]/[-] para expandir/contraer cada región.", 
-                                          className="text-muted mb-3", style={"fontSize": "0.85rem"}),
-                                    html.Div([
-                                        # Botones superpuestos para cada región
-                                        html.Div(id="participacion-toggle-buttons", style={
-                                            'position': 'absolute', 
-                                            'zIndex': 10, 
-                                            'pointerEvents': 'none'
-                                        }),
-                                        # Tabla principal
-                                        html.Div(id="tabla-participacion-jerarquica-container", children=[
-                                            html.Div("Cargando datos...", className="text-center text-muted")
-                                        ])
-                                    ], style={'position': 'relative'})
-                                ], className="p-3")
-                            ], className="card-modern h-100")
-                        ], md=6),
-                        
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardHeader([
-                                    html.I(className="bi bi-battery-full me-2", style={"color": "#28a745"}),
-                                    html.Strong("💧 Volumen Útil por Región")
-                                ], style={"background": "linear-gradient(135deg, #e8f5e8 0%, #f3f4f6 100%)",
-                                         "border": "none", "borderRadius": "8px 8px 0 0"}),
-                                dbc.CardBody([
-                                    html.P("Valores específicos de porcentaje de volumen útil disponible por región y embalses. El 'Volumen Útil (%)' indica el porcentaje del volumen almacenado por encima del Nivel Mínimo Técnico, representando la disponibilidad energética real de cada embalse. Haga clic en los botones [+]/[-] para expandir/contraer cada región.", 
-                                          className="text-muted mb-3", style={"fontSize": "0.85rem"}),
-                                    html.Div([
-                                        # Botones superpuestos para cada región
-                                        html.Div(id="capacidad-toggle-buttons", style={
-                                            'position': 'absolute', 
-                                            'zIndex': 10, 
-                                            'pointerEvents': 'none'
-                                        }),
-                                        # Tabla principal
-                                        html.Div(id="tabla-capacidad-jerarquica-container", children=[
-                                            html.Div("Cargando datos...", className="text-center text-muted")
-                                        ])
-                                    ], style={'position': 'relative'})
-                                ], className="p-3")
-                            ], className="card-modern h-100")
-                        ], md=6)
-                    ], className="g-3"),
-                    
-                    # Stores para manejar los datos jerárquicos y estados de expansión
-                    dcc.Store(id="participacion-jerarquica-data", data=[]),
-                    dcc.Store(id="capacidad-jerarquica-data", data=[]),
-                    dcc.Store(id="regiones-expandidas", data=[])
+
                 ])
             else:
                 return dbc.Alert("No se pueden procesar los datos obtenidos.", color="warning")
@@ -1329,18 +2808,22 @@ def update_content(n_clicks, rio, start_date, end_date, region):
     if filtros_vacios:
         return show_default_view(start_date, end_date)
     
+    objetoAPI = get_objetoAPI()
     # Validar fechas antes de proceder
     es_valido, mensaje = validar_rango_fechas(start_date, end_date)
     if not es_valido:
-        return dbc.Alert([
-            html.H6("Fechas no válidas", className="alert-heading"),
-            html.P(mensaje),
-            html.Hr(),
-            html.P("Corrija las fechas y vuelva a intentar.", className="mb-0")
-        ], color="warning", className="text-start")
+        return dbc.Alert(mensaje, color="warning", className="text-start")
 
     try:
-        data = objetoAPI.request_data('AporCaudal', 'Rio', start_date, end_date)
+        # ✅ OPTIMIZADO: Consulta inteligente SQLite (>=2020) vs API (<2020)
+        # La conversión a GWh se hace automáticamente
+        data, warning_msg = obtener_datos_inteligente('AporEner', 'Rio', start_date, end_date)
+        if warning_msg:
+            logger.info(f"⚠️ {warning_msg}")
+        
+        # LOGGING: Verificar que datos ya vienen en GWh
+        if data is not None and not data.empty:
+            logger.info(f"🔍 AporEner recibido: {len(data)} registros, Total: {data['Value'].sum():.2f} GWh")
         
         if data is None or data.empty:
             return dbc.Alert([
@@ -1357,93 +2840,70 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                 return dbc.Alert("No se encontraron datos para el río seleccionado.", color="warning")
             plot_df = data_rio.copy()
             if 'Date' in plot_df.columns and 'Value' in plot_df.columns:
-                plot_df = plot_df[['Date', 'Value']].rename(columns={'Date': 'Fecha', 'Value': 'm³/s'})
+                plot_df = plot_df[['Date', 'Value']].rename(columns={'Date': 'Fecha', 'Value': 'GWh'})
             return html.Div([
-                html.H5(f"🌊 Río {rio} - Serie Temporal Completa de Aportes de Caudal", className="text-center mb-2"),
-                html.P(f"Análisis detallado del río {rio} incluyendo gráfico de tendencias temporales y tabla de datos diarios. Los valores están expresados en metros cúbicos por segundo (m³/s) y representan el caudal volumétrico del río.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
+                html.H5(f"Río {rio} - Análisis de Aportes de Energía", className="text-center mb-2"),
+                html.P(f"Río {rio}: Gráfica temporal y datos detallados.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
                 
+                # LAYOUT HORIZONTAL COMPACTO
                 dbc.Row([
+                    # Gráfica Temporal (70%)
                     dbc.Col([
-                        html.H6("📈 Evolución Temporal", className="text-center mb-2"),
-                        create_line_chart(plot_df)
-                    ], md=7),
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("📈 Evolución Temporal", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                create_line_chart(plot_df, rio_name=rio, start_date=start_date, end_date=end_date)
+                            ], className="p-1")
+                        ], className="h-100")
+                    ], md=8),
+                    
+                    # Tabla de Datos (30%)
                     dbc.Col([
-                        html.H6("📊 Datos Detallados", className="text-center mb-2"),
-                        create_data_table(plot_df)
-                    ], md=5)
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("📋 Datos Detallados", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                html.Div([
+                                    create_data_table(plot_df)
+                                ], style={'maxHeight': '500px', 'overflowY': 'auto'})
+                            ], className="p-1")
+                        ], className="h-100")
+                    ], md=4)
                 ])
             ])
 
         # Si no hay río seleccionado o es 'Todos los ríos', mostrar barra de contribución total por río
         # Si hay región seleccionada, filtrar por región, si no, mostrar todas las regiones
-        data['Region'] = data['Name'].map(RIO_REGION)
+        rio_region = ensure_rio_region_loaded()
+        data['Region'] = data['Name'].map(rio_region)
+        
+        # LOGGING: Ver datos ANTES de filtrar por región
+        logger.info(f"🔍 ANTES filtro - Total data: {len(data)} registros, Suma: {data['Value'].sum():.2f} GWh")
         
         if region and region != "__ALL_REGIONS__":
-            print(f"🔧 [DEBUG FILTRO] Región original: '{region}', normalizada: '{region_normalized}'")
-            print(f"🔧 [DEBUG FILTRO] Regiones únicas en data: {sorted(data['Region'].dropna().unique().tolist())}")
+            logger.info(f"🔍 [FILTRO REGIÓN] Filtrando región '{region_normalized}'")
+            logger.info(f"🔍 Regiones únicas en data: {sorted(data['Region'].dropna().unique().tolist())}")
             data_filtered = data[data['Region'] == region_normalized]
-            print(f"🔧 [DEBUG FILTRO] Filas después del filtro: {len(data_filtered)}")
+            logger.info(f"🔍 DESPUÉS filtro - data_filtered: {len(data_filtered)} registros, Suma: {data_filtered['Value'].sum():.2f} GWh")
             title_suffix = f"en la región {region_normalized}"
             # Obtener datos frescos de embalses con la nueva columna
             embalses_df_fresh = get_embalses_capacidad(region_normalized, start_date, end_date)
-            print(f"🔧 [DEBUG FILTRO] Embalses encontrados para región: {len(embalses_df_fresh) if not embalses_df_fresh.empty else 0}")
+            logger.debug(f"[DEBUG FILTRO] Embalses encontrados para región: {len(embalses_df_fresh) if not embalses_df_fresh.empty else 0}")
             
-            # Aplicar formateo de números a la capacidad y porcentaje
-            if not embalses_df_fresh.empty and 'Capacidad_GWh_Internal' in embalses_df_fresh.columns:
-                # 🆕 Agregar columna de riesgo usando datos completos
-                embalses_df_con_riesgo = agregar_columna_riesgo_a_tabla(embalses_df_fresh)
-                embalses_df_formatted = embalses_df_con_riesgo.copy()
-                
-                # Formatear porcentaje de volumen útil si existe
-                if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                    embalses_df_formatted['Volumen Útil (%)'] = embalses_df_fresh['Volumen Útil (%)'].apply(
-                        lambda x: f"{x:.1f}%" if pd.notna(x) else "N/D"
-                    )
-                
-                # Agregar fila TOTAL para capacidad de embalses (calcular pero no mostrar capacidad)
-                if not embalses_df_formatted.empty:
-                    total_capacity = embalses_df_fresh['Capacidad_GWh_Internal'].sum()
-                    
-                    # Calcular promedio ponderado del porcentaje de volumen útil
-                    avg_volume_pct = None
-                    if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                        valid_data = embalses_df_fresh[embalses_df_fresh['Volumen Útil (%)'].notna()]
-                        if not valid_data.empty:
-                            avg_volume_pct = valid_data['Volumen Útil (%)'].mean()
-                    
-                    total_row_data = {
-                        'Embalse': ['TOTAL'],
-                        'Riesgo': ['⚡']  # 🆕 Agregar ícono especial para TOTAL
-                    }
-                    
-                    if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                        total_row_data['Volumen Útil (%)'] = [f"{avg_volume_pct:.1f}%" if avg_volume_pct is not None else "N/D"]
-                    
-                    total_row = pd.DataFrame(total_row_data)
-                    
-                    # Crear DataFrame para mostrar (sin columna de capacidad pero con riesgo)
-                    display_columns = ['Embalse']
-                    if 'Volumen Útil (%)' in embalses_df_formatted.columns:
-                        display_columns.append('Volumen Útil (%)')
-                    display_columns.append('Riesgo')  # 🆕 Incluir columna de riesgo
-                    
-                    # Filtrar solo embalses (sin TOTAL) y agregar TOTAL formateado
-                    embalses_sin_total = embalses_df_formatted[embalses_df_formatted['Embalse'] != 'TOTAL'][display_columns]
-                    embalses_df_formatted = pd.concat([embalses_sin_total, total_row], ignore_index=True)
-            else:
-                embalses_df_formatted = embalses_df_fresh
+            # Guardar datos SIN formatear - las tablas harán el formateo
+            embalses_df_formatted = embalses_df_fresh.copy() if not embalses_df_fresh.empty else pd.DataFrame()
                 
             # Obtener embalses de la región específica
             try:
+                objetoAPI = get_objetoAPI()
                 # Usar fecha actual para obtener listado más reciente
                 today = datetime.now().strftime('%Y-%m-%d')
                 yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-                embalses_info = objetoAPI.request_data('ListadoEmbalses','Sistema', yesterday, today)
+                embalses_info, warning = obtener_datos_inteligente('ListadoEmbalses','Sistema', yesterday, today)
                 embalses_info['Values_Name'] = embalses_info['Values_Name'].str.strip().str.upper()
-                embalses_info['Values_HydroRegion'] = embalses_info['Values_HydroRegion'].str.strip().str.title()
+                embalses_info['Values_HydroRegion'] = embalses_info['Values_HydroRegion'].str.strip().str.upper()  # ✅ FIX: .upper() en lugar de .title()
                 embalses_region = embalses_info[embalses_info['Values_HydroRegion'] == region_normalized]['Values_Name'].sort_values().unique()
             except Exception as e:
-                print(f"Error obteniendo embalses para el filtro: {e}")
+                logger.error(f"Error obteniendo embalses para el filtro: {e}", exc_info=True)
                 embalses_region = []
         else:
             # Si no hay región específica o es "Todas las regiones", mostrar vista nacional
@@ -1452,320 +2912,302 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                 region_df = data.groupby(['Region', 'Date'])['Value'].sum().reset_index()
                 region_df = region_df[region_df['Region'].notna()]  # Filtrar regiones válidas
                 
+                # Obtener datos de embalses para vista nacional
+                embalses_df_nacional = get_embalses_capacidad(None, start_date, end_date)
+                
                 return html.Div([
-                    html.H5("🇨🇴 Contribución Energética por Región Hidrológica de Colombia", className="text-center mb-2"),
-                    html.P("Vista panorámica nacional: Series temporales comparativas de aportes de caudal por región hidrológica. Haga clic en cualquier punto para ver el detalle agregado diario de la región. Los datos incluyen todos los ríos monitoreados en el período seleccionado, agrupados por región para análisis comparativo nacional.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
-                    
+                    # LAYOUT HORIZONTAL: Panel de controles (70%) + Ficha KPI (30%)
                     dbc.Row([
+                        dbc.Col([crear_panel_controles()], md=9),
+                        dbc.Col([html.Div(id="ficha-kpi-container")], md=3)
+                    ], className="g-2 mb-3 align-items-start"),
+                    
+                    html.H5("🇨🇴 Contribución Energética por Región Hidrológica de Colombia", className="text-center mb-2"),
+                    html.P("Vista nacional: Gráfica temporal, mapa y análisis de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
+                    
+                    # LAYOUT HORIZONTAL COMPACTO: Gráfica (58%) + Mapa (17%) + Tablas (25%)
+                    dbc.Row([
+                        # COLUMNA 1: Gráfica Temporal (58%)
                         dbc.Col([
-                            create_total_timeline_chart(data, "Aportes totales nacionales")
-                        ], md=12)
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("📈 Evolución Temporal Nacional", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    create_total_timeline_chart(data, "Aportes totales nacionales")
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=7),
+                        
+                        # COLUMNA 2: Mapa de Colombia (17%)
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("🗺️ Mapa Nacional", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    html.Div(id="mapa-embalses-nacional", children=[
+                                        crear_mapa_embalses_directo(
+                                            region_df,
+                                            embalses_df_nacional
+                                        )
+                                    ])
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=2),
+                        
+                        # COLUMNA 3: Resumen Nacional (25%)
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("📊 Resumen Nacional", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    html.Div([
+                                        html.Small(f"Total Regiones: {len(region_df['Region'].unique())}", className="d-block text-muted mb-1", style={'fontSize': '0.75rem'}),
+                                        html.Small(f"Total Embalses: {len(embalses_df_nacional) if not embalses_df_nacional.empty else 0}", className="d-block text-muted mb-1", style={'fontSize': '0.75rem'}),
+                                        html.Hr(className="my-1"),
+                                        html.Small("Haga clic en la gráfica para ver detalles por región", className="text-muted", style={'fontSize': '0.7rem'})
+                                    ])
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=3)
                     ]),
-                    dcc.Store(id="region-data-store", data=data.to_dict('records')),
-                    html.Hr(),
+                    
+                    dcc.Store(id="region-data-store", data=data.to_dict('records'))
                 ])
             
             data_filtered = data
             title_suffix = "- Todas las regiones"
             # Obtener datos frescos de embalses con la nueva columna  
             embalses_df_fresh = get_embalses_capacidad(None, start_date, end_date)
-            # Aplicar formateo de números a la capacidad y porcentaje
-            if not embalses_df_fresh.empty and 'Capacidad_GWh_Internal' in embalses_df_fresh.columns:
-                # 🆕 Agregar columna de riesgo usando datos completos
-                embalses_df_con_riesgo = agregar_columna_riesgo_a_tabla(embalses_df_fresh)
-                embalses_df_formatted = embalses_df_con_riesgo.copy()
-                
-                # Formatear porcentaje de volumen útil si existe
-                if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                    embalses_df_formatted['Volumen Útil (%)'] = embalses_df_fresh['Volumen Útil (%)'].apply(
-                        lambda x: f"{x:.1f}%" if pd.notna(x) else "N/D"
-                    )
-                
-                # Agregar fila TOTAL para capacidad de embalses (calcular pero no mostrar capacidad)
-                if not embalses_df_formatted.empty:
-                    total_capacity = embalses_df_fresh['Capacidad_GWh_Internal'].sum()
-                    
-                    # Calcular promedio ponderado del porcentaje de volumen útil
-                    avg_volume_pct = None
-                    if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                        valid_data = embalses_df_fresh[embalses_df_fresh['Volumen Útil (%)'].notna()]
-                        if not valid_data.empty:
-                            avg_volume_pct = valid_data['Volumen Útil (%)'].mean()
-                    
-                    total_row_data = {
-                        'Embalse': ['TOTAL'],
-                        'Riesgo': ['⚡']  # 🆕 Agregar ícono especial para TOTAL
-                    }
-                    
-                    if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                        total_row_data['Volumen Útil (%)'] = [f"{avg_volume_pct:.1f}%" if avg_volume_pct is not None else "N/D"]
-                    
-                    total_row = pd.DataFrame(total_row_data)
-                    
-                    # Crear DataFrame para mostrar (sin columna de capacidad pero con riesgo)
-                    display_columns = ['Embalse']
-                    if 'Volumen Útil (%)' in embalses_df_formatted.columns:
-                        display_columns.append('Volumen Útil (%)')
-                    display_columns.append('Riesgo')  # 🆕 Incluir columna de riesgo
-                    
-                    # Filtrar solo embalses (sin TOTAL) y agregar TOTAL formateado
-                    embalses_sin_total = embalses_df_formatted[embalses_df_formatted['Embalse'] != 'TOTAL'][display_columns]
-                    embalses_df_formatted = pd.concat([embalses_sin_total, total_row], ignore_index=True)
-            else:
-                embalses_df_formatted = embalses_df_fresh
+            # Guardar datos SIN formatear - las tablas harán el formateo
+            embalses_df_formatted = embalses_df_fresh.copy() if not embalses_df_fresh.empty else pd.DataFrame()
                 
             embalses_region = embalses_df_fresh['Embalse'].unique() if not embalses_df_fresh.empty else []
 
         if data_filtered.empty:
             return dbc.Alert("No se encontraron datos para la región seleccionada." if region else "No se encontraron datos.", color="warning")
         
-        # Asegurar que embalses_df_formatted esté definido para todos los casos
+        # Asegurar que embalses_df_formatted esté definido - SIN formatear
         if 'embalses_df_formatted' not in locals():
-            if not embalses_df_fresh.empty and 'Capacidad_GWh_Internal' in embalses_df_fresh.columns:
-                embalses_df_formatted = embalses_df_fresh.copy()
-                
-                # Formatear volumen útil si existe
-                if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                    embalses_df_formatted['Volumen Útil (%)'] = embalses_df_fresh['Volumen Útil (%)'].apply(
-                        lambda x: f"{x:.1f}%" if pd.notna(x) else "N/D"
-                    )
-                
-                # Agregar fila TOTAL para capacidad de embalses (calcular pero no mostrar capacidad)
-                if not embalses_df_formatted.empty:
-                    total_capacity = embalses_df_fresh['Capacidad_GWh_Internal'].sum()
-                    
-                    # Calcular promedio de volumen útil
-                    avg_volume_pct = None
-                    if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                        valid_data = embalses_df_fresh[embalses_df_fresh['Volumen Útil (%)'].notna()]
-                        if not valid_data.empty:
-                            avg_volume_pct = valid_data['Volumen Útil (%)'].mean()
-                    
-                    total_row_data = {
-                        'Embalse': ['TOTAL']
-                    }
-                    
-                    if 'Volumen Útil (%)' in embalses_df_fresh.columns:
-                        total_row_data['Volumen Útil (%)'] = [f"{avg_volume_pct:.1f}%" if avg_volume_pct is not None else "N/D"]
-                    
-                    total_row = pd.DataFrame(total_row_data)
-                    
-                    # Crear DataFrame para mostrar (sin columna de capacidad)
-                    display_columns = ['Embalse']
-                    if 'Volumen Útil (%)' in embalses_df_formatted.columns:
-                        display_columns.append('Volumen Útil (%)')
-                    
-                    embalses_df_formatted = embalses_df_formatted[display_columns]
-                    embalses_df_formatted = pd.concat([embalses_df_formatted, total_row], ignore_index=True)
-            else:
-                embalses_df_formatted = embalses_df_fresh
+            embalses_df_formatted = embalses_df_fresh.copy() if not embalses_df_fresh.empty else pd.DataFrame()
             
         if 'Name' in data_filtered.columns and 'Value' in data_filtered.columns:
             # Para región específica, crear gráfica temporal de esa región
             if region and region != "__ALL_REGIONS__":
-                # Crear gráfica temporal para la región específica
-                region_temporal_data = data_filtered.groupby('Date')['Value'].sum().reset_index()
-                region_temporal_data['Region'] = region_normalized
+                # Para región específica, pasar datos SIN agregar para que create_total_timeline_chart
+                # pueda hacer el filtrado correcto de la media histórica
+                region_temporal_data = data_filtered[['Date', 'Name', 'Value']].copy()
                 
                 return html.Div([
-                    html.H5(f"🏞️ Evolución Temporal de Aportes de Caudal - Región {region_normalized}", className="text-center mb-2"),
-                    html.P(f"Serie temporal de aportes de caudal para la región {region_normalized}. La gráfica muestra la evolución diaria de los aportes de caudal de todos los ríos de esta región durante el período seleccionado.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
+                    html.H5(f"Aportes de Energía - Región {region_normalized}", className="text-center mb-2"),
+                    html.P(f"Región {region_normalized}: Evolución temporal de generación hidroeléctrica.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
                     
+                    # LAYOUT HORIZONTAL OPTIMIZADO: Gráfica (75%) + Tabla (25%)
                     dbc.Row([
-                        dbc.Col([
-                            create_total_timeline_chart(region_temporal_data, f"Aportes región {region_normalized}")
-                        ], md=12)
-                    ]),
-                    dcc.Store(id="region-data-store", data=data_filtered.to_dict('records')),
-                    html.Hr(),
-                    html.H5(f"⚡ Sistema de Análisis Hidrológico por Embalse {title_suffix}", className="text-center mt-4 mb-2"),
-                    html.P(f"Análisis detallado con sistema de semáforo de riesgo para monitoreo energético. Los indicadores combinan participación porcentual y volumen útil disponible para identificar situaciones críticas.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
-                    
-                    # Tarjeta explicativa del semáforo
-                    dbc.Row([
+                        # COLUMNA 1: Gráfica Temporal (75% - expandida)
                         dbc.Col([
                             dbc.Card([
-                                dbc.CardHeader([
-                                    html.I(className="fas fa-traffic-light me-2", style={"color": "#28a745"}),
-                                    html.Strong("🚦 Sistema Inteligente de Semáforo de Riesgo Hidrológico")
-                                ], style={"background": "linear-gradient(135deg, #e8f5e8 0%, #f3f4f6 100%)",
-                                         "border": "none", "borderRadius": "8px 8px 0 0"}),
                                 dbc.CardBody([
-                                    html.P("Este sistema evalúa automáticamente el riesgo operativo de cada embalse mediante un análisis inteligente que combina:", 
-                                          className="mb-3", style={"fontSize": "0.9rem"}),
-                                    
-                                    dbc.Row([
-                                        dbc.Col([
-                                            html.Div([
-                                                html.H6("� Importancia Estratégica", className="text-primary mb-2"),
-                                                html.P("¿Qué tan crítico es este embalse para el sistema energético nacional?", 
-                                                      className="text-muted", style={"fontSize": "0.85rem"}),
-                                                html.Ul([
-                                                    html.Li("Embalses grandes (≥10% participación): Estratégicos", style={"fontSize": "0.8rem"}),
-                                                    html.Li("Embalses pequeños (<10% participación): Locales", style={"fontSize": "0.8rem"})
-                                                ])
-                                            ])
-                                        ], md=6),
-                                        dbc.Col([
-                                            html.Div([
-                                                html.H6("� Estado del Recurso Hídrico", className="text-info mb-2"),
-                                                html.P("¿Cuánta agua útil tiene disponible para generar energía?", 
-                                                      className="text-muted", style={"fontSize": "0.85rem"}),
-                                                html.Ul([
-                                                    html.Li("Crítico: <30% del volumen útil", style={"fontSize": "0.8rem"}),
-                                                    html.Li("Precaución: 30-70% del volumen útil", style={"fontSize": "0.8rem"}),
-                                                    html.Li("Óptimo: ≥70% del volumen útil", style={"fontSize": "0.8rem"})
-                                                ])
-                                            ])
-                                        ], md=6)
-                                    ], className="mb-3"),
-                                    
-                                    html.Hr(),
-                                    html.H6("🎯 Resultados del Análisis:", className="mb-2"),
-                                    dbc.Row([
-                                        dbc.Col([
-                                            html.Div([
-                                                html.Span("�", style={"fontSize": "1.5rem"}),
-                                                html.Strong(" ALTO RIESGO", className="ms-2", style={"color": "#dc3545"}),
-                                                html.Br(),
-                                                html.Small("Embalse estratégico + Agua crítica", className="text-danger fw-bold")
-                                            ], className="text-center p-2 border border-danger rounded")
-                                        ], md=4),
-                                        dbc.Col([
-                                            html.Div([
-                                                html.Span("🟡", style={"fontSize": "1.5rem"}),
-                                                html.Strong(" RIESGO MEDIO", className="ms-2", style={"color": "#ffc107"}),
-                                                html.Br(),
-                                                html.Small("Situaciones intermedias", className="text-warning fw-bold")
-                                            ], className="text-center p-2 border border-warning rounded")
-                                        ], md=4),
-                                        dbc.Col([
-                                            html.Div([
-                                                html.Span("🟢", style={"fontSize": "1.5rem"}),
-                                                html.Strong(" BAJO RIESGO", className="ms-2", style={"color": "#198754"}),
-                                                html.Br(),
-                                                html.Small("Agua suficiente disponible", className="text-success fw-bold")
-                                            ], className="text-center p-2 border border-success rounded")
-                                        ], md=4)
-                                    ])
-                                ], className="p-3")
-                            ], className="card-modern mb-4")
-                        ], md=12)
-                    ]),
-                    
-                    # Tablas jerárquicas con semáforo - filtradas por región
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardHeader([
-                                    html.I(className="bi bi-pie-chart me-2", style={"color": "#667eea"}),
-                                    html.Strong(f"📊 Participación Porcentual por Embalse {title_suffix}")
-                                ], style={"background": "linear-gradient(135deg, #e3f2fd 0%, #f3f4f6 100%)",
-                                         "border": "none", "borderRadius": "8px 8px 0 0"}),
-                                dbc.CardBody([
-                                    html.P(f"Distribución porcentual de la capacidad energética entre embalses de {region}. Los indicadores de semáforo muestran el nivel de riesgo de cada embalse basado en su importancia y volumen disponible.", 
-                                          className="text-muted mb-3", style={"fontSize": "0.85rem"}),
-                                    html.Div([
-                                        # Contenedor para la tabla con semáforo de región específica
-                                        html.Div(id="tabla-participacion-region-filtrada", children=[
-                                            create_region_filtered_participacion_table(region, start_date, end_date)
-                                        ])
-                                    ])
-                                ], className="p-3")
-                            ], className="card-modern h-100")
-                        ], md=6),
+                                    html.H6("📈 Evolución Temporal", className="text-center mb-2", style={'fontSize': '0.9rem'}),
+                                    create_total_timeline_chart(region_temporal_data, f"Aportes región {region_normalized}", region_filter=region_normalized)
+                                ], className="p-2")
+                            ], className="h-100")
+                        ], md=9),
                         
+                        # COLUMNA 2: Tabla Combinada de Embalses (25%)
                         dbc.Col([
                             dbc.Card([
-                                dbc.CardHeader([
-                                    html.I(className="bi bi-battery-full me-2", style={"color": "#28a745"}),
-                                    html.Strong(f"💧 Volumen Útil por Embalse {title_suffix}")
-                                ], style={"background": "linear-gradient(135deg, #e8f5e8 0%, #f3f4f6 100%)",
-                                         "border": "none", "borderRadius": "8px 8px 0 0"}),
                                 dbc.CardBody([
-                                    html.P(f"Valores específicos de porcentaje de volumen útil disponible por embalse en {region}. El 'Volumen Útil (%)' indica el porcentaje del volumen almacenado por encima del Nivel Mínimo Técnico, representando la disponibilidad energética real de cada embalse.", 
-                                          className="text-muted mb-3", style={"fontSize": "0.85rem"}),
+                                    html.H6("📊 Embalses", className="text-center mb-2", style={'fontSize': '0.9rem'}),
                                     html.Div([
-                                        # Contenedor para la tabla con semáforo de región específica
-                                        html.Div(id="tabla-capacidad-region-filtrada", children=[
-                                            create_region_filtered_capacidad_table(region, start_date, end_date)
-                                        ])
+                                        dash_table.DataTable(
+                                            id="tabla-embalses-region",
+                                            data=get_embalses_completa_para_tabla(region, start_date, end_date),
+                                            columns=[
+                                                {"name": "Embalse", "id": "Embalse"},
+                                                {"name": "Part.", "id": "Participación (%)"},
+                                                {"name": "Vol.", "id": "Volumen Útil (%)"},
+                                                {"name": "⚠️", "id": "Riesgo"}
+                                            ],
+                                            style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
+                                            style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
+                                            style_data_conditional=[
+                                                {'if': {'filter_query': '{Riesgo} = "🔴"'}, 'backgroundColor': '#ffe6e6'},
+                                                {'if': {'filter_query': '{Riesgo} = "🟡"'}, 'backgroundColor': '#fff9e6'},
+                                                {'if': {'filter_query': '{Riesgo} = "🟢"'}, 'backgroundColor': '#e6ffe6'},
+                                                {'if': {'filter_query': '{Embalse} = "TOTAL"'}, 'backgroundColor': '#e3f2fd', 'fontWeight': 'bold'}
+                                            ],
+                                            page_action="none",
+                                            style_table={'maxHeight': '480px', 'overflowY': 'auto'}
+                                        )
                                     ])
-                                ], className="p-3")
-                            ], className="card-modern h-100")
-                        ], md=6)
-                    ]),
+                                ], className="p-2")
+                            ], className="h-100")
+                        ], md=3)
+                    ], className="mb-3"),
+                    
+                    dcc.Store(id="region-data-store", data=data_filtered.to_dict('records')),
                     dcc.Store(id="embalse-cap-data", data=embalses_df_formatted.to_dict('records')),
-                    dcc.Store(id="participacion-data", data=get_participacion_embalses(embalses_df_fresh).to_dict('records'))
+                    dcc.Store(id="participacion-data", data=get_participacion_embalses(embalses_df_fresh).to_dict('records')),
+                    
+                    # ✅ Desplegable del semáforo eliminado (ya no es necesario)
+                    dbc.Collapse(
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Card([
+                                    dbc.CardHeader([
+                                        html.I(className="fas fa-traffic-light me-2", style={"color": "#28a745"}),
+                                        html.Strong("🚦 Sistema Inteligente de Semáforo de Riesgo Hidrológico")
+                                    ], style={"background": "linear-gradient(135deg, #e8f5e8 0%, #f3f4f6 100%)",
+                                             "border": "none", "borderRadius": "8px 8px 0 0"}),
+                                    dbc.CardBody([
+                                        html.P("Este sistema evalúa automáticamente el riesgo operativo de cada embalse mediante un análisis inteligente que combina:", 
+                                              className="mb-3", style={"fontSize": "0.9rem"}),
+                                        
+                                        dbc.Row([
+                                            dbc.Col([
+                                                html.Div([
+                                                    html.H6("� Importancia Estratégica", className="text-primary mb-2"),
+                                                    html.P("¿Qué tan crítico es este embalse para el sistema energético nacional?", 
+                                                          className="text-muted", style={"fontSize": "0.85rem"}),
+                                                    html.Ul([
+                                                        html.Li("Embalses grandes (≥10% participación): Estratégicos", style={"fontSize": "0.8rem"}),
+                                                        html.Li("Embalses pequeños (<10% participación): Locales", style={"fontSize": "0.8rem"})
+                                                    ])
+                                                ])
+                                            ], md=6),
+                                            dbc.Col([
+                                                html.Div([
+                                                    html.H6("� Estado del Recurso Hídrico", className="text-info mb-2"),
+                                                    html.P("¿Cuánta agua útil tiene disponible para generar energía?", 
+                                                          className="text-muted", style={"fontSize": "0.85rem"}),
+                                                    html.Ul([
+                                                        html.Li("Crítico: <30% del volumen útil", style={"fontSize": "0.8rem"}),
+                                                        html.Li("Precaución: 30-70% del volumen útil", style={"fontSize": "0.8rem"}),
+                                                        html.Li("Óptimo: ≥70% del volumen útil", style={"fontSize": "0.8rem"})
+                                                    ])
+                                                ])
+                                            ], md=6)
+                                        ], className="mb-3"),
+                                        
+                                        html.Hr(),
+                                        html.H6("🎯 Resultados del Análisis:", className="mb-2"),
+                                        dbc.Row([
+                                            dbc.Col([
+                                                html.Div([
+                                                    html.Span("�", style={"fontSize": "1.5rem"}),
+                                                    html.Strong(" ALTO RIESGO", className="ms-2", style={"color": "#dc3545"}),
+                                                    html.Br(),
+                                                    html.Small("Embalse estratégico + Agua crítica", className="text-danger fw-bold")
+                                                ], className="text-center p-2 border border-danger rounded")
+                                            ], md=4),
+                                            dbc.Col([
+                                                html.Div([
+                                                    html.Span("🟡", style={"fontSize": "1.5rem"}),
+                                                    html.Strong(" RIESGO MEDIO", className="ms-2", style={"color": "#ffc107"}),
+                                                    html.Br(),
+                                                    html.Small("Situaciones intermedias", className="text-warning fw-bold")
+                                                ], className="text-center p-2 border border-warning rounded")
+                                            ], md=4),
+                                            dbc.Col([
+                                                html.Div([
+                                                    html.Span("🟢", style={"fontSize": "1.5rem"}),
+                                                    html.Strong(" BAJO RIESGO", className="ms-2", style={"color": "#198754"}),
+                                                    html.Br(),
+                                                    html.Small("Agua suficiente disponible", className="text-success fw-bold")
+                                                ], className="text-center p-2 border border-success rounded")
+                                            ], md=4)
+                                        ])
+                                    ], className="p-3")
+                                ], className="card-modern mb-4")
+                            ], md=12)
+                        ]),
+                        id="collapse-semaforo-region-info",
+                        is_open=False
+                    )
                 ])
             else:
                 # Para caso sin región específica o vista general, mostrar también gráfica temporal
+                # ✅ FIX: NO agrupar aquí - pasar datos originales con columna 'Name' para que create_total_timeline_chart
+                # pueda obtener la media histórica por río correctamente
                 national_temporal_data = data_filtered.groupby('Date')['Value'].sum().reset_index()
                 national_temporal_data['Region'] = 'Nacional'
                 
+                # ✅ FIX CRÍTICO: Obtener datos CORRECTOS de embalses para el mapa
+                # El mapa necesita: regiones_totales (totales por región) y df_completo_embalses (lista de embalses)
+                fecha_para_mapa = end_date if end_date else datetime.now().strftime('%Y-%m-%d')
+                regiones_totales_mapa, df_completo_embalses_mapa = get_tabla_regiones_embalses(fecha_para_mapa, fecha_para_mapa)
+                
                 return html.Div([
-                    html.H5(f"🇨🇴 Evolución Temporal de Aportes de Caudal Nacionales", className="text-center mb-2"),
-                    html.P(f"Serie temporal agregada de aportes de caudal a nivel nacional. La gráfica muestra la evolución diaria de los aportes de caudal de todas las regiones de Colombia durante el período seleccionado.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
+                    html.H5(f"🇨🇴 Evolución Temporal de Aportes de Energía", className="text-center mb-2"),
+                    html.P(f"Vista general: Gráfica temporal, mapa y tablas de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
                     
+                    # LAYOUT HORIZONTAL COMPACTO: Gráfica (58%) + Mapa (17%) + Tablas (25%)
                     dbc.Row([
+                        # COLUMNA 1: Gráfica Temporal (58%)
                         dbc.Col([
-                            create_total_timeline_chart(national_temporal_data, "Aportes nacionales")
-                        ], md=12)
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("📈 Evolución Temporal", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    create_total_timeline_chart(data_filtered, "Aportes nacionales")
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=7),
+                        
+                        # COLUMNA 2: Mapa de Colombia (17%)
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("🗺️ Mapa de Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    html.Div(id="mapa-embalses-general", children=[
+                                        crear_mapa_embalses_directo(
+                                            regiones_totales_mapa,
+                                            df_completo_embalses_mapa
+                                        )
+                                    ])
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=2),
+                        
+                        # COLUMNA 3: Tabla Combinada de Embalses (25%)
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("📊 Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    html.Div([
+                                        dash_table.DataTable(
+                                            id="tabla-embalses-general",
+                                            data=get_embalses_completa_para_tabla(None, start_date, end_date),
+                                            columns=[
+                                                {"name": "Embalse", "id": "Embalse"},
+                                                {"name": "Part.", "id": "Participación (%)"},
+                                                {"name": "Vol.", "id": "Volumen Útil (%)"},
+                                                {"name": "⚠️", "id": "Riesgo"}
+                                            ],
+                                            style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
+                                            style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
+                                            style_data_conditional=[
+                                                {'if': {'filter_query': '{Riesgo} = "🔴"'}, 'backgroundColor': '#ffe6e6'},
+                                                {'if': {'filter_query': '{Riesgo} = "🟡"'}, 'backgroundColor': '#fff9e6'},
+                                                {'if': {'filter_query': '{Riesgo} = "🟢"'}, 'backgroundColor': '#e6ffe6'},
+                                                {'if': {'filter_query': '{Embalse} = "TOTAL"'}, 'backgroundColor': '#e3f2fd', 'fontWeight': 'bold'}
+                                            ],
+                                            page_action="none",
+                                            style_table={'maxHeight': '480px', 'overflowY': 'auto'}
+                                        )
+                                    ])
+                                ], className="p-1")
+                            ], className="h-100")
+                        ], md=3)
                     ]),
+                    
                     dcc.Store(id="region-data-store", data=data_filtered.to_dict('records')),
-                    html.Hr(),
-                    html.H5(f"⚡ Análisis de Embalses - Volumen Útil por Embalse", className="text-center mt-4 mb-2"),
-                    html.P(f"Análisis detallado del estado de los embalses nacionales. Los datos muestran la participación porcentual basada en capacidad energética y el porcentaje de volumen útil disponible por embalse.", className="text-center text-muted mb-3", style={"fontSize": "0.9rem"}),
-                    dbc.Row([
-                        dbc.Col([
-                            html.H6("📊 Participación Porcentual por Embalse", className="text-center mb-2"),
-                            html.P("Distribución porcentual de la capacidad energética entre embalses. La tabla incluye una fila TOTAL que suma exactamente 100%.", className="text-muted mb-2", style={"fontSize": "0.8rem"}),
-                            dash_table.DataTable(
-                                id="tabla-participacion-embalse",
-                                data=get_participacion_embalses(embalses_df_fresh).to_dict('records'),
-                                columns=[
-                                    {"name": "Embalse", "id": "Embalse"},
-                                    {"name": "Participación (%)", "id": "Participación (%)"},
-                                    {"name": "🚨 Riesgo", "id": "Riesgo"}
-                                ],
-                                style_cell={'textAlign': 'left', 'padding': '6px', 'fontFamily': 'Arial', 'fontSize': 14},
-                                style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold'},
-                                style_data={'backgroundColor': '#f8f8f8'},
-                                style_data_conditional=crear_estilos_condicionales_para_tabla_estatica(start_date, end_date),
-                                page_action="none"
-                            ),
-                        ], md=4),
-                        dbc.Col([
-                            html.H6("💧 Volumen Útil por Embalse", className="text-center mb-2"),
-                            html.P("Porcentajes de volumen útil disponible por embalse. Use el filtro para buscar embalses específicos.", className="text-muted mb-2", style={"fontSize": "0.8rem"}),
-                            dcc.Dropdown(
-                                id="embalse-cap-dropdown",
-                                options=[{"label": e.title(), "value": e} for e in embalses_region],
-                                placeholder="🔍 Buscar embalse específico...",
-                                className="mb-2"
-                            ),
-                            dash_table.DataTable(
-                                id="tabla-capacidad-embalse-2",
-                                data=get_embalses_data_for_table(None, start_date, end_date),
-                                columns=[
-                                    {"name": "Embalse", "id": "Embalse"},
-                                    {"name": "Volumen Útil (%)", "id": "Volumen Útil (%)"},
-                                    {"name": "🚨 Riesgo", "id": "Riesgo"}
-                                ],
-                                style_cell={"textAlign": "left", "padding": "6px", "fontFamily": "Arial", "fontSize": 14},
-                                style_header={"backgroundColor": "#e3e3e3", "fontWeight": "bold"},
-                                style_data={"backgroundColor": "#f8f8f8"},
-                                style_data_conditional=crear_estilos_condicionales_para_tabla_estatica(start_date, end_date),
-                                page_action="none"
-                            ),
-                        ], md=8)
-                    ]),
                     dcc.Store(id="embalse-cap-data", data=embalses_df_formatted.to_dict('records')),
                     dcc.Store(id="participacion-data", data=get_participacion_embalses(embalses_df_fresh).to_dict('records'))
                 ])
         else:
             return dbc.Alert("No se pueden graficar los datos de la región." if region else "No se pueden graficar los datos.", color="warning")
     except Exception as e:
+        # ✅ FIX: Log completo del error con traceback
+        import traceback
+        logger.error(f"❌ ERROR EN UPDATE_CONTENT: {str(e)}")
+        logger.error(f"❌ TRACEBACK COMPLETO:\n{traceback.format_exc()}")
         error_message = manejar_error_api(e, "consulta de datos hidrológicos")
         return dbc.Alert([
             html.H6("Error en consulta", className="alert-heading"),
@@ -1777,48 +3219,54 @@ def update_content(n_clicks, rio, start_date, end_date, region):
 # Callback para inicializar las tablas jerárquicas al cargar la página
 @callback(
     [Output("participacion-jerarquica-data", "data"),
-     Output("capacidad-jerarquica-data", "data")],
-    [Input("start-date", "date"), Input("end-date", "date")],
+     Output("capacidad-jerarquica-data", "data"),
+     Output("ultima-fecha-con-datos", "data")],
+    [Input("fecha-inicio-hidrologia", "date"), Input("fecha-fin-hidrologia", "date")],
     prevent_initial_call=False
 )
 def initialize_hierarchical_tables(start_date, end_date):
     """Inicializar las tablas jerárquicas con datos de regiones al cargar la página"""
     try:
-        print(f"🔧 DEBUG INIT: Inicializando tablas jerárquicas con fechas {start_date} - {end_date}")
+        objetoAPI = get_objetoAPI()
+        logger.debug(f"DEBUG INIT: Inicializando tablas jerárquicas con fechas {start_date} - {end_date}")
         
-        # Usar fecha con datos disponibles, no las fechas de los controles
-        fecha_con_datos = None
+        # 🔍 Buscar la última fecha con datos disponibles (no asumir que hoy tiene datos)
         from datetime import date, timedelta
-        for dias_atras in range(7):  # Buscar hasta 7 días atrás desde hoy
-            fecha_prueba = (date.today() - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-            df_vol_test = objetoAPI.request_data('VoluUtilDiarEner', 'Embalse', fecha_prueba, fecha_prueba)
-            if df_vol_test is not None and not df_vol_test.empty:
-                fecha_con_datos = fecha_prueba
-                print(f"📅 DEBUG INIT: Usando fecha con datos: {fecha_con_datos}")
-                break
+        fecha_busqueda = date.today()
+        fecha_obj = None
+        intentos = 0
+        max_intentos = 7  # Buscar hasta 7 días atrás
         
-        if not fecha_con_datos:
-            print("❌ DEBUG INIT: No se encontraron fechas con datos")
+        while intentos < max_intentos and fecha_obj is None:
+            df_vol_test, fecha_obj = obtener_datos_desde_sqlite('VoluUtilDiarEner', 'Embalse', fecha_busqueda)
+            if fecha_obj is None:
+                logger.debug(f"🔍 No hay datos para {fecha_busqueda}, intentando día anterior...")
+                fecha_busqueda = fecha_busqueda - timedelta(days=1)
+                intentos += 1
+        
+        if fecha_obj is None:
+            logger.error(f"❌ DEBUG INIT: No se encontraron fechas con datos en los últimos {max_intentos} días")
             return [], []
         
+        fecha_con_datos = fecha_obj.strftime('%Y-%m-%d')
+        logger.info(f"✅ DEBUG INIT: Última fecha con datos disponibles: {fecha_con_datos}")
+        
         regiones_totales, df_completo_embalses = get_tabla_regiones_embalses(None, fecha_con_datos)
-        print(f"🔧 DEBUG INIT: Regiones obtenidas: {len(regiones_totales) if not regiones_totales.empty else 0}")
+        logger.debug(f"DEBUG INIT: Regiones obtenidas: {len(regiones_totales) if not regiones_totales.empty else 0}")
         
         if regiones_totales.empty:
-            print("⚠️ DEBUG INIT: No hay regiones, retornando listas vacías")
+            logger.warning("DEBUG INIT: No hay regiones, retornando listas vacías")
             return [], []
         
         # Crear datos para tabla de participación (solo regiones inicialmente)
         participacion_data = []
         capacidad_data = []
         
-        print(f"🔧 DEBUG INIT: Procesando {len(regiones_totales)} regiones")
-        # Calcular suma total nacional de capacidad útil para la participación
-        total_capacidad_nacional = regiones_totales['Total (GWh)'].sum()
+        logger.debug(f"DEBUG INIT: Procesando {len(regiones_totales)} regiones")
+        
         for _, row in regiones_totales.iterrows():
-            print(f"🔧 DEBUG INIT: Procesando región: {row['Región']}")
-            # Participación = capacidad útil de la región / capacidad útil total nacional * 100
-            participacion_pct = (row['Total (GWh)'] / total_capacidad_nacional * 100) if total_capacidad_nacional > 0 else 0
+            # ✅ CORREGIDO: Usar directamente la columna 'Participación (%)' calculada en get_tabla_regiones_embalses
+            participacion_pct = row.get('Participación (%)', 0)
             participacion_data.append({
                 'nombre': f"▶️ {row['Región']}",
                 'participacion': f"{participacion_pct:.2f}%",
@@ -1848,11 +3296,17 @@ def initialize_hierarchical_tables(start_date, end_date):
             'id': 'total'
         })
         
-        # NUEVO: Calcular volumen útil nacional usando la función unificada
-        # Esto garantiza consistencia total entre fichas y tablas
-        resultado_nacional = calcular_volumen_util_unificado(end_date if end_date else start_date)
-        promedio_volumen_general = resultado_nacional['porcentaje'] if resultado_nacional else 0
-        print(f"🔧 Volumen útil nacional calculado con función unificada: {promedio_volumen_general:.1f}%")
+        # ✅ CORREGIDO: Calcular volumen útil nacional directamente desde regiones_totales
+        # Esto garantiza consistencia total con los datos mostrados en las regiones
+        total_volumen_gwh = regiones_totales['Volumen Util (GWh)'].sum()
+        total_capacidad_gwh = regiones_totales['Total (GWh)'].sum()
+        
+        if total_capacidad_gwh > 0:
+            promedio_volumen_general = round((total_volumen_gwh / total_capacidad_gwh) * 100, 1)
+        else:
+            promedio_volumen_general = 0.0
+        
+        logger.debug(f"Volumen útil nacional: Vol={total_volumen_gwh:.2f} GWh, Cap={total_capacidad_gwh:.2f} GWh, %={promedio_volumen_general:.1f}%")
         
         capacidad_data.append({
             'nombre': 'TOTAL SISTEMA',
@@ -1872,18 +3326,42 @@ def initialize_hierarchical_tables(start_date, end_date):
             embalses_region = get_embalses_by_region(region_name, df_completo_embalses)
             
             if not embalses_region.empty:
+                logger.info(f"🔍 [INIT_TABLES] Procesando región: {region_name}, {len(embalses_region)} embalses")
                 for _, embalse_row in embalses_region.iterrows():
                     embalse_name = embalse_row['Región'].replace('    └─ ', '')
                     volumen_embalse = embalse_row.get('Volumen Útil (%)', 0)
+                    participacion_embalse = embalse_row.get('Participación (%)', 0)
+                    
+                    # 🔍 LOG CRÍTICO: Valores RAW antes de formatear
+                    logger.info(f"🔍 [RAW] {embalse_name}: Volumen={volumen_embalse} (tipo={type(volumen_embalse).__name__}), Participación={participacion_embalse} (tipo={type(participacion_embalse).__name__})")
+                    
+                    # 🔍 Convertir a float para evitar corrupción
+                    try:
+                        participacion_float = float(embalse_row['Participación (%)'])
+                        volumen_float = float(volumen_embalse) if volumen_embalse is not None else 0.0
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"❌ Error convirtiendo valores a float para {embalse_name}: {e}")
+                        participacion_float = 0.0
+                        volumen_float = 0.0
+                    
+                    # 🔍 LOG CRÍTICO: Valores después de conversión a float
+                    logger.info(f"🔍 [FLOAT] {embalse_name}: Volumen={volumen_float:.2f}%, Participación={participacion_float:.2f}%")
+                    
+                    # 🔍 Formatear CONSISTENTEMENTE
+                    participacion_formatted = f"{participacion_float:.2f}%"
+                    volumen_formatted = f"{volumen_float:.1f}%"
+                    
+                    # 🔍 LOG CRÍTICO: Valores formateados
+                    logger.info(f"🔍 [FORMATTED] {embalse_name}: Volumen={volumen_formatted}, Participación={participacion_formatted}")
                     
                     # ESTRUCTURA UNIFICADA: Agregar AMBOS valores a la misma entrada
                     # Para participación_completa
                     participacion_completa.append({
                         'nombre': f"    └─ {embalse_name}",
-                        'participacion': f"{embalse_row['Participación (%)']}%",
-                        'capacidad': f"{volumen_embalse:.1f}%" if volumen_embalse is not None else "N/D",
-                        'participacion_valor': float(embalse_row['Participación (%)']),
-                        'volumen_valor': float(volumen_embalse) if volumen_embalse is not None else 0,
+                        'participacion': participacion_formatted,
+                        'capacidad': volumen_formatted,
+                        'participacion_valor': participacion_float,
+                        'volumen_valor': volumen_float,
                         'tipo': 'embalse',
                         'region_name': region_name,
                         'expandida': False,
@@ -1893,22 +3371,26 @@ def initialize_hierarchical_tables(start_date, end_date):
                     # Para capacidad_completa - MISMOS VALORES pero estructura diferente
                     capacidad_completa.append({
                         'nombre': f"    └─ {embalse_name}",
-                        'capacidad': f"{volumen_embalse:.1f}%" if volumen_embalse is not None else "N/D",
-                        'participacion': f"{embalse_row['Participación (%)']}%",
-                        'participacion_valor': float(embalse_row['Participación (%)']),
-                        'volumen_valor': float(volumen_embalse) if volumen_embalse is not None else 0,
+                        'capacidad': volumen_formatted,
+                        'participacion': participacion_formatted,
+                        'participacion_valor': participacion_float,
+                        'volumen_valor': volumen_float,
                         'tipo': 'embalse',
                         'region_name': region_name,
                         'expandida': False,
                         'id': f"embalse_{region_name}_{embalse_name}"
                     })
+                    
+                    # 🔍 LOG CRÍTICO: Verificar que ambos stores tienen EXACTAMENTE los mismos valores
+                    logger.info(f"🔍 [STORE_VERIFICATION] {embalse_name} - PARTICIPACION_STORE: vol={participacion_completa[-1]['capacidad']}, part={participacion_completa[-1]['participacion']}")
+                    logger.info(f"🔍 [STORE_VERIFICATION] {embalse_name} - CAPACIDAD_STORE: vol={capacidad_completa[-1]['capacidad']}, part={capacidad_completa[-1]['participacion']}")
         
-        # Retornar: datos completos para stores
-        return participacion_completa, capacidad_completa
+        # Retornar: datos completos para stores + última fecha con datos
+        return participacion_completa, capacidad_completa, fecha_con_datos
         
     except Exception as e:
-        print(f"Error inicializando tablas jerárquicas: {e}")
-        return [], []
+        logger.error(f"Error inicializando tablas jerárquicas: {e}", exc_info=True)
+        return [], [], None
 
 def build_hierarchical_table_view(data_complete, expanded_regions, view_type="participacion"):
     """Construir vista de tabla jerárquica con botones integrados y sistema de semáforo CORREGIDO"""
@@ -1947,7 +3429,8 @@ def build_hierarchical_table_view(data_complete, expanded_regions, view_type="pa
                         valor_num = float(valor_str.replace('%', '').replace(',', '').strip())
                     else:
                         valor_num = float(valor_str) if valor_str else 0
-                except:
+                except (ValueError, AttributeError, TypeError) as e:
+                    logger.debug(f"No se pudo convertir valor a numérico: {valor_str} - {e}")
                     valor_num = 0
                 
                 region_items.append({
@@ -2001,12 +3484,16 @@ def build_hierarchical_table_view(data_complete, expanded_regions, view_type="pa
                                 embalses_unificados[embalse_name]['valor_num'] = float(valor_str.replace('%', '').replace(',', '').strip())
                             else:
                                 embalses_unificados[embalse_name]['valor_num'] = float(valor_str) if valor_str else 0
-                        except:
+                        except (ValueError, AttributeError, TypeError) as e:
+                            logger.debug(f"No se pudo convertir valor a numérico: {valor_str} - {e}")
                             embalses_unificados[embalse_name]['valor_num'] = 0
             
             # Convertir a lista y ordenar
             embalses_lista = list(embalses_unificados.values())
             embalses_lista.sort(key=lambda x: x.get('valor_num', 0), reverse=True)
+            
+            # 🔍 LOG: Verificar datos antes de construir tabla
+            logger.info(f"🔍 [BUILD_TABLE] Región={region_name}, View={view_type}, Embalses={len(embalses_lista)}")
             
             # Procesar cada embalse con datos ya unificados
             for embalse_data in embalses_lista:
@@ -2015,11 +3502,14 @@ def build_hierarchical_table_view(data_complete, expanded_regions, view_type="pa
                 participacion_val = embalse_data.get('participacion_valor', 0)
                 volumen_val = embalse_data.get('volumen_valor', 0)
                 
-                print(f"✅ SEMÁFORO CORREGIDO: {embalse_name} - Participación={participacion_val}%, Volumen={volumen_val}%")
+                # 🔍 LOG CRÍTICO: Valores que se mostrarán en la tabla
+                logger.info(f"🔍 [TABLE_DISPLAY] {embalse_name} ({view_type}): Display={valor_embalse}, Part={participacion_val}%, Vol={volumen_val}%")
+                
+# REMOVED DEBUG:                 logger.info(f"SEMÁFORO CORREGIDO: {embalse_name} - Participación={participacion_val}%, Volumen={volumen_val}%")
                 
                 # Clasificar riesgo con ambos valores CORRECTOS
                 nivel_riesgo = clasificar_riesgo_embalse(participacion_val, volumen_val)
-                print(f"✅ RESULTADO SEMÁFORO: {embalse_name} - Riesgo: {nivel_riesgo}")
+# REMOVED DEBUG:                 logger.info(f"RESULTADO SEMÁFORO: {embalse_name} - Riesgo: {nivel_riesgo}")
                 
                 # Agregar fila del embalse
                 row_index = len(table_data)
@@ -2091,10 +3581,53 @@ def build_hierarchical_table_view(data_complete, expanded_regions, view_type="pa
         page_action="none"
     )
 
-# Callback para manejar clics en las regiones y expandir/colapsar embalses
+# Callback para inicializar las vistas HTML desde los stores (DEBE IR PRIMERO - sin allow_duplicate)
 @callback(
     [Output("tabla-participacion-jerarquica-container", "children"),
-     Output("tabla-capacidad-jerarquica-container", "children"),
+     Output("tabla-capacidad-jerarquica-container", "children")],
+    [Input("participacion-jerarquica-data", "data"),
+     Input("capacidad-jerarquica-data", "data")],
+    [State("regiones-expandidas", "data")],
+    prevent_initial_call=False
+)
+def update_html_tables_from_stores(participacion_complete, capacidad_complete, regiones_expandidas):
+    """Actualizar las vistas HTML basándose en los stores"""
+    try:
+        logger.info(f"✅ [UPDATE_TABLES_FROM_STORES] Ejecutándose...")
+        logger.info(f"✅ Participación: {len(participacion_complete) if participacion_complete else 0} items")
+        logger.info(f"✅ Capacidad: {len(capacidad_complete) if capacidad_complete else 0} items")
+        logger.info(f"✅ Regiones expandidas: {regiones_expandidas}")
+        
+        if not participacion_complete or not capacidad_complete:
+            logger.warning("DEBUG STORES: Datos incompletos, retornando mensajes de error")
+            return (
+                html.Div("No hay datos de participación disponibles", className="text-center text-muted p-3"),
+                html.Div("No hay datos de capacidad disponibles", className="text-center text-muted p-3")
+            )
+        
+        if not regiones_expandidas:
+            regiones_expandidas = []
+        
+        # Construir vistas de tabla iniciales (todas las regiones colapsadas)
+        logger.debug(f"DEBUG STORES: Construyendo vista de participación")
+        participacion_view = build_hierarchical_table_view(participacion_complete, regiones_expandidas, "participacion")
+        logger.debug(f"DEBUG STORES: Construyendo vista de capacidad")
+        capacidad_view = build_hierarchical_table_view(capacidad_complete, regiones_expandidas, "capacidad")
+        
+        return participacion_view, capacidad_view
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return (
+            html.Div("Error al cargar datos de participación", className="text-center text-danger p-3"),
+            html.Div("Error al cargar datos de capacidad", className="text-center text-danger p-3")
+        )
+
+# Callback para manejar clics en las regiones y expandir/colapsar embalses (CON allow_duplicate)
+@callback(
+    [Output("tabla-participacion-jerarquica-container", "children", allow_duplicate=True),
+     Output("tabla-capacidad-jerarquica-container", "children", allow_duplicate=True),
      Output("regiones-expandidas", "data")],
     [Input("tabla-participacion-jerarquica-display", "active_cell"),
      Input("tabla-capacidad-jerarquica-display", "active_cell")],
@@ -2162,61 +3695,181 @@ def toggle_region_from_table(active_cell_part, active_cell_cap, participacion_co
         return participacion_view, capacidad_view, regiones_expandidas
         
     except Exception as e:
-        print(f"❌ Error en toggle_region_from_table: {e}")
+# REMOVED DEBUG:         print(f"❌ Error en toggle_region_from_table: {e}")
         import traceback
         traceback.print_exc()
         return dash.no_update, dash.no_update, regiones_expandidas or []
 
-# Callback para inicializar las vistas HTML desde los stores
+
+# ============================================================================
+# CALLBACK PARA TABLA PEQUEÑA DE EMBALSES JERÁRQUICA
+# ============================================================================
+
 @callback(
-    [Output("tabla-participacion-jerarquica-container", "children", allow_duplicate=True),
-     Output("tabla-capacidad-jerarquica-container", "children", allow_duplicate=True)],
-    [Input("participacion-jerarquica-data", "data"),
-     Input("capacidad-jerarquica-data", "data")],
-    [State("regiones-expandidas", "data")],
-    prevent_initial_call='initial_duplicate'
+    [Output("tabla-embalses-jerarquica-container", "children"),
+     Output("embalses-expandidos-store", "data")],
+    [Input("tabla-embalses-jerarquica", "active_cell")],
+    [State("embalses-regiones-data", "data"),
+     State("embalses-completo-data", "data"),
+     State("embalses-expandidos-store", "data")],
+    prevent_initial_call=True
 )
-def update_html_tables_from_stores(participacion_complete, capacidad_complete, regiones_expandidas):
-    """Actualizar las vistas HTML basándose en los stores"""
+def toggle_embalse_region(active_cell, regiones_data, embalses_data, expanded_regions):
+    """Manejar clics en las regiones de la tabla pequeña para expandir/contraer"""
     try:
-        print(f"🔧 DEBUG STORES: Actualizando tablas HTML")
-        print(f"🔧 DEBUG STORES: participacion_complete: {len(participacion_complete) if participacion_complete else 0} items")
-        print(f"🔧 DEBUG STORES: capacidad_complete: {len(capacidad_complete) if capacidad_complete else 0} items")
-        print(f"🔧 DEBUG STORES: regiones_expandidas: {regiones_expandidas}")
+        if not active_cell or not regiones_data or not embalses_data:
+            return dash.no_update, expanded_regions or []
         
-        if not participacion_complete or not capacidad_complete:
-            print("⚠️ DEBUG STORES: Datos incompletos, retornando mensajes de error")
-            return (
-                html.Div("No hay datos de participación disponibles", className="text-center text-muted p-3"),
-                html.Div("No hay datos de capacidad disponibles", className="text-center text-muted p-3")
-            )
+        if expanded_regions is None:
+            expanded_regions = []
         
-        if not regiones_expandidas:
-            regiones_expandidas = []
+        # Solo responder a clics en la columna "embalse"
+        if active_cell.get('column_id') != 'embalse':
+            return dash.no_update, expanded_regions
         
-        # Construir vistas de tabla iniciales (todas las regiones colapsadas)
-        print(f"🔧 DEBUG STORES: Construyendo vista de participación")
-        participacion_view = build_hierarchical_table_view(participacion_complete, regiones_expandidas, "participacion")
-        print(f"🔧 DEBUG STORES: Construyendo vista de capacidad")
-        capacidad_view = build_hierarchical_table_view(capacidad_complete, regiones_expandidas, "capacidad")
+        # Convertir datos de vuelta a DataFrames
+        import pandas as pd
+        regiones_totales = pd.DataFrame(regiones_data)
+        df_completo_embalses = pd.DataFrame(embalses_data)
         
-        print(f"✅ DEBUG STORES: Vistas construidas exitosamente")
-        return participacion_view, capacidad_view
+        # Reconstruir la tabla para obtener los datos actuales
+        current_table = build_embalses_hierarchical_view(regiones_totales, df_completo_embalses, expanded_regions)
+        table_data = current_table.data if hasattr(current_table, 'data') else []
+        
+        # Verificar qué fila se clicó
+        row_id = active_cell['row']
+        if row_id < len(table_data):
+            clicked_row = table_data[row_id]
+            clicked_name = clicked_row.get('embalse', '')
+            
+            # Determinar si es una región (tiene ⊞ o ⊟ al inicio)
+            is_region = (clicked_name.startswith('⊞ ') or clicked_name.startswith('⊟ ')) and not clicked_name.startswith('    └─ ')
+            
+            # Solo procesar si es una región
+            if is_region:
+                # Extraer el nombre de la región
+                region_name = clicked_name.replace('⊞ ', '').replace('⊟ ', '').strip()
+                
+                # Toggle la región
+                if region_name in expanded_regions:
+                    expanded_regions.remove(region_name)
+                else:
+                    expanded_regions.append(region_name)
+        
+        # Reconstruir la vista con las regiones actualizadas
+        new_table = build_embalses_hierarchical_view(regiones_totales, df_completo_embalses, expanded_regions)
+        
+        return new_table, expanded_regions
         
     except Exception as e:
-        print(f"❌ Error en update_html_tables_from_stores: {e}")
+        logger.error(f"❌ Error en toggle_embalse_region: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
-        return (
-            html.Div("Error al cargar datos de participación", className="text-center text-danger p-3"),
-            html.Div("Error al cargar datos de capacidad", className="text-center text-danger p-3")
-        )
-        
-    except Exception as e:
-        print(f"Error en update_tables_from_stores: {e}")
-        import traceback
-        traceback.print_exc()
-        return [], []
+        return dash.no_update, expanded_regions or []
+
+
+# Clientside callback para toggle del Sistema Semáforo (más confiable para contenido dinámico)
+import dash
+from dash import clientside_callback, ClientsideFunction
+
+# JavaScript para manejar el toggle
+dash.clientside_callback(
+    """
+    function(n_clicks, is_open) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        const new_state = !is_open;
+        const button_text = new_state ? "Ocultar información del Sistema Semáforo" : "Ver información detallada del Sistema Semáforo de Riesgo Hidrológico";
+        const chevron_class = new_state ? "fas fa-chevron-up ms-2" : "fas fa-chevron-down ms-2";
+        return [new_state, button_text, chevron_class];
+    }
+    """,
+    [Output("collapse-semaforo-info", "is_open"),
+     Output("semaforo-button-text", "children"),
+     Output("semaforo-chevron", "className")],
+    [Input("toggle-semaforo-info", "n_clicks")],
+    [State("collapse-semaforo-info", "is_open")]
+)
+
+# Clientside callback para la vista de región
+dash.clientside_callback(
+    """
+    function(n_clicks, is_open) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        const new_state = !is_open;
+        const button_text = new_state ? "Ocultar información del Sistema Semáforo" : "Ver información detallada del Sistema Semáforo de Riesgo Hidrológico";
+        const chevron_class = new_state ? "fas fa-chevron-up ms-2" : "fas fa-chevron-down ms-2";
+        return [new_state, button_text, chevron_class];
+    }
+    """,
+    [Output("collapse-semaforo-region-info", "is_open"),
+     Output("semaforo-region-button-text", "children"),
+     Output("semaforo-region-chevron", "className")],
+    [Input("toggle-semaforo-region-info", "n_clicks")],
+    [State("collapse-semaforo-region-info", "is_open")]
+)
+
+# Clientside callback para la guía de lectura de la gráfica
+dash.clientside_callback(
+    """
+    function(n_clicks, is_open) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        const new_state = !is_open;
+        const button_text = new_state ? "Ocultar guía de lectura" : "Ver guía de lectura de la gráfica";
+        const chevron_class = new_state ? "fas fa-chevron-up ms-2" : "fas fa-chevron-down ms-2";
+        return [new_state, button_text, chevron_class];
+    }
+    """,
+    [Output("collapse-guia-grafica", "is_open"),
+     Output("guia-grafica-button-text", "children"),
+     Output("guia-grafica-chevron", "className")],
+    [Input("toggle-guia-grafica", "n_clicks")],
+    [State("collapse-guia-grafica", "is_open")]
+)
+
+# Callback para abrir/cerrar modal del semáforo
+@callback(
+    Output("modal-semaforo", "is_open"),
+    [Input("btn-info-semaforo", "n_clicks")],
+    [State("modal-semaforo", "is_open")],
+    prevent_initial_call=True
+)
+def toggle_modal_semaforo(n_clicks, is_open):
+    """Toggle del modal de información del semáforo"""
+    if n_clicks:
+        return not is_open
+    return is_open
+
+# Callback para abrir/cerrar modal del sistema de humedad
+@callback(
+    Output("modal-humedad", "is_open"),
+    [Input("btn-info-humedad", "n_clicks")],
+    [State("modal-humedad", "is_open")],
+    prevent_initial_call=True
+)
+def toggle_modal_humedad(n_clicks, is_open):
+    """Toggle del modal de información del sistema de humedad"""
+    if n_clicks:
+        return not is_open
+    return is_open
+
+# Callback para abrir/cerrar modal de información de la ficha KPI
+@callback(
+    Output("modal-info-ficha-kpi", "is_open"),
+    [Input("btn-info-ficha-kpi", "n_clicks")],
+    [State("modal-info-ficha-kpi", "is_open")],
+    prevent_initial_call=True
+)
+def toggle_modal_info_ficha_kpi(n_clicks, is_open):
+    """Toggle del modal de información de la ficha KPI"""
+    if n_clicks:
+        return not is_open
+    return is_open
 
 # Callback adicional para cargar datos por defecto al iniciar la página
 # TEMPORALMENTE DESHABILITADO PARA EVITAR CONFLICTOS
@@ -2278,6 +3931,90 @@ def get_participacion_embalses(df_embalses):
     
     return df_final
 
+def get_embalses_completa_para_tabla(region=None, start_date=None, end_date=None):
+    """
+    Función unificada que combina participación y volumen útil en UNA SOLA tabla.
+    Retorna: Embalse, Participación (%), Volumen Útil (%), Riesgo
+    USA LAS FUNCIONES QUE YA FUNCIONAN (get_tabla_regiones_embalses)
+    """
+    print(f"🔥🔥🔥 [INIT] get_embalses_completa_para_tabla LLAMADA: region={region}, dates={start_date} to {end_date}")
+    try:
+        # Usar la función que SÍ FUNCIONA para obtener datos
+        regiones_totales, df_embalses = get_tabla_regiones_embalses(start_date, end_date)
+        
+        print(f"🔥 [AFTER_CALL] get_tabla_regiones_embalses retornó: {len(df_embalses)} embalses")
+        
+        if df_embalses.empty:
+            print(f"⚠️ [RETURN_EMPTY] DataFrame vacío")
+            return []
+        
+        # Filtrar por región si se especificó
+        if region and region != "__ALL_REGIONS__":
+            # ✅ FIX ERROR #3: UPPER en lugar de title
+            region_normalized = region.strip().upper()
+            df_embalses = df_embalses[df_embalses['Región'] == region_normalized]
+            print(f"🔥 [FILTER] Filtrado por región {region_normalized}: {len(df_embalses)} embalses")
+        
+        if df_embalses.empty:
+            print(f"⚠️ [RETURN_EMPTY] No hay embalses en región {region}")
+            return []
+        
+        # Preparar datos para la tabla combinada
+        table_data = []
+        for _, row in df_embalses.iterrows():
+            # Ya tiene Participación (%) calculado por get_tabla_regiones_embalses
+            participacion_val = row.get('Participación (%)', 0)
+            volumen_val = row.get('Volumen Útil (%)', None)
+            
+            # Formatear volumen útil
+            if pd.notna(volumen_val):
+                volumen_formatted = f"{float(volumen_val):.1f}%"
+            else:
+                volumen_formatted = "N/D"
+            
+            # Formatear participación
+            participacion_formatted = f"{float(participacion_val):.2f}%"
+            
+            # Clasificar riesgo usando función existente
+            riesgo = clasificar_riesgo_embalse(participacion_val, volumen_val if pd.notna(volumen_val) else 0)
+            
+            formatted_row = {
+                'Embalse': row['Embalse'],
+                'Participación (%)': participacion_formatted,
+                'Volumen Útil (%)': volumen_formatted,
+                'Riesgo': riesgo
+            }
+            table_data.append(formatted_row)
+        
+        # Ordenar por participación descendente
+        table_data.sort(key=lambda x: float(x['Participación (%)'].replace('%', '')), reverse=True)
+        
+        print(f"✅ [SUCCESS] Tabla generada con {len(table_data)} filas")
+        
+        # Agregar fila TOTAL
+        if table_data:
+            # Calcular promedio de volumen útil
+            volumenes = [float(row['Volumen Útil (%)'].replace('%', '')) for row in table_data if row['Volumen Útil (%)'] != 'N/D']
+            avg_volume = sum(volumenes) / len(volumenes) if volumenes else None
+            
+            total_row = {
+                'Embalse': 'TOTAL',
+                'Participación (%)': '100.00%',
+                'Volumen Útil (%)': f"{avg_volume:.1f}%" if avg_volume is not None else "N/D",
+                'Riesgo': '⚡'
+            }
+            table_data.append(total_row)
+        
+        print(f"🎯 [FINAL] Total final: {len(table_data)} filas (incluye TOTAL)")
+        return table_data
+        
+    except Exception as e:
+        print(f"❌ [ERROR] Exception: {e}")
+        logger.error(f"❌ Error en get_embalses_completa_para_tabla: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
 # --- Función para clasificar riesgo según participación y volumen útil ---
 def clasificar_riesgo_embalse(participacion, volumen_util):
     """
@@ -2288,43 +4025,43 @@ def clasificar_riesgo_embalse(participacion, volumen_util):
         volumen_util (float): Volumen útil disponible (0-100)
     
     Returns:
-        str: 'high', 'medium', 'low'
+        str: '🟢' (bajo riesgo), '🟡' (riesgo medio), '🔴' (alto riesgo)
     """
     # MATRIZ DE RIESGO CORREGIDA: Combinar participación Y volumen
     
     # Caso 1: Embalses muy importantes (participación >= 15%)
     if participacion >= 15:
         if volumen_util < 30:
-            return 'high'  # Embalse importante con poco volumen = ALTO RIESGO
+            return '🔴'  # Embalse importante con poco volumen = ALTO RIESGO
         elif volumen_util < 70:
-            return 'medium'  # Embalse importante con volumen moderado = RIESGO MEDIO
+            return '🟡'  # Embalse importante con volumen moderado = RIESGO MEDIO
         else:
-            return 'low'  # Embalse importante con buen volumen = BAJO RIESGO
+            return '🟢'  # Embalse importante con buen volumen = BAJO RIESGO
     
     # Caso 2: Embalses importantes (participación >= 10%)
     elif participacion >= 10:
         if volumen_util < 20:
-            return 'high'  # Embalse importante con muy poco volumen = ALTO RIESGO
+            return '🔴'  # Embalse importante con muy poco volumen = ALTO RIESGO
         elif volumen_util < 60:
-            return 'medium'  # Embalse importante con volumen bajo-moderado = RIESGO MEDIO
+            return '🟡'  # Embalse importante con volumen bajo-moderado = RIESGO MEDIO
         else:
-            return 'low'  # Embalse importante con buen volumen = BAJO RIESGO
+            return '🟢'  # Embalse importante con buen volumen = BAJO RIESGO
     
     # Caso 3: Embalses moderadamente importantes (participación >= 5%)
     elif participacion >= 5:
         if volumen_util < 15:
-            return 'high'  # Embalse moderado con muy poco volumen = ALTO RIESGO
+            return '🔴'  # Embalse moderado con muy poco volumen = ALTO RIESGO
         elif volumen_util < 50:
-            return 'medium'  # Embalse moderado con volumen bajo = RIESGO MEDIO
+            return '🟡'  # Embalse moderado con volumen bajo = RIESGO MEDIO
         else:
-            return 'low'  # Embalse moderado con volumen adecuado = BAJO RIESGO
+            return '🟢'  # Embalse moderado con volumen adecuado = BAJO RIESGO
     
     # Caso 4: Embalses menos importantes (participación < 5%)
     else:
         if volumen_util < 25:
-            return 'medium'  # Embalse pequeño con poco volumen = RIESGO MEDIO
+            return '🟡'  # Embalse pequeño con poco volumen = RIESGO MEDIO
         else:
-            return 'low'  # Embalse pequeño con volumen adecuado = BAJO RIESGO
+            return '🟢'  # Embalse pequeño con volumen adecuado = BAJO RIESGO
 
 def obtener_estilo_riesgo(nivel_riesgo):
     """
@@ -2411,11 +4148,23 @@ def agregar_columna_riesgo_a_tabla(df_embalses):
         if row['Embalse'] != 'TOTAL':
             participacion = row.get('Participación (%)', 0)
             
-            # Extraer valor numérico del volumen útil (puede estar como "45.2%" o 45.2)
+            # Extraer valor numérico del volumen útil (puede estar como "45.2%", 45.2, o None)
             volumen_util = row.get('Volumen Útil (%)', 0)
-            if isinstance(volumen_util, str):
+            
+            # Manejar diferentes tipos de datos
+            if volumen_util is None or (isinstance(volumen_util, str) and volumen_util == 'N/D'):
+                volumen_util = 0
+            elif isinstance(volumen_util, str):
                 # Si es string como "45.2%", extraer el número
-                volumen_util = float(volumen_util.replace('%', '').replace(',', '.')) if volumen_util != 'N/D' else 0
+                try:
+                    volumen_util = float(volumen_util.replace('%', '').replace(',', '.').strip())
+                except (ValueError, AttributeError):
+                    volumen_util = 0
+            elif pd.isna(volumen_util):
+                volumen_util = 0
+            else:
+                # Ya es un número, asegurarse de que sea float
+                volumen_util = float(volumen_util)
             
             # Clasificar riesgo
             nivel_riesgo = clasificar_riesgo_embalse(participacion, volumen_util)
@@ -2449,8 +4198,19 @@ def generar_estilos_condicionales_riesgo(df_con_riesgo):
             
             # Extraer valor numérico del volumen útil
             volumen_util = row.get('Volumen Útil (%)', 0)
-            if isinstance(volumen_util, str):
-                volumen_util = float(volumen_util.replace('%', '').replace(',', '.')) if volumen_util != 'N/D' else 0
+            
+            # Manejar diferentes tipos de datos
+            if volumen_util is None or (isinstance(volumen_util, str) and volumen_util == 'N/D'):
+                volumen_util = 0
+            elif isinstance(volumen_util, str):
+                try:
+                    volumen_util = float(volumen_util.replace('%', '').replace(',', '.').strip())
+                except (ValueError, AttributeError):
+                    volumen_util = 0
+            elif pd.isna(volumen_util):
+                volumen_util = 0
+            else:
+                volumen_util = float(volumen_util)
             
             # Clasificar riesgo
             nivel_riesgo = clasificar_riesgo_embalse(participacion, volumen_util)
@@ -2515,117 +4275,137 @@ def get_tabla_regiones_embalses(start_date=None, end_date=None):
     Crea una tabla jerárquica que muestra primero las regiones y permite expandir para ver embalses.
     """
     try:
-        # Obtener todos los embalses con su información de región
-        # Usar fecha actual para obtener listado más reciente
+        objetoAPI = get_objetoAPI()
+        
+        # Obtener información de embalses desde API XM (fuente de verdad para regiones)
         today = datetime.now().strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        embalses_info = objetoAPI.request_data('ListadoEmbalses','Sistema', yesterday, today)
-        embalses_info['Values_Name'] = embalses_info['Values_Name'].str.strip().str.upper()
-        embalses_info['Values_HydroRegion'] = embalses_info['Values_HydroRegion'].str.strip().str.title()
+        embalses_info, warning = obtener_datos_inteligente('ListadoEmbalses','Sistema', yesterday, today)
+        
+        # ✅ NORMALIZAR usando funciones unificadas
+        embalses_info['Values_Name'] = normalizar_codigo(embalses_info['Values_Name'])
+        embalses_info['Values_HydroRegion'] = normalizar_region(embalses_info['Values_HydroRegion'])
+        
+        # CREAR MAPEO CÓDIGO → REGIÓN (fuente única de verdad)
+        embalse_region_map = dict(zip(embalses_info['Values_Name'], embalses_info['Values_HydroRegion']))
+        logger.debug(f"Mapeo embalse-región creado: {len(embalse_region_map)} embalses")
 
-        # Usar solo la fecha final para todos los cálculos (como en las fichas)
+        # Obtener fecha con datos disponibles
         fecha_solicitada = end_date if end_date else start_date
-
-        # Función para encontrar la fecha más reciente con datos completos (al menos 20 embalses)
-        def encontrar_fecha_con_datos(fecha_inicial):
-            for dias_atras in range(7):  # Buscar hasta 7 días atrás
-                fecha_prueba = (datetime.strptime(fecha_inicial, '%Y-%m-%d') - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-                df_vol_test = objetoAPI.request_data('VoluUtilDiarEner', 'Embalse', fecha_prueba, fecha_prueba)
-                df_cap_test = objetoAPI.request_data('CapaUtilDiarEner', 'Embalse', fecha_prueba, fecha_prueba)
-                
-                # Buscar fecha con datos más completos (al menos 20 embalses con volumen)
-                if (df_vol_test is not None and not df_vol_test.empty and 
-                    df_cap_test is not None and not df_cap_test.empty and
-                    len(df_vol_test) >= 20):
-                    print(f"📅 [DEBUG] Usando fecha con datos disponibles para cálculo de embalses: {fecha_prueba} ({len(df_vol_test)} embalses con volumen)")
-                    return fecha_prueba
-            
-            # Si no encontramos fecha con datos completos, usar cualquier fecha con datos
-            for dias_atras in range(7):
-                fecha_prueba = (datetime.strptime(fecha_inicial, '%Y-%m-%d') - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-                df_vol_test = objetoAPI.request_data('VoluUtilDiarEner', 'Embalse', fecha_prueba, fecha_prueba)
-                df_cap_test = objetoAPI.request_data('CapaUtilDiarEner', 'Embalse', fecha_prueba, fecha_prueba)
-                if (df_vol_test is not None and not df_vol_test.empty and 
-                    df_cap_test is not None and not df_cap_test.empty):
-                    print(f"📅 [DEBUG] Usando fecha con datos parciales para cálculo de embalses: {fecha_prueba} ({len(df_vol_test)} embalses con volumen)")
-                    return fecha_prueba
-            return None
-
-        # Encontrar fecha con datos disponibles
-        fecha = encontrar_fecha_con_datos(fecha_solicitada if fecha_solicitada else today)
+        today = datetime.now().strftime('%Y-%m-%d')
+        fecha_obj = datetime.strptime(fecha_solicitada if fecha_solicitada else today, '%Y-%m-%d').date()
+        df_vol_test, fecha_encontrada = obtener_datos_desde_sqlite('VoluUtilDiarEner', 'Embalse', fecha_obj)
+        df_cap_test, _ = obtener_datos_desde_sqlite('CapaUtilDiarEner', 'Embalse', fecha_obj)
+        
+        if fecha_encontrada is None or df_vol_test is None or df_cap_test is None:
+            logger.warning("No se encontraron datos en ninguna fecha reciente")
+            return pd.DataFrame(), pd.DataFrame()
+        
+        fecha = fecha_encontrada.strftime('%Y-%m-%d')
+        logger.debug(f"[DEBUG] Usando fecha con datos disponibles para cálculo de embalses: {fecha} ({len(df_vol_test)} embalses con volumen)")
 
         if not fecha:
-            print("❌ No se encontraron datos en ninguna fecha reciente")
+            logger.warning("No se encontraron datos en ninguna fecha reciente")
             return pd.DataFrame(), pd.DataFrame()
 
         # DataFrame detallado de embalses usando la fecha con datos
-        print(f"🔧 Construyendo tabla de embalses para fecha: {fecha}")
+        logger.debug(f"Construyendo tabla de embalses para fecha: {fecha}")
         embalses_detalle = []
 
-        # Obtener datos directamente de la API para todos los embalses de una vez
-        df_vol = objetoAPI.request_data('VoluUtilDiarEner', 'Embalse', fecha, fecha)
-        df_cap = objetoAPI.request_data('CapaUtilDiarEner', 'Embalse', fecha, fecha)
+        # Consultar datos de volumen y capacidad para la fecha encontrada
+        df_vol, _ = obtener_datos_desde_sqlite('VoluUtilDiarEner', 'Embalse', fecha_encontrada)
+        df_cap, _ = obtener_datos_desde_sqlite('CapaUtilDiarEner', 'Embalse', fecha_encontrada)
 
-        # Convertir de Wh a GWh
-        df_vol['Value_GWh'] = df_vol['Value'] / 1e9
-        df_cap['Value_GWh'] = df_cap['Value'] / 1e9
+        # ✅ NO CONVERTIR: obtener_datos_inteligente ya devuelve valores en GWh cuando viene de SQLite
+        # Los datos de la API XM vienen en Wh, pero se convierten en obtener_datos_inteligente
+        # Por lo tanto, 'Value' ya está en GWh aquí
+        df_vol['Value_GWh'] = df_vol['Value']
+        df_cap['Value_GWh'] = df_cap['Value']
 
-        # Combinar con información de regiones
+        # ✅ SIEMPRE incluir TODOS los embalses del listado maestro (25 embalses)
+        # Si no tienen datos, mostrar 0 o N/D
         for _, embalse_info in embalses_info.iterrows():
             embalse_name = embalse_info['Values_Name']
             region_name = embalse_info['Values_HydroRegion']
 
             # Buscar datos de este embalse
-            vol_data = df_vol[df_vol['Name'] == embalse_name]
-            cap_data = df_cap[df_cap['Name'] == embalse_name]
+            # ✅ FIX ERROR #1: obtener_datos_desde_sqlite retorna columna 'Embalse', NO 'Name'
+            vol_data = df_vol[df_vol['Embalse'] == embalse_name]
+            cap_data = df_cap[df_cap['Embalse'] == embalse_name]
 
+            # ✅ CAMBIO CRÍTICO: Incluir embalse aunque NO tenga datos
             if not vol_data.empty and not cap_data.empty:
                 vol_gwh = vol_data['Value_GWh'].iloc[0]
                 cap_gwh = cap_data['Value_GWh'].iloc[0]
                 pct = (vol_gwh / cap_gwh * 100) if cap_gwh > 0 else 0
+            else:
+                # Si no tiene datos, usar 0 para permitir su visualización
+                vol_gwh = 0.0
+                cap_gwh = 0.0
+                pct = 0.0
+                logger.debug(f"⚠️ Embalse {embalse_name} sin datos - incluido con valores 0")
 
-                embalses_detalle.append({
-                    'Embalse': embalse_name,
-                    'Región': region_name,
-                    'VoluUtilDiarEner (GWh)': vol_gwh,
-                    'CapaUtilDiarEner (GWh)': cap_gwh,
-                    'Volumen Útil (%)': pct
-                })
+            embalses_detalle.append({
+                'Embalse': embalse_name,
+                'Región': region_name,
+                'VoluUtilDiarEner (GWh)': vol_gwh,
+                'CapaUtilDiarEner (GWh)': cap_gwh,
+                'Volumen Útil (%)': pct
+            })
 
         df_embalses = pd.DataFrame(embalses_detalle)
-        print(f"✅ DataFrame de embalses creado con {len(df_embalses)} embalses")
-        print("[DEPURACIÓN] Primeras filas df_embalses:")
-        print(df_embalses[['Región', 'VoluUtilDiarEner (GWh)', 'CapaUtilDiarEner (GWh)']].head(10))
+        
+        # ✅ FIX #1B: Eliminar duplicados (API puede retornar mismo embalse múltiples veces)
+        if not df_embalses.empty:
+            registros_antes = len(df_embalses)
+            df_embalses = df_embalses.drop_duplicates(subset=['Embalse'], keep='first')
+            registros_despues = len(df_embalses)
+            if registros_antes != registros_despues:
+                logger.info(f"🔍 Eliminados {registros_antes - registros_despues} embalses duplicados (quedan {registros_despues} únicos)")
+        
+# REMOVED DEBUG:         logger.info(f"DataFrame de embalses creado con {len(df_embalses)} embalses")
+        logger.debug("Primeras filas df_embalses:")
+        logger.debug(f"\n{df_embalses[['Región', 'VoluUtilDiarEner (GWh)', 'CapaUtilDiarEner (GWh)']].head(10)}")
 
         # Procesar datos si tenemos embalses
         if not df_embalses.empty:
-            # Calcular participación porcentual dentro de cada región (según la fórmula solicitada)
+            # ✅ FIX ERROR #1: Calcular participación a nivel NACIONAL (no por región)
+            # Esto evita embalses duplicados y garantiza que la suma sea 100% a nivel nacional
             df_embalses['Capacidad_GWh_Internal'] = df_embalses['CapaUtilDiarEner (GWh)']
 
-            # Calcular participación por región
-            for region in df_embalses['Región'].unique():
-                mask = df_embalses['Región'] == region
-                total_cap_region = df_embalses.loc[mask, 'Capacidad_GWh_Internal'].sum()
-                if total_cap_region > 0:
-                    df_embalses.loc[mask, 'Participación (%)'] = (
-                        df_embalses.loc[mask, 'Capacidad_GWh_Internal'] / total_cap_region * 100
-                    ).round(2)
-                else:
-                    df_embalses.loc[mask, 'Participación (%)'] = 0.0
+            # Calcular participación NACIONAL (todos los embalses suman 100%)
+            total_cap_nacional = df_embalses['Capacidad_GWh_Internal'].sum()
+            if total_cap_nacional > 0:
+                df_embalses['Participación (%)'] = (
+                    df_embalses['Capacidad_GWh_Internal'] / total_cap_nacional * 100
+                ).round(2)
+            else:
+                df_embalses['Participación (%)'] = 0.0
 
-            # Crear tabla resumen por región usando la función unificada para consistencia total con las fichas
+            # Crear tabla resumen por región usando los datos YA OBTENIDOS (no llamar a función externa)
             regiones_resumen = []
             regiones_unicas = [r for r in df_embalses['Región'].unique() if r and r.strip() and r.strip().lower() not in ['sin nacional', 'rios estimados', '']]
-            print(f"🔧 DEBUG: Regiones encontradas antes del filtro: {sorted(df_embalses['Región'].unique())}")
-            print(f"🔧 DEBUG: Regiones después del filtro: {sorted(regiones_unicas)}")
+            
             for region in regiones_unicas:
-                resultado = calcular_volumen_util_unificado(fecha, region=region)
-                if resultado:
+                # Filtrar embalses de esta región
+                embalses_region = df_embalses[df_embalses['Región'] == region]
+                
+                if not embalses_region.empty:
+                    # Calcular totales directamente de los datos que ya tenemos
+                    total_capacidad = embalses_region['CapaUtilDiarEner (GWh)'].sum()
+                    total_volumen = embalses_region['VoluUtilDiarEner (GWh)'].sum()
+                    
+                    # Calcular porcentaje
+                    if total_capacidad > 0:
+                        porcentaje_volumen = (total_volumen / total_capacidad) * 100
+                    else:
+                        porcentaje_volumen = 0.0
+                    
                     regiones_resumen.append({
                         'Región': region,
-                        'Total (GWh)': round(resultado['capacidad_gwh'], 2),
-                        'Volumen Util (GWh)': round(resultado['volumen_gwh'], 2),
-                        'Volumen Útil (%)': float(f"{resultado['porcentaje']:.1f}")
+                        'Total (GWh)': round(total_capacidad, 2),
+                        'Volumen Util (GWh)': round(total_volumen, 2),
+                        'Volumen Útil (%)': round(porcentaje_volumen, 1)
                     })
                 else:
                     regiones_resumen.append({
@@ -2634,12 +4414,26 @@ def get_tabla_regiones_embalses(start_date=None, end_date=None):
                         'Volumen Util (GWh)': 0.00,
                         'Volumen Útil (%)': 0.00
                     })
+            
             regiones_totales = pd.DataFrame(regiones_resumen)
-            print(f"✅ Tabla de regiones creada con {len(regiones_totales)} regiones (usando función unificada)")
+            
+            # 🆕 Calcular participación porcentual de cada región respecto al total nacional
+            # La participación se basa en la capacidad útil total de cada región
+            total_capacidad_nacional = regiones_totales['Total (GWh)'].sum()
+            
+            if total_capacidad_nacional > 0:
+                regiones_totales['Participación (%)'] = (
+                    regiones_totales['Total (GWh)'] / total_capacidad_nacional * 100
+                ).round(2)
+            else:
+                regiones_totales['Participación (%)'] = 0.0
+            
+            logger.debug(f"Tabla de regiones creada con {len(regiones_totales)} regiones")
+            logger.debug(f"Participación por región: {regiones_totales[['Región', 'Participación (%)']].to_dict('records')}")
         else:
             # Si no hay datos, crear DataFrame vacío con estructura correcta
-            regiones_totales = pd.DataFrame(columns=['Región', 'Total (GWh)', 'Volumen Util (GWh)', 'Volumen Útil (%)'])
-            print("⚠️ No se pudieron obtener datos de embalses para las fechas disponibles")
+            regiones_totales = pd.DataFrame(columns=['Región', 'Total (GWh)', 'Volumen Util (GWh)', 'Volumen Útil (%)', 'Participación (%)'])
+            logger.warning("No se pudieron obtener datos de embalses para las fechas disponibles")
 
         # (No agregar fila TOTAL SISTEMA aquí, se agregará manualmente en la tabla de participación)
         return regiones_totales, df_embalses
@@ -2880,8 +4674,7 @@ def create_collapsible_regions_table(start_date=None, end_date=None):
             dbc.Card([
                 dbc.CardBody([
                     html.Div([
-                        html.I(className="bi bi-info-circle-fill me-2", style={"color": "#0d6efd"}),
-                        html.Strong("⚡ Capacidad Útil Diaria de Energía por Región Hidrológica", style={"fontSize": "1.2rem"})
+                        html.Strong("Capacidad Útil Diaria de Energía por Región Hidrológica", style={"fontSize": "1.2rem"})
                     ], className="d-flex align-items-center mb-2"),
                     html.P([
                         "Haz clic en cualquier región para expandir y ver sus tablas detalladas. ",
@@ -2966,7 +4759,7 @@ def get_embalses_by_region(region, df_completo):
         resultado['Tipo'] = 'embalse'
         return resultado
     else:
-        print(f"Warning: Columnas disponibles en df_completo: {embalses_region.columns.tolist()}")
+        logger.warning(f"Columnas disponibles en df_completo: {embalses_region.columns.tolist()}")
         return pd.DataFrame()
 def get_embalses_data_for_table(region=None, start_date=None, end_date=None):
     """
@@ -2976,6 +4769,9 @@ def get_embalses_data_for_table(region=None, start_date=None, end_date=None):
     try:
         # Obtener datos frescos con todas las columnas para cálculos
         df_fresh = get_embalses_capacidad(region, start_date, end_date)
+        
+        # 🔍 LOG: Datos obtenidos
+        logger.info(f"🔍 [get_embalses_data_for_table] Región={region}, Registros={len(df_fresh)}")
         
         if df_fresh.empty:
             return []
@@ -2988,9 +4784,25 @@ def get_embalses_data_for_table(region=None, start_date=None, end_date=None):
         
         for _, row in df_con_riesgo.iterrows():
             if row['Embalse'] != 'TOTAL':  # Procesar solo embalses, no TOTAL
+                volumen_val = row['Volumen Útil (%)']
+                
+                # 🔍 LOG CRÍTICO: Valor RAW de Volumen Útil
+                logger.info(f"🔍 [TABLE_DATA] {row['Embalse']}: Volumen RAW={volumen_val} (tipo={type(volumen_val).__name__})")
+                
+                # Solo formatear si es numérico, no reformatear strings
+                if isinstance(volumen_val, str):
+                    volumen_formatted = volumen_val  # Ya está formateado
+                elif pd.notna(volumen_val) and isinstance(volumen_val, (int, float)):
+                    volumen_formatted = f"{float(volumen_val):.1f}%"
+                else:
+                    volumen_formatted = "N/D"
+                
+                # 🔍 LOG CRÍTICO: Valor formateado final
+                logger.info(f"🔍 [TABLE_DATA] {row['Embalse']}: Volumen FORMATTED={volumen_formatted}")
+                
                 formatted_row = {
                     'Embalse': row['Embalse'],
-                    'Volumen Útil (%)': f"{row['Volumen Útil (%)']:.1f}%" if pd.notna(row['Volumen Útil (%)']) and not isinstance(row['Volumen Útil (%)'], str) else (row['Volumen Útil (%)'] if isinstance(row['Volumen Útil (%)'], str) else "N/D"),
+                    'Volumen Útil (%)': volumen_formatted,
                     'Riesgo': row['Riesgo']
                 }
                 table_data.append(formatted_row)
@@ -3007,11 +4819,11 @@ def get_embalses_data_for_table(region=None, start_date=None, end_date=None):
         }
         table_data.append(total_row)
         
-        print(f"✅ DATOS TABLA PREPARADOS: {len(table_data)} filas con columna de riesgo")
+# REMOVED DEBUG:         logger.info(f"DATOS TABLA PREPARADOS: {len(table_data)} filas con columna de riesgo")
         return table_data
         
     except Exception as e:
-        print(f"❌ Error en get_embalses_data_for_table: {e}")
+# REMOVED DEBUG:         print(f"❌ Error en get_embalses_data_for_table: {e}")
         return []
 
 def get_embalses_capacidad(region=None, start_date=None, end_date=None):
@@ -3024,7 +4836,7 @@ def get_embalses_capacidad(region=None, start_date=None, end_date=None):
     IMPORTANTE: Usa solo end_date (fecha final) para los cálculos de volumen útil.
     """
     try:
-        print(f"🔍 DEBUG CAPACIDAD: Iniciando con región={region}, fechas={start_date} a {end_date}")
+        objetoAPI = get_objetoAPI()
         
         # Si no se proporcionan fechas, usar fecha actual
         if not start_date or not end_date:
@@ -3035,99 +4847,132 @@ def get_embalses_capacidad(region=None, start_date=None, end_date=None):
         # USAR SOLO LA FECHA FINAL para los cálculos de volumen útil
         fecha_para_calculo = end_date
         
-        # Obtener datos de capacidad útil diaria de energía (para determinar qué embalses incluir)
-        df_capacidad = objetoAPI.request_data('CapaUtilDiarEner','Embalse', fecha_para_calculo, fecha_para_calculo)
+        # Consultar datos de capacidad
+        df_capacidad, warning = obtener_datos_inteligente('CapaUtilDiarEner','Embalse', fecha_para_calculo, fecha_para_calculo)
         print(f"� DEBUG CAPACIDAD: Datos de capacidad obtenidos: {len(df_capacidad) if df_capacidad is not None else 0} registros")
         
         # Si no hay datos para la fecha exacta, buscar fecha anterior con datos (igual que la función unificada)
         if df_capacidad is None or df_capacidad.empty:
-            print("🔧 DEBUG CAPACIDAD: Buscando fecha anterior con datos...")
-            for dias_atras in range(1, 8):  # Buscar hasta 7 días atrás
-                fecha_prueba = (datetime.strptime(fecha_para_calculo, '%Y-%m-%d') - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-                df_capacidad = objetoAPI.request_data('CapaUtilDiarEner','Embalse', fecha_prueba, fecha_prueba)
-                if df_capacidad is not None and not df_capacidad.empty:
-                    print(f"🔧 DEBUG CAPACIDAD: Usando fecha con datos: {fecha_prueba}")
-                    fecha_para_calculo = fecha_prueba
-                    break
-            else:
+            logger.debug("DEBUG CAPACIDAD: Buscando fecha anterior con datos...")
+            # Usar helper para buscar fecha con datos disponibles
+            fecha_obj = datetime.strptime(fecha_para_calculo, '%Y-%m-%d').date()
+            df_capacidad, fecha_encontrada = obtener_datos_desde_sqlite('CapaUtilDiarEner', 'Embalse', fecha_obj)
+            
+            if fecha_encontrada is None or df_capacidad is None:
                 print("❌ DEBUG CAPACIDAD: No se encontraron datos en los últimos 7 días")
                 return pd.DataFrame()
+            
+            fecha_para_calculo = fecha_encontrada.strftime('%Y-%m-%d')
+            logger.debug(f"DEBUG CAPACIDAD: Usando fecha con datos: {fecha_para_calculo}")
         
-        print(f"🔧 DEBUG CAPACIDAD: Datos finales obtenidos: {len(df_capacidad)} registros")
+        logger.debug(f"DEBUG CAPACIDAD: Datos finales obtenidos: {len(df_capacidad)} registros")
         
         if 'Name' in df_capacidad.columns and 'Value' in df_capacidad.columns:
-            # Obtener información de región para embalses
+            # Obtener información de embalses desde API XM (fuente de verdad)
             today = datetime.now().strftime('%Y-%m-%d')
             yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-            embalses_info = objetoAPI.request_data('ListadoEmbalses','Sistema', yesterday, today)
-            embalses_info['Values_Name'] = embalses_info['Values_Name'].str.strip().str.upper()
-            embalses_info['Values_HydroRegion'] = embalses_info['Values_HydroRegion'].str.strip().str.title()
+            embalses_info, warning = obtener_datos_inteligente('ListadoEmbalses','Sistema', yesterday, today)
+            
+            # ✅ NORMALIZAR usando funciones unificadas
+            embalses_info['Values_Name'] = normalizar_codigo(embalses_info['Values_Name'])
+            embalses_info['Values_HydroRegion'] = normalizar_region(embalses_info['Values_HydroRegion'])
             embalse_region_dict = dict(zip(embalses_info['Values_Name'], embalses_info['Values_HydroRegion']))
             
-            print(f"🔍 DEBUG CAPACIDAD: Mapeado región-embalse: {len(embalse_region_dict)} embalses")
-            print(f"🔍 DEBUG CAPACIDAD: Regiones disponibles: {set(embalse_region_dict.values())}")
+            # ✅ FIX: obtener_datos_desde_sqlite retorna 'Embalse', NO 'Name'
+            # NORMALIZAR códigos en df_capacidad ANTES de mapear
+            df_capacidad['Name_Upper'] = normalizar_codigo(df_capacidad['Embalse'])
+            logger.debug(f"Códigos normalizados: {df_capacidad['Name_Upper'].unique()[:5].tolist()}")
+            
+# REMOVED DEBUG:             logger.debug(f"DEBUG CAPACIDAD: Mapeado región-embalse: {len(embalse_region_dict)} embalses")
+# REMOVED DEBUG:             logger.debug(f"DEBUG CAPACIDAD: Regiones disponibles: {set(embalse_region_dict.values())}")
             if region:
                 embalses_en_region = [e for e, r in embalse_region_dict.items() if r == region]
-                print(f"🔍 DEBUG CAPACIDAD: Embalses en región {region}: {embalses_en_region}")
+# REMOVED DEBUG:                 logger.debug(f"DEBUG CAPACIDAD: Embalses en región {region}: {embalses_en_region}")
             
+            # ✅ FIX: Usar 'Embalse' en lugar de 'Name'
             # Solo incluir embalses que tienen datos de capacidad
-            embalses_con_datos = set(df_capacidad['Name'].unique())
+            embalses_con_datos = set(df_capacidad['Embalse'].unique())
             embalse_region_dict_filtrado = {
                 embalse: region_emb for embalse, region_emb in embalse_region_dict.items() 
                 if embalse in embalses_con_datos
             }
-            print(f"🔍 DEBUG CAPACIDAD: Embalses con datos de capacidad: {len(embalses_con_datos)}")
-            print(f"🔍 DEBUG CAPACIDAD: Embalses filtrados: {len(embalse_region_dict_filtrado)}")
+# REMOVED DEBUG:             logger.debug(f"DEBUG CAPACIDAD: Embalses con datos de capacidad: {len(embalses_con_datos)}")
+# REMOVED DEBUG:             logger.debug(f"DEBUG CAPACIDAD: Embalses filtrados: {len(embalse_region_dict_filtrado)}")
             
-            # Procesar datos de capacidad
-            df_capacidad['Region'] = df_capacidad['Name'].map(embalse_region_dict_filtrado)
+            # Procesar datos de capacidad usando código normalizado
+            df_capacidad['Region'] = df_capacidad['Name_Upper'].map(embalse_region_dict)
+            logger.debug(f"Regiones mapeadas: {df_capacidad['Region'].value_counts().to_dict()}")
+            
             if region:
-                region_normalized = region.strip().title()
+                # ✅ FIX ERROR #3: UPPER en lugar de title
+                region_normalized = region.strip().upper()
                 antes_filtro = len(df_capacidad)
                 df_capacidad = df_capacidad[df_capacidad['Region'] == region_normalized]
-                print(f"🔍 DEBUG CAPACIDAD: Filtro por región '{region}' -> '{region_normalized}' - antes: {antes_filtro}, después: {len(df_capacidad)}")
+# REMOVED DEBUG:                 logger.debug(f"DEBUG CAPACIDAD: Filtro por región '{region}' -> '{region_normalized}' - antes: {antes_filtro}, después: {len(df_capacidad)}")
             
-            # CORRECCIÓN: Convertir de Wh a GWh (dividir por 1e9)
-            df_capacidad['Value'] = df_capacidad['Value'] / 1e9
+            # ✅ NO CONVERTIR: obtener_datos_inteligente ya devuelve valores en GWh cuando viene de SQLite
+            # Los datos de la API XM vienen en Wh, pero obtener_datos_inteligente los convierte automáticamente
+            df_capacidad['Value_GWh'] = df_capacidad['Value']
             
-            df_capacidad_grouped = df_capacidad.groupby('Name')['Value'].sum().reset_index()
-            df_capacidad_grouped = df_capacidad_grouped.rename(columns={'Name': 'Embalse', 'Value': 'Capacidad_GWh_Internal'})
+            df_capacidad_grouped = df_capacidad.groupby('Name')['Value_GWh'].sum().reset_index()
+            df_capacidad_grouped = df_capacidad_grouped.rename(columns={'Name': 'Embalse', 'Value_GWh': 'Capacidad_GWh_Internal'})
             
-            print(f"🔧 DEBUG CAPACIDAD CORREGIDA: Valores después de conversión a GWh:")
+            logger.debug(f"DEBUG CAPACIDAD CORREGIDA: Valores después de conversión a GWh:")
             print(df_capacidad_grouped.head().to_string())
             
-            # NUEVO: Calcular porcentaje de volumen útil usando la función unificada
-            df_final = df_capacidad_grouped.copy()
-            volumen_util_lista = []
+            # Obtener datos de volumen útil
+            df_volumen, warning_vol = obtener_datos_inteligente('VoluUtilDiarEner','Embalse', fecha_para_calculo, fecha_para_calculo)
             
-            for _, row in df_capacidad_grouped.iterrows():
-                embalse_nombre = row['Embalse']
-                # Usar la función unificada para calcular el porcentaje del embalse individual
-                resultado = calcular_volumen_util_unificado(fecha_para_calculo, embalse=embalse_nombre)
-                if resultado and resultado['porcentaje'] is not None:
-                    volumen_util_lista.append(resultado['porcentaje'])
-                    print(f"🔧 Embalse {embalse_nombre}: {resultado['porcentaje']:.1f}%")
-                else:
-                    volumen_util_lista.append(None)
-                    print(f"🔧 Embalse {embalse_nombre}: Sin datos de volumen útil")
+            if df_volumen is None or df_volumen.empty:
+                # Buscar fecha anterior con datos
+                fecha_obj = datetime.strptime(fecha_para_calculo, '%Y-%m-%d').date()
+                df_volumen, fecha_vol = obtener_datos_desde_sqlite('VoluUtilDiarEner', 'Embalse', fecha_obj)
+                if fecha_vol:
+                    fecha_para_calculo_vol = fecha_vol.strftime('%Y-%m-%d')
+                    logger.debug(f"Usando fecha alternativa para volumen: {fecha_para_calculo_vol}")
+            
+            # Procesar datos de volumen
+            df_final = df_capacidad_grouped.copy()
+            
+            if df_volumen is not None and not df_volumen.empty and 'Name' in df_volumen.columns and 'Value' in df_volumen.columns:
+                # ✅ NO CONVERTIR: obtener_datos_inteligente ya devuelve valores en GWh
+                df_volumen['Value_GWh'] = df_volumen['Value']
+                df_volumen_grouped = df_volumen.groupby('Name')['Value_GWh'].sum().reset_index()
+                df_volumen_grouped = df_volumen_grouped.rename(columns={'Name': 'Embalse'})
+                
+                # Merge con capacidad
+                df_final = df_final.merge(df_volumen_grouped, on='Embalse', how='left')
+                
+                # Calcular porcentaje: (Volumen / Capacidad) * 100 - IGUAL que en get_tabla_regiones_embalses
+                df_final['Volumen Útil (%)'] = df_final.apply(
+                    lambda row: round((row['Value_GWh'] / row['Capacidad_GWh_Internal'] * 100), 1)
+                    if pd.notna(row.get('Value_GWh')) and row['Capacidad_GWh_Internal'] > 0 
+                    else None,
+                    axis=1
+                )
+                
+                # Limpiar columna temporal
+                df_final = df_final.drop(columns=['Value_GWh'])
+                
+                logger.info(f"✅ Volumen útil calculado: {df_final['Volumen Útil (%)'].notna().sum()}/{len(df_final)} embalses")
+            else:
+                df_final['Volumen Útil (%)'] = None
+                logger.warning("⚠️ No hay datos de volumen útil disponibles")
 
-            df_final['Volumen Útil (%)'] = volumen_util_lista
-
-            # Si todos los valores de volumen útil son None, mostrar 'N/D' en la tabla
-            if df_final['Volumen Útil (%)'].isnull().all():
-                df_final['Volumen Útil (%)'] = 'N/D'
-
-            print(f"📊 Columnas finales: {list(df_final.columns)}")
-            print(f"📊 Primeras filas del DataFrame final:")
+            # IMPORTANTE: NO formatear aquí, dejar valores numéricos (o None)
+            # El formateo se hace solo una vez en las funciones que crean las tablas
+            
+# REMOVED DEBUG:             logger.debug(f"Columnas finales: {list(df_final.columns)}")
+# REMOVED DEBUG:             logger.debug(f"Primeras filas del DataFrame final:")
             print(df_final.head())
 
-            print(f"🔍 DEBUG CAPACIDAD: Retornando DataFrame con {len(df_final)} filas")
+# REMOVED DEBUG:             logger.debug(f"DEBUG CAPACIDAD: Retornando DataFrame con {len(df_final)} filas")
             return df_final.sort_values('Embalse')
         else:
             # Si no hay datos de capacidad, mostrar DataFrame vacío pero con columnas correctas
             return pd.DataFrame(columns=['Embalse', 'Capacidad_GWh_Internal', 'Volumen Útil (%)'])
     except Exception as e:
-        print(f"Error obteniendo datos de embalses: {e}")
+        logger.error(f"Error obteniendo datos de embalses: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
         return pd.DataFrame(columns=['Embalse', 'Capacidad_GWh_Internal', 'Volumen Útil (%)'])
@@ -3135,33 +4980,33 @@ def get_embalses_capacidad(region=None, start_date=None, end_date=None):
 def create_embalse_table_columns(df):
     """Crea las columnas para la tabla de embalses dinámicamente según las columnas disponibles"""
     columns = []
-    print(f"🔧 Creando columnas para tabla - DataFrame tiene: {list(df.columns) if not df.empty else 'VACÍO'}")
+    logger.debug(f"Creando columnas para tabla - DataFrame tiene: {list(df.columns) if not df.empty else 'VACÍO'}")
     if not df.empty:
         for col in df.columns:
             if col == "Embalse":
                 columns.append({"name": "Embalse", "id": "Embalse"})
-                print(f"✅ Agregada columna: Embalse")
+# REMOVED DEBUG:                 logger.info(f"Agregada columna: Embalse")
             elif col == "Volumen Útil (%)":
                 columns.append({"name": "Volumen Útil (%)", "id": "Volumen Útil (%)"})
-                print(f"✅ Agregada columna: Volumen Útil (%)")
+# REMOVED DEBUG:                 logger.info(f"Agregada columna: Volumen Útil (%)")
             elif col == "Participación (%)":
                 columns.append({"name": "Participación (%)", "id": "Participación (%)"})
-                print(f"✅ Agregada columna: Participación (%)")
+# REMOVED DEBUG:                 logger.info(f"Agregada columna: Participación (%)")
             elif col == "Riesgo":
                 columns.append({"name": "🚨 Riesgo", "id": "Riesgo"})
-                print(f"✅ Agregada columna: Riesgo")
+# REMOVED DEBUG:                 logger.info(f"Agregada columna: Riesgo")
             # Nota: La columna 'Capacidad_GWh_Internal' ha sido eliminada de las tablas jerárquicas
-    print(f"🔧 Total de columnas creadas: {len(columns)}")
+    logger.debug(f"Total de columnas creadas: {len(columns)}")
     return columns
 
 def create_initial_embalse_table():
     """Crea la tabla inicial de embalses con la nueva columna"""
     try:
-        print("🚀 CREANDO TABLA INICIAL DE EMBALSES...")
+        logger.info("Creando tabla inicial de embalses...")
         
         # Obtener datos directamente usando fechas actuales
         df = get_embalses_capacidad()
-        print(f"📊 Datos iniciales obtenidos: {df.shape[0]} filas, columnas: {list(df.columns)}")
+# REMOVED DEBUG:         logger.debug(f"Datos iniciales obtenidos: {df.shape[0]} filas, columnas: {list(df.columns)}")
         
         if df.empty:
             return dbc.Alert("No hay datos de embalses para mostrar.", color="warning")
@@ -3170,10 +5015,11 @@ def create_initial_embalse_table():
         df_formatted = df.copy()
         
         if 'Volumen Útil (%)' in df.columns:
+            # Solo formatear valores numéricos, no reformatear strings
             df_formatted['Volumen Útil (%)'] = df['Volumen Útil (%)'].apply(
-                lambda x: f"{x:.1f}%" if pd.notna(x) else "N/D"
+                lambda x: x if isinstance(x, str) else (f"{x:.1f}%" if pd.notna(x) and isinstance(x, (int, float)) else "N/D")
             )
-            print("✅ Columna 'Volumen Útil (%)' formateada en tabla inicial")
+            logger.info("Columna 'Volumen Útil (%)' formateada en tabla inicial")
         
         # Calcular totales para la fila TOTAL (usando los datos originales)
         total_capacity = df['Capacidad_GWh_Internal'].sum() if 'Capacidad_GWh_Internal' in df.columns else 0
@@ -3221,35 +5067,35 @@ def create_initial_embalse_table():
         df_total_row = pd.DataFrame([total_row_riesgo])
         df_final_display = pd.concat([df_embalses_only, df_total_row], ignore_index=True)
         
-        print(f"📊 DataFrame final para tabla inicial: {df_final_display.shape[0]} filas, columnas: {list(df_final_display.columns)}")
+# REMOVED DEBUG:         logger.debug(f"DataFrame final para tabla inicial: {df_final_display.shape[0]} filas, columnas: {list(df_final_display.columns)}")
         
         return create_dynamic_embalse_table(df_final_display)
         
     except Exception as e:
-        print(f"❌ Error creando tabla inicial: {e}")
+# REMOVED DEBUG:         print(f"❌ Error creando tabla inicial: {e}")
         import traceback
         traceback.print_exc()
         return dbc.Alert(f"Error: {str(e)}", color="danger")
 
 def create_dynamic_embalse_table(df_formatted):
     """Crea una tabla de embalses dinámicamente con todas las columnas disponibles"""
-    print(f"🏗️ INICIO create_dynamic_embalse_table - DataFrame: {df_formatted.shape if not df_formatted.empty else 'VACÍO'}")
+    logger.debug(f"INICIO create_dynamic_embalse_table - DataFrame: {df_formatted.shape if not df_formatted.empty else 'VACÍO'}")
     
     if df_formatted.empty:
-        print("⚠️ DataFrame vacío - retornando alerta")
+        logger.warning("DataFrame vacío - retornando alerta")
         return dbc.Alert("No hay datos de embalses para mostrar.", color="warning")
     
-    print(f"🏗️ Creando tabla dinámica de embalses con {len(df_formatted)} filas y columnas: {list(df_formatted.columns)}")
+    logger.debug(f"Creando tabla dinámica de embalses con {len(df_formatted)} filas y columnas: {list(df_formatted.columns)}")
     
     # Crear columnas dinámicamente
     columns = create_embalse_table_columns(df_formatted)
-    print(f"🔧 Columnas creadas: {len(columns)}")
+    logger.debug(f"Columnas creadas: {len(columns)}")
     
     # 🆕 Generar estilos condicionales basados en riesgo
     estilos_condicionales = []
     if 'Riesgo' in df_formatted.columns:
         estilos_condicionales = generar_estilos_condicionales_riesgo(df_formatted)
-        print(f"🎨 Estilos condicionales de riesgo generados: {len(estilos_condicionales)}")
+        logger.debug(f"Estilos condicionales de riesgo generados: {len(estilos_condicionales)}")
     else:
         # Estilo básico para TOTAL si no hay columna de riesgo
         estilos_condicionales = [
@@ -3273,11 +5119,11 @@ def create_dynamic_embalse_table(df_formatted):
         page_action="none"
     )
     
-    print(f"✅ Tabla DataTable creada exitosamente con ID: {table.id}")
+# REMOVED DEBUG:     logger.info(f"Tabla DataTable creada exitosamente con ID: {table.id}")
     return table
     
 def create_data_table(data):
-    """Tabla simple de datos de caudal con participación porcentual"""
+    """Tabla paginada de datos de energía con participación porcentual y total integrado"""
     if data is None or data.empty:
         return dbc.Alert("No hay datos para mostrar en la tabla.", color="warning")
     
@@ -3290,17 +5136,19 @@ def create_data_table(data):
         df_with_participation[col] = df_with_participation[col].apply(format_date)
     
     # Si tiene columna 'GWh', calcular participación
+    total_value = 0
+    num_registros = len(df_with_participation)
     if 'GWh' in df_with_participation.columns:
         # Filtrar filas que no sean TOTAL para calcular el porcentaje
         df_no_total = df_with_participation[df_with_participation['GWh'] != 'TOTAL'].copy()
         if not df_no_total.empty:
             # Asegurar que los valores son numéricos
             df_no_total['GWh'] = pd.to_numeric(df_no_total['GWh'], errors='coerce')
-            total = df_no_total['GWh'].sum()
+            total_value = df_no_total['GWh'].sum()
             
-            if total > 0:
+            if total_value > 0:
                 # Calcular porcentajes
-                porcentajes = (df_no_total['GWh'] / total * 100).round(2)
+                porcentajes = (df_no_total['GWh'] / total_value * 100).round(2)
                 
                 # Ajustar para que sume exactamente 100%
                 diferencia = 100 - porcentajes.sum()
@@ -3310,24 +5158,6 @@ def create_data_table(data):
                 
                 # Agregar la columna de participación
                 df_with_participation.loc[df_no_total.index, 'Participación (%)'] = porcentajes.round(2)
-                
-                # Agregar fila TOTAL si no existe
-                has_total_row = any(df_with_participation.iloc[:, 0] == 'TOTAL')
-                if not has_total_row:
-                    # Crear fila total
-                    total_row = {}
-                    for col in df_with_participation.columns:
-                        if col == df_with_participation.columns[0]:  # Primera columna (normalmente 'Fecha')
-                            total_row[col] = 'TOTAL'
-                        elif col == 'GWh':
-                            total_row[col] = format_number(total)
-                        elif col == 'Participación (%)':
-                            total_row[col] = '100.0%'
-                        else:
-                            total_row[col] = ''
-                    
-                    # Agregar la fila total al dataframe
-                    df_with_participation = pd.concat([df_with_participation, pd.DataFrame([total_row])], ignore_index=True)
             else:
                 df_with_participation['Participación (%)'] = 0
         else:
@@ -3335,7 +5165,7 @@ def create_data_table(data):
     
     # Formatear columnas numéricas (GWh, capacidades, etc.)
     numeric_columns = [col for col in df_with_participation.columns 
-                      if any(keyword in col.lower() for keyword in ['gwh', 'capacidad', 'caudal', 'valor', 'value'])]
+                      if any(keyword in col.lower() for keyword in ['gwh', 'capacidad', 'energia', 'valor', 'value'])]
     
     for col in numeric_columns:
         if col != 'Participación (%)':  # No formatear porcentajes
@@ -3343,33 +5173,71 @@ def create_data_table(data):
                 lambda x: format_number(x) if pd.notnull(x) and x != 'TOTAL' else x
             )
     
-    # Detectar si hay columna de totales
-    style_data_conditional = []
-    if 'TOTAL' in df_with_participation.values:
-        # Buscar la columna que contiene el total
-        for col in df_with_participation.columns:
-            if any(df_with_participation[col] == 'TOTAL'):
-                style_data_conditional.append({
-                    'if': {'filter_query': f'{{{col}}} = "TOTAL"'},
-                    'backgroundColor': '#007bff',
-                    'color': 'white',
-                    'fontWeight': 'bold'
-                })
+    # Agregar fila de TOTAL al final del DataFrame
+    total_row = {}
+    for col in df_with_participation.columns:
+        if 'fecha' in col.lower() or 'date' in col.lower():
+            total_row[col] = f"📊 TOTAL ({num_registros} registros)"
+        elif col == 'GWh':
+            total_row[col] = format_number(total_value)
+        elif col == 'Participación (%)':
+            total_row[col] = '100.00'
+        else:
+            total_row[col] = ''
     
+    df_with_participation = pd.concat([df_with_participation, pd.DataFrame([total_row])], ignore_index=True)
+    
+    # Crear tabla paginada con total integrado
     return dash_table.DataTable(
-        data=df_with_participation.head(1000).to_dict('records'),
+        data=df_with_participation.to_dict('records'),
         columns=[{"name": i, "id": i} for i in df_with_participation.columns],
-        style_cell={'textAlign': 'left', 'padding': '6px', 'fontFamily': 'Arial', 'fontSize': 14},
-        style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold'},
-        style_data={'backgroundColor': '#f8f8f8'},
-        style_data_conditional=style_data_conditional,
-        page_action="none",
-        export_format="xlsx",
-        export_headers="display"
+        style_cell={
+            'textAlign': 'left', 
+            'padding': '4px 8px',  # Reducido verticalmente
+            'fontFamily': 'Inter, Arial, sans-serif', 
+            'fontSize': '12px',  # Reducido de 13px a 12px
+            'whiteSpace': 'normal',
+            'height': 'auto'
+        },
+        style_header={
+            'backgroundColor': '#2c3e50', 
+            'fontWeight': 'bold',
+            'color': 'white',
+            'border': '1px solid #34495e',
+            'fontSize': '11px',  # Encabezado más pequeño
+            'padding': '6px 8px'  # Padding reducido en header
+        },
+        style_data={
+            'backgroundColor': '#f8f9fa',
+            'border': '1px solid #dee2e6'
+        },
+        style_data_conditional=[
+            {
+                'if': {'row_index': 'odd'},
+                'backgroundColor': '#ffffff'
+            },
+            {
+                # Estilo especial para la fila de TOTAL (última fila)
+                'if': {'row_index': len(df_with_participation) - 1},
+                'backgroundColor': '#e3f2fd',
+                'fontWeight': 'bold',
+                'borderTop': '3px solid #007bff',
+                'borderBottom': '3px solid #007bff',
+                'color': '#0056b3'
+            }
+        ],
+        page_size=8,  # Mostrar 8 filas por página
+        page_action='native',  # Paginación nativa
+        page_current=0,
+        style_table={
+            'maxHeight': '400px',
+            'overflowY': 'auto',
+            'overflowX': 'auto'
+        }
     )
 
-def create_line_chart(data):
-    """Gráfico de líneas moderno de caudal"""
+def create_line_chart(data, rio_name=None, start_date=None, end_date=None):
+    """Gráfico de líneas moderno de energía con media histórica"""
     if data is None or data.empty:
         return dbc.Alert("No se pueden crear gráficos con estos datos.", color="warning", className="alert-modern")
     
@@ -3385,27 +5253,126 @@ def create_line_chart(data):
     
     # Detectar columna de valor
     for col in data.columns:
-        if any(keyword in col.lower() for keyword in ['m³/s', 'caudal', 'value', 'gwh']):
+        if any(keyword in col.lower() for keyword in ['energia', 'value', 'gwh']):
             value_col = col
             break
     
     if date_col and value_col:
         # Determinar la etiqueta del eje Y basada en el nombre de la columna
-        if 'm³/s' in value_col:
-            y_label = "Caudal (m³/s)"
-        elif 'gwh' in value_col.lower():
+        if 'gwh' in value_col.lower() or 'energia' in value_col.lower():
             y_label = "Energía (GWh)"
         else:
             y_label = value_col
         
-        fig = px.line(data, x=date_col, y=value_col, 
-                     labels={value_col: y_label, date_col: "Fecha"}, 
-                     markers=True)
+        # Crear figura base con plotly graph objects
+        px, go = get_plotly_modules()
+        fig = go.Figure()
+        
+        # Agregar línea de valores reales (negra para consistencia)
+        fig.add_trace(go.Scatter(
+            x=data[date_col],
+            y=data[value_col],
+            mode='lines+markers',
+            name='Aportes Reales',
+            line=dict(width=1.5, color='black'),
+            marker=dict(size=4, color='black', line=dict(width=0.8, color='white')),
+            hovertemplate=f'<b>Fecha:</b> %{{x}}<br><b>{y_label}:</b> %{{y:.2f}}<extra></extra>'
+        ))
+        
+        # Obtener media histórica si tenemos nombre de río y fechas
+        tiene_media = False
+        if rio_name and start_date and end_date:
+            try:
+                # Convertir fechas a string si es necesario
+                if hasattr(start_date, 'strftime'):
+                    fecha_inicio_str = start_date.strftime('%Y-%m-%d')
+                else:
+                    fecha_inicio_str = str(start_date)
+                
+                if hasattr(end_date, 'strftime'):
+                    fecha_fin_str = end_date.strftime('%Y-%m-%d')
+                else:
+                    fecha_fin_str = str(end_date)
+                
+                # Obtener media histórica
+                media_hist_data, _ = obtener_datos_inteligente('AporEnerMediHist', 'Rio', fecha_inicio_str, fecha_fin_str)
+                
+                if media_hist_data is not None and not media_hist_data.empty:
+                    # Filtrar por el río específico
+                    media_hist_rio = media_hist_data[media_hist_data['Name'] == rio_name]
+                    
+                    if not media_hist_rio.empty and 'Value' in media_hist_rio.columns:
+                        # ⚠️ NO convertir - fetch_metric_data YA convierte a GWh automáticamente
+                        
+                        # Combinar datos reales e históricos para colorear según estado
+                        # Necesitamos preparar los datos reales en formato adecuado
+                        datos_reales = data[[date_col, value_col]].copy()
+                        datos_reales.columns = ['Date', 'Value_real']
+                        datos_reales['Date'] = pd.to_datetime(datos_reales['Date'])
+                        
+                        media_hist_rio['Date'] = pd.to_datetime(media_hist_rio['Date'])
+                        
+                        # Merge para comparación
+                        merged_data = datos_reales.merge(
+                            media_hist_rio[['Date', 'Value']], 
+                            on='Date', 
+                            how='inner'
+                        )
+                        merged_data.rename(columns={'Value': 'Value_hist'}, inplace=True)
+                        
+                        if not merged_data.empty:
+                            # Calcular porcentaje
+                            merged_data['porcentaje'] = (merged_data['Value_real'] / merged_data['Value_hist']) * 100
+                            
+                            # Agregar línea histórica con colores dinámicos
+                            for i in range(len(merged_data) - 1):
+                                # ✅ FIX: Convertir a float antes de usar en formato
+                                porcentaje = float(merged_data.iloc[i]['porcentaje'])
+                                
+                                # Determinar color según porcentaje
+                                if porcentaje >= 100:
+                                    color = '#28a745'  # Verde - Húmedo
+                                    estado = 'Húmedo'
+                                elif porcentaje >= 90:
+                                    color = '#17a2b8'  # Cyan - Normal
+                                    estado = 'Normal'
+                                elif porcentaje >= 70:
+                                    color = '#ffc107'  # Amarillo - Moderadamente seco
+                                    estado = 'Moderadamente seco'
+                                else:
+                                    color = '#dc3545'  # Rojo - Muy seco
+                                    estado = 'Muy seco'
+                                
+                                # Agregar segmento de línea
+                                fig.add_trace(go.Scatter(
+                                    x=merged_data['Date'].iloc[i:i+2],
+                                    y=merged_data['Value_hist'].iloc[i:i+2],
+                                    mode='lines',
+                                    name='Media Histórica' if i == 0 else None,
+                                    showlegend=(i == 0),
+                                    line=dict(width=3, color=color, dash='dash'),
+                                    hovertemplate=f'<b>Fecha:</b> %{{x}}<br><b>Media Histórica:</b> %{{y:.2f}} GWh<br><b>Estado:</b> {estado} ({porcentaje:.1f}%)<extra></extra>',
+                                    legendgroup='media_historica'
+                                ))
+                            tiene_media = True
+                        else:
+                            # Fallback: línea azul simple si no hay datos para comparar
+                            fig.add_trace(go.Scatter(
+                                x=media_hist_rio['Date'],
+                                y=media_hist_rio['Value'],
+                                mode='lines',
+                                name='Media Histórica',
+                                line=dict(width=3, color='#1e90ff', dash='dash'),
+                                hovertemplate=f'<b>Fecha:</b> %{{x}}<br><b>Media Histórica:</b> %{{y:.2f}} GWh<extra></extra>'
+                            ))
+                            tiene_media = True
+            except Exception as e:
+                logger.warning(f"No se pudo obtener media histórica para río {rio_name}: {e}")
         
         # Aplicar tema moderno
         fig.update_layout(
-            height=400,
-            margin=dict(l=20, r=20, t=40, b=20),
+            height=325,  # Reducido para compensar eliminación de zoom
+            margin=dict(l=50, r=20, t=40, b=50),
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(family="Inter, Arial, sans-serif", size=12),
@@ -3416,7 +5383,8 @@ def create_line_chart(data):
                 gridcolor='rgba(128,128,128,0.2)',
                 showline=True,
                 linewidth=2,
-                linecolor='rgba(128,128,128,0.3)'
+                linecolor='rgba(128,128,128,0.3)',
+                title="Fecha"
             ),
             yaxis=dict(
                 showgrid=True,
@@ -3424,27 +5392,21 @@ def create_line_chart(data):
                 gridcolor='rgba(128,128,128,0.2)',
                 showline=True,
                 linewidth=2,
-                linecolor='rgba(128,128,128,0.3)'
+                linecolor='rgba(128,128,128,0.3)',
+                title=y_label
+            ),
+            showlegend=tiene_media,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
             )
         )
         
-        # Estilo moderno de la línea
-        fig.update_traces(
-            line=dict(width=3, color='#667eea'),
-            marker=dict(size=8, color='#764ba2', 
-                       line=dict(width=2, color='white')),
-            hovertemplate=f'<b>Fecha:</b> %{{x}}<br><b>{y_label}:</b> %{{y:.2f}}<extra></extra>'
-        )
-        
-        return dbc.Card([
-            dbc.CardHeader([
-                html.I(className="bi bi-graph-up-arrow me-2", style={"color": "#667eea"}),
-                html.Strong("Evolución Temporal", style={"fontSize": "1.1rem"})
-            ]),
-            dbc.CardBody([
-                dcc.Graph(figure=fig)
-            ], className="p-2")
-        ], className="card-modern chart-container")
+        # ✅ Eliminar CardHeader - solo retornar el gráfico
+        return dcc.Graph(figure=fig)
     else:
         return dbc.Alert("No se pueden crear gráficos con estos datos.", color="warning", className="alert-modern")
 
@@ -3509,7 +5471,7 @@ def create_bar_chart(data, metric_name):
     
     # Aplicar estilo moderno
     fig.update_layout(
-        height=550,
+        height=360,
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         font=dict(family="Inter, Arial, sans-serif", size=12),
@@ -3718,19 +5680,20 @@ def create_latest_value_kpi(data, metric_name):
 def get_porcapor_data(fecha_inicio, fecha_fin):
     """Obtener datos de la métrica PorcApor - Aportes % por río"""
     try:
-        print(f"🔍 Consultando PorcApor desde {fecha_inicio} hasta {fecha_fin}")
-        data = objetoAPI.request_data('PorcApor', 'Rio', fecha_inicio, fecha_fin)
+        objetoAPI = get_objetoAPI()
+# REMOVED DEBUG:         logger.debug(f"Consultando PorcApor desde {fecha_inicio} hasta {fecha_fin}")
+        data, warning = obtener_datos_inteligente('PorcApor', 'Rio', fecha_inicio, fecha_fin)
         if not data.empty:
             # Multiplicar por 100 para convertir a porcentaje
             if 'Value' in data.columns:
                 data['Value'] = data['Value'] * 100
-            print(f"✅ Datos PorcApor obtenidos: {len(data)} registros")
+# REMOVED DEBUG:             logger.info(f"Datos PorcApor obtenidos: {len(data)} registros")
             return data
         else:
-            print("⚠️ No se encontraron datos de PorcApor")
+            logger.warning("No se encontraron datos de PorcApor")
             return pd.DataFrame()
     except Exception as e:
-        print(f"❌ Error obteniendo datos PorcApor: {e}")
+# REMOVED DEBUG:         print(f"❌ Error obteniendo datos PorcApor: {e}")
         return pd.DataFrame()
 
 def create_porcapor_kpi(fecha_inicio, fecha_fin, region=None, rio=None):
@@ -3758,7 +5721,7 @@ def create_porcapor_kpi(fecha_inicio, fecha_fin, region=None, rio=None):
             return dbc.Card([
                 dbc.CardBody([
                     html.Div([
-                        html.H6("📊 Aportes % por Sistema", className="text-center mb-2"),
+                        html.H6("Aportes % por Sistema", className="text-center mb-2"),
                         html.Hr(),
                         html.P(f"No hay datos de participación porcentual para el río {rio} en este período.", 
                                className="text-center text-muted mb-2"),
@@ -3774,8 +5737,10 @@ def create_porcapor_kpi(fecha_inicio, fecha_fin, region=None, rio=None):
         # Filtrar por región si se especifica y no es "todas las regiones"
         if region and region != "__ALL_REGIONS__":
             # Agregar información de región usando el mapeo RIO_REGION
-            region_normalized = region.strip().title()
-            data['Region'] = data['Name'].map(RIO_REGION) 
+            # ✅ FIX ERROR #3: UPPER en lugar de title
+            region_normalized = region.strip().upper()
+            rio_region = ensure_rio_region_loaded()
+            data['Region'] = data['Name'].map(rio_region) 
             data_filtered = data[data['Region'] == region_normalized]
             if data_filtered.empty:
                 return dbc.Alert(f"No hay datos de PorcApor para la región {region_normalized}", color="warning", className="mb-3")
@@ -3911,8 +5876,10 @@ def create_porcapor_kpi(fecha_inicio, fecha_fin, region=None, rio=None):
            "minHeight": "200px"
        })
 
-def create_total_timeline_chart(data, metric_name):
-    """Crear gráfico de línea temporal con total nacional por día"""
+def create_total_timeline_chart(data, metric_name, region_filter=None, rio_filter=None):
+    """
+    Crear gráfico de línea temporal con total nacional/regional/río por día incluyendo media histórica filtrada
+    """
     if data is None or data.empty:
         return dbc.Alert("No se pueden crear gráficos con estos datos.", 
                         color="warning", className="alert-modern")
@@ -3922,27 +5889,268 @@ def create_total_timeline_chart(data, metric_name):
         return dbc.Alert("No se encuentran las columnas necesarias (Date, Value).", 
                         color="warning", className="alert-modern")
     
-    # Agrupar por fecha y sumar todos los valores de todas las regiones
+    # LOGGING: Ver qué datos recibimos ANTES de agrupar
+    try:
+        logger.info(f"🔍 create_total_timeline_chart recibió {len(data)} registros")
+        logger.info(f"🔍 Columnas: {list(data.columns)}")
+        logger.info(f"🔍 Fechas únicas: {data['Date'].nunique()}")
+        logger.info(f"🔍 Suma total de Value ANTES de agrupar: {data['Value'].sum():.2f} GWh")
+    except Exception as log_error:
+        logger.warning(f"⚠️ Error en logging: {log_error}")
+    
+    # Agrupar por fecha y sumar todos los valores
     daily_totals = data.groupby('Date')['Value'].sum().reset_index()
     daily_totals = daily_totals.sort_values('Date')
     
-    # Crear gráfico de línea con una sola línea negra
-    fig = px.line(
-        daily_totals,
-        x='Date',
-        y='Value',
-        title="Total Nacional de Aportes de Caudal por Día",
-        labels={'Value': "Caudal (m³/s)", 'Date': "Fecha"},
-        markers=True
-    )
+    logger.info(f"🔍 DESPUÉS de agrupar: {len(daily_totals)} fechas, Total: {daily_totals['Value'].sum():.2f} GWh")
     
-    # Estilo moderno con línea negra
+    # Obtener media histórica y calcular indicador
+    tiene_media = False  # ✅ Inicializar antes del try
+    media_hist_totals = None  # ✅ Inicializar para evitar NameError fuera del try
+    porcentaje_vs_historico = None
+    promedio_real = None
+    promedio_historico = None
+    
+    try:
+        # ✅ FIX ERROR #2: Convertir a string de forma segura (puede ser datetime o string)
+        fecha_min = daily_totals['Date'].min()
+        fecha_max = daily_totals['Date'].max()
+        
+        if hasattr(fecha_min, 'strftime'):
+            fecha_inicio = fecha_min.strftime('%Y-%m-%d')
+        else:
+            fecha_inicio = str(fecha_min)
+            
+        if hasattr(fecha_max, 'strftime'):
+            fecha_fin = fecha_max.strftime('%Y-%m-%d')
+        else:
+            fecha_fin = str(fecha_max)  # ✅ FIX: usar fecha_max, NO fecha_fin
+        
+        # Obtener datos de media histórica de energía por río
+        media_hist_data, warning_msg = obtener_datos_inteligente('AporEnerMediHist', 'Rio', fecha_inicio, fecha_fin)
+        if warning_msg:
+            logger.info(f"✅ Usando media_hist_data recibida como parámetro (sin query duplicado)")
+        
+        logger.debug(f"Datos recibidos de AporEnerMediHist: {len(media_hist_data) if media_hist_data is not None else 0} registros")
+        if media_hist_data is not None and not media_hist_data.empty:
+            logger.debug(f"Columnas disponibles: {media_hist_data.columns.tolist()}")
+            logger.debug(f"Primeras 3 filas completas:")
+            print(media_hist_data.head(3))
+            logger.debug(f"Valores de muestra ANTES de conversión: {media_hist_data['Value'].head(3).tolist()}")
+            logger.debug(f"Rango de valores: min={media_hist_data['Value'].min()}, max={media_hist_data['Value'].max()}")
+            logger.debug(f"Nombres de ríos únicos: {media_hist_data['Name'].unique()[:5].tolist() if 'Name' in media_hist_data.columns else 'Sin columna Name'}")
+        
+        if media_hist_data is not None and not media_hist_data.empty and 'Value' in media_hist_data.columns:
+            # ✅ La conversión kWh→GWh ahora se hace automáticamente en fetch_metric_data()
+            # Los valores ya vienen en GWh desde el cache
+            valor_promedio = media_hist_data['Value'].mean()
+            logger.debug(f"AporEnerMediHist promedio: {valor_promedio:.2f} GWh")
+            logger.debug(f"Valores de muestra: {media_hist_data['Value'].head(3).tolist()}")
+            
+            # ✅ FIX: Filtrar registros con Name NULL ANTES de intentar mapear regiones
+            if 'Name' in media_hist_data.columns:
+                registros_antes = len(media_hist_data)
+                media_hist_data = media_hist_data[media_hist_data['Name'].notna()]
+                registros_despues = len(media_hist_data)
+                if registros_antes != registros_despues:
+                    logger.info(f"🔍 Filtrados {registros_antes - registros_despues} registros con Name=NULL (quedan {registros_despues})")
+            
+            # FILTRAR por región o río si se especifica
+            if region_filter:
+                # Agregar mapeo de región
+                rio_region = ensure_rio_region_loaded()
+                # ✅ NORMALIZAR usando función unificada
+                media_hist_data['Name_Upper'] = normalizar_codigo(media_hist_data['Name'])
+                media_hist_data['Region'] = media_hist_data['Name_Upper'].map(rio_region)
+                
+                # ✅ FIX ERROR #3: UPPER para coincidir con normalizar_region()
+                region_filter_normalized = region_filter.strip().upper() if isinstance(region_filter, str) else region_filter
+                
+                # Filtrar por región
+                antes_filtro = len(media_hist_data)
+                logger.info(f"🔍 ANTES filtro región '{region_filter}' (normalizado: '{region_filter_normalized}'): {antes_filtro} registros")
+                logger.info(f"🔍 Regiones disponibles: {sorted(media_hist_data['Region'].dropna().unique())}")
+                media_hist_data = media_hist_data[media_hist_data['Region'] == region_filter_normalized]
+                logger.info(f"🔍 DESPUÉS filtro región '{region_filter_normalized}': {len(media_hist_data)} registros")
+                if media_hist_data.empty:
+                    logger.error(f"❌ ERROR: No hay datos históricos después del filtro para región '{region_filter_normalized}'")
+                    logger.error(f"   Regiones disponibles eran: {sorted(media_hist_data['Region'].dropna().unique()) if 'Region' in media_hist_data.columns else 'N/A'}")
+            elif rio_filter:
+                # Filtrar por río específico
+                antes_filtro = len(media_hist_data)
+                media_hist_data = media_hist_data[media_hist_data['Name'] == rio_filter]
+                logger.debug(f"Media histórica filtrada por río '{rio_filter}': {antes_filtro} → {len(media_hist_data)} registros")
+            
+            # Agrupar por fecha y sumar
+            if not media_hist_data.empty:
+                media_hist_totals = media_hist_data.groupby('Date')['Value'].sum().reset_index()
+                media_hist_totals = media_hist_totals.sort_values('Date')
+                tiene_media = True
+                
+                logger.info(f"✅ Media histórica agregada por fecha: {len(media_hist_totals)} días")
+                logger.info(f"✅ tiene_media = {tiene_media} - LA LÍNEA DEBERÍA APARECER")
+                logger.debug(f"Valores agregados de muestra: {media_hist_totals['Value'].head(3).tolist()}")
+                logger.debug(f"Total agregado: min={media_hist_totals['Value'].min():.2f}, max={media_hist_totals['Value'].max():.2f}, suma={media_hist_totals['Value'].sum():.2f} GWh")
+                
+                # CORRECCIÓN: Calcular porcentaje con SUMA TOTAL del período (no promedio)
+                total_real = daily_totals['Value'].sum()  # SUMA TOTAL
+                total_historico = media_hist_totals['Value'].sum()  # SUMA TOTAL
+                
+                # ✅ FIX: Convertir a float explícitamente para evitar error de formato
+                total_real = float(total_real)
+                total_historico = float(total_historico)
+                
+                logger.info(f"📊 CÁLCULO PORCENTAJE: Real={total_real:.2f} GWh, Histórico={total_historico:.2f} GWh")
+                
+                if total_historico > 0:
+                    # ✅ FIX CRÍTICO: Convertir a float Python nativo inmediatamente
+                    porcentaje_vs_historico = float((total_real / total_historico) * 100)
+                    logger.info(f"✅ Porcentaje calculado: {porcentaje_vs_historico:.1f}%")
+                else:
+                    logger.error(f"❌ ERROR: total_historico = 0, no se puede calcular porcentaje")
+                    porcentaje_vs_historico = None
+            else:
+                tiene_media = False
+                logger.warning(f"No hay datos después del filtrado")
+        else:
+            tiene_media = False
+            logger.warning(f"No se recibieron datos válidos de AporEnerMediHist")
+    except Exception as e:
+        logger.error(f"❌ ERROR obteniendo media histórica: {e}")
+        logger.error(f"   Tipo de error: {type(e).__name__}")
+        logger.error(f"   Detalles: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        tiene_media = False
+        # Mostrar mensaje más visible en consola
+        print(f"\n⚠️ ADVERTENCIA: No se pudo cargar línea de media histórica")
+        print(f"   Razón: {str(e)}")
+        print(f"   La gráfica se mostrará solo con datos reales\n")
+    
+    # Crear figura base
+    from plotly.subplots import make_subplots
+    px, go = get_plotly_modules()
+    
+    fig = go.Figure()
+    
+    # Agregar línea de valores reales (negra) - optimizada para mejor visualización
+    fig.add_trace(go.Scatter(
+        x=daily_totals['Date'],
+        y=daily_totals['Value'],
+        mode='lines+markers',
+        name='Aportes Reales',
+        line=dict(width=1.5, color='black'),
+        marker=dict(size=4, color='black', line=dict(width=0.8, color='white')),
+        hovertemplate=(
+            '<b>📅 Fecha:</b> %{x|%d/%m/%Y}<br>'
+            '<b>⚡ Aportes Reales:</b> %{y:.2f} GWh<br>'
+            '<b>━━━━━━━━━━━━━━━━</b><br>'
+            '<i>Pasa el cursor sobre la línea histórica<br>para ver la comparación detallada</i>'
+            '<extra></extra>'
+        )
+    ))
+    
+    # Agregar línea de media histórica con colores dinámicos según estado hidrológico
+    logger.info(f"🎨 DIBUJANDO GRÁFICA: tiene_media={tiene_media}, media_hist_totals={'EXISTE' if media_hist_totals is not None else 'NULL'}")
+    if tiene_media and media_hist_totals is not None:
+        logger.info(f"✅ INICIANDO DIBUJO de línea de media histórica con {len(media_hist_totals)} puntos")
+        # Combinar datos reales e históricos por fecha para comparación
+        merged_data = daily_totals.merge(
+            media_hist_totals, 
+            on='Date', 
+            how='inner', 
+            suffixes=('_real', '_hist')
+        )
+        logger.info(f"🔗 Datos combinados: {len(merged_data)} fechas coincidentes")
+        
+        if not merged_data.empty:
+            # Calcular porcentaje: (real / histórico) * 100
+            merged_data['porcentaje'] = (merged_data['Value_real'] / merged_data['Value_hist']) * 100
+            
+            # Crear segmentos de línea coloreados según estado
+            # Verde: > 100% (húmedo), Cyan: 90-100% (normal), Naranja: 70-90% (seco moderado), Rojo: < 70% (muy seco)
+            for i in range(len(merged_data) - 1):
+                # ✅ FIX: Convertir a float explícitamente para evitar errores de formato
+                porcentaje = float(merged_data.iloc[i]['porcentaje'])
+                valor_real = float(merged_data.iloc[i]['Value_real'])
+                valor_hist = float(merged_data.iloc[i]['Value_hist'])
+                
+                # Calcular variación porcentual (formato estándar)
+                variacion = float(porcentaje - 100)
+                signo = '+' if variacion >= 0 else ''
+                
+                # Determinar color según porcentaje
+                if porcentaje >= 100:
+                    color = '#28a745'  # Verde - Húmedo
+                    estado = 'Húmedo'
+                    emoji = '💧'
+                elif porcentaje >= 90:
+                    color = '#17a2b8'  # Cyan - Normal
+                    estado = 'Normal'
+                    emoji = '✓'
+                elif porcentaje >= 70:
+                    color = '#ffc107'  # Amarillo/Naranja - Moderadamente seco
+                    estado = 'Moderadamente seco'
+                    emoji = '⚠️'
+                else:
+                    color = '#dc3545'  # Rojo - Muy seco
+                    estado = 'Muy seco'
+                    emoji = '🔴'
+                
+                # Tooltip mejorado con formato estándar de variación porcentual
+                hover_text = (
+                    f'<b>📅 Fecha:</b> %{{x|%d/%m/%Y}}<br>'
+                    f'<b>📊 Media Histórica:</b> %{{y:.2f}} GWh<br>'
+                    f'<b>⚡ Aportes Reales:</b> {valor_real:.2f} GWh<br>'
+                    f'<b>━━━━━━━━━━━━━━━━</b><br>'
+                    f'<b>{emoji} Estado:</b> {estado}<br>'
+                    f'<b>📈 Variación:</b> {signo}{variacion:.1f}% vs histórico<br>'
+                    f'<b>📐 Fórmula:</b> ({valor_real:.1f} / {valor_hist:.1f}) × 100 = {porcentaje:.1f}%<br>'
+                    f'<b>🧮 Diferencia:</b> {porcentaje:.1f}% - 100% = {signo}{variacion:.1f}%'
+                    f'<extra></extra>'
+                )
+                
+                # Agregar segmento de línea
+                fig.add_trace(go.Scatter(
+                    x=merged_data['Date'].iloc[i:i+2],
+                    y=merged_data['Value_hist'].iloc[i:i+2],
+                    mode='lines',
+                    name='Media Histórica' if i == 0 else None,  # Solo mostrar leyenda una vez
+                    showlegend=(i == 0),
+                    line=dict(width=3, color=color, dash='dash'),
+                    hovertemplate=hover_text,
+                    legendgroup='media_historica'
+                ))
+        else:
+            # Fallback: línea azul simple si no hay datos para comparar
+            fig.add_trace(go.Scatter(
+                x=media_hist_totals['Date'],
+                y=media_hist_totals['Value'],
+                mode='lines',
+                name='Media Histórica',
+                line=dict(width=3, color='#1e90ff', dash='dash'),
+                hovertemplate='<b>Fecha:</b> %{x}<br><b>Media Histórica:</b> %{y:.2f} GWh<extra></extra>'
+            ))
+    else:
+        logger.warning(f"⚠️ NO SE DIBUJÓ línea de media histórica: tiene_media={tiene_media}, media_hist_totals={'None' if media_hist_totals is None else f'{len(media_hist_totals)} registros'}")
+    
+    # Determinar título dinámico según filtros
+    if rio_filter:
+        titulo_grafica = f"Aportes de Energía - Río {rio_filter}"
+    elif region_filter:
+        titulo_grafica = f"Aportes de Energía - Región {region_filter}"
+    else:
+        titulo_grafica = "Total Nacional de Aportes de Energía por Día"
+    
+    # Estilo moderno con márgenes optimizados
     fig.update_layout(
         height=500,
+        margin=dict(l=50, r=20, t=60, b=50),
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         font=dict(family="Inter, Arial, sans-serif", size=12),
         title=dict(
+            text=titulo_grafica,
             font_size=16,
             x=0.5,
             xanchor='center',
@@ -3964,31 +6172,71 @@ def create_total_timeline_chart(data, metric_name):
             showline=True,
             linewidth=2,
             linecolor='rgba(128,128,128,0.3)',
-            title="Caudal (m³/s)"
+            title="Energía (GWh)"
         ),
-        showlegend=False
+        showlegend=tiene_media,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
     
-    # Aplicar línea negra con marcadores
-    fig.update_traces(
-        line=dict(width=3, color='black'),
-        marker=dict(size=8, color='black', 
-                   line=dict(width=2, color='white')),
-        hovertemplate='<b>Fecha:</b> %{x}<br><b>Total Nacional:</b> %{y:.2f} m³/s<extra></extra>'
-    )
+    # Crear indicador visual de comparación
+    indicador_badge = None
+    if porcentaje_vs_historico is not None:
+        # ✅ FIX: Asegurar que porcentaje_vs_historico sea float
+        try:
+            porcentaje_vs_historico = float(porcentaje_vs_historico)
+        except (ValueError, TypeError):
+            logger.error(f"❌ No se pudo convertir porcentaje_vs_historico a float: {porcentaje_vs_historico}")
+            porcentaje_vs_historico = None
     
-    return dbc.Card([
-        dbc.CardHeader([
-            html.Div([
-                html.I(className="bi bi-graph-up me-2", style={"color": "#000"}),
-                html.Strong("Total Nacional por Día", style={"fontSize": "1.2rem"})
-            ], className="d-flex align-items-center"),
-            html.Small("Haz clic en cualquier punto para ver detalles por región", className="text-muted")
-        ]),
-        dbc.CardBody([
-            dcc.Graph(id="total-timeline-graph", figure=fig, clear_on_unhover=True)
-        ], className="p-2")
-    ], className="card-modern chart-container shadow-lg")
+    if porcentaje_vs_historico is not None:
+        # Determinar color y emoji según el porcentaje
+        if porcentaje_vs_historico >= 100:
+            # Por encima del histórico (húmedo)
+            color_badge = "success"
+            icono = "💧"
+            diferencia = float(porcentaje_vs_historico - 100)
+            texto_badge = f"{icono} +{diferencia:.1f}% vs Histórico"
+            texto_contexto = "Condiciones más húmedas que el promedio histórico"
+        elif porcentaje_vs_historico >= 90:
+            # Cerca del histórico (normal)
+            color_badge = "info"
+            icono = "✓"
+            diferencia = float(100 - porcentaje_vs_historico)
+            texto_badge = f"{icono} -{diferencia:.1f}% vs Histórico"
+            texto_contexto = "Condiciones cercanas al promedio histórico"
+        elif porcentaje_vs_historico >= 70:
+            # Moderadamente bajo (alerta)
+            color_badge = "warning"
+            icono = "⚠️"
+            diferencia = float(100 - porcentaje_vs_historico)
+            texto_badge = f"{icono} -{diferencia:.1f}% vs Histórico"
+            texto_contexto = "Condiciones más secas que el promedio histórico"
+        else:
+            # Muy bajo (crítico)
+            color_badge = "danger"
+            icono = "🔴"
+            diferencia = float(100 - porcentaje_vs_historico)
+            texto_badge = f"{icono} -{diferencia:.1f}% vs Histórico"
+            texto_contexto = "Condiciones significativamente más secas que el histórico"
+        
+        indicador_badge = html.Div([
+            dbc.Badge(
+                texto_badge,
+                color=color_badge,
+                className="me-2",
+                style={"fontSize": "0.9rem", "fontWeight": "600"}
+            ),
+            html.Small(texto_contexto, className="text-muted", style={"fontSize": "0.85rem"})
+        ], className="d-flex align-items-center mt-2")
+    
+    # ✅ Header eliminado - solo retornar el gráfico sin card header
+    return dcc.Graph(id="total-timeline-graph", figure=fig, clear_on_unhover=True)
 # Callback para mostrar el modal con la tabla diaria al hacer click en un punto de la línea
 @callback(
     [Output("modal-rio-table", "is_open"), Output("modal-table-content", "children"), 
@@ -4000,8 +6248,8 @@ def create_total_timeline_chart(data, metric_name):
 def show_modal_table(timeline_clickData, is_open, region_data):
     ctx = dash.callback_context
     
-    print(f"🚀 CALLBACK EJECUTADO! Triggered: {[prop['prop_id'] for prop in ctx.triggered]}")
-    print(f" Timeline click data: {timeline_clickData}")
+    logger.debug(f"CALLBACK EJECUTADO! Triggered: {[prop['prop_id'] for prop in ctx.triggered]}")
+    logger.debug(f"Timeline click data: {timeline_clickData}")
     
     # Determinar qué fue clicado
     clickData = None
@@ -4009,86 +6257,204 @@ def show_modal_table(timeline_clickData, is_open, region_data):
     
     if ctx.triggered:
         trigger_id = ctx.triggered[0]["prop_id"]
-        print(f"🔍 DEBUG: Callback triggered - trigger_id: {trigger_id}")
         
         if trigger_id.startswith("total-timeline-graph") and timeline_clickData:
             clickData = timeline_clickData
             graph_type = "timeline"
-            print(f"🎯 DEBUG: Timeline click detected! clickData: {clickData}")
+            logger.debug(f"Click detected! clickData: {clickData}")
         elif trigger_id.startswith("modal-rio-table"):
-            print(f"❌ DEBUG: Modal close triggered")
             return False, None, "", ""
     
     # Si se hace click en un punto del timeline, mostrar el modal con la tabla
     if clickData and graph_type == "timeline":
         point_data = clickData["points"][0]
-        print(f"🔍 DEBUG: point_data extraído: {point_data}")
         
+        # Detectar en qué línea/curva se hizo clic
+        curve_number = point_data.get('curveNumber', 0)
+        trace_name = point_data.get('fullData', {}).get('name', 'Aportes Reales')
+        
+        logger.debug(f"Curva clickeada: {curve_number}, Nombre: {trace_name}")
+        
+        # Si se hizo clic en la Media Histórica (curva 1)
+        if curve_number == 1 or 'Media Histórica' in str(trace_name):
+            logger.debug("Click en MEDIA HISTÓRICA detectado")
+            
+            # Obtener la fecha clicada
+            selected_date = point_data['x']
+            total_value = point_data['y']
+            
+            # Obtener datos de media histórica
+            try:
+                # Necesitamos obtener la media histórica del backend
+                objetoAPI = get_objetoAPI()
+                
+                # Obtener el rango de fechas del store de datos
+                df_store = pd.DataFrame(region_data) if region_data else pd.DataFrame()
+                if not df_store.empty:
+                    fecha_inicio = df_store['Date'].min()
+                    fecha_fin = df_store['Date'].max()
+                    
+                    if isinstance(fecha_inicio, str):
+                        fecha_inicio_str = fecha_inicio
+                    else:
+                        fecha_inicio_str = fecha_inicio.strftime('%Y-%m-%d')
+                    
+                    if isinstance(fecha_fin, str):
+                        fecha_fin_str = fecha_fin
+                    else:
+                        fecha_fin_str = fecha_fin.strftime('%Y-%m-%d')
+                    
+                    # Obtener media histórica
+                    media_hist_data, _ = obtener_datos_inteligente('AporEnerMediHist', 'Rio', fecha_inicio_str, fecha_fin_str)
+                    
+                    if media_hist_data is not None and not media_hist_data.empty:
+                        # ⚠️ NO convertir - fetch_metric_data YA convierte a GWh automáticamente en _xm.py
+                        
+                        # Agregar información de región
+                        rio_region = ensure_rio_region_loaded()
+                        media_hist_data['Region'] = media_hist_data['Name'].map(rio_region)
+                        
+                        # Filtrar por la fecha seleccionada
+                        selected_date_dt = pd.to_datetime(selected_date)
+                        media_hist_data['Date'] = pd.to_datetime(media_hist_data['Date'])
+                        df_date = media_hist_data[media_hist_data['Date'] == selected_date_dt].copy()
+                        
+                        if not df_date.empty:
+                            # Agrupar por región
+                            region_summary = df_date.groupby('Region')['Value'].sum().reset_index()
+                            region_summary = region_summary.sort_values('Value', ascending=False)
+                            region_summary = region_summary.rename(columns={'Region': 'Región', 'Value': 'Energía (GWh)'})
+                            
+                            # Calcular participación porcentual
+                            total = region_summary['Energía (GWh)'].sum()
+                            
+                            if total > 0:
+                                region_summary['Participación (%)'] = (region_summary['Energía (GWh)'] / total * 100).round(2)
+                                diferencia = 100 - region_summary['Participación (%)'].sum()
+                                if abs(diferencia) > 0.001:
+                                    idx_max = region_summary['Participación (%)'].idxmax()
+                                    region_summary.loc[idx_max, 'Participación (%)'] += diferencia
+                                    region_summary['Participación (%)'] = region_summary['Participación (%)'].round(2)
+                            else:
+                                region_summary['Participación (%)'] = 0
+                            
+                            # Formatear números
+                            region_summary['Energía (GWh)'] = region_summary['Energía (GWh)'].apply(format_number)
+                            
+                            # Agregar fila total
+                            total_row = {
+                                'Región': 'TOTAL',
+                                'Energía (GWh)': format_number(total),
+                                'Participación (%)': '100.0%'
+                            }
+                            
+                            data_with_total = region_summary.to_dict('records') + [total_row]
+                            
+                            # Crear tabla
+                            table = dash_table.DataTable(
+                                data=data_with_total,
+                                columns=[
+                                    {"name": "Región", "id": "Región"},
+                                    {"name": "Energía (GWh)", "id": "Energía (GWh)"},
+                                    {"name": "Participación (%)", "id": "Participación (%)"}
+                                ],
+                                style_cell={'textAlign': 'left', 'padding': '8px', 'fontFamily': 'Inter, Arial', 'fontSize': 14},
+                                style_header={'backgroundColor': '#1e90ff', 'color': 'white', 'fontWeight': 'bold'},
+                                style_data={'backgroundColor': '#f0f8ff'},
+                                style_data_conditional=[
+                                    {
+                                        'if': {'filter_query': '{Región} = "TOTAL"'},
+                                        'backgroundColor': '#1e90ff',
+                                        'color': 'white',
+                                        'fontWeight': 'bold'
+                                    }
+                                ],
+                                page_action="none",
+                                export_format="xlsx",
+                                export_headers="display"
+                            )
+                            
+                            formatted_date = format_date(selected_date)
+                            total_regions = len(region_summary)
+                            title = f"📘 Media Histórica del {formatted_date} - Total Nacional: {format_number(total_value)} GWh"
+                            description = f"Detalle de media histórica por región hidrológica para el día {formatted_date}. Se muestran los aportes energéticos históricos promedio de {total_regions} regiones, con su respectiva participación porcentual sobre el total nacional de {format_number(total_value)} GWh."
+                            
+                            return True, table, title, description
+                        
+            except Exception as e:
+                print(f"❌ Error obteniendo media histórica: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            return False, None, "Error", "No se pudieron obtener los datos de media histórica."
+        
+        # Si se hizo clic en Aportes Reales (curva 0) - código original
         df = pd.DataFrame(region_data) if region_data else pd.DataFrame()
-        print(f"📊 DEBUG: region_data recibido: {type(region_data)}, length: {len(region_data) if region_data else 'None'}")
-        print(f"📈 DEBUG: DataFrame creado - shape: {df.shape}, columns: {df.columns.tolist() if not df.empty else 'DataFrame vacío'}")
+# REMOVED DEBUG:         logger.debug(f"DEBUG: region_data recibido: {type(region_data)}, length: {len(region_data) if region_data else 'None'}")
+        logger.debug(f"DataFrame creado - shape: {df.shape}, columns: {df.columns.tolist() if not df.empty else 'DataFrame vacío'}")
         
         if df.empty:
-            print(f"❌ DEBUG: DataFrame está vacío - retornando mensaje de error")
+# REMOVED DEBUG:             print(f"❌ DEBUG: DataFrame está vacío - retornando mensaje de error")
             return False, None, "Sin datos", "No hay información disponible para mostrar."
         
         # Obtener la fecha clicada
         selected_date = point_data['x']
         total_value = point_data['y']
-        print(f"📅 DEBUG: Fecha seleccionada: {selected_date}, Total: {total_value}")
-        print(f"📅 DEBUG: Tipo de fecha seleccionada: {type(selected_date)}")
+        logger.debug(f"DEBUG: Fecha seleccionada: {selected_date}, Total: {total_value}")
+        logger.debug(f"DEBUG: Tipo de fecha seleccionada: {type(selected_date)}")
         
         # Ver qué fechas están disponibles en el DataFrame
         unique_dates = df['Date'].unique()[:10]  # Primeras 10 fechas únicas
-        print(f"📆 DEBUG: Primeras fechas disponibles en DataFrame: {unique_dates}")
-        print(f"📆 DEBUG: Tipo de fechas en DataFrame: {type(df['Date'].iloc[0]) if not df.empty else 'N/A'}")
+        logger.debug(f"Primeras fechas disponibles en DataFrame: {unique_dates}")
+        logger.debug(f"Tipo de fechas en DataFrame: {type(df['Date'].iloc[0]) if not df.empty else 'N/A'}")
         
         # Filtrar datos de esa fecha específica
         df_date = df[df['Date'] == selected_date].copy()
-        print(f"🗓️ DEBUG: Datos filtrados por fecha - shape: {df_date.shape}")
+        logger.debug(f"Datos filtrados por fecha - shape: {df_date.shape}")
         
         # Si no hay datos, intentar convertir la fecha a diferentes formatos
         if df_date.empty:
-            print(f"🔄 DEBUG: Intentando conversiones de fecha...")
+            logger.debug(f" Intentando conversiones de fecha...")
             # Intentar convertir la fecha seleccionada a datetime
             try:
                 from datetime import datetime
                 if isinstance(selected_date, str):
                     selected_date_dt = pd.to_datetime(selected_date)
-                    print(f"🔄 DEBUG: Fecha convertida a datetime: {selected_date_dt}")
+                    logger.debug(f" Fecha convertida a datetime: {selected_date_dt}")
                     # Intentar filtrar con la fecha convertida
                     df_date = df[df['Date'] == selected_date_dt].copy()
-                    print(f"🔄 DEBUG: Datos filtrados con fecha convertida - shape: {df_date.shape}")
+                    logger.debug(f" Datos filtrados con fecha convertida - shape: {df_date.shape}")
                 
                 # Si aún no hay datos, intentar convertir las fechas del DataFrame
                 if df_date.empty:
-                    print(f"🔄 DEBUG: Convirtiendo fechas del DataFrame...")
+                    logger.debug(f" Convirtiendo fechas del DataFrame...")
                     df['Date'] = pd.to_datetime(df['Date'])
                     df_date = df[df['Date'] == selected_date_dt].copy()
-                    print(f"🔄 DEBUG: Datos filtrados después de conversión DF - shape: {df_date.shape}")
+                    logger.debug(f" Datos filtrados después de conversión DF - shape: {df_date.shape}")
                     
             except Exception as e:
-                print(f"❌ DEBUG: Error en conversión de fechas: {e}")
+                logger.error(f"Error en conversión de fechas: {e}")
+                pass
         
-        print(f"🔍 DEBUG: Primeras filas de df_date: {df_date.head(3).to_dict() if not df_date.empty else 'No hay datos'}")
+# REMOVED DEBUG:         logger.debug(f"DEBUG: Primeras filas de df_date: {df_date.head(3).to_dict() if not df_date.empty else 'No hay datos'}")
         
         if df_date.empty:
-            print(f"❌ DEBUG: No hay datos para la fecha {selected_date}")
+# REMOVED DEBUG:             print(f"❌ DEBUG: No hay datos para la fecha {selected_date}")
             return False, None, f"Sin datos para {selected_date}", f"No se encontraron datos para la fecha {selected_date}."
         
         # Agrupar por región para esa fecha
         region_summary = df_date.groupby('Region')['Value'].sum().reset_index()
         region_summary = region_summary.sort_values('Value', ascending=False)
-        region_summary = region_summary.rename(columns={'Region': 'Región', 'Value': 'Caudal (m³/s)'})
-        print(f"📊 DEBUG: region_summary creado - shape: {region_summary.shape}")
-        print(f"📈 DEBUG: region_summary contenido: {region_summary.to_dict() if not region_summary.empty else 'Vacío'}")
+        region_summary = region_summary.rename(columns={'Region': 'Región', 'Value': 'Energía (GWh)'})
+# REMOVED DEBUG:         logger.debug(f"DEBUG: region_summary creado - shape: {region_summary.shape}")
+        logger.debug(f"region_summary contenido: {region_summary.to_dict() if not region_summary.empty else 'Vacío'}")
         
         # Calcular participación porcentual
-        total = region_summary['Caudal (m³/s)'].sum()
-        print(f"💰 DEBUG: Total calculado: {total}")
+        total = region_summary['Energía (GWh)'].sum()
+        logger.debug(f"Total calculado: {total}")
         
         if total > 0:
-            region_summary['Participación (%)'] = (region_summary['Caudal (m³/s)'] / total * 100).round(2)
+            region_summary['Participación (%)'] = (region_summary['Energía (GWh)'] / total * 100).round(2)
             # Ajustar para que sume exactamente 100%
             diferencia = 100 - region_summary['Participación (%)'].sum()
             if abs(diferencia) > 0.001:
@@ -4099,12 +6465,12 @@ def show_modal_table(timeline_clickData, is_open, region_data):
             region_summary['Participación (%)'] = 0
         
         # Formatear números
-        region_summary['Caudal (m³/s)'] = region_summary['Caudal (m³/s)'].apply(format_number)
+        region_summary['Energía (GWh)'] = region_summary['Energía (GWh)'].apply(format_number)
         
         # Agregar fila total
         total_row = {
             'Región': 'TOTAL',
-            'Caudal (m³/s)': format_number(total),
+            'Energía (GWh)': format_number(total),
             'Participación (%)': '100.0%'
         }
         
@@ -4115,7 +6481,7 @@ def show_modal_table(timeline_clickData, is_open, region_data):
             data=data_with_total,
             columns=[
                 {"name": "Región", "id": "Región"},
-                {"name": "Caudal (m³/s)", "id": "Caudal (m³/s)"},
+                {"name": "Energía (GWh)", "id": "Energía (GWh)"},
                 {"name": "Participación (%)", "id": "Participación (%)"}
             ],
             style_cell={'textAlign': 'left', 'padding': '8px', 'fontFamily': 'Inter, Arial', 'fontSize': 14},
@@ -4137,12 +6503,12 @@ def show_modal_table(timeline_clickData, is_open, region_data):
         # Crear título y descripción
         formatted_date = format_date(selected_date)
         total_regions = len(region_summary) - 1 if len(region_summary) > 0 else 0
-        title = f"📅 Detalles del {formatted_date} - Total Nacional: {format_number(total_value)} m³/s"
-        description = f"Detalle por región hidrológica para el día {formatted_date}. Se muestran los aportes de caudal de {total_regions} regiones que registraron actividad en esta fecha, con su respectiva participación porcentual sobre el total nacional de {format_number(total_value)} m³/s."
+        title = f"⚡ Detalles del {formatted_date} - Total Nacional: {format_number(total_value)} GWh"
+        description = f"Detalle por región hidrológica para el día {formatted_date}. Se muestran los aportes de energía de {total_regions} regiones que registraron actividad en esta fecha, con su respectiva participación porcentual sobre el total nacional de {format_number(total_value)} GWh."
         
-        print(f"✅ DEBUG: Título: {title}")
-        print(f"✅ DEBUG: Descripción: {description}")
-        print(f"✅ DEBUG: Retornando modal abierto con tabla de {len(data_with_total)} filas")
+# REMOVED DEBUG:         logger.info(f"DEBUG: Título: {title}")
+# REMOVED DEBUG:         logger.info(f"DEBUG: Descripción: {description}")
+# REMOVED DEBUG:         logger.info(f"DEBUG: Retornando modal abierto con tabla de {len(data_with_total)} filas")
         
         return True, table, title, description
     
@@ -4151,7 +6517,7 @@ def show_modal_table(timeline_clickData, is_open, region_data):
         return False, None, "", ""
     
     # Por defecto, modal cerrado
-    print(f"⚠️ DEBUG: No se detectó ningún click válido - modal cerrado por defecto")
+# REMOVED DEBUG:     logger.warning(f"DEBUG: No se detectó ningún click válido - modal cerrado por defecto")
     return False, None, "", ""
 
 def create_stats_summary(data):
@@ -4197,20 +6563,20 @@ def create_region_filtered_participacion_table(region, start_date, end_date):
     incluyendo el sistema de semáforo de riesgo.
     """
     try:
-        print(f"🔍 DEBUG PARTICIPACIÓN: Iniciando para región={region}, fechas={start_date} a {end_date}")
+# REMOVED DEBUG:         logger.debug(f"DEBUG PARTICIPACIÓN: Iniciando para región={region}, fechas={start_date} a {end_date}")
         
         # Obtener datos de embalses filtrados por región
         df_embalses = get_embalses_capacidad(region, start_date, end_date)
-        print(f"🔍 DEBUG PARTICIPACIÓN: get_embalses_capacidad retornó {len(df_embalses)} filas")
-        print(f"🔍 DEBUG PARTICIPACIÓN: Embalses encontrados: {df_embalses['Embalse'].tolist() if not df_embalses.empty else 'NINGUNO'}")
+# REMOVED DEBUG:         logger.debug(f"DEBUG PARTICIPACIÓN: get_embalses_capacidad retornó {len(df_embalses)} filas")
+# REMOVED DEBUG:         logger.debug(f"DEBUG PARTICIPACIÓN: Embalses encontrados: {df_embalses['Embalse'].tolist() if not df_embalses.empty else 'NINGUNO'}")
         
         if df_embalses.empty:
-            print(f"❌ ERROR PARTICIPACIÓN: No hay datos para región {region}")
+# REMOVED DEBUG:             print(f"❌ ERROR PARTICIPACIÓN: No hay datos para región {region}")
             return html.Div("No hay datos disponibles para esta región.", className="text-center text-muted")
         
         # Calcular participación porcentual
         df_participacion = get_participacion_embalses(df_embalses)
-        print(f"🔍 DEBUG PARTICIPACIÓN: get_participacion_embalses retornó {len(df_participacion)} filas")
+# REMOVED DEBUG:         logger.debug(f"DEBUG PARTICIPACIÓN: get_participacion_embalses retornó {len(df_participacion)} filas")
         
         # Crear datos para la tabla con semáforo
         table_data = []
@@ -4231,14 +6597,28 @@ def create_region_filtered_participacion_table(region, start_date, end_date):
             
             # Obtener volumen útil del embalse
             embalse_data = df_embalses[df_embalses['Embalse'] == embalse_name]
-            volumen_util = embalse_data['Volumen Útil (%)'].iloc[0] if not embalse_data.empty else 0
+            volumen_util_raw = embalse_data['Volumen Útil (%)'].iloc[0] if not embalse_data.empty else 0
+            
+            # Convertir volumen_util a número (no reformatear si ya es string)
+            if volumen_util_raw is None or (isinstance(volumen_util_raw, str) and volumen_util_raw == 'N/D'):
+                volumen_util = 0
+            elif isinstance(volumen_util_raw, str):
+                # Si ya es string con %, extraer solo el número para cálculos de riesgo
+                try:
+                    volumen_util = float(volumen_util_raw.replace('%', '').replace(',', '.').strip())
+                except (ValueError, AttributeError):
+                    volumen_util = 0
+            elif pd.isna(volumen_util_raw):
+                volumen_util = 0
+            else:
+                volumen_util = float(volumen_util_raw)
             
             # Clasificar riesgo
             nivel_riesgo = clasificar_riesgo_embalse(participacion_num, volumen_util)
             estilo_riesgo = obtener_estilo_riesgo(nivel_riesgo)
             
-            print(f"✅ SEMÁFORO REGIÓN {region}: {embalse_name} - Participación={participacion_num}%, Volumen={volumen_util}%")
-            print(f"✅ RESULTADO SEMÁFORO REGIÓN {region}: {embalse_name} - Riesgo: {nivel_riesgo}")
+# REMOVED DEBUG:             logger.info(f"SEMÁFORO REGIÓN {region}: {embalse_name} - Participación={participacion_num}%, Volumen={volumen_util}%")
+# REMOVED DEBUG:             logger.info(f"RESULTADO SEMÁFORO REGIÓN {region}: {embalse_name} - Riesgo: {nivel_riesgo}")
             
             table_data.append({
                 'Embalse': embalse_name,
@@ -4261,7 +6641,7 @@ def create_region_filtered_participacion_table(region, start_date, end_date):
                 'Riesgo': "⚡"  # Icono especial para el total
             })
         
-        print(f"🔍 DEBUG PARTICIPACIÓN: Datos finales de tabla: {len(table_data)} filas")
+# REMOVED DEBUG:         logger.debug(f"DEBUG PARTICIPACIÓN: Datos finales de tabla: {len(table_data)} filas")
         
         # Crear DataTable con semáforo
         return dash_table.DataTable(
@@ -4311,8 +6691,10 @@ def create_region_filtered_participacion_table(region, start_date, end_date):
         )
         
     except Exception as e:
-        print(f"❌ Error en create_region_filtered_participacion_table: {e}")
-        return html.Div("Error al cargar los datos.", className="text-center text-danger")
+        logger.error(f"❌ Error en create_region_filtered_participacion_table: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        return html.Div(f"Error al cargar los datos: {str(e)}", className="text-center text-danger")
 
 def create_region_filtered_capacidad_table(region, start_date, end_date):
     """
@@ -4335,7 +6717,27 @@ def create_region_filtered_capacidad_table(region, start_date, end_date):
         for _, row in df_embalses.iterrows():
             embalse_name = row['Embalse']
             capacidad = row['Capacidad_GWh_Internal']  # Solo para cálculos internos
-            volumen_util = row['Volumen Útil (%)']
+            volumen_util_raw = row['Volumen Útil (%)']
+            
+            # Convertir volumen_util a número y preservar formato original si ya está formateado
+            volumen_util_formatted = None
+            if volumen_util_raw is None or (isinstance(volumen_util_raw, str) and volumen_util_raw == 'N/D'):
+                volumen_util = 0
+                volumen_util_formatted = "N/D"
+            elif isinstance(volumen_util_raw, str):
+                # Si ya es string, preservar formato original y extraer número
+                try:
+                    volumen_util = float(volumen_util_raw.replace('%', '').replace(',', '.').strip())
+                    volumen_util_formatted = volumen_util_raw  # Usar formato original
+                except (ValueError, AttributeError):
+                    volumen_util = 0
+                    volumen_util_formatted = "N/D"
+            elif pd.isna(volumen_util_raw):
+                volumen_util = 0
+                volumen_util_formatted = "N/D"
+            else:
+                volumen_util = float(volumen_util_raw)
+                volumen_util_formatted = None  # Formatear después
             
             # Obtener participación del embalse
             participacion_row = df_participacion[df_participacion['Embalse'] == embalse_name]
@@ -4351,13 +6753,13 @@ def create_region_filtered_capacidad_table(region, start_date, end_date):
             # Clasificar riesgo
             nivel_riesgo = clasificar_riesgo_embalse(participacion_num, volumen_util)
             
-            print(f"✅ SEMÁFORO CAPACIDAD REGIÓN {region}: {embalse_name} - Participación={participacion_num}%, Volumen={volumen_util}%")
-            print(f"✅ RESULTADO CAPACIDAD REGIÓN {region}: {embalse_name} - Riesgo: {nivel_riesgo}")
+# REMOVED DEBUG:             logger.info(f"SEMÁFORO CAPACIDAD REGIÓN {region}: {embalse_name} - Participación={participacion_num}%, Volumen={volumen_util}%")
+# REMOVED DEBUG:             logger.info(f"RESULTADO CAPACIDAD REGIÓN {region}: {embalse_name} - Riesgo: {nivel_riesgo}")
             
             # NO incluir la columna de capacidad GWh en la tabla
             table_data.append({
                 'Embalse': embalse_name,
-                'Volumen Útil (%)': f"{volumen_util:.1f}%" if pd.notna(volumen_util) else "N/D",
+                'Volumen Útil (%)': volumen_util_formatted if volumen_util_formatted else (f"{volumen_util:.1f}%" if pd.notna(volumen_util) else "N/D"),
                 'Riesgo': "🔴" if nivel_riesgo == "high" else "🟡" if nivel_riesgo == "medium" else "🟢"
             })
         
@@ -4420,8 +6822,10 @@ def create_region_filtered_capacidad_table(region, start_date, end_date):
         )
         
     except Exception as e:
-        print(f"❌ Error en create_region_filtered_capacidad_table: {e}")
-        return html.Div("Error al cargar los datos.", className="text-center text-danger")
+        logger.error(f"❌ Error en create_region_filtered_capacidad_table: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        return html.Div(f"Error al cargar los datos: {str(e)}", className="text-center text-danger")
 
 # NOTA: Los callbacks de tabla de embalses fueron eliminados para implementación directa en layout
 
@@ -4434,9 +6838,536 @@ def load_region_options(_):
     """Carga las opciones de regiones dinámicamente para evitar bloqueos durante la importación."""
     try:
         regiones_disponibles = get_region_options()
-        options = [{"label": "🌍 Todas las regiones", "value": "__ALL_REGIONS__"}]
-        options += [{"label": f"🏔️ {r}", "value": r} for r in regiones_disponibles]
+        options = [{"label": "Todas las regiones", "value": "__ALL_REGIONS__"}]
+        options += [{"label": r, "value": r} for r in regiones_disponibles]
         return options
     except Exception as e:
-        print(f"Error cargando opciones de regiones: {e}")
-        return [{"label": "🌍 Todas las regiones", "value": "__ALL_REGIONS__"}]
+        logger.error(f"Error cargando opciones de regiones: {e}", exc_info=True)
+        return [{"label": "Todas las regiones", "value": "__ALL_REGIONS__"}]
+
+# Callback para cargar el mapa de embalses por región
+@callback(
+    Output('mapa-embalses-container', 'children'),
+    Input('participacion-jerarquica-data', 'data')  # Se ejecuta cuando se cargan los datos de las tablas
+)
+def cargar_mapa_embalses(data):
+    """Genera el mapa mostrando CADA EMBALSE como un punto individual dentro de su región."""
+    try:
+        logger.info("Generando mapa con puntos por embalse...")
+        
+        if not data or len(data) == 0:
+            return dbc.Alert([
+                html.H5("No hay datos disponibles", className="alert-heading"),
+                html.P("Esperando datos de embalses...")
+            ], color="info")
+        
+        # Filtrar solo embalses (no regiones ni total)
+        embalses_data = [d for d in data if d.get('tipo') == 'embalse']
+        
+        if len(embalses_data) == 0:
+            return dbc.Alert([
+                html.H5("No hay datos de embalses", className="alert-heading"),
+                html.P("No se encontraron datos de embalses en las tablas.")
+            ], color="warning")
+        
+        logger.info(f"Procesando {len(embalses_data)} embalses individuales...")
+        
+        # Agrupar embalses por región
+        import random
+        from math import cos, radians
+        
+        regiones_embalses = {}
+        for emb in embalses_data:
+            region = emb.get('region_name')
+            if not region or region not in REGIONES_COORDENADAS:
+                continue
+            
+            if region not in regiones_embalses:
+                regiones_embalses[region] = []
+            
+            # Obtener valores
+            participacion = emb.get('participacion_valor', 0)
+            volumen_pct = emb.get('volumen_valor', 0)
+            nombre_embalse = emb.get('nombre', '').replace('    └─ ', '')
+            
+            # Calcular riesgo con LA MISMA función del semáforo
+            riesgo, color, icono = calcular_semaforo_embalse(participacion, volumen_pct)
+            
+            regiones_embalses[region].append({
+                'nombre': nombre_embalse,
+                'participacion': participacion,
+                'volumen_pct': volumen_pct,
+                'riesgo': riesgo,
+                'color': color,
+                'icono': icono
+            })
+        
+        # Crear el mapa con Plotly
+        import plotly.graph_objects as go
+        
+        fig = go.Figure()
+        
+        # Contador para leyenda (solo mostrar una vez cada color)
+        leyenda_mostrada = {'ALTO': False, 'MEDIO': False, 'BAJO': False}
+        
+        # Para cada región, distribuir los embalses en un área alrededor del centro de la región
+        for region, embalses in regiones_embalses.items():
+            coords = REGIONES_COORDENADAS[region]
+            lat_centro = coords['lat']
+            lon_centro = coords['lon']
+            
+            # Calcular un radio de dispersión proporcional al número de embalses
+            # Más embalses = mayor área de dispersión
+            num_embalses = len(embalses)
+            radio_lat = 0.3 + (num_embalses * 0.05)  # Radio en grados de latitud
+            radio_lon = 0.4 + (num_embalses * 0.06)  # Radio en grados de longitud
+            
+            logger.debug(f"{region}: {num_embalses} embalses")
+            
+            # Distribuir cada embalse en posiciones aleatorias dentro del área de la región
+            for i, emb in enumerate(embalses):
+                # Generar posición aleatoria dentro de un círculo alrededor del centro
+                # Usar semilla basada en el nombre para que sea consistente entre recargas
+                seed_value = hash(emb['nombre']) % 10000
+                random.seed(seed_value)
+                
+                # Ángulo aleatorio y distancia aleatoria desde el centro
+                angulo = random.uniform(0, 360)
+                distancia = random.uniform(0.2, 1.0)  # 20% a 100% del radio
+                
+                # Calcular offset
+                from math import sin, cos, radians
+                offset_lat = distancia * radio_lat * sin(radians(angulo))
+                offset_lon = distancia * radio_lon * cos(radians(angulo))
+                
+                lat_embalse = lat_centro + offset_lat
+                lon_embalse = lon_centro + offset_lon
+                
+                # Crear tooltip con información del embalse
+                hover_text = (
+                    f"<b>{emb['nombre']}</b><br>" +
+                    f"Región: {coords['nombre']}<br>" +
+                    f"Participación: {emb['participacion']:.2f}%<br>" +
+                    f"Volumen Útil: {emb['volumen_pct']:.1f}%<br>" +
+                    f"<b>Riesgo: {emb['riesgo']}</b> {emb['icono']}"
+                )
+                
+                # Tamaño según participación (más grande = más importante)
+                tamaño = min(8 + emb['participacion'] * 0.5, 25)
+                
+                # Mostrar en leyenda solo la primera vez que aparece cada nivel de riesgo
+                mostrar_leyenda = not leyenda_mostrada[emb['riesgo']]
+                if mostrar_leyenda:
+                    leyenda_mostrada[emb['riesgo']] = True
+                    nombre_leyenda = f"{emb['icono']} Riesgo {emb['riesgo']}"
+                else:
+                    nombre_leyenda = f"{emb['nombre']}"
+                
+                # Agregar punto al mapa
+                fig.add_trace(go.Scattergeo(
+                    lon=[lon_embalse],
+                    lat=[lat_embalse],
+                    mode='markers',
+                    marker=dict(
+                        size=tamaño,
+                        color=emb['color'],
+                        line=dict(width=1, color='white'),
+                        symbol='circle',
+                        opacity=0.85
+                    ),
+                    name=nombre_leyenda,
+                    hovertext=hover_text,
+                    hoverinfo='text',
+                    showlegend=mostrar_leyenda,
+                    legendgroup=emb['riesgo']  # Agrupar por nivel de riesgo
+                ))
+        
+        # Configurar el mapa centrado en Colombia
+        fig.update_geos(
+            center=dict(lon=-74, lat=4.5),
+            projection_type='mercator',
+            showcountries=True,
+            countrycolor='lightgray',
+            showcoastlines=True,
+            coastlinecolor='gray',
+            showland=True,
+            landcolor='#f5f5f5',
+            showlakes=True,
+            lakecolor='lightblue',
+            showrivers=True,
+            rivercolor='lightblue',
+            lonaxis_range=[-79, -66],
+            lataxis_range=[-4.5, 13],
+            bgcolor='#e8f4f8'
+        )
+        
+        fig.update_layout(
+            title={
+                'text': f'🗺️ Mapa de {len(embalses_data)} Embalses - Semáforo de Riesgo Hidrológico',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 16, 'color': COLORS['text_primary'], 'family': 'Arial Black'}
+            },
+            height=390,
+            margin=dict(l=0, r=0, t=60, b=0),
+            legend=dict(
+                title=dict(text='Nivel de Riesgo', font=dict(size=12, family='Arial Black')),
+                orientation='v',
+                yanchor='top',
+                y=0.98,
+                xanchor='left',
+                x=0.01,
+                bgcolor='rgba(255,255,255,0.9)',
+                bordercolor='gray',
+                borderwidth=1,
+                font=dict(size=11)
+            ),
+            hoverlabel=dict(
+                bgcolor='white',
+                font_size=12,
+                font_family='Arial'
+            )
+        )
+        
+        total_embalses = len(embalses_data)
+        total_regiones = len(regiones_embalses)
+        logger.info(f"Mapa generado: {total_embalses} embalses en {total_regiones} regiones")
+        
+        return dcc.Graph(figure=fig, config={'displayModeBar': True, 'displaylogo': False})
+        
+    except Exception as e:
+        print(f"❌ Error generando mapa de embalses: {e}")
+        import traceback
+        traceback.print_exc()
+        return html.Div([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            f"Error al generar el mapa: {str(e)}"
+        ], className="alert alert-danger")
+
+
+# ============================================================================
+# CALLBACK: COMPARACIÓN ANUAL DE HIDROLOGÍA (EMBALSES)
+# ============================================================================
+
+@callback(
+    [Output('grafica-lineas-temporal-hidro', 'figure'),
+     Output('contenedor-embalses-anuales', 'children')],
+    [Input('btn-actualizar-comparacion-hidro', 'n_clicks'),
+     Input('years-multiselector-hidro', 'value'),
+     Input('hidro-tabs', 'active_tab')],
+    prevent_initial_call=False
+)
+def actualizar_comparacion_anual_hidro(n_clicks, years_selected, active_tab):
+    """
+    Callback para actualizar:
+    1. Gráfica de líneas temporales (volumen útil por año)
+    2. Gráficas de barras (volumen promedio por embalse y año)
+    """
+    px, go = get_plotly_modules()
+    
+    # Solo ejecutar si estamos en la pestaña de comparación anual
+    if active_tab != "tab-comparacion-anual":
+        raise PreventUpdate
+    
+    if not years_selected or len(years_selected) == 0:
+        return (
+            go.Figure().add_annotation(text="Selecciona al menos un año", xref="paper", yref="paper", x=0.5, y=0.5),
+            dbc.Alert("Por favor selecciona al menos un año para comparar", color="warning")
+        )
+    
+    try:
+        # Colores únicos para cada año
+        colores_años = {
+            2020: '#1f77b4',
+            2021: '#ff7f0e',
+            2022: '#2ca02c',
+            2023: '#d62728',
+            2024: '#9467bd',
+            2025: '#8c564b'
+        }
+        
+        # ============================================================
+        # 1. OBTENER DATOS DE VOLÚMENES PARA CADA AÑO SELECCIONADO
+        # ============================================================
+        datos_todos_años = []
+        
+        for year in sorted(years_selected):
+            logger.info(f"📅 Obteniendo datos hidrológicos para año {year}...")
+            
+            # Definir fechas del año completo
+            fecha_inicio = date(year, 1, 1)
+            fecha_fin = date(year, 12, 31)
+            
+            # Si es el año actual, usar solo hasta ayer
+            if year == date.today().year:
+                fecha_fin = date.today() - timedelta(days=1)
+            
+            # Obtener datos de volumen útil de embalses (VoluUtilDiarEner)
+            try:
+                df_year, warning_msg = obtener_datos_inteligente(
+                    'VoluUtilDiarEner', 
+                    'Embalse',
+                    fecha_inicio.strftime('%Y-%m-%d'),
+                    fecha_fin.strftime('%Y-%m-%d')
+                )
+                
+                if warning_msg:
+                    logger.info(f"⚠️ {warning_msg}")
+                
+                if df_year is not None and not df_year.empty:
+                    # Renombrar columnas para consistencia
+                    if 'Date' in df_year.columns:
+                        df_year.rename(columns={'Date': 'Fecha'}, inplace=True)
+                    if 'Value' in df_year.columns:
+                        df_year.rename(columns={'Value': 'Volumen_GWh'}, inplace=True)
+                    
+                    # La columna 'Embalse' ya existe gracias a obtener_datos_inteligente
+                    # Solo verificar que exista
+                    if 'Embalse' not in df_year.columns and 'Name' in df_year.columns:
+                        df_year['Embalse'] = df_year['Name']
+                    
+                    df_year['Año'] = year
+                    datos_todos_años.append(df_year)
+                else:
+                    logger.warning(f"⚠️ Sin datos para año {year}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error obteniendo datos para {year}: {e}")
+                continue
+        
+        if not datos_todos_años:
+            return (
+                go.Figure().add_annotation(text="No hay datos disponibles para los años seleccionados", 
+                                         xref="paper", yref="paper", x=0.5, y=0.5),
+                dbc.Alert("No se encontraron datos para los años seleccionados", color="warning")
+            )
+        
+        # Combinar todos los años
+        df_completo = pd.concat(datos_todos_años, ignore_index=True)
+        df_completo['Fecha'] = pd.to_datetime(df_completo['Fecha'])
+        
+        # ============================================================
+        # NOTA: Se muestran TODOS los embalses de cada año (sin filtrar)
+        # Esto asegura que los datos sean reales y completos
+        # ============================================================
+        
+        # Logging para verificar totales por año
+        for year in sorted(years_selected):
+            embalses_año = df_completo[df_completo['Año'] == year]['Embalse'].nunique()
+            logger.info(f"📊 {year}: {embalses_año} embalses")
+        
+        # ============================================================
+        # 2. CREAR GRÁFICA DE LÍNEAS TEMPORALES SUPERPUESTAS
+        # ============================================================
+        
+        # Agregar por fecha y año (suma total de embalses comunes por día)
+        df_por_dia_año = df_completo.groupby(['Año', 'Fecha'], as_index=False)['Volumen_GWh'].sum()
+        
+        # Crear fecha normalizada (mismo año base 2024 para superposición)
+        df_por_dia_año['MesDia'] = df_por_dia_año['Fecha'].dt.strftime('%m-%d')
+        df_por_dia_año['FechaNormalizada'] = pd.to_datetime('2024-' + df_por_dia_año['MesDia'])
+        
+        # Crear gráfica de líneas superpuestas
+        fig_lineas = go.Figure()
+        
+        for year in sorted(years_selected):
+            df_year = df_por_dia_año[df_por_dia_año['Año'] == year].sort_values('FechaNormalizada')
+            
+            # Crear texto customizado para hover con fecha real
+            hover_text = [
+                f"<b>{year}</b><br>{fecha.strftime('%d de %B de %Y')}<br>Volumen: {vol:.2f} GWh"
+                for fecha, vol in zip(df_year['Fecha'], df_year['Volumen_GWh'])
+            ]
+            
+            fig_lineas.add_trace(
+                go.Scatter(
+                    x=df_year['FechaNormalizada'],
+                    y=df_year['Volumen_GWh'],
+                    mode='lines',
+                    name=str(year),
+                    line=dict(color=colores_años.get(year, '#666'), width=2),
+                    hovertext=hover_text,
+                    hoverinfo='text'
+                )
+            )
+        
+        fig_lineas.update_layout(
+            title="Volumen Útil Total de Embalses (GWh)",
+            xaxis_title="Fecha",
+            yaxis_title="Volumen (GWh)",
+            hovermode='x unified',
+            template='plotly_white',
+            height=325,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            xaxis=dict(
+                tickformat='%d %b',
+                dtick='M1',
+                tickangle=-45
+            )
+        )
+        
+        # ============================================================
+        # 3. CREAR GRÁFICAS DE TORTA CON FICHAS (una por año) - ESTRUCTURA IDÉNTICA A GENERACIÓN
+        # ============================================================
+        
+        # Calcular altura dinámica según cantidad de años
+        num_years = len(years_selected)
+        if num_years <= 2:
+            torta_height = 200  # Más grande para 1-2 años
+        elif num_years == 3:
+            torta_height = 120  # Media para 3 años
+        else:
+            torta_height = 80   # Pequeña para 4+ años
+        
+        embalses_anuales = []
+        
+        for year in sorted(years_selected):
+            # Definir fechas del año específico
+            fecha_inicio_year = date(year, 1, 1)
+            fecha_fin_year = date(year, 12, 31)
+            
+            if year == date.today().year:
+                fecha_fin_year = date.today() - timedelta(days=1)
+            
+            # Filtrar datos del año
+            df_year = df_completo[df_completo['Año'] == year].copy()
+            
+            # Calcular totales para KPIs
+            volumen_promedio_total = df_por_dia_año[df_por_dia_año['Año'] == year]['Volumen_GWh'].mean()
+            volumen_minimo = df_por_dia_año[df_por_dia_año['Año'] == year]['Volumen_GWh'].min()
+            volumen_maximo = df_por_dia_año[df_por_dia_año['Año'] == year]['Volumen_GWh'].max()
+            
+            # Calcular promedios por embalse para la gráfica
+            df_por_embalse = df_year.groupby('Embalse')['Volumen_GWh'].mean().reset_index()
+            df_por_embalse.columns = ['Embalse', 'Promedio']
+            
+            # Ordenar y tomar top 10 embalses
+            df_por_embalse = df_por_embalse.sort_values('Promedio', ascending=False).head(10)
+            
+            # Crear gráfica de BARRAS (más clara que torta para volúmenes)
+            fig_barras = go.Figure()
+            fig_barras.add_trace(
+                go.Bar(
+                    x=df_por_embalse['Embalse'],
+                    y=df_por_embalse['Promedio'],
+                    marker=dict(
+                        color='#1f77b4'  # Color uniforme azul para todas las barras
+                    ),
+                    hovertemplate='<b>%{x}</b><br>Volumen Promedio: %{y:.1f} GWh<extra></extra>'
+                )
+            )
+            
+            fig_barras.update_layout(
+                template='plotly_white',
+                height=torta_height,
+                showlegend=False,
+                margin=dict(t=5, b=25, l=5, r=5),
+                xaxis=dict(
+                    tickangle=-45,
+                    tickfont=dict(size=7)
+                ),
+                yaxis=dict(
+                    title="GWh",
+                    titlefont=dict(size=8),
+                    tickfont=dict(size=7)
+                )
+            )
+            
+            # Agregar tarjeta con fichas compactas DENTRO (estructura idéntica a Generación)
+            embalses_anuales.append(
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Small(f"{year}", style={'fontSize': '0.6rem', 'color': '#666', 'fontWeight': '600', 'display': 'block', 'textAlign': 'center', 'marginBottom': '4px'}),
+                        
+                        # Fichas horizontales compactas (3 en fila)
+                        html.Div([
+                            # Ficha Promedio
+                            html.Div([
+                                html.I(className="fas fa-water", style={'color': '#1f77b4', 'fontSize': '0.6rem', 'marginRight': '2px'}),
+                                html.Span("Prom", style={'fontSize': '0.45rem', 'marginRight': '2px', 'color': '#666'}),
+                                html.Span(f"{volumen_promedio_total:,.0f}", style={'fontSize': '0.7rem', 'fontWeight': '700', 'color': '#1f77b4'})
+                            ], style={
+                                'display': 'flex',
+                                'alignItems': 'center',
+                                'gap': '1px',
+                                'padding': '2px 4px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '3px',
+                                'flex': '1',
+                                'justifyContent': 'center'
+                            }),
+                            
+                            # Ficha Mínimo
+                            html.Div([
+                                html.I(className="fas fa-arrow-down", style={'color': '#dc3545', 'fontSize': '0.6rem', 'marginRight': '2px'}),
+                                html.Span("Min", style={'fontSize': '0.45rem', 'marginRight': '2px', 'color': '#666'}),
+                                html.Span(f"{volumen_minimo:,.0f}", style={'fontSize': '0.7rem', 'fontWeight': '700', 'color': '#dc3545'})
+                            ], style={
+                                'display': 'flex',
+                                'alignItems': 'center',
+                                'gap': '1px',
+                                'padding': '2px 4px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '3px',
+                                'flex': '1',
+                                'justifyContent': 'center'
+                            }),
+                            
+                            # Ficha Máximo
+                            html.Div([
+                                html.I(className="fas fa-arrow-up", style={'color': '#28a745', 'fontSize': '0.6rem', 'marginRight': '2px'}),
+                                html.Span("Max", style={'fontSize': '0.45rem', 'marginRight': '2px', 'color': '#666'}),
+                                html.Span(f"{volumen_maximo:,.0f}", style={'fontSize': '0.7rem', 'fontWeight': '700', 'color': '#28a745'})
+                            ], style={
+                                'display': 'flex',
+                                'alignItems': 'center',
+                                'gap': '1px',
+                                'padding': '2px 4px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '3px',
+                                'flex': '1',
+                                'justifyContent': 'center'
+                            }),
+                        ], style={'display': 'flex', 'gap': '3px', 'marginBottom': '4px'}),
+                        
+                        # Gráfica de barras
+                        dcc.Graph(figure=fig_barras, config={'displayModeBar': False}),
+                        
+                        # Fecha del período
+                        html.Small(f"{fecha_inicio_year.strftime('%d/%m/%Y')} - {fecha_fin_year.strftime('%d/%m/%Y')}",
+                                 className="text-center d-block text-muted",
+                                 style={'fontSize': '0.5rem', 'marginTop': '2px'})
+                    ], className="p-1")
+                ], className="shadow-sm")
+            )
+        
+        # Organizar fichas de 2 en 2 horizontalmente
+        filas = []
+        for i in range(0, len(embalses_anuales), 2):
+            cols = []
+            # Primera columna (50% del ancho de la columna = 15% del total)
+            cols.append(dbc.Col(embalses_anuales[i], md=6, className="mb-2"))
+            # Segunda columna (si existe)
+            if i + 1 < len(embalses_anuales):
+                cols.append(dbc.Col(embalses_anuales[i + 1], md=6, className="mb-2"))
+            filas.append(dbc.Row(cols, className="g-2"))
+        
+        contenedor_embalses = html.Div(filas)
+        
+        return fig_lineas, contenedor_embalses
+        
+    except Exception as e:
+        logger.error(f"❌ Error en comparación anual hidrología: {e}")
+        import traceback
+        traceback.print_exc()
+        return (
+            go.Figure().add_annotation(text=f"Error: {str(e)}", xref="paper", yref="paper", x=0.5, y=0.5),
+            dbc.Alert(f"Error procesando datos: {str(e)}", color="danger")
+        )

@@ -1,0 +1,329 @@
+/* ============================================
+   ESTILOS PROFESIONALES - DASHBOARD MME
+   Diseño moderno, limpio y corporativo
+   ============================================ */
+
+/* Variables de color corporativas */
+:root {
+    --primary-blue: #1e3a8a;
+    --secondary-blue: #3b82f6;
+    --accent-orange: #f59e0b;
+    --success-green: #10b981;
+    --warning-amber: #f59e0b;
+    --error-red: #ef4444;
+    --gray-50: #f9fafb;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-600: #4b5563;
+    --gray-800: #1f2937;
+    --gray-900: #111827;
+}
+
+/* Tipografía profesional */
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    color: var(--gray-900);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Headers minimalistas y elegantes */
+.professional-header {
+    border-left: 3px solid var(--primary-blue);
+    padding-left: 20px;
+    margin-bottom: 32px;
+    background: linear-gradient(90deg, var(--gray-50) 0%, transparent 100%);
+    padding-top: 16px;
+    padding-bottom: 16px;
+}
+
+.professional-header h1 {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--gray-900);
+    margin: 0;
+    letter-spacing: -0.5px;
+}
+
+.professional-header .text-muted,
+.professional-header p {
+    font-size: 15px;
+    color: var(--gray-600);
+    margin-top: 6px;
+    font-weight: 400;
+}
+
+/* Cards modernos con sombras sutiles */
+.card {
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Botones profesionales estilo corporativo */
+.btn-professional,
+.btn-primary,
+button[class*="btn"] {
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    border-radius: 8px;
+    padding: 10px 24px;
+    transition: all 0.2s ease;
+    border: none;
+    text-transform: none;
+    font-size: 14px;
+}
+
+.btn-professional:hover,
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.2);
+}
+
+/* Alertas corporativas sin iconos innecesarios */
+.alert {
+    border: none;
+    border-left: 4px solid;
+    border-radius: 8px;
+    padding: 16px 20px;
+    font-size: 14px;
+    background-color: var(--gray-50);
+}
+
+.alert-info {
+    border-left-color: var(--secondary-blue);
+    background-color: #eff6ff;
+    color: var(--primary-blue);
+}
+
+.alert-warning {
+    border-left-color: var(--warning-amber);
+    background-color: #fffbeb;
+    color: #92400e;
+}
+
+.alert-success {
+    border-left-color: var(--success-green);
+    background-color: #f0fdf4;
+    color: #065f46;
+}
+
+.alert-danger,
+.alert-error {
+    border-left-color: var(--error-red);
+    background-color: #fef2f2;
+    color: #991b1b;
+}
+
+/* Dropdowns y controles de formulario */
+.Select-control,
+.form-control,
+input[type="text"],
+select {
+    border: 1px solid var(--gray-300);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.Select-control:hover,
+.form-control:hover,
+input[type="text"]:hover {
+    border-color: var(--gray-400);
+}
+
+.Select-control:focus,
+.form-control:focus,
+input[type="text"]:focus {
+    border-color: var(--secondary-blue);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    outline: none;
+}
+
+/* Labels minimalistas */
+label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Iconos corporativos uniformes */
+.fa, .fas, .far {
+    color: var(--gray-600);
+    font-size: 14px;
+}
+
+/* Tarjetas de métricas */
+.metric-card {
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.metric-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+
+.metric-value {
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--primary-blue);
+    line-height: 1;
+    margin-bottom: 8px;
+}
+
+.metric-label {
+    font-size: 13px;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-weight: 600;
+}
+
+/* Tablas corporativas */
+.table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.table thead th {
+    background-color: var(--gray-100);
+    color: var(--gray-800);
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--gray-300);
+    padding: 14px 16px;
+}
+
+.table tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--gray-200);
+    font-size: 14px;
+}
+
+.table tbody tr:hover {
+    background-color: var(--gray-50);
+}
+
+/* Pestañas modernas */
+.nav-tabs {
+    border-bottom: 2px solid var(--gray-200);
+}
+
+.nav-tabs .nav-link {
+    border: none;
+    color: var(--gray-600);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 12px 24px;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--primary-blue);
+    border-bottom-color: var(--gray-300);
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--primary-blue);
+    border-bottom-color: var(--primary-blue);
+    background-color: transparent;
+}
+
+/* Badges corporativos */
+.badge {
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+}
+
+/* Sombras sutiles para profundidad */
+.shadow-sm {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+.shadow {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+}
+
+.shadow-lg {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Animaciones suaves y profesionales */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.4s ease-out;
+}
+
+/* Gráficos de Plotly - estilo corporativo */
+.js-plotly-plot .plotly .modebar {
+    background: transparent !important;
+}
+
+.js-plotly-plot .plotly .modebar-btn {
+    color: var(--gray-600) !important;
+}
+
+.js-plotly-plot .plotly .modebar-btn:hover {
+    background: var(--gray-100) !important;
+}
+
+/* Spinners y loaders minimalistas */
+.loading-spinner {
+    border: 3px solid var(--gray-200);
+    border-top: 3px solid var(--primary-blue);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Mejoras responsive */
+@media (max-width: 768px) {
+    .professional-header h1 {
+        font-size: 24px;
+    }
+    
+    .metric-value {
+        font-size: 28px;
+    }
+    
+    .btn-professional {
+        padding: 8px 16px;
+        font-size: 13px;

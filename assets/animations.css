@@ -1,0 +1,171 @@
+/* =================================================================
+   ANIMACIONES PARA NUEVA ARQUITECTURA DE PORTADA
+   ================================================================= */
+
+/* Animación de flotación suave SOLO para portada_secciones.png */
+@keyframes gentle-float {
+    0%, 100% {
+        transform: translate(-50%, -50%) translateY(0px);
+    }
+    50% {
+        transform: translate(-50%, -50%) translateY(-10px);
+    }
+}
+
+/* Aplicar flotación SOLO a la ilustración de secciones */
+.floating-sections {
+    animation: gentle-float 5s ease-in-out infinite;
+}
+
+/* Botones SIN flotación (solo hover) */
+.button-module {
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.3));
+}
+
+/* Animación de pulso para botón de información */
+@keyframes pulse {
+    0%, 100% {
+        transform: translate(-50%, -50%) scale(1);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.6), 0 0 0 4px rgba(242,195,48,0.5);
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.05);
+        box-shadow: 0 12px 35px rgba(0,0,0,0.7), 0 0 0 6px rgba(242,195,48,0.7);
+    }
+}
+
+/* Contenedor de módulo con transiciones suaves */
+.module-container {
+    transition: all 0.3s ease !important;
+}
+
+/* 🚫 ELIMINACIÓN COMPLETA DE CUADROS ROJOS Y BORDES 🚫 */
+.custom-module,
+.custom-module *,
+.floating-container,
+.floating-container *,
+.floating-module,
+.floating-module * {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    background: transparent !important;
+}
+
+/* Eliminar cualquier efecto hover automático que cause bordes */
+.custom-module:hover,
+.custom-module:hover *,
+.floating-container:hover,
+.floating-container:hover *,
+.floating-module:hover,
+.floating-module:hover * {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    background: transparent !important;
+}
+
+/* Asegurar que las imágenes no tengan bordes */
+.custom-module img,
+.floating-container img,
+.floating-module img {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    background: transparent !important;
+}
+
+/* Y tampoco en hover */
+.custom-module:hover img,
+.floating-container:hover img,
+.floating-module:hover img {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    background: transparent !important;
+}
+
+/* Hover: Elevar MÁS y agregar brillo con sombra amarilla más intensa */
+/* DESHABILITADO - CONFLICTA CON JAVASCRIPT HOVER */
+.floating-module:hover-DISABLED {
+    transform: translateY(-25px) scale(1.12) !important;
+    filter: drop-shadow(0 30px 50px rgba(255, 193, 7, 0.6)) 
+            drop-shadow(0 15px 30px rgba(255, 165, 0, 0.4)) 
+            brightness(1.15) !important;
+    animation: hover-float 0.6s ease-in-out infinite !important;
+}
+
+/* Animación más pronunciada durante hover */
+@keyframes hover-float {
+    0%, 100% {
+        transform: translateY(-25px) scale(1.12);
+    }
+    50% {
+        transform: translateY(-32px) scale(1.15);
+    }
+}
+
+/* Tooltip styles */
+.module-tooltip {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    backdrop-filter: blur(10px);
+    animation: tooltip-appear 0.3s ease;
+}
+
+@keyframes tooltip-appear {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(10px) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(-10px) scale(1);
+    }
+}
+
+/* Delays diferentes para cada módulo (efecto asíncrono) */
+.module-generacion {
+    animation-delay: 0s;
+}
+
+.module-transmision {
+    animation-delay: 0.7s;
+}
+
+.module-distribucion {
+    animation-delay: 1.4s;
+}
+
+.module-metricas {
+    animation-delay: 2.1s;
+}
+
+.module-restricciones {
+    animation-delay: 2.8s;
+}
+
+.module-perdidas {
+    animation-delay: 3.5s;
+}
+
+/* Efecto de clic con sombra amarilla */
+.floating-module:active {
+    transform: translateY(-15px) scale(1.08) !important;
+    filter: drop-shadow(0 20px 35px rgba(255, 193, 7, 0.5)) 
+            drop-shadow(0 10px 20px rgba(255, 165, 0, 0.35)) 
+            brightness(1.1) !important;
+    animation: none !important;
+}
+
+/* Asegurar que los links sean clickeables */
+a[href] {
+    pointer-events: auto !important;
+}
+
+
+

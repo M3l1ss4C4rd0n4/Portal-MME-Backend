@@ -1,0 +1,119 @@
+/* Estilos para el botón del Chat IA */
+
+@keyframes pulse-ia {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.5);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 12px 32px rgba(102, 126, 234, 0.7);
+    }
+}
+
+#chat-toggle-btn {
+    animation: pulse-ia 2s ease-in-out infinite !important;
+}
+
+#chat-toggle-btn:hover {
+    transform: scale(1.1) !important;
+    box-shadow: 0 12px 36px rgba(102, 126, 234, 0.8) !important;
+}
+
+/* Contenedor del chat */
+#chat-container {
+    position: fixed !important;
+    bottom: 120px !important;
+    right: 30px !important;
+    width: 420px !important;
+    max-height: 650px !important;
+    z-index: 99998 !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3) !important;
+    border-radius: 20px !important;
+}
+
+/* Efectos hover para botones del header */
+#chat-fullscreen-btn:hover,
+#chat-minimize-btn:hover,
+#chat-close-btn:hover {
+    transform: scale(1.2) !important;
+    opacity: 0.8 !important;
+}
+
+/* Estilos para Markdown dentro del chat */
+#chat-messages .markdown p {
+    margin: 0.5em 0 !important;
+    line-height: 1.6 !important;
+}
+
+#chat-messages .markdown strong {
+    font-weight: 600 !important;
+    color: #1e293b !important;
+}
+
+#chat-messages .markdown ul,
+#chat-messages .markdown ol {
+    margin: 0.5em 0 !important;
+    padding-left: 1.5em !important;
+}
+
+#chat-messages .markdown li {
+    margin: 0.3em 0 !important;
+    line-height: 1.5 !important;
+}
+
+#chat-messages .markdown h2,
+#chat-messages .markdown h3 {
+    margin: 0.8em 0 0.4em 0 !important;
+    font-size: 1.1em !important;
+    font-weight: 600 !important;
+    color: #1e293b !important;
+}
+
+#chat-messages .markdown code {
+    background-color: #f1f5f9 !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+    font-size: 0.9em !important;
+}
+
+/* Responsive para móviles */
+@media (max-width: 768px) {
+    #chat-container {
+        width: 90vw !important;
+        right: 5vw !important;
+        bottom: 100px !important;
+        max-height: 70vh !important;
+    }
+    
+    #chat-toggle-btn {
+        width: 60px !important;
+        height: 60px !important;
+        bottom: 20px !important;
+        right: 20px !important;
+    }
+}
+
+/* Badge de notificación (para futuras alertas) */
+.chat-notification-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #ef4444;
+    color: white;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    border: 2px solid white;
+    animation: bounce 1s infinite;
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+}

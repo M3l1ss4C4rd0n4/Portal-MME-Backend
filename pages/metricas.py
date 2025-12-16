@@ -1,34 +1,203 @@
+
+def get_plotly_modules():
+    """Importar plotly solo cuando se necesite"""
+    import plotly.express as px
+    import plotly.graph_objects as go
+    return px, go
+
 import dash
-from dash import dcc, html, Input, Output, callback, dash_table, register_page
-import dash_bootstrap_components as dbc
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
+from dash import dcc, html, Input, Output, State, callback, register_page
+import dash_table
 import datetime as dt
-from datetime import date, timedelta
+import dash_bootstrap_components as dbc
+import pandas as pd
+from datetime import date, timedelta, datetime
 import sys
 import os
 from io import BytesIO
 import base64
 import warnings
 import zipfile
+import sqlite3
+import numpy as np
+import pandas.api.types
 
 try:
     from pydataxm.pydataxm import ReadDB
     PYDATAXM_AVAILABLE = True
 except ImportError:
     PYDATAXM_AVAILABLE = False
-    print("⚠️ pydataxm no está disponible. Algunos datos pueden no cargarse correctamente.")
+    # logger se configura después
+
+try:
+    from pydataxm.pydatasimem import VariableSIMEM
+    PYDATASIMEM_AVAILABLE = True
+except ImportError:
+    PYDATASIMEM_AVAILABLE = False
 
 # Imports locales para componentes uniformes
-from .components import crear_header, crear_navbar, crear_sidebar_universal, crear_boton_regresar
-from .config import COLORS
+from utils.components import crear_navbar_horizontal, crear_boton_regresar
+from utils.config import COLORS
+from utils.logger import setup_logger
+from utils.validators import validate_date_range, validate_string
+from utils.exceptions import DateRangeError, InvalidParameterError, DataNotFoundError
+from utils.config_simem import METRICAS_SIMEM_POR_CATEGORIA, METRICAS_SIMEM_CRITICAS, obtener_listado_simem
 
 warnings.filterwarnings("ignore")
+
+# Configurar logger para este módulo
+logger = setup_logger(__name__)
+
+# Ruta de la base de datos
+DB_PATH = '/home/admonctrlxm/server/portal_energetico.db'
 
 # =============================================================================
 # SISTEMA AUTOMÁTICO DE GENERACIÓN DE INFORMACIÓN DE MÉTRICAS
 # =============================================================================
+
+# =============================================================================
+# CLASIFICACIÓN DE MÉTRICAS POR SECCIÓN DEL PORTAL
+# =============================================================================
+
+METRICAS_POR_SECCION = {
+    '⚡ Generación': {
+        'icon': 'fa-bolt',
+        'color': '#FFD700',
+        'metricas': ['Gene', 'GeneIdea', 'GeneProgDesp', 'GeneProgRedesp', 'GeneFueraMerito', 
+                     'GeneSeguridad', 'CapEfecNeta', 'ENFICC', 'ObligEnerFirme', 'DDVContratada'],
+        'descripcion': 'Métricas relacionadas con la producción de energía eléctrica por plantas generadoras'
+    },
+    '📊 Demanda': {
+        'icon': 'fa-chart-line',
+        'color': '#4169E1',
+        'metricas': ['DemaReal', 'DemaCome', 'DemaRealReg', 'DemaRealNoReg', 'DemaComeReg', 
+                     'DemaComeNoReg', 'DemaSIN', 'DemaMaxPot', 'DemaNoAtenProg', 'DemaNoAtenNoProg', 'DemaOR'],
+        'descripcion': 'Métricas de consumo eléctrico por sistema, agentes y sectores'
+    },
+    '⚡ Transmisión': {
+        'icon': 'fa-tower-broadcast',
+        'color': '#FF6347',
+        'metricas': ['DispoReal', 'DispoCome', 'DispoDeclarada', 'CargoUsoSTN', 'CargoUsoSTR'],
+        'descripcion': 'Disponibilidad de recursos de transmisión y cargos por uso de redes'
+    },
+    '🚫 Restricciones': {
+        'icon': 'fa-ban',
+        'color': '#DC143C',
+        'metricas': ['RestAliv', 'RestSinAliv', 'RentasCongestRestr', 'EjecGarantRestr', 
+                     'DesvGenVariableDesp', 'DesvGenVariableRedesp'],
+        'descripcion': 'Restricciones operativas del sistema y costos asociados'
+    },
+    '💰 Precios': {
+        'icon': 'fa-dollar-sign',
+        'color': '#32CD32',
+        'metricas': ['PrecBolsNaci', 'PrecBolsNaciTX1', 'PPPrecBolsNaci', 'PrecTransBolsa',
+                     'PrecPromCont', 'PrecPromContRegu', 'PrecPromContNoRegu',
+                     'PrecEsca', 'PrecEscaAct', 'PrecEscaMarg', 'PrecEscaPon',
+                     'PrecOferDesp', 'PrecOferIdeal', 'MaxPrecOferNal',
+                     'CostMargDesp', 'CostRecPos', 'CostRecNeg', 'PrecCargConf'],
+        'descripcion': 'Precios de bolsa, contratos, escasez y ofertas de despacho'
+    },
+    '💼 Transacciones': {
+        'icon': 'fa-exchange-alt',
+        'color': '#20B2AA',
+        'metricas': ['CompBolsNaciEner', 'VentBolsNaciEner', 'CompContEner', 'VentContEner',
+                     'CompBolsaTIEEner', 'VentBolsaTIEEner', 'CompBolsaIntEner', 'VentBolsaIntEner'],
+        'descripcion': 'Compras y ventas de energía en bolsa, contratos e intercambios'
+    },
+    '📉 Pérdidas': {
+        'icon': 'fa-chart-line-down',
+        'color': '#FF4500',
+        'metricas': ['PerdidasEner', 'PerdidasEnerReg', 'PerdidasEnerNoReg'],
+        'descripcion': 'Pérdidas de energía del sistema por mercado regulado y no regulado'
+    },
+    '🌍 Intercambios Internacionales': {
+        'icon': 'fa-globe',
+        'color': '#1E90FF',
+        'metricas': ['ImpoEner', 'ExpoEner', 'ImpoMoneda', 'ExpoMoneda', 
+                     'SnTIEMerito', 'SnTIEFueraMerito', 'DeltaInt', 'DeltaNal'],
+        'descripcion': 'Importaciones, exportaciones y saldos de intercambios energéticos'
+    },
+    '💧 Hidrología': {
+        'icon': 'fa-water',
+        'color': '#4682B4',
+        'metricas': ['AporEner', 'AporCaudal', 'AporEnerMediHist', 'AporCaudalMediHist',
+                     'VoluUtilDiarEner', 'VoluUtilDiarMasa', 'CapaUtilDiarEner', 'CapaUtilDiarMasa',
+                     'VertEner', 'VertMasa', 'VolTurbMasa', 'DescMasa', 'PorcApor', 'PorcVoluUtilDiar'],
+        'descripcion': 'Aportes, volúmenes y capacidades útiles de embalses y ríos'
+    },
+    '🔥 Combustibles y Emisiones': {
+        'icon': 'fa-fire',
+        'color': '#FF8C00',
+        'metricas': ['ConsCombustibleMBTU', 'ConsCombAprox', 'EmisionesCO2', 'EmisionesCH4', 
+                     'EmisionesN2O', 'EmisionesCO2Eq', 'factorEmisionCO2e'],
+        'descripcion': 'Consumo de combustibles y emisiones de gases de efecto invernadero'
+    },
+    '☀️ Energías Renovables': {
+        'icon': 'fa-sun',
+        'color': '#FFD700',
+        'metricas': ['IrrPanel', 'IrrGlobal', 'TempPanel', 'TempAmbSolar'],
+        'descripcion': 'Irradiación solar y temperatura para generación fotovoltaica'
+    },
+    '💵 Cargos y Tarifas': {
+        'icon': 'fa-file-invoice-dollar',
+        'color': '#228B22',
+        'metricas': ['FAZNI', 'FAER', 'PRONE', 'MC', 'CERE', 'CEE', 
+                     'CargoUsoSTN', 'CargoUsoSTR', 'CargMaxTPrima', 'CargMinTPrima', 'CargMedTPrima'],
+        'descripcion': 'Componentes tarifarios y cargos del sistema eléctrico'
+    }
+}
+
+# Diccionario global de métricas importantes con información detallada
+METRICAS_IMPORTANTES = {
+    'DemaEner': {
+        'nombre': 'Demanda de Energía',
+        'descripcion': 'Consumo total de energía eléctrica del Sistema Interconectado Nacional (SIN) medido en MWh. Representa la energía que requieren todos los usuarios del país: residenciales, comerciales, industriales y oficiales. Es el indicador principal para evaluar el crecimiento del sector energético.',
+        'descripcion_practica': 'Consumo total de energía eléctrica del Sistema Interconectado Nacional (SIN) medido en MWh. Representa la energía que requieren todos los usuarios del país: residenciales, comerciales, industriales y oficiales. Es el indicador principal para evaluar el crecimiento del sector energético.',
+        'unidad': 'MWh',
+        'frecuencia': 'Horaria',
+        'criticidad': 'Alta',
+        'uso_directo': 'El MME utiliza esta métrica para: 1) Proyectar el crecimiento energético del país y planificar nueva capacidad de generación, 2) Dimensionar las redes de transmisión necesarias, 3) Establecer políticas de eficiencia energética, 4) Calcular subsidios y contribuciones del FSSRI',
+        'valor_critico': 'Demanda máxima histórica Colombia: ~11,800 MWh/h. Picos >12,000 MWh/h requieren activación de reservas de emergencia.',
+        'aplicaciones': ['Proyección de crecimiento energético', 'Planificación de nueva capacidad', 'Políticas de eficiencia energética', 'Cálculo de subsidios FSSRI'],
+        'categoria': 'demanda'
+    },
+    'GeneReal': {
+        'nombre': 'Generación Real',
+        'descripcion': 'Energía efectivamente producida por todas las plantas generadoras del SIN en tiempo real. Incluye plantas hidráulicas, térmicas, eólicas, solares y menores. Muestra la capacidad real del sistema vs. la capacidad instalada, considerando mantenimientos, fallas y restricciones operativas.',
+        'descripcion_practica': 'Energía efectivamente producida por todas las plantas generadoras del SIN en tiempo real. Incluye plantas hidráulicas, térmicas, eólicas, solares y menores. Muestra la capacidad real del sistema vs. la capacidad instalada, considerando mantenimientos, fallas y restricciones operativas.',
+        'unidad': 'MWh',
+        'frecuencia': 'Horaria',
+        'criticidad': 'Alta',
+        'uso_directo': 'El MME la usa para: 1) Monitorear la confiabilidad del parque generador nacional, 2) Evaluar la necesidad de nuevas licitaciones de generación, 3) Detectar problemas operativos en tiempo real, 4) Coordinar con el ONS medidas de emergencia',
+        'valor_critico': 'Margen mínimo 200-300 MW sobre demanda. Déficit vs demanda activa Plan de Emergencia del ONS.',
+        'aplicaciones': ['Monitoreo de confiabilidad', 'Evaluación de licitaciones', 'Detección de problemas operativos', 'Coordinación con ONS'],
+        'categoria': 'generacion'
+    },
+    'PrecBols': {
+        'nombre': 'Precio de Bolsa Nacional',
+        'descripcion': 'Costo marginal del sistema eléctrico colombiano expresado en pesos por kWh. Se determina por el costo de la planta más costosa que debe operar para atender la demanda. Refleja la escasez o abundancia energética del país y es clave para las señales económicas del mercado.',
+        'descripcion_practica': 'Costo marginal del sistema eléctrico colombiano expresado en pesos por kWh. Se determina por el costo de la planta más costosa que debe operar para atender la demanda. Refleja la escasez o abundancia energética del país y es clave para las señales económicas del mercado.',
+        'unidad': 'COP$/kWh',
+        'frecuencia': 'Horaria',
+        'criticidad': 'Alta',
+        'uso_directo': 'El MME lo utiliza para: 1) Diseñar esquemas tarifarios y políticas de subsidios, 2) Evaluar la necesidad de declarar emergencias energéticas, 3) Establecer señales para nuevas inversiones en generación, 4) Monitorear la competitividad del mercado',
+        'valor_critico': 'Precio de escasez: 446.26 $/kWh (2025). Valores >300 $/kWh indican tensión del sistema.',
+        'aplicaciones': ['Diseño tarifario', 'Políticas de subsidios', 'Evaluación de emergencias', 'Señales de inversión'],
+        'categoria': 'precio'
+    },
+    'ReseAmb': {
+        'nombre': 'Reservas Ambientales',
+        'descripcion': 'Volumen de agua almacenado en los embalses del SIN disponible para generación hidroeléctrica. Medido como porcentaje de la capacidad útil total. Es el indicador clave para prevenir crisis energéticas y gestionar restricciones ambientales.',
+        'descripcion_practica': 'Volumen de agua almacenado en los embalses del SIN disponible para generación hidroeléctrica. Medido como porcentaje de la capacidad útil total. Es el indicador clave para prevenir crisis energéticas y gestionar restricciones ambientales.',
+        'unidad': '%',
+        'frecuencia': 'Diaria',
+        'criticidad': 'Alta',
+        'uso_directo': 'El MME lo utiliza para: 1) Activar alertas y planes de emergencia energética, 2) Coordinar con autoridades ambientales restricciones de uso del agua, 3) Declarar fenómenos El Niño/La Niña, 4) Planificar estrategias de ahorro y uso eficiente',
+        'valor_critico': 'Alerta Amarilla: <30%, Alerta Naranja: <20%, Emergencia: <15%. Nivel crítico histórico: 28% (Fenómeno El Niño 2016).',
+        'aplicaciones': ['Alertas de emergencia', 'Coordinación con autoridades ambientales', 'Declaración de fenómenos climáticos', 'Estrategias de ahorro'],
+        'categoria': 'reserva'
+    }
+}
 
 def generar_info_automatica_metrica(metric_id, metric_name, metric_description, metric_units):
     """
@@ -136,35 +305,7 @@ def generar_info_automatica_metrica(metric_id, metric_name, metric_description, 
 def obtener_info_metrica_completa(metric_id):
     """Obtener información específica y práctica de una métrica"""
     
-    # Primero buscar en el diccionario manual para métricas importantes
-    METRICAS_IMPORTANTES = {
-        'DemaEner': {
-            'nombre': 'Demanda de Energía',
-            'descripcion_practica': 'Consumo total de energía eléctrica del Sistema Interconectado Nacional (SIN) medido en MWh. Representa la energía que requieren todos los usuarios del país: residenciales, comerciales, industriales y oficiales. Es el indicador principal para evaluar el crecimiento del sector energético.',
-            'unidad': 'MWh',
-            'uso_directo': 'El MME utiliza esta métrica para: 1) Proyectar el crecimiento energético del país y planificar nueva capacidad de generación, 2) Dimensionar las redes de transmisión necesarias, 3) Establecer políticas de eficiencia energética, 4) Calcular subsidios y contribuciones del FSSRI',
-            'valor_critico': 'Demanda máxima histórica Colombia: ~11,800 MWh/h. Picos >12,000 MWh/h requieren activación de reservas de emergencia.',
-            'categoria': 'demanda'
-        },
-        'GeneReal': {
-            'nombre': 'Generación Real',
-            'descripcion_practica': 'Energía efectivamente producida por todas las plantas generadoras del SIN en tiempo real. Incluye plantas hidráulicas, térmicas, eólicas, solares y menores. Muestra la capacidad real del sistema vs. la capacidad instalada, considerando mantenimientos, fallas y restricciones operativas.',
-            'unidad': 'MWh',
-            'uso_directo': 'El MME la usa para: 1) Monitorear la confiabilidad del parque generador nacional, 2) Evaluar la necesidad de nuevas licitaciones de generación, 3) Detectar problemas operativos en tiempo real, 4) Coordinar con el ONS medidas de emergencia',
-            'valor_critico': 'Margen mínimo 200-300 MW sobre demanda. Déficit vs demanda activa Plan de Emergencia del ONS.',
-            'categoria': 'generacion'
-        },
-        'PrecBols': {
-            'nombre': 'Precio de Bolsa Nacional',
-            'descripcion_practica': 'Costo marginal del sistema eléctrico colombiano expresado en pesos por kWh. Se determina por el costo de la planta más costosa que debe operar para atender la demanda. Refleja la escasez o abundancia energética del país y es clave para las señales económicas del mercado.',
-            'unidad': 'COP$/kWh',
-            'uso_directo': 'El MME lo utiliza para: 1) Diseñar esquemas tarifarios y políticas de subsidios, 2) Evaluar la necesidad de declarar emergencias energéticas, 3) Establecer señales para nuevas inversiones en generación, 4) Monitorear la competitividad del mercado',
-            'valor_critico': 'Precio de escasez: 446.26 $/kWh (2025). Valores >300 $/kWh indican tensión del sistema.',
-            'categoria': 'precio'
-        }
-    }
-    
-    # Si es una métrica importante, usar información manual
+    # Si es una métrica importante, usar información manual del diccionario global
     if metric_id in METRICAS_IMPORTANTES:
         return METRICAS_IMPORTANTES[metric_id]
     
@@ -200,31 +341,31 @@ register_page(
     title="Dashboard Energético XM - Colombia",
     order=2
 )
-# Inicializar API XM
-objetoAPI = None
+from utils._xm import get_objetoAPI
+
+# Inicializar API XM de forma perezosa y cargar colecciones si están disponibles
 todas_las_metricas = pd.DataFrame()
 
 try:
-    if PYDATAXM_AVAILABLE:
-        objetoAPI = ReadDB()
+    objetoAPI = get_objetoAPI()  # Obtener la API cuando se necesita
+    if objetoAPI is not None:
         todas_las_metricas = objetoAPI.get_collections()
-        print("API XM inicializada correctamente")
-        print(f"Métricas disponibles: {len(todas_las_metricas)}")
+        logger.info("API XM inicializada correctamente (lazy)")
+        logger.info(f"Métricas disponibles: {len(todas_las_metricas)}")
     else:
-        print("⚠️ pydataxm no está disponible - usando datos mock")
+        logger.warning("pydataxm no está disponible - usando datos mock")
 except Exception as e:
-    print(f"Error al inicializar API XM: {e}")
-    objetoAPI = None
+    logger.error(f"Error al inicializar API XM: {e}", exc_info=True)
     todas_las_metricas = pd.DataFrame()
 
 # Función para obtener opciones únicas de MetricId y Entity
 def get_metric_options():
-    print(f"🔍 [DEBUG] get_metric_options() llamada - todas_las_metricas está vacío: {todas_las_metricas.empty}")
-    print(f"🔍 [DEBUG] Forma de todas_las_metricas: {todas_las_metricas.shape}")
-    print(f"🔍 [DEBUG] objetoAPI disponible: {objetoAPI is not None}")
+# REMOVED DEBUG:     print(f"🔍 [DEBUG] get_metric_options() llamada - todas_las_metricas está vacío: {todas_las_metricas.empty}")
+# REMOVED DEBUG:     print(f"🔍 [DEBUG] Forma de todas_las_metricas: {todas_las_metricas.shape}")
+# REMOVED DEBUG:     print(f"🔍 [DEBUG] objetoAPI disponible: {objetoAPI is not None}")
     
     if todas_las_metricas.empty or objetoAPI is None:
-        print("⚠️ [DEBUG] Retornando opciones vacías porque todas_las_metricas está vacío o objetoAPI es None")
+        logger.warning("Retornando opciones vacías porque todas_las_metricas está vacío o objetoAPI es None")
         return [], []
     
     # Crear opciones de métricas y ordenarlas alfabéticamente por MetricName
@@ -245,28 +386,59 @@ def get_metric_options():
     # También ordenar las entidades alfabéticamente
     entity_options = sorted(entity_options, key=lambda x: x['label'])
     
-    print(f"📊 Opciones de métricas creadas para el dropdown: {len(metric_options)}")
-    print(f"🏢 Opciones de entidades disponibles: {len(entity_options)}")
+# REMOVED DEBUG:     print(f"📊 Opciones de métricas creadas para el dropdown: {len(metric_options)}")
+    logger.debug(f"Opciones de entidades disponibles: {len(entity_options)}")
     
     return metric_options, entity_options
 
 metric_options, entity_options = get_metric_options()
-print(f"🔍 [DEBUG] Layout - metric_options: {len(metric_options)} opciones disponibles")
-print(f"🔍 [DEBUG] Layout - entity_options: {len(entity_options)} opciones disponibles")
+# REMOVED DEBUG: print(f"🔍 [DEBUG] Layout - metric_options: {len(metric_options)} opciones disponibles")
+# REMOVED DEBUG: print(f"🔍 [DEBUG] Layout - entity_options: {len(entity_options)} opciones disponibles")
+
+def crear_selector_fuente_datos():
+    """Crea un selector para elegir entre datos XM y SIMEM"""
+    return dbc.Card([
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col([
+                    html.Label([
+                        html.I(className="fas fa-database me-2"),
+                        html.Strong("Fuente de Datos:")
+                    ], className="mb-2"),
+                    dbc.RadioItems(
+                        id="selector-fuente-datos",
+                        options=[
+                            {"label": [
+                                html.I(className="fas fa-bolt me-2", style={"color": "#FFD700"}),
+                                "Métricas XM (Portal Energético)"
+                            ], "value": "xm"},
+                            {"label": [
+                                html.I(className="fas fa-server me-2", style={"color": "#4169E1"}),
+                                "Métricas SIMEM (Sistema de Información)"
+                            ], "value": "simem", "disabled": not PYDATASIMEM_AVAILABLE}
+                        ],
+                        value="xm",
+                        inline=True,
+                        className="mb-0"
+                    )
+                ], md=8),
+                dbc.Col([
+                    dbc.Badge([
+                        html.I(className="fas fa-info-circle me-1"),
+                        f"XM: {len(metric_options)} métricas" if metric_options else "XM: Cargando..."
+                    ], color="primary", className="me-2"),
+                    dbc.Badge([
+                        html.I(className="fas fa-info-circle me-1"),
+                        "SIMEM: 193 variables" if PYDATASIMEM_AVAILABLE else "SIMEM: No disponible"
+                    ], color="info")
+                ], md=4, className="text-end")
+            ], align="center")
+        ])
+    ], className="shadow-sm mb-3")
 
 layout = html.Div([
-    # Sidebar desplegable
-    crear_sidebar_universal(),
-    
-    # Header uniforme
-    # Header dinámico específico para métricas
-    crear_header(
-        titulo_pagina="Métricas Energéticas",
-        descripcion_pagina="Consulta y análisis de variables del mercado eléctrico colombiano",
-        icono_pagina="fas fa-chart-line",
-        color_tema=COLORS['primary']
-    ),
-    # Barra de navegación eliminada
+    # Navbar horizontal
+    crear_navbar_horizontal(),
     
     # Container principal
     dbc.Container([
@@ -279,6 +451,7 @@ layout = html.Div([
                 # Panel de controles en tabs
                 dbc.Tabs([
                     dbc.Tab(label="📊 Consulta de Métricas", tab_id="tab-consulta"),
+                    dbc.Tab(label="🗂️ Análisis por Sección", tab_id="tab-secciones"),
                     dbc.Tab(label="📈 Análisis Energético", tab_id="tab-analisis"),
                     dbc.Tab(label="🔍 Exploración Avanzada", tab_id="tab-exploracion"),
                     dbc.Tab(label="📚 Guía para Ingenieros", tab_id="tab-guia"),
@@ -422,7 +595,7 @@ def crear_panel_controles_metricas():
                     # Componentes de descarga
                     dcc.Download(id="download-metricas-excel"),
                     dcc.Download(id="download-metricas-csv"),
-                    dcc.Download(id="download-metricas-pdf"),
+                    dcc.Download(id="download-metricas-pd"),
                     dcc.Download(id="download-metricas-zip")
                 ], lg=6, md=12)
             ], className="g-3")
@@ -439,8 +612,13 @@ def crear_panel_controles_metricas():
 def render_metricas_tab_content(active_tab):
     if active_tab == "tab-consulta":
         return html.Div([
-            crear_panel_controles_metricas(),
-            html.Div(id="metricas-results-content", className="mt-4")
+            crear_selector_fuente_datos(),
+            html.Div(id="contenedor-consulta-dinamico", className="mt-3")
+        ])
+    elif active_tab == "tab-secciones":
+        return html.Div([
+            crear_selector_fuente_datos(),
+            html.Div(id="contenedor-seccion-dinamico", className="mt-3")
         ])
     elif active_tab == "tab-analisis":
         return html.Div([
@@ -474,38 +652,84 @@ def render_metricas_tab_content(active_tab):
         ])
     elif active_tab == "tab-exploracion":
         return html.Div([
-            dbc.Card([
-                dbc.CardBody([
-                    html.H4([
-                        html.I(className="fas fa-search-plus me-2", style={"color": COLORS['primary']}),
-                        "Exploración Avanzada de Datos"
-                    ], className="mb-4"),
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardBody([
-                                    html.H6("🔍 Análisis Multivariable", className="mb-3"),
-                                    html.P("Exploración de correlaciones entre múltiples métricas energéticas.", className="text-muted")
-                                ])
-                            ], className="h-100")
-                        ], md=6),
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardBody([
-                                    html.H6("📊 Métricas Personalizadas", className="mb-3"),
-                                    html.P("Creación de indicadores energéticos específicos para análisis.", className="text-muted")
-                                ])
-                            ], className="h-100")
-                        ], md=6)
-                    ])
-                ])
-            ], className="shadow-sm"),
-            html.Div(id="metricas-results-content-exploracion", className="mt-4")
+            crear_selector_fuente_datos(),
+            html.Div(id="contenedor-exploracion-dinamico", className="mt-3")
         ])
     elif active_tab == "tab-guia":
         return crear_guia_ingenieros()
     
     return html.Div()
+
+def crear_analisis_por_seccion():
+    """Crear panel de análisis de métricas organizadas por sección del portal"""
+    return html.Div([
+        # Header
+        dbc.Card([
+            dbc.CardBody([
+                html.H3([
+                    html.I(className="fas fa-sitemap me-3", style={"color": COLORS['primary']}),
+                    "Análisis de Métricas por Sección del Portal"
+                ], className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600'}),
+                
+                dbc.Alert([
+                    html.I(className="fas fa-info-circle me-2", style={'color': COLORS['info']}),
+                    html.Strong("Explora las métricas organizadas según las secciones del Portal Energético. "),
+                    "Cada sección agrupa métricas relacionadas para facilitar el análisis multivariado y correlacional."
+                ], color="light", className="mb-0", style={'border': f'1px solid {COLORS["border"]}'})
+            ])
+        ], className="mb-4", style={'border': f'1px solid {COLORS["border"]}', 'boxShadow': f'0 2px 4px {COLORS["shadow_md"]}'}),
+        
+        # Grid de secciones
+        dbc.Row([
+            dbc.Col([
+                crear_card_seccion(seccion, info)
+            ], md=4, className="mb-4")
+            for seccion, info in METRICAS_POR_SECCION.items()
+        ]),
+        
+        # Contenedor para análisis multivariado
+        html.Div(id="analisis-seccion-container", className="mt-4")
+    ])
+
+def crear_card_seccion(seccion, info):
+    """Crear card para una sección específica"""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.H5([
+                html.I(className=f"fas {info['icon']} me-2", style={'color': info['color']}),
+                seccion
+            ], className="mb-0", style={'fontSize': '1.1em', 'fontWeight': '600'})
+        ], style={'backgroundColor': f"{info['color']}15", 'border': 'none'}),
+        dbc.CardBody([
+            html.P(info['descripcion'], className="mb-3", style={'fontSize': '0.9em', 'color': COLORS['text_secondary']}),
+            
+            dbc.Badge(f"{len(info['metricas'])} métricas disponibles", 
+                     color="primary", className="mb-3", style={'fontSize': '0.85em'}),
+            
+            html.Div([
+                html.H6("Métricas principales:", className="mb-2", style={'fontSize': '0.95em', 'fontWeight': '600'}),
+                html.Ul([
+                    html.Li(metrica, style={'fontSize': '0.85em', 'color': COLORS['text_secondary']})
+                    for metrica in info['metricas'][:5]
+                ], className="mb-2"),
+                html.Small([
+                    html.I(className="fas fa-ellipsis-h me-1"),
+                    f"y {len(info['metricas']) - 5} más..." if len(info['metricas']) > 5 else ""
+                ], style={'color': COLORS['text_muted'], 'fontSize': '0.8em'}) if len(info['metricas']) > 5 else None
+            ]),
+            
+            dbc.Button([
+                html.I(className="fas fa-chart-line me-2"),
+                "Analizar Sección"
+            ], color="primary", size="sm", outline=True, className="w-100 mt-3", 
+               id={"type": "btn-analizar-seccion", "index": seccion},
+               style={'fontSize': '0.85em'})
+        ])
+    ], style={'height': '100%', 'border': f'2px solid {info["color"]}30', 
+              'boxShadow': f'0 2px 4px {COLORS["shadow_sm"]}', 
+              'transition': 'all 0.3s ease',
+              'cursor': 'pointer'},
+       className="h-100")
 
 def crear_guia_ingenieros():
     """Crear guía detallada para ingenieros del MME"""
@@ -536,12 +760,12 @@ def crear_guia_ingenieros():
             ], style={'backgroundColor': '#FFFDF0', 'border': 'none'}),
             dbc.CardBody([
                 dbc.Row([
-                    crear_card_metrica_detallada("DemaEner", METRICAS_DETALLADAS["DemaEner"]),
-                    crear_card_metrica_detallada("GeneReal", METRICAS_DETALLADAS["GeneReal"]),
+                    crear_card_metrica_detallada("DemaEner", METRICAS_IMPORTANTES["DemaEner"]),
+                    crear_card_metrica_detallada("GeneReal", METRICAS_IMPORTANTES["GeneReal"]),
                 ], className="mb-3"),
                 dbc.Row([
-                    crear_card_metrica_detallada("PrecBols", METRICAS_DETALLADAS["PrecBols"]),
-                    crear_card_metrica_detallada("ReseAmb", METRICAS_DETALLADAS["ReseAmb"]),
+                    crear_card_metrica_detallada("PrecBols", METRICAS_IMPORTANTES["PrecBols"]),
+                    crear_card_metrica_detallada("ReseAmb", METRICAS_IMPORTANTES["ReseAmb"]),
                 ])
             ])
         ], className="mb-4", style={'border': f'1px solid #FEF3C7'}),
@@ -687,6 +911,355 @@ def crear_card_metrica_detallada(metric_id, info):
         ], style={'height': '100%', 'border': f'1px solid {COLORS["border"]}', 'boxShadow': f'0 1px 3px {COLORS["shadow_sm"]}'})
     ], md=6, className="mb-3")
 
+# =============================================================================
+# CALLBACKS PARA SELECTOR DE FUENTE DE DATOS (XM vs SIMEM)
+# =============================================================================
+
+@callback(
+    Output("contenedor-consulta-dinamico", "children"),
+    Input("selector-fuente-datos", "value")
+)
+def actualizar_panel_consulta(fuente):
+    """Actualiza el panel de consulta según la fuente seleccionada"""
+    if fuente == "simem":
+        return crear_panel_consulta_simem()
+    else:
+        return html.Div([
+            crear_panel_controles_metricas(),
+            html.Div(id="metricas-results-content", className="mt-4")
+        ])
+
+@callback(
+    Output("contenedor-seccion-dinamico", "children"),
+    Input("selector-fuente-datos", "value")
+)
+def actualizar_panel_seccion(fuente):
+    """Actualiza el panel de análisis por sección según la fuente"""
+    if fuente == "simem":
+        return crear_analisis_por_seccion_simem()
+    else:
+        return crear_analisis_por_seccion()
+
+@callback(
+    Output("contenedor-exploracion-dinamico", "children"),
+    Input("selector-fuente-datos", "value")
+)
+def actualizar_panel_exploracion(fuente):
+    """Actualiza el panel de exploración avanzada según la fuente"""
+    if fuente == "simem":
+        return crear_exploracion_simem()
+    else:
+        return crear_exploracion_xm()
+
+def crear_panel_consulta_simem():
+    """Crea el panel de consulta para métricas SIMEM"""
+    if not PYDATASIMEM_AVAILABLE:
+        return dbc.Alert([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            "El módulo pydatasimem no está disponible. Por favor, instale pydataxm correctamente."
+        ], color="warning")
+    
+    # Obtener listado de variables SIMEM
+    try:
+        listado_simem = obtener_listado_simem()
+        if listado_simem is None or listado_simem.empty:
+            raise Exception("No se pudo cargar el listado SIMEM")
+        
+        opciones_simem = [
+            {"label": f"{row['CodigoVariable']} - {row['Nombre']}", "value": row['CodigoVariable']}
+            for _, row in listado_simem.iterrows()
+        ]
+        opciones_simem = sorted(opciones_simem, key=lambda x: x['label'])
+    except Exception as e:
+        logger.error(f"Error cargando variables SIMEM: {e}")
+        return dbc.Alert([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            f"Error al cargar variables SIMEM: {str(e)}"
+        ], color="danger")
+    
+    return dbc.Card([
+        dbc.CardBody([
+            html.Div([
+                html.I(className="fas fa-server me-2", style={"color": COLORS['primary']}),
+                html.Strong("Consulta de Variables SIMEM", style={"fontSize": "1.1rem"})
+            ], className="mb-3"),
+            
+            dbc.Row([
+                dbc.Col([
+                    html.Label([
+                        html.I(className="fas fa-chart-bar me-2"),
+                        "Variable SIMEM"
+                    ], className="fw-bold mb-2"),
+                    dcc.Dropdown(
+                        id="simem-variable-dropdown",
+                        options=opciones_simem,
+                        value=opciones_simem[0]["value"] if opciones_simem else None,
+                        placeholder="Selecciona una variable SIMEM...",
+                        className="form-control-modern"
+                    )
+                ], md=6),
+                
+                dbc.Col([
+                    html.Label([
+                        html.I(className="fas fa-calendar-range me-2"),
+                        "Período"
+                    ], className="fw-bold mb-2"),
+                    dcc.DatePickerRange(
+                        id="simem-date-picker",
+                        start_date=date.today() - timedelta(days=7),
+                        end_date=date.today(),
+                        display_format="DD/MM/YYYY",
+                        className="form-control-modern"
+                    )
+                ], md=6)
+            ], className="mb-3"),
+            
+            dbc.Button([
+                html.I(className="fas fa-search me-2"),
+                "Consultar SIMEM"
+            ], id="btn-consultar-simem", color="primary", size="lg", className="w-100")
+        ])
+    ], className="shadow-sm"),
+    
+    # Contenedor de resultados
+    html.Div(id="simem-results", className="mt-4")
+
+def crear_analisis_por_seccion_simem():
+    """Crea el panel de análisis por sección para métricas SIMEM con análisis multivariable"""
+    return html.Div([
+        # Header principal
+        dbc.Card([
+            dbc.CardBody([
+                html.H3([
+                    html.I(className="fas fa-server me-3", style={"color": COLORS['primary']}),
+                    "Análisis de Métricas SIMEM por Categoría"
+                ], className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600'}),
+                
+                dbc.Alert([
+                    html.I(className="fas fa-info-circle me-2", style={'color': COLORS['info']}),
+                    html.Strong("Sistema de Información del Mercado Eléctrico (SIMEM). "),
+                    "193 variables organizadas en 10 categorías para análisis detallado del sector energético colombiano."
+                ], color="light", className="mb-0", style={'border': f'1px solid {COLORS["border"]}'})
+            ])
+        ], className="mb-4 shadow-sm"),
+        
+        # Grid de categorías SIMEM
+        dbc.Row([
+            crear_card_seccion_simem(seccion, info)
+            for seccion, info in METRICAS_SIMEM_POR_CATEGORIA.items()
+        ], className="g-3"),
+        
+        # Panel de análisis multivariable SIMEM
+        html.Div([
+            html.Hr(className="my-5"),
+            
+            dbc.Card([
+                dbc.CardBody([
+                    html.H4([
+                        html.I(className="fas fa-project-diagram me-3", style={"color": COLORS['primary']}),
+                        "Análisis Multivariable SIMEM"
+                    ], className="mb-4", style={'fontWeight': '600'}),
+                    
+                    dbc.Alert([
+                        html.I(className="fas fa-lightbulb me-2"),
+                        html.Strong("Análisis de correlaciones: "),
+                        "Explora las relaciones entre múltiples variables SIMEM para identificar patrones y dependencias del sistema eléctrico."
+                    ], color="info", className="mb-4"),
+                    
+                    # Selector de variables para análisis
+                    dbc.Row([
+                        dbc.Col([
+                            html.Label([
+                                html.I(className="fas fa-list me-2"),
+                                html.Strong("Variables para Análisis:")
+                            ], className="mb-2"),
+                            dcc.Dropdown(
+                                id="simem-multivariable-dropdown",
+                                options=[
+                                    {"label": f"{codigo} - {nombre}", "value": codigo}
+                                    for categoria in METRICAS_SIMEM_POR_CATEGORIA.values()
+                                    for codigo, nombre in categoria['metricas'].items()
+                                ],
+                                value=['GReal', 'DdaReal', 'CostoMarginalDespacho'],
+                                multi=True,
+                                placeholder="Selecciona variables SIMEM para análisis...",
+                                className="mb-3"
+                            )
+                        ], md=8),
+                        
+                        dbc.Col([
+                            html.Label([
+                                html.I(className="fas fa-calendar me-2"),
+                                html.Strong("Período:")
+                            ], className="mb-2"),
+                            dcc.DatePickerRange(
+                                id="simem-multivariable-dates",
+                                start_date=date.today() - timedelta(days=7),
+                                end_date=date.today(),
+                                display_format="DD/MM/YYYY"
+                            )
+                        ], md=4)
+                    ], className="mb-3"),
+                    
+                    dbc.Button([
+                        html.I(className="fas fa-chart-line me-2"),
+                        "Generar Análisis Multivariable"
+                    ], id="btn-analisis-multivariable-simem", color="primary", size="lg", className="w-100 mb-3"),
+                    
+                    html.Div(id="simem-multivariable-results", className="mt-4")
+                ])
+            ], className="shadow-sm")
+        ])
+    ])
+
+def crear_card_seccion_simem(seccion, info):
+    """Crea una tarjeta para una sección de métricas SIMEM con listado completo"""
+    metricas_dict = info['metricas']
+    
+    return dbc.Col([
+        dbc.Card([
+            dbc.CardHeader([
+                html.H5([
+                    html.I(className=f"fas {info['icon']} me-2", style={'color': info['color']}),
+                    seccion
+                ], className="mb-0", style={'fontSize': '1.1em', 'fontWeight': '600'})
+            ], style={'backgroundColor': f"{info['color']}15", 'border': 'none'}),
+            dbc.CardBody([
+                html.P(info['descripcion'], className="mb-3", style={'fontSize': '0.9em', 'color': COLORS['text_secondary']}),
+                
+                dbc.Badge(f"{len(metricas_dict)} métricas disponibles", 
+                         color="info", className="mb-3", style={'fontSize': '0.85em'}),
+                
+                html.Div([
+                    html.H6("📊 Variables SIMEM:", className="mb-2", style={'fontSize': '0.95em', 'fontWeight': '600'}),
+                    html.Div([
+                        html.Div([
+                            html.I(className="fas fa-chevron-right me-2", style={'fontSize': '0.6em', 'color': info['color']}),
+                            html.Strong(f"{codigo}: ", style={'fontSize': '0.8em', 'color': COLORS['primary']}),
+                            html.Span(nombre, style={'fontSize': '0.8em', 'color': COLORS['text_secondary']})
+                        ], className="mb-1")
+                        for codigo, nombre in metricas_dict.items()
+                    ], style={'maxHeight': '400px', 'overflowY': 'auto', 'paddingRight': '10px'})
+                ]),
+                
+                html.Hr(className="my-3"),
+                
+                html.Small([
+                    html.I(className="fas fa-info-circle me-1", style={'color': info['color']}),
+                    "Usa el panel de consulta para visualizar estas variables"
+                ], className="text-muted", style={'fontSize': '0.75em'})
+            ])
+        ], className="h-100 shadow-sm", style={'border': f'1px solid {COLORS["border"]}'})
+    ], md=6, lg=4, className="mb-3")
+
+def crear_exploracion_xm():
+    """Crea el panel de exploración avanzada para métricas XM"""
+    return html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                html.H4([
+                    html.I(className="fas fa-search-plus me-2", style={"color": COLORS['primary']}),
+                    "Exploración Avanzada de Datos XM"
+                ], className="mb-4"),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("🔍 Análisis Multivariable", className="mb-3"),
+                                html.P("Exploración de correlaciones entre múltiples métricas energéticas del Portal XM.", className="text-muted"),
+                                html.Hr(),
+                                dbc.Button("Próximamente", color="secondary", disabled=True, className="w-100")
+                            ])
+                        ], className="h-100")
+                    ], md=6),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("📊 Métricas Personalizadas", className="mb-3"),
+                                html.P("Creación de indicadores energéticos específicos para análisis personalizado.", className="text-muted"),
+                                html.Hr(),
+                                dbc.Button("Próximamente", color="secondary", disabled=True, className="w-100")
+                            ])
+                        ], className="h-100")
+                    ], md=6)
+                ])
+            ])
+        ], className="shadow-sm"),
+        html.Div(id="metricas-results-content-exploracion", className="mt-4")
+    ])
+
+def crear_exploracion_simem():
+    """Crea el panel de exploración avanzada para métricas SIMEM"""
+    return html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                html.H4([
+                    html.I(className="fas fa-search-plus me-2", style={"color": COLORS['primary']}),
+                    "Exploración Avanzada SIMEM"
+                ], className="mb-4"),
+                
+                dbc.Alert([
+                    html.I(className="fas fa-flask me-2"),
+                    html.Strong("Análisis avanzado de variables SIMEM. "),
+                    "Herramientas para exploración profunda del Sistema de Información del Mercado Eléctrico."
+                ], color="info", className="mb-4"),
+                
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6([
+                                    html.I(className="fas fa-project-diagram me-2"),
+                                    "Correlaciones SIMEM"
+                                ], className="mb-3"),
+                                html.P("Matriz de correlaciones entre variables del SIMEM para identificar relaciones.", 
+                                      className="text-muted mb-3"),
+                                dbc.Button([
+                                    html.I(className="fas fa-chart-scatter me-2"),
+                                    "Analizar Correlaciones"
+                                ], color="primary", className="w-100", disabled=True)
+                            ])
+                        ], className="h-100 shadow-sm")
+                    ], md=4),
+                    
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6([
+                                    html.I(className="fas fa-cube me-2"),
+                                    "Análisis por Dimensiones"
+                                ], className="mb-3"),
+                                html.P("Exploración de variables SIMEM filtradas por planta, agente, región.", 
+                                      className="text-muted mb-3"),
+                                dbc.Button([
+                                    html.I(className="fas fa-filter me-2"),
+                                    "Filtrar por Dimensión"
+                                ], color="primary", className="w-100", disabled=True)
+                            ])
+                        ], className="h-100 shadow-sm")
+                    ], md=4),
+                    
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6([
+                                    html.I(className="fas fa-code-branch me-2"),
+                                    "Comparación de Versiones"
+                                ], className="mb-3"),
+                                html.P("Compara diferentes versiones SIMEM para detectar variaciones en los datos.", 
+                                      className="text-muted mb-3"),
+                                dbc.Button([
+                                    html.I(className="fas fa-exchange-alt me-2"),
+                                    "Comparar Versiones"
+                                ], color="primary", className="w-100", disabled=True)
+                            ])
+                        ], className="h-100 shadow-sm")
+                    ], md=4)
+                ])
+            ])
+        ], className="shadow-sm")
+    ])
+
 # Callbacks originales para funcionalidad (actualizando IDs)
 
 # Callback para actualizar las opciones de entidad según la métrica seleccionada
@@ -731,24 +1304,52 @@ def update_entity_options(selected_metric):
      dash.dependencies.State("date-picker-range", "end_date")]
 )
 def display_metric_results(n_clicks, selected_metric, selected_entity, start_date, end_date):
-    print(f"🔍 [DEBUG] Callback ejecutado - n_clicks: {n_clicks}, metric: {selected_metric}, entity: {selected_entity}, dates: {start_date} to {end_date}")
-    print(f"🔍 [DEBUG] objetoAPI disponible: {objetoAPI is not None}, métricas cargadas: {len(todas_las_metricas)}")
+    """
+    Callback principal para consultar y mostrar métricas XM.
     
+    Incluye validación de parámetros y manejo robusto de errores.
+    """
+    # Validaciones iniciales
     if not n_clicks or not selected_metric:
-        print("⚠️ [DEBUG] Callback terminado - falta métrica o no hay clicks")
-        return dbc.Alert("👆 Selecciona una métrica y haz clic en 'Consultar Datos Energéticos'", color="info", className="text-center")
+        logger.debug("Callback terminado - falta métrica o no hay clicks")
+        return dbc.Alert(
+            "👆 Selecciona una métrica y haz clic en 'Consultar Datos Energéticos'", 
+            color="info", 
+            className="text-center"
+        )
     
     if todas_las_metricas.empty or objetoAPI is None:
+        logger.warning("API XM no disponible o métricas no cargadas")
         return dbc.Alert([
             html.I(className="fas fa-exclamation-triangle me-2"),
             html.Strong("Servicio XM no disponible: "),
             "No se pudieron cargar las métricas de XM. Verifica la conexión a internet y que la librería pydataxm esté correctamente instalada."
         ], color="warning")
     
+    # Validar métrica seleccionada
+    try:
+        selected_metric = validate_string(
+            selected_metric, 
+            min_length=3, 
+            max_length=50,
+            name="métrica"
+        )
+    except InvalidParameterError as e:
+        logger.error(f"Métrica inválida: {e}")
+        return dbc.Alert([
+            html.I(className="fas fa-times-circle me-2"),
+            html.Strong("Métrica inválida: "),
+            str(e)
+        ], color="danger")
+    
     metric_data = todas_las_metricas[todas_las_metricas['MetricId'] == selected_metric]
     
     if metric_data.empty:
-        return dbc.Alert("Métrica no encontrada.", color="warning")
+        logger.warning(f"Métrica no encontrada: {selected_metric}")
+        return dbc.Alert(
+            f"Métrica '{selected_metric}' no encontrada en el sistema.", 
+            color="warning"
+        )
     
     # Información básica de la métrica
     metric_name = metric_data.iloc[0]['MetricName']
@@ -844,6 +1445,56 @@ def display_metric_results(n_clicks, selected_metric, selected_entity, start_dat
     # Si hay entidad y fechas seleccionadas, intentar consultar datos
     if selected_entity and start_date and end_date:
         try:
+            # Validar entidad
+            try:
+                selected_entity = validate_string(
+                    selected_entity, 
+                    min_length=1, 
+                    max_length=100,
+                    name="entidad"
+                )
+            except InvalidParameterError as e:
+                logger.error(f"Entidad inválida: {e}")
+                return html.Div([
+                    info_card,
+                    dbc.Alert([
+                        html.I(className="fas fa-times-circle me-2"),
+                        html.Strong("Entidad inválida: "),
+                        str(e)
+                    ], color="danger", className="mt-3")
+                ])
+            
+            # Validar rango de fechas
+            try:
+                # Obtener max_days de la métrica
+                max_days_allowed = metric_data.iloc[0].get('MaxDays', 365)
+                if max_days_allowed == 'N/A':
+                    max_days_allowed = 365
+                
+                start_validated, end_validated = validate_date_range(
+                    start_date, 
+                    end_date, 
+                    max_days=int(max_days_allowed)
+                )
+                logger.info(f"Fechas validadas", extra={
+                    'inicio': start_validated,
+                    'fin': end_validated,
+                    'metrica': selected_metric,
+                    'entidad': selected_entity
+                })
+            except DateRangeError as e:
+                logger.error(f"Error en rango de fechas: {e}", extra=e.details if hasattr(e, 'details') else {})
+                return html.Div([
+                    info_card,
+                    dbc.Alert([
+                        html.I(className="fas fa-calendar-times me-2"),
+                        html.Strong("Error en fechas: "),
+                        str(e),
+                        html.Hr(),
+                        html.Small(f"💡 Consejo: Esta métrica permite un máximo de {max_days_allowed} días. Reduce el rango de fechas.")
+                    ], color="danger", className="mt-3")
+                ])
+            
             # Verificar que la API esté disponible
             if objetoAPI is None:
                 api_error_alert = dbc.Alert([
@@ -854,20 +1505,44 @@ def display_metric_results(n_clicks, selected_metric, selected_entity, start_dat
                 ], color="danger", className="mt-3")
                 return html.Div([info_card, api_error_alert])
             
-            # Convertir fechas
-            start_dt = dt.datetime.strptime(start_date, "%Y-%m-%d").date()
-            end_dt = dt.datetime.strptime(end_date, "%Y-%m-%d").date()
+            # Convertir fechas validadas
+            start_dt = dt.datetime.strptime(start_validated, "%Y-%m-%d").date()
+            end_dt = dt.datetime.strptime(end_validated, "%Y-%m-%d").date()
             
             # Realizar consulta a la API
-            print(f"🔍 [DEBUG] Iniciando consulta API XM")
-            print(f"🔍 [DEBUG] Parámetros: metric={selected_metric}, entity={selected_entity}, start={start_dt}, end={end_dt}")
-            print(f"🔍 [DEBUG] Objeto API: {type(objetoAPI)}")
+            logger.info(f"Iniciando consulta API XM", extra={
+                'metrica': selected_metric,
+                'entidad': selected_entity,
+                'fecha_inicio': start_dt,
+                'fecha_fin': end_dt
+            })
             
-            data = objetoAPI.request_data(selected_metric, selected_entity, start_dt, end_dt)
-            print(f"🔍 [DEBUG] Respuesta API: type={type(data)}, empty={data is None or (hasattr(data, 'empty') and data.empty)}")
+            try:
+                data = objetoAPI.request_data(selected_metric, selected_entity, start_dt, end_dt)
+            except Exception as api_error:
+                logger.error(f"Error en consulta API XM", extra={
+                    'error': str(api_error),
+                    'metrica': selected_metric,
+                    'entidad': selected_entity
+                })
+                return html.Div([
+                    info_card,
+                    dbc.Alert([
+                        html.I(className="fas fa-exclamation-triangle me-2"),
+                        html.Strong("Error consultando API XM: "),
+                        str(api_error),
+                        html.Hr(),
+                        html.Small("💡 Verifica la conexión a internet y que los parámetros sean correctos.")
+                    ], color="danger", className="mt-3")
+                ])
             
             if data is not None and not data.empty:
-                print(f"✅ Datos obtenidos: {len(data)} registros")
+                logger.info(f"Datos obtenidos exitosamente", extra={
+                    'registros': len(data),
+                    'columnas': list(data.columns),
+                    'metrica': selected_metric
+                })
+# REMOVED DEBUG:                 print(f"✅ Datos obtenidos: {len(data)} registros")
                 
                 # Crear explicación de las columnas de la tabla
                 columnas_info = dbc.Card([
@@ -955,30 +1630,462 @@ def display_metric_results(n_clicks, selected_metric, selected_entity, start_dat
                 
                 return html.Div([info_card, columnas_info, data_table])
             else:
-                print("⚠️ [DEBUG] No se encontraron datos en la consulta")
-                print(f"⚠️ [DEBUG] Data returned: {data}")
-                if hasattr(data, 'shape'):
-                    print(f"⚠️ [DEBUG] Data shape: {data.shape}")
-                no_data_alert = dbc.Alert(
-                    "No se encontraron datos para los parámetros seleccionados. Intenta con un rango de fechas más amplio o una métrica diferente.",
-                    color="warning",
-                    className="mt-3"
-                )
+                logger.warning("No se encontraron datos en la consulta", extra={
+                    'metrica': selected_metric,
+                    'entidad': selected_entity,
+                    'fecha_inicio': start_dt,
+                    'fecha_fin': end_dt
+                })
+                no_data_alert = dbc.Alert([
+                    html.I(className="fas fa-inbox me-2"),
+                    html.Strong("No se encontraron datos"),
+                    html.Hr(),
+                    html.P([
+                        "No hay registros disponibles para los parámetros seleccionados:",
+                        html.Ul([
+                            html.Li(f"Métrica: {selected_metric}"),
+                            html.Li(f"Entidad: {selected_entity}"),
+                            html.Li(f"Período: {start_dt} - {end_dt}")
+                        ])
+                    ]),
+                    html.Small([
+                        html.Strong("💡 Sugerencias:"),
+                        html.Br(),
+                        "• Intenta con un rango de fechas más amplio",
+                        html.Br(),
+                        "• Verifica que la entidad tenga datos para esta métrica",
+                        html.Br(),
+                        "• Consulta fechas más recientes (algunos datos históricos pueden no estar disponibles)"
+                    ])
+                ], color="warning", className="mt-3")
                 return html.Div([info_card, no_data_alert])
                 
+        except (DateRangeError, InvalidParameterError) as validation_error:
+            # Errores de validación ya fueron manejados arriba
+            logger.error(f"Error de validación: {validation_error}")
+            raise
         except Exception as e:
-            print(f"❌ [DEBUG] Error en la consulta: {str(e)}")
-            print(f"❌ [DEBUG] Error type: {type(e)}")
-            import traceback
-            print(f"❌ [DEBUG] Traceback: {traceback.format_exc()}")
-            error_alert = dbc.Alert(
-                f"Error al consultar los datos: {str(e)}",
-                color="danger",
-                className="mt-3"
-            )
+            logger.error(f"Error inesperado en consulta de datos", extra={
+                'error': str(e),
+                'tipo_error': type(e).__name__,
+                'metrica': selected_metric,
+                'entidad': selected_entity
+            }, exc_info=True)
+            
+            error_alert = dbc.Alert([
+                html.I(className="fas fa-bug me-2"),
+                html.Strong("Error inesperado: "),
+                str(e),
+                html.Hr(),
+                html.Small([
+                    html.Strong("ℹ️ Información técnica:"),
+                    html.Br(),
+                    f"Tipo de error: {type(e).__name__}",
+                    html.Br(),
+                    "Este error ha sido registrado en los logs del sistema."
+                ])
+            ], color="danger", className="mt-3")
             return html.Div([info_card, error_alert])
     
     return info_card
+
+# =============================================================================
+# CALLBACKS PARA CONSULTAS SIMEM
+# =============================================================================
+
+@callback(
+    Output("simem-results", "children"),
+    Input("btn-consultar-simem", "n_clicks"),
+    State("simem-variable-dropdown", "value"),
+    State("simem-date-picker", "start_date"),
+    State("simem-date-picker", "end_date"),
+    prevent_initial_call=True
+)
+def consultar_variable_simem(n_clicks, variable, start_date, end_date):
+    """
+    Consulta datos de una variable SIMEM y genera visualizaciones
+    """
+    if not n_clicks or not variable:
+        return dbc.Alert("Selecciona una variable y fecha para consultar", color="info")
+    
+    if not PYDATASIMEM_AVAILABLE:
+        return dbc.Alert([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            "El módulo pydatasimem no está disponible"
+        ], color="danger")
+    
+    try:
+        # Consultar datos SIMEM
+        from pydataxm.pydatasimem import VariableSIMEM
+        
+        # Mostrar indicador de carga
+        with logger.contextualize(variable=variable):
+            logger.info(f"Consultando variable SIMEM: {variable}")
+        
+        # Realizar consulta
+        datos = VariableSIMEM(
+            variable=variable,
+            start_date=start_date,
+            end_date=end_date
+        ).request_data()
+        
+        if datos is None or datos.empty:
+            return dbc.Alert([
+                html.I(className="fas fa-info-circle me-2"),
+                f"No hay datos disponibles para {variable} en el período seleccionado"
+            ], color="warning")
+        
+        logger.info(f"Datos SIMEM obtenidos: {len(datos)} registros")
+        
+        # Generar visualizaciones
+        px, go = get_plotly_modules()
+        
+        # Card de información
+        info_card = dbc.Card([
+            dbc.CardHeader([
+                html.H5([
+                    html.I(className="fas fa-chart-line me-2", style={'color': COLORS['primary']}),
+                    f"Variable SIMEM: {variable}"
+                ], className="mb-0")
+            ]),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            html.I(className="fas fa-database me-2", style={'color': COLORS['info']}),
+                            html.Strong("Registros: "),
+                            html.Span(f"{len(datos):,}")
+                        ], className="mb-2")
+                    ], md=3),
+                    dbc.Col([
+                        html.Div([
+                            html.I(className="fas fa-columns me-2", style={'color': COLORS['success']}),
+                            html.Strong("Columnas: "),
+                            html.Span(f"{len(datos.columns)}")
+                        ], className="mb-2")
+                    ], md=3),
+                    dbc.Col([
+                        html.Div([
+                            html.I(className="fas fa-calendar me-2", style={'color': COLORS['warning']}),
+                            html.Strong("Período: "),
+                            html.Span(f"{start_date} - {end_date}")
+                        ], className="mb-2")
+                    ], md=6)
+                ])
+            ])
+        ], className="mb-3 shadow-sm")
+        
+        # Identificar columna de valor principal
+        valor_col = None
+        for col in datos.columns:
+            if variable.lower() in col.lower() and col not in ['Fecha', 'FechaHora', 'Version']:
+                valor_col = col
+                break
+        
+        if valor_col is None:
+            # Intentar con columnas numéricas
+            numeric_cols = datos.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) > 0:
+                valor_col = numeric_cols[0]
+        
+        graficos = []
+        
+        if valor_col:
+            # Preparar datos para gráfico
+            df_plot = datos.copy()
+            
+            # Identificar columna de fecha
+            fecha_col = None
+            for col in ['FechaHora', 'Fecha', 'fecha', 'fechahora']:
+                if col in df_plot.columns:
+                    fecha_col = col
+                    break
+            
+            if fecha_col:
+                # Convertir a datetime si es necesario
+                if not pd.api.types.is_datetime64_any_dtype(df_plot[fecha_col]):
+                    df_plot[fecha_col] = pd.to_datetime(df_plot[fecha_col])
+                
+                # Gráfico de serie temporal
+                fig_temporal = px.line(
+                    df_plot,
+                    x=fecha_col,
+                    y=valor_col,
+                    title=f"Serie Temporal - {variable}",
+                    labels={fecha_col: 'Fecha', valor_col: variable}
+                )
+                fig_temporal.update_layout(
+                    hovermode='x unified',
+                    plot_bgcolor='white',
+                    paper_bgcolor='white'
+                )
+                fig_temporal.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+                fig_temporal.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+                
+                graficos.append(
+                    dbc.Card([
+                        dbc.CardBody([
+                            dcc.Graph(figure=fig_temporal, config={'displayModeBar': True})
+                        ])
+                    ], className="mb-3 shadow-sm")
+                )
+                
+                # Estadísticas
+                stats_card = dbc.Card([
+                    dbc.CardHeader([
+                        html.H6([
+                            html.I(className="fas fa-chart-bar me-2"),
+                            "Estadísticas Descriptivas"
+                        ], className="mb-0")
+                    ]),
+                    dbc.CardBody([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Strong("Media: "),
+                                html.Span(f"{df_plot[valor_col].mean():.2f}")
+                            ], md=3),
+                            dbc.Col([
+                                html.Strong("Mediana: "),
+                                html.Span(f"{df_plot[valor_col].median():.2f}")
+                            ], md=3),
+                            dbc.Col([
+                                html.Strong("Mín: "),
+                                html.Span(f"{df_plot[valor_col].min():.2f}")
+                            ], md=3),
+                            dbc.Col([
+                                html.Strong("Máx: "),
+                                html.Span(f"{df_plot[valor_col].max():.2f}")
+                            ], md=3)
+                        ])
+                    ])
+                ], className="mb-3 shadow-sm")
+                
+                graficos.append(stats_card)
+        
+        # Tabla de datos
+        tabla = dbc.Card([
+            dbc.CardHeader([
+                html.H6([
+                    html.I(className="fas fa-table me-2"),
+                    "Datos SIMEM (últimos 100 registros)"
+                ], className="mb-0")
+            ]),
+            dbc.CardBody([
+                dash_table.DataTable(
+                    data=datos.tail(100).to_dict('records'),
+                    columns=[{"name": col, "id": col} for col in datos.columns],
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left', 'padding': '10px'},
+                    style_header={'backgroundColor': COLORS['primary'], 'color': 'white', 'fontWeight': 'bold'},
+                    page_size=20
+                )
+            ])
+        ], className="mb-3 shadow-sm")
+        
+        return html.Div([info_card] + graficos + [tabla])
+        
+    except Exception as e:
+        logger.error(f"Error consultando SIMEM: {e}", exc_info=True)
+        return dbc.Alert([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            html.Strong("Error al consultar SIMEM: "),
+            html.Br(),
+            str(e)
+        ], color="danger")
+
+@callback(
+    Output("simem-multivariable-results", "children"),
+    Input("btn-analisis-multivariable-simem", "n_clicks"),
+    State("simem-multivariable-dropdown", "value"),
+    State("simem-multivariable-dates", "start_date"),
+    State("simem-multivariable-dates", "end_date"),
+    prevent_initial_call=True
+)
+def analisis_multivariable_simem(n_clicks, variables, start_date, end_date):
+    """
+    Análisis multivariable de variables SIMEM con correlaciones
+    """
+    if not n_clicks or not variables or len(variables) < 2:
+        return dbc.Alert([
+            html.I(className="fas fa-info-circle me-2"),
+            "Selecciona al menos 2 variables para análisis multivariable"
+        ], color="info")
+    
+    if not PYDATASIMEM_AVAILABLE:
+        return dbc.Alert([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            "El módulo pydatasimem no está disponible"
+        ], color="danger")
+    
+    try:
+        from pydataxm.pydatasimem import VariableSIMEM
+        
+        logger.info(f"Análisis multivariable SIMEM: {len(variables)} variables")
+        
+        # Consultar cada variable
+        datos_dict = {}
+        for var in variables:
+            try:
+                datos = VariableSIMEM(
+                    variable=var,
+                    start_date=start_date,
+                    end_date=end_date
+                ).request_data()
+                
+                if datos is not None and not datos.empty:
+                    datos_dict[var] = datos
+                    logger.info(f"Variable {var}: {len(datos)} registros")
+            except Exception as e:
+                logger.warning(f"Error consultando {var}: {e}")
+        
+        if len(datos_dict) < 2:
+            return dbc.Alert([
+                html.I(className="fas fa-exclamation-circle me-2"),
+                f"Solo se pudieron cargar {len(datos_dict)} variables. Se necesitan al menos 2."
+            ], color="warning")
+        
+        # Combinar datos por fecha
+        df_combined = None
+        for var, datos in datos_dict.items():
+            # Identificar columnas
+            fecha_col = None
+            for col in ['FechaHora', 'Fecha', 'fecha']:
+                if col in datos.columns:
+                    fecha_col = col
+                    break
+            
+            if not fecha_col:
+                continue
+            
+            # Buscar columna de valor
+            valor_col = None
+            for col in datos.columns:
+                if var.lower() in col.lower() and col not in ['Fecha', 'FechaHora', 'Version']:
+                    valor_col = col
+                    break
+            
+            if not valor_col:
+                numeric_cols = datos.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    valor_col = numeric_cols[0]
+            
+            if valor_col:
+                df_temp = datos[[fecha_col, valor_col]].copy()
+                df_temp.columns = ['Fecha', var]
+                df_temp['Fecha'] = pd.to_datetime(df_temp['Fecha'])
+                
+                if df_combined is None:
+                    df_combined = df_temp
+                else:
+                    df_combined = pd.merge(df_combined, df_temp, on='Fecha', how='outer')
+        
+        if df_combined is None or len(df_combined.columns) < 3:
+            return dbc.Alert("No se pudieron combinar los datos", color="danger")
+        
+        # Calcular correlaciones
+        df_numeric = df_combined.drop('Fecha', axis=1)
+        correlacion = df_numeric.corr()
+        
+        px, go = get_plotly_modules()
+        
+        # Matriz de correlación
+        fig_corr = px.imshow(
+            correlacion,
+            labels=dict(x="Variable", y="Variable", color="Correlación"),
+            x=correlacion.columns,
+            y=correlacion.columns,
+            color_continuous_scale='RdBu_r',
+            zmin=-1, zmax=1,
+            title="Matriz de Correlación - Variables SIMEM"
+        )
+        fig_corr.update_layout(height=500)
+        
+        # Series temporales
+        fig_series = go.Figure()
+        for col in df_numeric.columns:
+            fig_series.add_trace(go.Scatter(
+                x=df_combined['Fecha'],
+                y=df_combined[col],
+                mode='lines',
+                name=col
+            ))
+        fig_series.update_layout(
+            title="Series Temporales - Comparación",
+            xaxis_title="Fecha",
+            yaxis_title="Valor",
+            hovermode='x unified',
+            height=400
+        )
+        
+        # Tabla de correlaciones
+        corr_table = correlacion.round(3).reset_index()
+        
+        return html.Div([
+            dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                f"Análisis completado: {len(datos_dict)} variables, {len(df_combined)} registros"
+            ], color="success", className="mb-3"),
+            
+            dbc.Card([
+                dbc.CardHeader([
+                    html.H6([
+                        html.I(className="fas fa-project-diagram me-2"),
+                        "Matriz de Correlación"
+                    ], className="mb-0")
+                ]),
+                dbc.CardBody([
+                    dcc.Graph(figure=fig_corr, config={'displayModeBar': True})
+                ])
+            ], className="mb-3 shadow-sm"),
+            
+            dbc.Card([
+                dbc.CardHeader([
+                    html.H6([
+                        html.I(className="fas fa-chart-line me-2"),
+                        "Series Temporales Comparadas"
+                    ], className="mb-0")
+                ]),
+                dbc.CardBody([
+                    dcc.Graph(figure=fig_series, config={'displayModeBar': True})
+                ])
+            ], className="mb-3 shadow-sm"),
+            
+            dbc.Card([
+                dbc.CardHeader([
+                    html.H6([
+                        html.I(className="fas fa-table me-2"),
+                        "Tabla de Correlaciones"
+                    ], className="mb-0")
+                ]),
+                dbc.CardBody([
+                    dash_table.DataTable(
+                        data=corr_table.to_dict('records'),
+                        columns=[{"name": col, "id": col} for col in corr_table.columns],
+                        style_cell={'textAlign': 'center', 'padding': '10px'},
+                        style_header={'backgroundColor': COLORS['primary'], 'color': 'white', 'fontWeight': 'bold'},
+                        style_data_conditional=[
+                            {
+                                'if': {
+                                    'filter_query': '{{{col}}} > 0.7 && {{{col}}} < 1'.format(col=col),
+                                    'column_id': col
+                                },
+                                'backgroundColor': '#d4edda',
+                                'color': '#155724'
+                            } for col in corr_table.columns if col != 'index'
+                        ]
+                    )
+                ])
+            ], className="shadow-sm")
+        ])
+        
+    except Exception as e:
+        logger.error(f"Error en análisis multivariable SIMEM: {e}", exc_info=True)
+        return dbc.Alert([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            html.Strong("Error en análisis: "),
+            html.Br(),
+            str(e)
+        ], color="danger")
 
 # =============================================================================
 # CALLBACKS PARA DESCARGAS DE REPORTES
@@ -988,28 +2095,29 @@ def display_metric_results(n_clicks, selected_metric, selected_entity, start_dat
 def obtener_datos_reporte():
     """Obtener datos para el reporte"""
     try:
-        # Intentar obtener datos reales de la API
-        objectxm = ReadDB()
-        metricas_list = objectxm.request_data_available()
+        # Intentar obtener datos reales de la API usando get_objetoAPI para colecciones
+        from utils._xm import get_objetoAPI
+        objectxm = get_objetoAPI()
+        if objectxm is not None:
+            metricas_list = objectxm.get_collections()
+        else:
+            metricas_list = []
         
         # Crear DataFrame con información de métricas
         df_metricas = pd.DataFrame({
-            'Métrica': metricas_list[:50],  # Primeras 50 métricas
-            'Tipo': ['Energética'] * min(50, len(metricas_list)),
-            'Estado': ['Disponible'] * min(50, len(metricas_list)),
-            'Última_Actualización': [dt.datetime.now().strftime('%Y-%m-%d')] * min(50, len(metricas_list))
+            'Métrica': metricas_list[:50] if metricas_list else [],  # Primeras 50 métricas
+            'Tipo': ['Energética'] * min(50, len(metricas_list)) if metricas_list else [],
+            'Estado': ['Disponible'] * min(50, len(metricas_list)) if metricas_list else [],
+            'Última_Actualización': [dt.datetime.now().strftime('%Y-%m-%d')] * min(50, len(metricas_list)) if metricas_list else []
         })
         
-        return df_metricas
-    except:
-        # Datos de ejemplo si la API no está disponible
-        return pd.DataFrame({
-            'Métrica': ['DemaEner', 'GeneReal', 'PrecBols', 'ReseAmb', 'CapaEfec'],
-            'Descripción': ['Demanda Energía', 'Generación Real', 'Precio Bolsa', 'Reserva Ambiental', 'Capacidad Efectiva'],
-            'Tipo': ['Demanda', 'Generación', 'Precio', 'Reserva', 'Capacidad'],
-            'Estado': ['Disponible'] * 5,
-            'Última_Actualización': [dt.datetime.now().strftime('%Y-%m-%d')] * 5
-        })
+        return df_metricas if not df_metricas.empty else None
+    except Exception as e:
+        logger.error(f"Error creando tabla de métricas: {e}", exc_info=True)
+        return None
+    
+    # Si no hay datos reales, retornar None
+    return None
 
 # Callback para descarga Excel
 @callback(
@@ -1080,7 +2188,7 @@ MÉTRICAS DISPONIBLES:
 """
         
         for idx, row in df.iterrows():
-            reporte_texto += f"\n{idx+1}. {row.get('Métrica', 'N/A')} - {row.get('Tipo', 'N/A')} - {row.get('Estado', 'N/A')}"
+            reporte_texto += "\n{idx+1}. {row.get('Métrica', 'N/A')} - {row.get('Tipo', 'N/A')} - {row.get('Estado', 'N/A')}"
         
         reporte_texto += f"""
 
@@ -1150,4 +2258,279 @@ Sistema de Análisis de Métricas Energéticas
             zip_data,
             filename=f"reporte_completo_metricas_{dt.datetime.now().strftime('%Y%m%d_%H%M')}.zip"
         )
+
+# ============================================
+# CALLBACK: Análisis Multivariado por Sección
+# ============================================
+@callback(
+    Output("analisis-seccion-container", "children"),
+    Input({"type": "btn-analizar-seccion", "index": dash.ALL}, "n_clicks"),
+    State({"type": "btn-analizar-seccion", "index": dash.ALL}, "id"),
+    prevent_initial_call=True
+)
+def analizar_seccion_multivariado(n_clicks, ids):
+    """Realizar análisis multivariado de métricas de una sección"""
+    if not any(n_clicks):
+        return html.Div()
+    
+    # Identificar qué botón fue clickeado
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return html.Div()
+    
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    import json
+    button_id = json.loads(triggered_id)
+    seccion = button_id["index"]
+    
+    if seccion not in METRICAS_POR_SECCION:
+        return dbc.Alert("Sección no encontrada", color="danger")
+    
+    info_seccion = METRICAS_POR_SECCION[seccion]
+    metricas = info_seccion['metricas']
+    
+    # Consultar datos de la base de datos
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        
+        # Obtener últimos 90 días de datos para cada métrica
+        fecha_fin = datetime.now()
+        fecha_inicio = fecha_fin - timedelta(days=90)
+        
+        df_list = []
+        metricas_disponibles = []
+        
+        for metrica in metricas[:10]:  # Limitar a 10 métricas para rendimiento
+            query = f"""
+            SELECT fecha, metrica, AVG(valor_gwh) as valor
+            FROM metrics
+            WHERE metrica = '{metrica}'
+            AND fecha >= '{fecha_inicio.strftime('%Y-%m-%d')}'
+            AND fecha <= '{fecha_fin.strftime('%Y-%m-%d')}'
+            GROUP BY fecha, metrica
+            ORDER BY fecha
+            """
+            df_temp = pd.read_sql_query(query, conn)
+            if not df_temp.empty:
+                df_list.append(df_temp)
+                metricas_disponibles.append(metrica)
+        
+        conn.close()
+        
+        if not df_list:
+            return dbc.Alert([
+                html.I(className="fas fa-exclamation-triangle me-2"),
+                f"No hay datos disponibles en la base de datos para las métricas de '{seccion}'. ",
+                "Estas métricas están disponibles en la API de XM pero aún no han sido cargadas al sistema."
+            ], color="warning")
+        
+        # Combinar datos
+        df_combined = pd.concat(df_list, ignore_index=True)
+        
+        # Pivotar para análisis multivariado
+        df_pivot = df_combined.pivot_table(
+            index='fecha',
+            columns='metrica',
+            values='valor',
+            aggfunc='mean'
+        ).reset_index()
+        
+        # Eliminar columnas con muchos NaN
+        df_pivot = df_pivot.dropna(thresh=len(df_pivot)*0.5, axis=1)
+        df_pivot = df_pivot.fillna(method='ffill').fillna(method='bfill')
+        
+        # Crear visualizaciones
+        return crear_visualizaciones_multivariadas(df_pivot, seccion, info_seccion, metricas_disponibles)
+        
+    except Exception as e:
+        logger.error(f"Error en análisis multivariado: {e}")
+        return dbc.Alert(f"Error al procesar datos: {str(e)}", color="danger")
+
+def crear_visualizaciones_multivariadas(df, seccion, info_seccion, metricas_disponibles):
+    """Crear visualizaciones de análisis multivariado"""
+    px, go = get_plotly_modules()
+    
+    # Preparar datos para correlación
+    df_numeric = df.select_dtypes(include=[float, int])
+    
+    if df_numeric.shape[1] < 2:
+        return dbc.Alert("Se necesitan al menos 2 métricas con datos para análisis multivariado", color="warning")
+    
+    # 1. Matriz de correlación
+    corr_matrix = df_numeric.corr()
+    
+    fig_corr = go.Figure(data=go.Heatmap(
+        z=corr_matrix.values,
+        x=corr_matrix.columns,
+        y=corr_matrix.columns,
+        colorscale='RdBu',
+        zmid=0,
+        text=corr_matrix.values,
+        texttemplate='%{text:.2f}',
+        textfont={"size": 10},
+        colorbar=dict(title="Correlación")
+    ))
+    
+    fig_corr.update_layout(
+        title=f"Matriz de Correlación - {seccion}",
+        height=500,
+        xaxis={'side': 'bottom'},
+        yaxis={'side': 'left'}
+    )
+    
+    # 2. Scatter matrix (pairplot style)
+    fig_scatter = px.scatter_matrix(
+        df_numeric,
+        dimensions=df_numeric.columns[:min(5, len(df_numeric.columns))],
+        title=f"Análisis Multivariado - {seccion}",
+        height=700
+    )
+    
+    fig_scatter.update_traces(diagonal_visible=False, showupperhalf=False)
+    
+    # 3. Series temporales superpuestas (normalizadas)
+    df_normalized = df.copy()
+    for col in df_numeric.columns:
+        if col in df_normalized.columns:
+            min_val = df_normalized[col].min()
+            max_val = df_normalized[col].max()
+            if max_val > min_val:
+                df_normalized[col] = (df_normalized[col] - min_val) / (max_val - min_val)
+    
+    fig_series = go.Figure()
+    for col in df_numeric.columns:
+        if col in df_normalized.columns:
+            fig_series.add_trace(go.Scatter(
+                x=df['fecha'] if 'fecha' in df.columns else df.index,
+                y=df_normalized[col],
+                mode='lines',
+                name=col,
+                line=dict(width=2)
+            ))
+    
+    fig_series.update_layout(
+        title=f"Series Temporales Normalizadas - {seccion}",
+        xaxis_title="Fecha",
+        yaxis_title="Valor Normalizado (0-1)",
+        height=400,
+        hovermode='x unified'
+    )
+    
+    # Layout del análisis
+    return html.Div([
+        dbc.Card([
+            dbc.CardHeader([
+                html.H4([
+                    html.I(className=f"fas {info_seccion['icon']} me-2", style={'color': info_seccion['color']}),
+                    f"Análisis Multivariado: {seccion}"
+                ], className="mb-0")
+            ], style={'backgroundColor': f"{info_seccion['color']}15"}),
+            dbc.CardBody([
+                dbc.Alert([
+                    html.I(className="fas fa-chart-line me-2"),
+                    html.Strong(f"Métricas analizadas: "),
+                    f"{', '.join(metricas_disponibles)}"
+                ], color="info", className="mb-3"),
+                
+                # Estadísticas básicas
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("Métricas Disponibles", className="text-muted"),
+                                html.H3(len(metricas_disponibles), className="mb-0", style={'color': info_seccion['color']})
+                            ])
+                        ], className="text-center mb-3")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("Registros Analizados", className="text-muted"),
+                                html.H3(len(df), className="mb-0", style={'color': info_seccion['color']})
+                            ])
+                        ], className="text-center mb-3")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("Correlación Promedio", className="text-muted"),
+                                html.H3(f"{corr_matrix.values[np.triu_indices_from(corr_matrix.values, k=1)].mean():.2f}",
+                                       className="mb-0", style={'color': info_seccion['color']})
+                            ])
+                        ], className="text-center mb-3")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("Período de Datos", className="text-muted"),
+                                html.H3("90 días", className="mb-0", style={'color': info_seccion['color']})
+                            ])
+                        ], className="text-center mb-3")
+                    ], md=3)
+                ], className="mb-4"),
+                
+                # Tabs para diferentes visualizaciones
+                dbc.Tabs([
+                    dbc.Tab([
+                        dcc.Graph(figure=fig_corr, config={'displayModeBar': True})
+                    ], label="🔥 Matriz de Correlación"),
+                    
+                    dbc.Tab([
+                        dcc.Graph(figure=fig_scatter, config={'displayModeBar': True})
+                    ], label="📊 Análisis Bivariado"),
+                    
+                    dbc.Tab([
+                        dcc.Graph(figure=fig_series, config={'displayModeBar': True})
+                    ], label="📈 Series Temporales"),
+                    
+                    dbc.Tab([
+                        crear_tabla_correlaciones(corr_matrix, metricas_disponibles)
+                    ], label="📋 Tabla de Correlaciones")
+                ])
+            ])
+        ], className="mb-4", style={'border': f'2px solid {info_seccion["color"]}'}),
+        
+        dbc.Button([
+            html.I(className="fas fa-arrow-left me-2"),
+            "Volver a Secciones"
+        ], id="btn-volver-secciones", color="secondary", outline=True, className="mb-4")
+    ])
+
+def crear_tabla_correlaciones(corr_matrix, metricas):
+    """Crear tabla con las correlaciones más fuertes"""
+    # Extraer correlaciones (sin diagonal)
+    correlaciones = []
+    for i in range(len(corr_matrix.columns)):
+        for j in range(i+1, len(corr_matrix.columns)):
+            correlaciones.append({
+                'Métrica 1': corr_matrix.columns[i],
+                'Métrica 2': corr_matrix.columns[j],
+                'Correlación': corr_matrix.iloc[i, j],
+                'Abs': abs(corr_matrix.iloc[i, j])
+            })
+    
+    df_corr = pd.DataFrame(correlaciones).sort_values('Abs', ascending=False)
+    
+    return html.Div([
+        html.H5("Correlaciones más Fuertes", className="mb-3"),
+        dbc.Table.from_dataframe(
+            df_corr[['Métrica 1', 'Métrica 2', 'Correlación']].head(20),
+            striped=True,
+            bordered=True,
+            hover=True,
+            responsive=True,
+            style={'fontSize': '0.9em'}
+        )
+    ])
+
+@callback(
+    Output("analisis-seccion-container", "children", allow_duplicate=True),
+    Input("btn-volver-secciones", "n_clicks"),
+    prevent_initial_call=True
+)
+def volver_secciones(n_clicks):
+    """Limpiar análisis y volver a vista de secciones"""
+    if n_clicks:
+        return html.Div()
+    return dash.no_update
     return dash.no_update

@@ -1,0 +1,23 @@
+[Unit]
+Description=Dashboard Multipage MME - Ministerio de Minas y Energía
+After=network.target
+
+[Service]
+Type=notify
+User=admonctrlxm
+Group=admonctrlxm
+WorkingDirectory=/home/admonctrlxm/server
+Environment="PATH=/home/admonctrlxm/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/admonctrlxm/server"
+ExecStart=/home/admonctrlxm/.local/bin/gunicorn -c gunicorn_config.py "app:server"
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/admonctrlxm/server/logs/dashboard.log
+StandardError=append:/home/admonctrlxm/server/logs/dashboard-error.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

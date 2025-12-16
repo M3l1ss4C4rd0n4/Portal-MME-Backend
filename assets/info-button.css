@@ -1,0 +1,21 @@
+/* Animación de pulso para el botón de información */
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.4), 0 0 0 2px rgba(242,195,48,0.3);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.5), 0 0 0 4px rgba(242,195,48,0.5);
+    }
+}
+
+#info-button:hover {
+    transform: scale(1.15) !important;
+    background-color: #FFD700 !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6), 0 0 0 4px rgba(255,215,0,0.6) !important;
+}
+
+#info-button:active {
+    transform: scale(0.95) !important;
+}

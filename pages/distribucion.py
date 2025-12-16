@@ -1,20 +1,21 @@
-from dash import html, dcc, register_page
+from dash import dcc, html, Input, Output, State, callback, register_page
 import dash_bootstrap_components as dbc
 
 # Imports locales para componentes uniformes
-from .components import crear_header, crear_sidebar_universal, crear_boton_regresar
-from .config import COLORS
+from utils.components import crear_navbar_horizontal, crear_boton_regresar
+from utils.config import COLORS
 
 register_page(
     __name__,
-    path="/distribucion",
-    name="Distribución",
+    path="/distribucion-opciones",
+    name="Distribución (Opciones)",
     title="Distribución Eléctrica - Ministerio de Minas y Energía",
-    order=10
+    order=99  # Oculto del menú principal
 )
 
 # Definir las subsecciones de distribución
 DISTRIBUCION_SUBSECTIONS = [
+    {"name": "Demanda por Agente", "path": "/distribucion/demanda", "icon": "fas fa-bolt", "color": "#1976D2", "description": "Análisis de demanda comercial y real"},
     {"name": "Red de Distribución", "path": "/distribucion-red", "icon": "fas fa-sitemap", "color": "#3F51B5", "description": "Redes locales de distribución"},
     {"name": "Transformadores", "path": "/distribucion-transformadores", "icon": "fas fa-bolt", "color": "#3949AB", "description": "Infraestructura de transformación"},
     {"name": "Calidad del Servicio", "path": "/distribucion-calidad", "icon": "fas fa-chart-line", "color": "#303F9F", "description": "Indicadores de calidad"}
@@ -55,16 +56,8 @@ def create_subsection_card(subsection):
     ], lg=4, md=6, sm=12, className="mb-4")
 
 layout = html.Div([
-    # Sidebar desplegable
-    crear_sidebar_universal(),
-    
-    # Header específico para distribución
-    crear_header(
-        titulo_pagina="Distribución Eléctrica",
-        descripcion_pagina="Redes de distribución, calidad del servicio y atención a usuarios",
-        icono_pagina="fas fa-project-diagram",
-        color_tema=COLORS['distribucion']
-    ),
+    # Navbar horizontal
+    crear_navbar_horizontal(),
     
     # Container principal
     dbc.Container([

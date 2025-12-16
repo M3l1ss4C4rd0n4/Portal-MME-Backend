@@ -1,9 +1,9 @@
-from dash import html, dcc, register_page
+from dash import dcc, html, Input, Output, State, callback, register_page
 import dash_bootstrap_components as dbc
 
 # Imports locales para componentes uniformes
-from .components import crear_header, crear_sidebar_universal, crear_boton_regresar
-from .config import COLORS
+from utils.components import crear_navbar_horizontal, crear_boton_regresar
+from utils.config import COLORS
 
 register_page(
     __name__,
@@ -55,16 +55,8 @@ def create_subsection_card(subsection):
     ], lg=4, md=6, sm=12, className="mb-4")
 
 layout = html.Div([
-    # Sidebar desplegable
-    crear_sidebar_universal(),
-    
-    # Header específico para demanda
-    crear_header(
-        titulo_pagina="Demanda Energética",
-        descripcion_pagina="Análisis de consumo energético nacional y proyecciones",
-        icono_pagina="fas fa-chart-bar",
-        color_tema=COLORS['demanda']
-    ),
+    # Navbar horizontal
+    crear_navbar_horizontal(),
     
     # Container principal
     dbc.Container([

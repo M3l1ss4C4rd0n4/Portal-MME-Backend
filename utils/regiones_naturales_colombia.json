@@ -1,0 +1,80 @@
+{
+  "regiones": {
+    "Caribe": {
+      "nombre": "Región Caribe",
+      "color": "rgba(255, 152, 0, 0.4)",
+      "border": "#FF9800",
+      "departamentos": [
+        "ATLANTICO",
+        "BOLIVAR",
+        "CESAR",
+        "CORDOBA",
+        "LA GUAJIRA",
+        "MAGDALENA",
+        "SUCRE",
+        "SAN ANDRES Y PROVIDENCIA"
+      ]
+    },
+    "Pacifica": {
+      "nombre": "Región Pacífica",
+      "color": "rgba(33, 150, 243, 0.4)",
+      "border": "#2196F3",
+      "departamentos": [
+        "CHOCO",
+        "VALLE DEL CAUCA",
+        "CAUCA",
+        "NARIÑO"
+      ]
+    },
+    "Andina": {
+      "nombre": "Región Andina",
+      "color": "rgba(76, 175, 80, 0.4)",
+      "border": "#4CAF50",
+      "departamentos": [
+        "ANTIOQUIA",
+        "BOYACA",
+        "CALDAS",
+        "CUNDINAMARCA",
+        "HUILA",
+        "NORTE DE SANTANDER",
+        "QUINDIO",
+        "RISARALDA",
+        "SANTANDER",
+        "TOLIMA"
+      ]
+    },
+    "Orinoquia": {
+      "nombre": "Región Orinoquía",
+      "color": "rgba(255, 235, 59, 0.4)",
+      "border": "#FFEB3B",
+      "departamentos": [
+        "ARAUCA",
+        "CASANARE",
+        "META",
+        "VICHADA"
+      ]
+    },
+    "Amazonia": {
+      "nombre": "Región Amazonía",
+      "color": "rgba(103, 58, 183, 0.4)",
+      "border": "#673AB7",
+      "departamentos": [
+        "AMAZONAS",
+        "CAQUETA",
+        "GUAINIA",
+        "GUAVIARE",
+        "PUTUMAYO",
+        "VAUPES"
+      ]
+    },
+    "Insular": {
+      "nombre": "Región Insular",
+      "color": "rgba(233, 30, 99, 0.4)",
+      "border": "#E91E63",
+      "departamentos": [
+        "SAN ANDRES Y PROVIDENCIA"
+      ]
+    }
+  },
+  "notas": "Regiones naturales de Colombia según clasificación geográfica tradicional"
+}
