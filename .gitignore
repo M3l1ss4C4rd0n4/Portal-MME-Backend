@@ -38,6 +38,13 @@ env/
 logs/
 nohup.out
 
+# Test/linters caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
 # OS - Windows/Mac/Linux compatibility
 .DS_Store
 Thumbs.db
@@ -113,3 +120,4 @@ instaladores-offline/*.md
 siea/.env
 siea/venv/
 siea/**/__pycache__/
+*.pyo

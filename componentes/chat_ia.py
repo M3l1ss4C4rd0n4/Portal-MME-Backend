@@ -401,13 +401,17 @@ def manejar_mensajes(n_send, n_submit, n_analizar, n_anomalias, n_resumen,
         # Mensaje visible para el usuario (corto y limpio)
         pregunta_visible = f"🔍 Analizar tablero de {pagina_actual}"
         
-        # Obtener datos del Store si estamos en Generación por Fuentes
-        if current_pathname == '/generacion-fuentes' and datos_generacion_store:
+        # Obtener datos del Store si hay datos disponibles (para cualquier página)
+        if datos_generacion_store and datos_generacion_store.get('pagina'):
+            # Usar datos del store si están disponibles y coinciden con la página actual
             datos_contexto = datos_generacion_store
+            print(f"✅ Chatbot usando datos del STORE para página: {datos_generacion_store.get('pagina')}")
+            print(f"   Datos disponibles: {list(datos_generacion_store.keys())}")
         else:
-            # Para otras páginas, usar el método anterior
+            # Si el store está vacío o no tiene datos, usar el método de consulta directa
             agente = get_agente()
             datos_contexto = agente.obtener_datos_contexto_pagina(current_pathname)
+            print(f"⚠️ Chatbot usando consulta DIRECTA para: {current_pathname} (store vacío o sin datos)")
         
         # Pregunta completa con datos para la IA (no se muestra al usuario)
         pregunta = f"""Analiza profundamente el tablero de {pagina_actual} que estoy viendo. 
@@ -422,54 +426,67 @@ EXPLICA EN DETALLE:
 DATOS DE LA PÁGINA ACTUAL:
 {json.dumps(datos_contexto, indent=2, default=str, ensure_ascii=False)}"""
     elif trigger_id == 'chat-quick-anomalias':
-        pregunta = "Detecta y analiza las anomalías actuales en el Sistema Interconectado Nacional"
+        # Obtener datos del store o consulta directa
+        if datos_generacion_store and datos_generacion_store.get('pagina'):
+            datos_contexto = datos_generacion_store
+            print(f"✅ Anomalías usando datos del STORE para: {datos_generacion_store.get('pagina')}")
+        else:
+            agente = get_agente()
+            datos_contexto = agente.obtener_datos_contexto_pagina(current_pathname)
+            print(f"⚠️ Anomalías usando consulta DIRECTA para: {current_pathname}")
+        
+        pregunta = f"""Detecta y analiza anomalías en los datos que estoy viendo actualmente.
+
+Analiza estos datos y detecta:
+1. ⚠️ Valores anormales o fuera de rango
+2. 📉 Tendencias preocupantes
+3. 🚨 Situaciones críticas que requieran atención
+
+DATOS ACTUALES:
+{json.dumps(datos_contexto, indent=2, default=str, ensure_ascii=False)}"""
+        
     elif trigger_id == 'chat-quick-resumen':
-        pregunta = "Dame un resumen ejecutivo del estado actual del sistema energético"
+        # Obtener datos del store o consulta directa
+        if datos_generacion_store and datos_generacion_store.get('pagina'):
+            datos_contexto = datos_generacion_store
+            print(f"✅ Resumen usando datos del STORE para: {datos_generacion_store.get('pagina')}")
+        else:
+            agente = get_agente()
+            datos_contexto = agente.obtener_datos_contexto_pagina(current_pathname)
+            print(f"⚠️ Resumen usando consulta DIRECTA para: {current_pathname}")
+        
+        pregunta = f"""Dame un resumen ejecutivo de los datos que estoy viendo actualmente.
+
+Incluye:
+1. 📊 Indicadores clave (KPIs)
+2. 📈 Estado general
+3. 💡 Puntos importantes a destacar
+
+DATOS ACTUALES:
+{json.dumps(datos_contexto, indent=2, default=str, ensure_ascii=False)}"""
     
     if not pregunta:
         return mensajes_actuales, input_text or '', ''
     
-    # Agregar mensaje del usuario (usar versión visible si existe)
-    mensaje_para_mostrar = pregunta_visible if trigger_id == 'chat-quick-analizar-tablero' else pregunta
+    # Agregar mensaje del usuario
+    # Para "Analizar tablero" mostrar versión corta, para otros mostrar la pregunta completa
+    if trigger_id == 'chat-quick-analizar-tablero':
+        mensaje_para_mostrar = pregunta_visible
+    elif trigger_id == 'chat-quick-anomalias':
+        mensaje_para_mostrar = "🚨 Detectar anomalías"
+    elif trigger_id == 'chat-quick-resumen':
+        mensaje_para_mostrar = "📊 Resumen ejecutivo"
+    else:
+        mensaje_para_mostrar = pregunta
+    
     mensajes_actuales.append(crear_mensaje_usuario(mensaje_para_mostrar))
     
     try:
         # Obtener instancia del agente IA
         agente = get_agente()
         
-        # Procesar según el tipo de pregunta
-        if trigger_id == 'chat-quick-anomalias':
-            # Detección de alertas
-            alertas = agente.detectar_alertas()
-            
-            respuesta_texto = "🚨 **DETECCIÓN DE ALERTAS**\n\n"
-            
-            if alertas.get('criticas'):
-                respuesta_texto += "**🔴 CRÍTICAS:**\n"
-                for alerta in alertas['criticas']:
-                    respuesta_texto += f"- {alerta}\n"
-                respuesta_texto += "\n"
-            
-            if alertas.get('advertencias'):
-                respuesta_texto += "**🟡 ADVERTENCIAS:**\n"
-                for alerta in alertas['advertencias']:
-                    respuesta_texto += f"- {alerta}\n"
-                respuesta_texto += "\n"
-            
-            if alertas.get('informativas'):
-                respuesta_texto += "**🔵 INFORMATIVAS:**\n"
-                for alerta in alertas['informativas']:
-                    respuesta_texto += f"- {alerta}\n"
-            
-            respuesta_ia = respuesta_texto
-            
-        elif trigger_id == 'chat-quick-resumen':
-            # Resumen ejecutivo
-            respuesta_ia = agente.resumen_dashboard()
-            
-        else:
-            # Chat interactivo general
-            respuesta_ia = agente.chat_interactivo(pregunta)
+        # Todos los botones ahora usan chat_interactivo con los datos del contexto
+        respuesta_ia = agente.chat_interactivo(pregunta)
         
         # Agregar mensaje de la IA
         mensajes_actuales.append(crear_mensaje_ia(respuesta_ia))

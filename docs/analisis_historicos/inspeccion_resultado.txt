@@ -1,0 +1,191 @@
+================================================================================
+🔍 INSPECCIÓN PROFUNDA DEL ETL Y BASE DE DATOS
+================================================================================
+
+📊 1. ESTRUCTURA DE LA BASE DE DATOS
+--------------------------------------------------------------------------------
+
+Tablas encontradas: 5
+  - metrics: 1,595,413 registros
+  - sqlite_sequence: 4 registros
+  - catalogos: 2,198 registros
+  - metrics_hourly: 23,582,292 registros
+  - predictions: 450 registros
+
+📋 Estructura de tabla 'metrics':
+  - id                        (INTEGER)
+  - fecha                     (DATE)
+  - metrica                   (VARCHAR(50))
+  - entidad                   (VARCHAR(100))
+  - recurso                   (VARCHAR(100))
+  - valor_gwh                 (REAL)
+  - unidad                    (VARCHAR(10))
+  - fecha_actualizacion       (TIMESTAMP)
+
+📈 2. ANÁLISIS DE MÉTRICAS ENERGÉTICAS
+--------------------------------------------------------------------------------
+
+📊 Estadísticas Generales:
+  Total registros: 1,595,413
+  Fecha mínima: 2020-01-01
+  Fecha máxima: 2025-12-15
+  Métricas únicas: 92
+  Entidades únicas: 7
+
+📋 3. MÉTRICAS POR CANTIDAD DE REGISTROS (Top 30)
+--------------------------------------------------------------------------------
+ 1. Gene                           - 503,970 registros |   2 entidades | 2020-01-01 → 2025-12-13
+ 2. DemaCome                       - 175,860 registros |   2 entidades | 2020-01-01 → 2025-12-13
+ 3. DemaReal                       - 173,688 registros |   2 entidades | 2020-01-01 → 2025-12-12
+ 4. AporEnerMediHist               -  87,289 registros |   2 entidades | 2020-01-01 → 2025-12-15
+ 5. AporCaudal                     -  85,330 registros |   1 entidades | 2020-01-01 → 2025-12-14
+ 6. AporEner                       -  83,994 registros |   2 entidades | 2020-01-01 → 2025-12-15
+ 7. PorcApor                       -  81,394 registros |   2 entidades | 2020-01-01 → 2025-12-14
+ 8. DemaRealNoReg                  -  80,314 registros |   2 entidades | 2020-11-01 → 2025-12-04
+ 9. DispoDeclarada                 -  77,423 registros |   1 entidades | 2025-06-07 → 2025-12-14
+10. CapaUtilDiarEner               -  73,243 registros |   2 entidades | 2020-01-01 → 2025-12-15
+11. VoluUtilDiarEner               -  72,429 registros |   2 entidades | 2020-01-01 → 2025-12-15
+12. DispoCome                      -  69,253 registros |   1 entidades | 2025-06-07 → 2025-12-12
+13. DispoReal                      -  13,154 registros |   1 entidades | 2025-06-07 → 2025-12-13
+14. PerdidasEnerNoReg              -   1,814 registros |   1 entidades | 2020-12-02 → 2025-12-09
+15. DemaRealReg                    -   1,805 registros |   1 entidades | 2020-11-25 → 2025-11-23
+16. PerdidasEner                   -   1,804 registros |   1 entidades | 2020-12-02 → 2025-11-29
+17. PerdidasEnerReg                -   1,804 registros |   1 entidades | 2020-12-02 → 2025-11-29
+18. DemaNoAtenProg                 -   1,343 registros |   2 entidades | 2020-01-19 → 2025-12-14
+19. DemaNoAtenNoProg               -     402 registros |   2 entidades | 2025-09-04 → 2025-12-14
+20. RestSinAliv                    -     377 registros |   1 entidades | 2024-12-02 → 2025-12-13
+21. PrecEscaInf                    -     376 registros |   1 entidades | 2025-03-01 → 2025-12-12
+22. PrecEscaSup                    -     376 registros |   1 entidades | 2025-03-01 → 2025-12-12
+23. RespComerAGC                   -     375 registros |   1 entidades | 2024-12-02 → 2025-12-11
+24. RestAliv                       -     364 registros |   1 entidades | 2024-12-02 → 2025-12-09
+25. PorcVoluUtilDiar               -     204 registros |   2 entidades | 2025-09-04 → 2025-12-14
+26. VertEner                       -     204 registros |   2 entidades | 2025-09-04 → 2025-12-14
+27. VolTurbMasa                    -     204 registros |   2 entidades | 2025-09-04 → 2025-12-14
+28. ENFICC                         -     202 registros |   2 entidades | 2025-09-04 → 2025-12-14
+29. ComContRespEner                -     196 registros |   2 entidades | 2025-09-04 → 2025-12-10
+30. CompBolsNaciEner               -     196 registros |   2 entidades | 2025-09-04 → 2025-12-10
+
+🔄 4. VERIFICACIÓN DE CONVERSIONES DE UNIDADES
+--------------------------------------------------------------------------------
+  AporEner                  [GWh]: Min=        0.00 | Max=      643.40 | Avg=     10.30 | N=83,994
+  Gene                      [GWh]: Min=        0.00 | Max=      255.54 | Avg=      1.89 | N=503,970
+  DemaCome                  [GWh]: Min=        0.00 | Max=      255.54 | Avg=      5.34 | N=175,860
+  PerdidasEner              [GWh]: Min=        1.10 | Max=        5.42 | Avg=      3.28 | N= 1,804
+  PerdidasEnerReg           [GWh]: Min=        0.73 | Max=        3.74 | Avg=      2.22 | N= 1,804
+  PerdidasEnerNoReg         [GWh]: Min=        0.37 | Max=        1.74 | Avg=      1.03 | N= 1,814
+
+⚠️  5. DETECCIÓN DE CONVERSIONES DOBLES O ERRORES
+--------------------------------------------------------------------------------
+
+✅ AporEnerMediHist (ya corregida anteriormente):
+  Total registros: 87,289
+  Valores > 1M (sospechosos): 0
+  Valor máximo: 288.05
+  ✅ OK: Sin valores astronómicos
+
+⚠️ Métricas con valores sospechosos:
+  - CapaUtilDiarMasa              :   102 valores >1M |     0 negativos | Max=1,213,370,000
+  - CargoUsoSTN                   :     2 valores >1M |     0 negativos | Max=379,860,496,024
+  - CargoUsoSTR                   :     2 valores >1M |     0 negativos | Max=245,075,491,810
+  - ComContRespEner               :   155 valores >1M |     0 negativos | Max=25,746,560
+  - DescMasa                      :     5 valores >1M |     0 negativos | Max=1,639,510
+  - ENFICC                        :   100 valores >1M |     0 negativos | Max=244,790,198
+  - EscDemUPMEAlto                :     3 valores >1M |     0 negativos | Max=7,464,000,000
+  - EscDemUPMEBajo                :     3 valores >1M |     0 negativos | Max=6,877,000,000
+  - EscDemUPMEMedio               :     3 valores >1M |     0 negativos | Max=7,170,000,000
+  - FAER                          :     2 valores >1M |     0 negativos | Max=21,151,396,487
+  - FAZNI                         :   100 valores >1M |     0 negativos | Max=777,737,214
+  - PRONE                         :     2 valores >1M |     0 negativos | Max=19,136,977,774
+  - RemuRealIndiv                 :    98 valores >1M |     0 negativos | Max=18,475,587,610
+  - VertMasa                      :    84 valores >1M |     0 negativos | Max=57,633,190
+  - VolTurbMasa                   :   204 valores >1M |     0 negativos | Max=380,063,660
+  - VoluUtilDiarMasa              :   102 valores >1M |     0 negativos | Max=1,191,820,000
+
+📅 6. COMPLETITUD DE DATOS RECIENTES (Últimos 30 días)
+--------------------------------------------------------------------------------
+
+Métricas con datos recientes (desde 2025-11-17):
+✅ DispoDeclarada                : 11,781 registros | Último: 2025-12-14 (3d)
+✅ DispoCome                     : 9,720 registros | Último: 2025-12-12 (5d)
+✅ Gene                          : 9,290 registros | Último: 2025-12-13 (4d)
+✅ DispoReal                     : 1,901 registros | Último: 2025-12-13 (4d)
+✅ AporEnerMediHist              : 1,220 registros | Último: 2025-12-15 (2d)
+✅ AporEner                      : 1,182 registros | Último: 2025-12-15 (2d)
+✅ AporCaudal                    : 1,158 registros | Último: 2025-12-14 (3d)
+✅ PorcApor                      : 1,153 registros | Último: 2025-12-14 (3d)
+✅ CapaUtilDiarEner              :   992 registros | Último: 2025-12-15 (2d)
+✅ VoluUtilDiarEner              :   982 registros | Último: 2025-12-15 (2d)
+⚠️ DemaRealNoReg                 :   618 registros | Último: 2025-12-04 (13d)
+✅ DemaCome                      :   606 registros | Último: 2025-12-13 (4d)
+✅ DemaReal                      :   587 registros | Último: 2025-12-12 (5d)
+✅ DemaNoAtenNoProg              :   229 registros | Último: 2025-12-14 (3d)
+✅ DemaNoAtenProg                :    63 registros | Último: 2025-12-14 (3d)
+✅ PorcVoluUtilDiar              :    56 registros | Último: 2025-12-14 (3d)
+✅ VertEner                      :    56 registros | Último: 2025-12-14 (3d)
+✅ VolTurbMasa                   :    56 registros | Último: 2025-12-14 (3d)
+✅ ENFICC                        :    54 registros | Último: 2025-12-14 (3d)
+✅ GeneIdea                      :    52 registros | Último: 2025-12-12 (5d)
+
+🎯 7. VERIFICACIÓN DE MÉTRICAS CRÍTICAS
+--------------------------------------------------------------------------------
+✅ AporEner                  (Aportes de Energía Hídrica)
+      83,994 registros |   2 entidades | 2020-01-01 → 2025-12-15
+✅ AporEnerMediHist          (Aportes Medios Históricos)
+      87,289 registros |   2 entidades | 2020-01-01 → 2025-12-15
+✅ Gene                      (Generación Total)
+     503,970 registros |   2 entidades | 2020-01-01 → 2025-12-13
+✅ DemaCome                  (Demanda Comercial)
+     175,860 registros |   2 entidades | 2020-01-01 → 2025-12-13
+✅ PerdidasEner              (Pérdidas de Energía)
+       1,804 registros |   1 entidades | 2020-12-02 → 2025-11-29
+❌ CapaEfecNeta              (Capacidad Efectiva Neta) - SIN DATOS
+✅ RestAliv                  (Restricciones Aliviadas)
+         364 registros |   1 entidades | 2024-12-02 → 2025-12-09
+✅ RestSinAliv               (Restricciones Sin Aliviar)
+         377 registros |   1 entidades | 2024-12-02 → 2025-12-13
+
+📏 8. VERIFICACIÓN DE UNIDADES
+--------------------------------------------------------------------------------
+
+Unidades en uso:
+  - GWh       :  92 métricas | 1,594,828 registros
+  - $/kWh     :   3 métricas | 585 registros
+
+⚙️  9. REVISIÓN DE CONFIGURACIÓN DEL ETL
+--------------------------------------------------------------------------------
+
+Métricas configuradas en ETL: 9
+⚠️ No se pudo cargar config_metricas.py: 'list' object has no attribute 'get'
+
+🔍 10. COMPARACIÓN DB vs CONFIGURACIÓN ETL
+--------------------------------------------------------------------------------
+
+✅ Métricas en ambos (DB y Config): 0
+
+⚠️ Métricas en DB pero NO en config (92):
+  - AporCaudalMediHist
+  - CapaUtilDiarMasa
+  - CompContMoneda
+  - DeltaNal
+  - GeneProgRedesp
+  - GeneSeguridad
+  - PRONE
+  - PrecCargConf
+  - PrecEscaMarg
+  - RespComerAGC
+  ... y 82 más
+
+⚠️ Métricas en config pero NO en DB (9):
+  - generacion_fuentes
+  - indicadores_generacion
+  - listados_sistema
+  - metricas_disponibilidad
+  - metricas_distribucion
+  - metricas_hidrologia
+  - metricas_mercado
+  - metricas_perdidas
+  - metricas_restricciones
+
+================================================================================
+✅ INSPECCIÓN COMPLETADA
+================================================================================

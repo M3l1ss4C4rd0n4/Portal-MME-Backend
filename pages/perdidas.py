@@ -5,7 +5,7 @@ def get_plotly_modules():
     import plotly.graph_objects as go
     return px, go
 
-from dash import dcc, html, Input, Output, State, callback, register_page
+from dash import dcc, html, Input, Output, callback, register_page
 import dash_bootstrap_components as dbc
 import pandas as pd
 from datetime import date, timedelta, datetime
@@ -69,11 +69,12 @@ def layout():
 registrar_callback_filtro_fechas('perdidas')
 
 @callback(
-    Output('perdidas-container', 'children'),
+    [Output('perdidas-container', 'children'),
+     Output('store-datos-chatbot-generacion', 'data', allow_duplicate=True)],
     [Input('btn-actualizar-perdidas', 'n_clicks'),
      Input('fecha-inicio-perdidas', 'date'),
      Input('fecha-fin-perdidas', 'date')],
-    prevent_initial_call=False
+    prevent_initial_call=True
 )
 def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
     """Actualizar análisis de pérdidas de energía"""
@@ -82,7 +83,8 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
     try:
         # Validar fechas
         if not fecha_inicio or not fecha_fin:
-            return dbc.Alert("Por favor seleccione ambas fechas", color="warning", className="alert-professional warning")
+            datos_error = {'pagina': 'perdidas', 'error': 'Fechas no seleccionadas'}
+            return dbc.Alert("Por favor seleccione ambas fechas", color="warning", className="alert-professional warning"), datos_error
         
         # Convertir fechas
         fecha_ini = pd.to_datetime(fecha_inicio).strftime('%Y-%m-%d')
@@ -96,6 +98,7 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
         
         # Verificar que haya datos
         if perdidas_totales is None or perdidas_totales.empty:
+            datos_vacio = {'pagina': 'perdidas', 'error': 'Sin datos para el período'}
             return dbc.Alert([
                 html.H5("ℹ️ Datos no disponibles", className="alert-heading"),
                 html.P("No se encontraron datos de pérdidas para el período seleccionado."),
@@ -106,7 +109,7 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
                     html.Li("El rango de fechas seleccionado no tiene datos disponibles"),
                     html.Li("Error de conectividad con la base de datos")
                 ])
-            ], color="info")
+            ], color="info"), datos_vacio
         
         # Calcular estadísticas
         perdidas_total_gwh = perdidas_totales['Value'].sum()
@@ -245,7 +248,7 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
             fig_porcentaje = go.Figure()
         
         # Layout final
-        return html.Div([
+        contenido = html.Div([
             kpis,
             
             dbc.Row([
@@ -273,10 +276,23 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
             ])
         ])
         
+        # Preparar datos para chatbot
+        datos_chatbot = {
+            'pagina': 'perdidas',
+            'timestamp': pd.Timestamp.now().isoformat(),
+            'perdidas_totales_gwh': float(perdidas_total_gwh),
+            'perdidas_reguladas_gwh': float(perdidas_reg_gwh),
+            'perdidas_no_reguladas_gwh': float(perdidas_no_reg_gwh),
+            'porcentaje_perdidas': float(pct_perdidas)
+        }
+        
+        return contenido, datos_chatbot
+        
     except Exception as e:
+        datos_error = {'pagina': 'perdidas', 'error': str(e)}
         return dbc.Alert([
             html.H5("Error al cargar datos", className="alert-heading"),
             html.P(f"Detalle: {str(e)}"),
             html.Hr(),
             html.P("Por favor, intente nuevamente o contacte al administrador.", className="mb-0")
-        ], color="danger")
+        ], color="danger"), datos_error

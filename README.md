@@ -378,10 +378,10 @@ Dashboard interactivo con **Inteligencia Artificial**, **Machine Learning** y **
 ✅ **Respuesta ultra-rápida**: SQLite primero (<500ms), API XM solo como fallback  
 ✅ **Sin timeouts**: 95% de consultas resueltas instantáneamente desde SQLite
 
-**📅 Última actualización:** 15 de December de 2025 - 23:00  
-*(ISO: 2025-12-15T23:00:02.485884)*  
+**📅 Última actualización:** 28 de January de 2026 - 22:10  
+*(ISO: 2026-01-28T22:10:00.229953)*  
 **Estado:** ✅ Sistema activo y optimizado  
-**Registros:** 1,595,441 | **Duplicados:** 0 | **BD:** 5,896.10 MB  
+**Registros:** 1,768,018 | **Duplicados:** 0 | **BD:** 7,273.62 MB  
 **Capacidad:** 6 workers × 3 threads = 18 conexiones concurrentes
 
 ---

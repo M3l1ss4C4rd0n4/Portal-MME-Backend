@@ -1,4 +1,4 @@
-from dash import dcc, html, Input, Output, State, callback, register_page
+from dash import dcc, html, Input, Output, callback, register_page
 import dash_bootstrap_components as dbc
 from datetime import date, timedelta, datetime
 import pandas as pd

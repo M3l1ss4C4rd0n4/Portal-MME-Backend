@@ -13,7 +13,7 @@ DATOS REALES DE TRANSMISIÓN:
 """
 
 import dash
-from dash import dcc, html, Input, Output, State, callback, dash_table
+from dash import dcc, html, Input, Output, callback, dash_table
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import plotly.express as px
@@ -190,6 +190,24 @@ def crear_tabla_lineas_criticas(df_lineas):
     tabla_data = top_criticas[['Nivel', 'NombreLinea', 'Tension', 'Longitud', 'Part_%', 'PartNivel_%', 'Antiguedad', 'Sistema', 'CodigoOperador']].copy()
     tabla_data.columns = ['Criticidad', 'Línea', 'Tensión', 'km', 'Sist.%', 'Nivel%', 'Años', 'Sistema', 'Operador']
     
+    # AGREGAR FILA DE TOTALES CON TODOS LOS VALORES
+    num_tensiones = tabla_data['Tensión'].nunique()
+    num_sistemas = tabla_data['Sistema'].nunique()
+    num_operadores = tabla_data['Operador'].nunique()
+    
+    total_row = {
+        'Criticidad': '📊 TOTAL',
+        'Línea': f'{len(tabla_data)} líneas',
+        'Tensión': f'{num_tensiones} niveles',
+        'km': tabla_data['km'].sum().round(1),
+        'Sist.%': tabla_data['Sist.%'].sum().round(2),
+        'Nivel%': tabla_data['Nivel%'].sum().round(2),
+        'Años': int(tabla_data['Años'].mean()),
+        'Sistema': f'{num_sistemas} tipos',
+        'Operador': f'{num_operadores} oper.'
+    }
+    tabla_data = pd.concat([tabla_data, pd.DataFrame([total_row])], ignore_index=True)
+    
     # Crear tabla compacta con estilos forzados
     tabla = dash_table.DataTable(
         data=tabla_data.to_dict('records'),
@@ -225,6 +243,8 @@ def crear_tabla_lineas_criticas(df_lineas):
              'backgroundColor': '#fee2e215', 'borderLeft': '3px solid #dc2626'},
             {'if': {'filter_query': '{Criticidad} contains "🟡"'}, 
              'backgroundColor': '#fef3c715', 'borderLeft': '3px solid #f59e0b'},
+            {'if': {'filter_query': '{Criticidad} contains "TOTAL"'}, 
+             'backgroundColor': '#dbeafe', 'fontWeight': 'bold', 'borderTop': '2px solid #2563eb'},
             {'if': {'row_index': 'odd'}, 'backgroundColor': '#fafafa'}
         ],
         page_size=15,
@@ -468,12 +488,13 @@ registrar_callback_filtro_fechas('transmision')
         Output('grafica-criticidad-antiguedad', 'figure'),
         Output('grafica-participacion-voltaje', 'figure'),
         Output('grafica-antiguedad-decadas', 'figure'),
-        Output('tabla-lineas-criticas', 'children')
+        Output('tabla-lineas-criticas', 'children'),
+        Output('store-datos-chatbot-generacion', 'data', allow_duplicate=True)
     ],
     [Input('btn-actualizar-transmision', 'n_clicks'),
      Input('fecha-inicio-transmision', 'date'),
      Input('fecha-fin-transmision', 'date')],
-    prevent_initial_call=False
+    prevent_initial_call=True
 )
 def actualizar_tablero_transmision(n_clicks, fecha_inicio, fecha_fin):
     """Actualizar todo el tablero de transmisión"""
@@ -513,14 +534,24 @@ def actualizar_tablero_transmision(n_clicks, fecha_inicio, fecha_fin):
         tabla = crear_tabla_lineas_criticas(df_lineas)
         print(f"✅ Tabla creada")
         
-        return kpis, fig_criticidad, fig_participacion, fig_decadas, tabla
+        # Preparar datos para chatbot
+        datos_chatbot = {
+            'pagina': 'transmision',
+            'timestamp': pd.Timestamp.now().isoformat(),
+            'total_lineas': len(df_lineas),
+            'lineas_criticas': len(df_lineas[df_lineas['Criticidad'] == 'Crítica']) if 'Criticidad' in df_lineas.columns else 0,
+            'antiguedad_promedio': df_lineas['Años_Operacion'].mean() if 'Años_Operacion' in df_lineas.columns else 0
+        }
+        
+        return kpis, fig_criticidad, fig_participacion, fig_decadas, tabla, datos_chatbot
         
     except Exception as e:
         print(f"❌ ERROR en callback transmision: {e}")
         import traceback
         traceback.print_exc()
         mensaje_error = html.Div(f"Error: {str(e)}", className="alert alert-danger")
-        return mensaje_error, go.Figure(), go.Figure(), go.Figure(), html.Div()
+        datos_error = {'pagina': 'transmision', 'error': str(e)}
+        return mensaje_error, go.Figure(), go.Figure(), go.Figure(), html.Div(), datos_error
 
 # Registro de página
 dash.register_page(__name__, path='/transmision', name='Transmisión', icon='fa-bolt')

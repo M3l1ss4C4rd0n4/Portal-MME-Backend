@@ -159,10 +159,11 @@ _cargar_geojson_cache()
 # --- VALIDACIÓN DE FECHAS Y MANEJO DE ERRORES ---
 def validar_rango_fechas(start_date, end_date):
     """
-    Valida que el rango de fechas sea válido para la API de XM.
-    La API de XM tiene limitaciones temporales hacia atrás.
+    Valida que el rango de fechas sea lógicamente válido.
+    Permite cualquier rango de fechas - los datos se consultarán desde SQLite (>=2020, rápido)
+    o desde API XM (<2020, lento pero funcional).
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime, date
     
     if not start_date or not end_date:
         return False, "Debe seleccionar fechas de inicio y fin."
@@ -171,18 +172,21 @@ def validar_rango_fechas(start_date, end_date):
         start_dt = datetime.strptime(start_date, '%Y-%m-%d') if isinstance(start_date, str) else start_date
         end_dt = datetime.strptime(end_date, '%Y-%m-%d') if isinstance(end_date, str) else end_date
         
-        # Fecha mínima permitida (aproximadamente 2 años hacia atrás para datos hidrológicos)
-        fecha_minima = datetime.now() - timedelta(days=730)
-        fecha_maxima = datetime.now()
-        
-        if start_dt < fecha_minima:
-            return False, f"La fecha de inicio es muy antigua. La API de XM solo permite consultas desde {fecha_minima.strftime('%Y-%m-%d')} aproximadamente. Para datos históricos más antiguos, contacte directamente a XM."
-        
-        if end_dt > fecha_maxima:
-            return False, f"La fecha final no puede ser futura. Fecha máxima permitida: {fecha_maxima.strftime('%Y-%m-%d')}"
-        
+        # Validación lógica básica
         if start_dt > end_dt:
             return False, "La fecha de inicio debe ser anterior a la fecha final."
+        
+        # Mensaje informativo (no bloqueante) si consulta datos antes de 2020
+        FECHA_LIMITE_SQLITE = date(2020, 1, 1)
+        if isinstance(start_dt, datetime):
+            start_date_obj = start_dt.date()
+        else:
+            start_date_obj = start_dt
+        
+        if start_date_obj < FECHA_LIMITE_SQLITE:
+            # ⚠️ Advertencia informativa, NO bloquea la consulta
+            mensaje_info = f"ℹ️ Consultando datos anteriores a 2020 desde API XM (puede demorar 30-90 segundos). Datos desde 2020 en adelante se cargarán rápidamente desde base de datos local."
+            return True, mensaje_info
         
         return True, "Rango de fechas válido"
         
@@ -1815,10 +1819,12 @@ registrar_callback_filtro_fechas('hidrologia')
     Input('rango-fechas-hidrologia', 'value'),
     State('fecha-inicio-hidrologia', 'date'),
     State('fecha-fin-hidrologia', 'date'),
+    State("region-dropdown", "value"),
+    State("rio-dropdown", "value"),
     prevent_initial_call=False
 )
-def update_ficha_kpi(n_clicks, rango, start_date, end_date):
-    """Actualiza solo la ficha KPI sin tocar el resto del layout"""
+def update_ficha_kpi(n_clicks, rango, start_date, end_date, region, rio):
+    """Actualiza solo la ficha KPI sin tocar el resto del layout - FILTRA POR REGIÓN/RÍO"""
     # Calcular fechas según el rango seleccionado
     fecha_fin = date.today()
     
@@ -1849,13 +1855,46 @@ def update_ficha_kpi(n_clicks, rango, start_date, end_date):
             logger.warning(f"⚠️ Ficha KPI: No hay datos para {start_date_str} a {end_date_str}")
             return html.Div()
         
-        total_real = data['Value'].sum()
+        # ✅ FILTRAR POR REGIÓN O RÍO
+        data_filtrada = data.copy()
+        texto_filtro = "Nacional"
         
-        # Obtener media histórica usando el mismo rango de fechas
+        if rio and rio != "":
+            # Filtrar por río específico
+            data_filtrada = data_filtrada[data_filtrada['Name'].str.upper() == rio.upper()]
+            texto_filtro = rio.title()
+            logger.info(f"📊 Ficha KPI: Filtrando por río {rio}")
+        elif region and region != "__ALL_REGIONS__":
+            # Filtrar por región
+            rio_region = ensure_rio_region_loaded()
+            data_filtrada['Region'] = data_filtrada['Name'].map(rio_region)
+            region_normalizada = region.strip().upper()
+            data_filtrada = data_filtrada[data_filtrada['Region'].str.upper() == region_normalizada]
+            texto_filtro = region.title()
+            logger.info(f"📊 Ficha KPI: Filtrando por región {region}")
+        
+        if data_filtrada.empty:
+            logger.warning(f"⚠️ Ficha KPI: Sin datos después de filtrar")
+            return html.Div()
+        
+        total_real = data_filtrada['Value'].sum()
+        
+        # Obtener media histórica usando el mismo rango de fechas Y APLICAR EL MISMO FILTRO
         media_hist_data, _ = obtener_datos_inteligente('AporEnerMediHist', 'Rio', start_date_str, end_date_str)
         
         if media_hist_data is not None and not media_hist_data.empty:
-            total_historico = media_hist_data['Value'].sum()
+            # Aplicar el mismo filtro a la media histórica
+            media_hist_filtrada = media_hist_data.copy()
+            
+            if rio and rio != "":
+                media_hist_filtrada = media_hist_filtrada[media_hist_filtrada['Name'].str.upper() == rio.upper()]
+            elif region and region != "__ALL_REGIONS__":
+                rio_region = ensure_rio_region_loaded()
+                media_hist_filtrada['Region'] = media_hist_filtrada['Name'].map(rio_region)
+                region_normalizada = region.strip().upper()
+                media_hist_filtrada = media_hist_filtrada[media_hist_filtrada['Region'].str.upper() == region_normalizada]
+            
+            total_historico = media_hist_filtrada['Value'].sum()
             porcentaje_vs_historico = (total_real / total_historico * 100) if total_historico > 0 else None
         else:
             logger.warning(f"⚠️ Ficha KPI: No hay media histórica")
@@ -1865,8 +1904,8 @@ def update_ficha_kpi(n_clicks, rango, start_date, end_date):
             logger.warning(f"⚠️ Ficha KPI: porcentaje_vs_historico es None")
             return html.Div()
         
-        logger.info(f"✅ Ficha KPI actualizada: {porcentaje_vs_historico - 100:+.1f}%")
-        # Crear ficha compacta CON BOTÓN DE INFORMACIÓN
+        logger.info(f"✅ Ficha KPI actualizada ({texto_filtro}): {porcentaje_vs_historico - 100:+.1f}%")
+        # Crear ficha compacta CON BOTÓN DE INFORMACIÓN Y TEXTO DINÁMICO
         return dbc.Card([
             dbc.CardBody([
                 # Botón de información en esquina superior derecha
@@ -1902,7 +1941,7 @@ def update_ficha_kpi(n_clicks, rango, start_date, end_date):
                                                        else "#dc3545" if porcentaje_vs_historico < 90
                                                        else "#17a2b8", 'fontSize': '1.2rem', 'marginRight': '8px'}),
                     html.Div([
-                        html.Span("Estado 2025", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.8rem', 'display': 'block'}),
+                        html.Span(f"Estado 2025 - {texto_filtro}", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.75rem', 'display': 'block'}),
                         html.Span(
                             f"{porcentaje_vs_historico - 100:+.1f}%",
                             style={'fontWeight': 'bold', 'fontSize': '1.6rem', 
@@ -1944,6 +1983,12 @@ def render_hidro_tab_content(active_tab):
             def show_default_view(start_date, end_date):
                 objetoAPI = get_objetoAPI()
                 es_valido, mensaje = validar_rango_fechas(start_date, end_date)
+                
+                # Mensaje informativo si hay advertencia (no bloquea)
+                mensaje_info = None
+                if mensaje and mensaje != "Rango de fechas válido":
+                    mensaje_info = dbc.Alert(mensaje, color="info", className="mb-2")
+                
                 if not es_valido:
                     return dbc.Alert(mensaje, color="warning", className="text-start")
                 try:
@@ -1966,73 +2011,87 @@ def render_hidro_tab_content(active_tab):
                         region_df = data.groupby(['Region', 'Date'])['Value'].sum().reset_index()
                         region_df = region_df[region_df['Region'].notna()]
                         
-                        # Obtener datos de embalses para vista inicial
-                        embalses_df_fresh = get_embalses_capacidad(None, start_date, end_date)
+                        # Obtener datos completos de embalses CON PARTICIPACIÓN para mapa y tabla
+                        regiones_totales, df_completo_embalses = get_tabla_regiones_embalses(start_date, end_date)
                         
                         # CORRECCIÓN: Pasar datos originales (con columna Name) para que la función
                         # create_total_timeline_chart pueda obtener media histórica por río
                         
-                        # LAYOUT HORIZONTAL COMPACTO INICIAL: 58%-17%-25%
+                        # LAYOUT HORIZONTAL OPTIMIZADO: 67%-33% (sin tabla visible)
                         return html.Div([
                             html.H5("🇨🇴 Evolución Temporal de Aportes de Energía", className="text-center mb-2"),
-                            html.P("Vista general: Gráfica temporal, mapa y tablas de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
+                            html.P("Vista general: Gráfica temporal y mapa. Haga clic en ℹ️ para ver tabla de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
                             
                             dbc.Row([
-                                # COLUMNA 1: Gráfica Temporal (58%)
+                                # COLUMNA 1: Gráfica Temporal (67%)
                                 dbc.Col([
                                     dbc.Card([
                                         dbc.CardBody([
                                             html.H6("📈 Evolución Temporal", className="text-center mb-1", style={'fontSize': '0.9rem'}),
-                                            create_total_timeline_chart(data, "Aportes nacionales")
+                                            create_total_timeline_chart(
+                                                agregar_datos_hidrologia_inteligente(
+                                                    data.copy(), 
+                                                    (pd.to_datetime(data['Date'].max()) - pd.to_datetime(data['Date'].min())).days
+                                                ) if not data.empty else data,
+                                                "Aportes nacionales"
+                                            )
                                         ], className="p-1")
                                     ], className="h-100")
-                                ], md=7),
+                                ], md=8),
                                 
-                                # COLUMNA 2: Mapa de Colombia (17%)
+                                # COLUMNA 2: Mapa de Colombia con Popover de Embalses (33%)
                                 dbc.Col([
                                     dbc.Card([
                                         dbc.CardBody([
-                                            html.H6("🗺️ Mapa de Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                            html.Div([
+                                                html.H6("🗺️ Mapa de Embalses", className="text-center mb-1 d-inline", style={'fontSize': '0.9rem'}),
+                                                html.I(
+                                                    id="btn-info-mapa-embalses",
+                                                    className="fas fa-info-circle ms-2",
+                                                    style={'color': '#17a2b8', 'cursor': 'pointer', 'fontSize': '1rem'}
+                                                ),
+                                                dbc.Popover(
+                                                    [
+                                                        dbc.PopoverHeader("📊 Tabla de Embalses"),
+                                                        dbc.PopoverBody([
+                                                            dash_table.DataTable(
+                                                                id="tabla-embalses-inicial",
+                                                                data=get_embalses_completa_para_tabla(None, start_date, end_date, embalses_df_preconsultado=df_completo_embalses),
+                                                                columns=[
+                                                                    {"name": "Embalse", "id": "Embalse"},
+                                                                    {"name": "Part.", "id": "Participación (%)"},
+                                                                    {"name": "Vol.", "id": "Volumen Útil (%)"},
+                                                                    {"name": "⚠️", "id": "Riesgo"}
+                                                                ],
+                                                                style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
+                                                                style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
+                                                                style_data_conditional=[
+                                                                    {'if': {'filter_query': '{Riesgo} = "🔴"'}, 'backgroundColor': '#ffe6e6'},
+                                                                    {'if': {'filter_query': '{Riesgo} = "🟡"'}, 'backgroundColor': '#fff9e6'},
+                                                                    {'if': {'filter_query': '{Riesgo} = "🟢"'}, 'backgroundColor': '#e6ffe6'},
+                                                                    {'if': {'filter_query': '{Embalse} = "TOTAL"'}, 'backgroundColor': '#e3f2fd', 'fontWeight': 'bold'}
+                                                                ],
+                                                                page_action="none",
+                                                                style_table={'maxHeight': '400px', 'overflowY': 'auto', 'width': '100%'}
+                                                            )
+                                                        ], style={'padding': '10px'})
+                                                    ],
+                                                    id="popover-tabla-embalses",
+                                                    target="btn-info-mapa-embalses",
+                                                    trigger="click",
+                                                    placement="left",
+                                                    style={'maxWidth': '500px'}
+                                                )
+                                            ], className="text-center mb-1"),
                                             html.Div([
                                                 crear_mapa_embalses_directo(
-                                                    region_df.groupby('Region')['Value'].sum().reset_index(),
-                                                    embalses_df_fresh
+                                                    regiones_totales,
+                                                    df_completo_embalses
                                                 )
                                             ])
                                         ], className="p-1")
                                     ], className="h-100")
-                                ], md=2),
-                                
-                                # COLUMNA 3: Tabla de Embalses (25%)
-                                dbc.Col([
-                                    dbc.Card([
-                                        dbc.CardBody([
-                                            html.H6("📊 Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
-                                            html.Div([
-                                                dash_table.DataTable(
-                                                    id="tabla-embalses-inicial",
-                                                    data=get_embalses_completa_para_tabla(None, start_date, end_date),
-                                                    columns=[
-                                                        {"name": "Embalse", "id": "Embalse"},
-                                                        {"name": "Part.", "id": "Participación (%)"},
-                                                        {"name": "Vol.", "id": "Volumen Útil (%)"},
-                                                        {"name": "⚠️", "id": "Riesgo"}
-                                                    ],
-                                                    style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
-                                                    style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
-                                                    style_data_conditional=[
-                                                        {'if': {'filter_query': '{Riesgo} = "🔴"'}, 'backgroundColor': '#ffe6e6'},
-                                                        {'if': {'filter_query': '{Riesgo} = "🟡"'}, 'backgroundColor': '#fff9e6'},
-                                                        {'if': {'filter_query': '{Riesgo} = "🟢"'}, 'backgroundColor': '#e6ffe6'},
-                                                        {'if': {'filter_query': '{Embalse} = "TOTAL"'}, 'backgroundColor': '#e3f2fd', 'fontWeight': 'bold'}
-                                                    ],
-                                                    page_action="none",
-                                                    style_table={'maxHeight': '480px', 'overflowY': 'auto'}
-                                                )
-                                            ])
-                                        ], className="p-2")
-                                    ], className="h-100")
-                                ], md=3)
+                                ], md=4)
                             ])
                         ])
                 except Exception as e:
@@ -2492,6 +2551,12 @@ def update_content(n_clicks, rio, start_date, end_date, region):
         objetoAPI = get_objetoAPI()
         # Validar rango de fechas
         es_valido, mensaje = validar_rango_fechas(start_date, end_date)
+        
+        # Mensaje informativo si hay advertencia (no bloquea)
+        mensaje_info = None
+        if mensaje and mensaje != "Rango de fechas válido":
+            mensaje_info = dbc.Alert(mensaje, color="info", className="mb-2")
+        
         if not es_valido:
             return dbc.Alert(mensaje, color="warning", className="text-start")
         
@@ -2559,11 +2624,8 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                 
                 fecha_embalse = fecha_embalse_obj.strftime('%Y-%m-%d') if fecha_embalse_obj else end_date
                 
-                # Llamar a las funciones sin precarga
+                # Obtener datos completos con participación para mapa y tabla
                 regiones_totales, df_completo_embalses = get_tabla_regiones_embalses(fecha_embalse, fecha_embalse)
-                
-                # Obtener datos de embalses para vista inicial
-                embalses_df_fresh = get_embalses_capacidad(None, start_date, end_date)
                 
                 # CREAR FICHA KPI (para colocarla junto al panel de controles)
                 ficha_kpi = dbc.Col([
@@ -2594,11 +2656,11 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                 
                 return html.Div([
                     html.H5("🇨🇴 Contribución Energética por Región Hidrológica de Colombia", className="text-center mb-1", style={"fontSize": "1rem"}),
-                    html.P("Vista general: Gráfica temporal, mapa y tablas de embalses.", className="text-center text-muted mb-0", style={"fontSize": "0.75rem"}),
+                    html.P("Vista general: Gráfica temporal y mapa. Haga clic en ℹ️ para ver tabla de embalses.", className="text-center text-muted mb-0", style={"fontSize": "0.75rem"}),
                     
-                    # LAYOUT HORIZONTAL COMPACTO: Gráfica (58%) + Mapa (17%) + Tablas (25%)
+                    # LAYOUT HORIZONTAL OPTIMIZADO: Gráfica (67%) + Mapa (33%)
                     dbc.Row([
-                        # COLUMNA 1: Gráfica Temporal (58%) - ✅ CON LOADING INDICATOR
+                        # COLUMNA 1: Gráfica Temporal (67%) - ✅ CON LOADING INDICATOR
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
@@ -2632,13 +2694,13 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                     create_total_timeline_chart(data, "Aportes nacionales")
                                 ], className="p-1")
                             ], className="h-100")
-                        ], md=7),
+                        ], md=8),
                         
-                        # COLUMNA 2: Mapa de Colombia (17%)
+                        # COLUMNA 2: Mapa de Colombia con Popover (33%)
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
-                                    # Encabezado compacto con fecha y botón de info
+                                    # Encabezado compacto con fecha y botones de info
                                     html.Div([
                                         html.Div([
                                             html.Small([
@@ -2650,6 +2712,11 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                             ], style={'fontSize': '0.65rem', 'color': '#666', 'fontWeight': '500'})
                                         ], style={'flex': '1'}),
                                         html.Div([
+                                            html.I(
+                                                id="btn-info-mapa-embalses-callback",
+                                                className="fas fa-info-circle me-2",
+                                                style={'color': '#17a2b8', 'cursor': 'pointer', 'fontSize': '1rem'}
+                                            ),
                                             html.Button(
                                                 "ℹ",
                                                 id="btn-info-semaforo",
@@ -2671,8 +2738,28 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                                     'animation': 'pulse 2s ease-in-out infinite'
                                                 },
                                                 title="Información del semáforo de riesgo"
+                                            ),
+                                            dbc.Popover(
+                                                [
+                                                    dbc.PopoverHeader("📊 Tabla de Embalses"),
+                                                    dbc.PopoverBody([
+                                                        html.P("Haga clic en ⊞/⊟ para expandir/contraer regiones", 
+                                                               className="text-muted text-center mb-1", 
+                                                               style={'fontSize': '0.65rem'}),
+                                                        html.Div(
+                                                            id="tabla-embalses-jerarquica-container",
+                                                            children=[build_embalses_hierarchical_view(regiones_totales, df_completo_embalses, [])],
+                                                            style={'maxHeight': '500px', 'overflowY': 'auto'}
+                                                        )
+                                                    ], style={'padding': '10px'})
+                                                ],
+                                                id="popover-tabla-embalses-callback",
+                                                target="btn-info-mapa-embalses-callback",
+                                                trigger="click",
+                                                placement="left",
+                                                style={'maxWidth': '600px'}
                                             )
-                                        ])
+                                        ], style={'display': 'flex', 'alignItems': 'center'})
                                     ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '4px'}),
                                     # Mapa sin loading indicator
                                     html.Div([
@@ -2680,23 +2767,7 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                     ])
                                 ], className="p-1")
                             ], className="h-100")
-                        ], md=2),
-                        
-                        # COLUMNA 3: Tabla Jerárquica de Embalses (25%)
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardBody([
-                                    html.H6("📊 Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
-                                    html.P("Haga clic en ⊞/⊟ para expandir/contraer regiones", 
-                                           className="text-muted text-center mb-1", 
-                                           style={'fontSize': '0.65rem'}),
-                                    html.Div(
-                                        id="tabla-embalses-jerarquica-container",
-                                        children=[build_embalses_hierarchical_view(regiones_totales, df_completo_embalses, [])]
-                                    )
-                                ], className="p-1")
-                            ], className="h-100")
-                        ], md=3)
+                        ], md=4)
                     ]),
                     
                     dcc.Store(id="region-data-store", data=data.to_dict('records')),
@@ -2811,6 +2882,12 @@ def update_content(n_clicks, rio, start_date, end_date, region):
     objetoAPI = get_objetoAPI()
     # Validar fechas antes de proceder
     es_valido, mensaje = validar_rango_fechas(start_date, end_date)
+    
+    # Mensaje informativo si hay advertencia (no bloquea)
+    mensaje_info = None
+    if mensaje and mensaje != "Rango de fechas válido":
+        mensaje_info = dbc.Alert(mensaje, color="info", className="mb-2")
+    
     if not es_valido:
         return dbc.Alert(mensaje, color="warning", className="text-start")
 
@@ -2912,8 +2989,8 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                 region_df = data.groupby(['Region', 'Date'])['Value'].sum().reset_index()
                 region_df = region_df[region_df['Region'].notna()]  # Filtrar regiones válidas
                 
-                # Obtener datos de embalses para vista nacional
-                embalses_df_nacional = get_embalses_capacidad(None, start_date, end_date)
+                # Obtener datos completos de embalses con participación para vista nacional
+                regiones_totales_nacional, embalses_df_nacional = get_tabla_regiones_embalses(start_date, end_date)
                 
                 return html.Div([
                     # LAYOUT HORIZONTAL: Panel de controles (70%) + Ficha KPI (30%)
@@ -2923,11 +3000,11 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                     ], className="g-2 mb-3 align-items-start"),
                     
                     html.H5("🇨🇴 Contribución Energética por Región Hidrológica de Colombia", className="text-center mb-2"),
-                    html.P("Vista nacional: Gráfica temporal, mapa y análisis de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
+                    html.P("Vista nacional: Gráfica temporal y mapa. Haga clic en ℹ️ para ver resumen.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
                     
-                    # LAYOUT HORIZONTAL COMPACTO: Gráfica (58%) + Mapa (17%) + Tablas (25%)
+                    # LAYOUT HORIZONTAL OPTIMIZADO: Gráfica (67%) + Mapa (33%)
                     dbc.Row([
-                        # COLUMNA 1: Gráfica Temporal (58%)
+                        # COLUMNA 1: Gráfica Temporal (67%)
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
@@ -2935,37 +3012,44 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                     create_total_timeline_chart(data, "Aportes totales nacionales")
                                 ], className="p-1")
                             ], className="h-100")
-                        ], md=7),
+                        ], md=8),
                         
-                        # COLUMNA 2: Mapa de Colombia (17%)
+                        # COLUMNA 2: Mapa de Colombia con Popover (33%)
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
-                                    html.H6("🗺️ Mapa Nacional", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    html.Div([
+                                        html.H6("🗺️ Mapa Nacional", className="text-center mb-1 d-inline", style={'fontSize': '0.9rem'}),
+                                        html.I(
+                                            id="btn-info-mapa-nacional",
+                                            className="fas fa-info-circle ms-2",
+                                            style={'color': '#17a2b8', 'cursor': 'pointer', 'fontSize': '1rem'}
+                                        ),
+                                        dbc.Popover(
+                                            [
+                                                dbc.PopoverHeader("📊 Resumen Nacional"),
+                                                dbc.PopoverBody([
+                                                    html.Small(f"Total Regiones: {len(region_df['Region'].unique())}", className="d-block text-muted mb-1", style={'fontSize': '0.75rem'}),
+                                                    html.Small(f"Total Embalses: {len(embalses_df_nacional) if not embalses_df_nacional.empty else 0}", className="d-block text-muted mb-1", style={'fontSize': '0.75rem'}),
+                                                    html.Hr(className="my-1"),
+                                                    html.Small("Haga clic en la gráfica para ver detalles por región", className="text-muted", style={'fontSize': '0.7rem'})
+                                                ])
+                                            ],
+                                            id="popover-resumen-nacional",
+                                            target="btn-info-mapa-nacional",
+                                            trigger="click",
+                                            placement="left"
+                                        )
+                                    ], className="text-center mb-1"),
                                     html.Div(id="mapa-embalses-nacional", children=[
                                         crear_mapa_embalses_directo(
-                                            region_df,
+                                            regiones_totales_nacional,
                                             embalses_df_nacional
                                         )
                                     ])
                                 ], className="p-1")
                             ], className="h-100")
-                        ], md=2),
-                        
-                        # COLUMNA 3: Resumen Nacional (25%)
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardBody([
-                                    html.H6("📊 Resumen Nacional", className="text-center mb-1", style={'fontSize': '0.9rem'}),
-                                    html.Div([
-                                        html.Small(f"Total Regiones: {len(region_df['Region'].unique())}", className="d-block text-muted mb-1", style={'fontSize': '0.75rem'}),
-                                        html.Small(f"Total Embalses: {len(embalses_df_nacional) if not embalses_df_nacional.empty else 0}", className="d-block text-muted mb-1", style={'fontSize': '0.75rem'}),
-                                        html.Hr(className="my-1"),
-                                        html.Small("Haga clic en la gráfica para ver detalles por región", className="text-muted", style={'fontSize': '0.7rem'})
-                                    ])
-                                ], className="p-1")
-                            ], className="h-100")
-                        ], md=3)
+                        ], md=4)
                     ]),
                     
                     dcc.Store(id="region-data-store", data=data.to_dict('records'))
@@ -3018,7 +3102,7 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                     html.Div([
                                         dash_table.DataTable(
                                             id="tabla-embalses-region",
-                                            data=get_embalses_completa_para_tabla(region, start_date, end_date),
+                                            data=get_embalses_completa_para_tabla(region, start_date, end_date, embalses_df_preconsultado=embalses_df_fresh),
                                             columns=[
                                                 {"name": "Embalse", "id": "Embalse"},
                                                 {"name": "Part.", "id": "Participación (%)"},
@@ -3136,11 +3220,11 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                 
                 return html.Div([
                     html.H5(f"🇨🇴 Evolución Temporal de Aportes de Energía", className="text-center mb-2"),
-                    html.P(f"Vista general: Gráfica temporal, mapa y tablas de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
+                    html.P(f"Vista general: Gráfica temporal y mapa. Haga clic en ℹ️ para ver tabla de embalses.", className="text-center text-muted mb-2", style={"fontSize": "0.85rem"}),
                     
-                    # LAYOUT HORIZONTAL COMPACTO: Gráfica (58%) + Mapa (17%) + Tablas (25%)
+                    # LAYOUT HORIZONTAL OPTIMIZADO: Gráfica (67%) + Mapa (33%)
                     dbc.Row([
-                        # COLUMNA 1: Gráfica Temporal (58%)
+                        # COLUMNA 1: Gráfica Temporal (67%)
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
@@ -3148,13 +3232,52 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                     create_total_timeline_chart(data_filtered, "Aportes nacionales")
                                 ], className="p-1")
                             ], className="h-100")
-                        ], md=7),
+                        ], md=8),
                         
-                        # COLUMNA 2: Mapa de Colombia (17%)
+                        # COLUMNA 2: Mapa de Colombia con Popover (33%)
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardBody([
-                                    html.H6("🗺️ Mapa de Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
+                                    html.Div([
+                                        html.H6("🗺️ Mapa de Embalses", className="text-center mb-1 d-inline", style={'fontSize': '0.9rem'}),
+                                        html.I(
+                                            id="btn-info-mapa-embalses-general",
+                                            className="fas fa-info-circle ms-2",
+                                            style={'color': '#17a2b8', 'cursor': 'pointer', 'fontSize': '1rem'}
+                                        ),
+                                        dbc.Popover(
+                                            [
+                                                dbc.PopoverHeader("📊 Tabla de Embalses"),
+                                                dbc.PopoverBody([
+                                                    dash_table.DataTable(
+                                                        id="tabla-embalses-general",
+                                                        data=get_embalses_completa_para_tabla(None, start_date, end_date, embalses_df_preconsultado=df_completo_embalses_mapa),
+                                                        columns=[
+                                                            {"name": "Embalse", "id": "Embalse"},
+                                                            {"name": "Part.", "id": "Participación (%)"},
+                                                            {"name": "Vol.", "id": "Volumen Útil (%)"},
+                                                            {"name": "⚠️", "id": "Riesgo"}
+                                                        ],
+                                                        style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
+                                                        style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
+                                                        style_data_conditional=[
+                                                            {'if': {'filter_query': '{Riesgo} = "🔴"'}, 'backgroundColor': '#ffe6e6'},
+                                                            {'if': {'filter_query': '{Riesgo} = "🟡"'}, 'backgroundColor': '#fff9e6'},
+                                                            {'if': {'filter_query': '{Riesgo} = "🟢"'}, 'backgroundColor': '#e6ffe6'},
+                                                            {'if': {'filter_query': '{Embalse} = "TOTAL"'}, 'backgroundColor': '#e3f2fd', 'fontWeight': 'bold'}
+                                                        ],
+                                                        page_action="none",
+                                                        style_table={'maxHeight': '400px', 'overflowY': 'auto', 'width': '100%'}
+                                                    )
+                                                ], style={'padding': '10px'})
+                                            ],
+                                            id="popover-tabla-embalses-general",
+                                            target="btn-info-mapa-embalses-general",
+                                            trigger="click",
+                                            placement="left",
+                                            style={'maxWidth': '500px'}
+                                        )
+                                    ], className="text-center mb-1"),
                                     html.Div(id="mapa-embalses-general", children=[
                                         crear_mapa_embalses_directo(
                                             regiones_totales_mapa,
@@ -3163,38 +3286,7 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                                     ])
                                 ], className="p-1")
                             ], className="h-100")
-                        ], md=2),
-                        
-                        # COLUMNA 3: Tabla Combinada de Embalses (25%)
-                        dbc.Col([
-                            dbc.Card([
-                                dbc.CardBody([
-                                    html.H6("📊 Embalses", className="text-center mb-1", style={'fontSize': '0.9rem'}),
-                                    html.Div([
-                                        dash_table.DataTable(
-                                            id="tabla-embalses-general",
-                                            data=get_embalses_completa_para_tabla(None, start_date, end_date),
-                                            columns=[
-                                                {"name": "Embalse", "id": "Embalse"},
-                                                {"name": "Part.", "id": "Participación (%)"},
-                                                {"name": "Vol.", "id": "Volumen Útil (%)"},
-                                                {"name": "⚠️", "id": "Riesgo"}
-                                            ],
-                                            style_cell={'textAlign': 'left', 'padding': '4px', 'fontSize': '0.7rem'},
-                                            style_header={'backgroundColor': '#e3e3e3', 'fontWeight': 'bold', 'fontSize': '0.7rem', 'padding': '4px'},
-                                            style_data_conditional=[
-                                                {'if': {'filter_query': '{Riesgo} = "🔴"'}, 'backgroundColor': '#ffe6e6'},
-                                                {'if': {'filter_query': '{Riesgo} = "🟡"'}, 'backgroundColor': '#fff9e6'},
-                                                {'if': {'filter_query': '{Riesgo} = "🟢"'}, 'backgroundColor': '#e6ffe6'},
-                                                {'if': {'filter_query': '{Embalse} = "TOTAL"'}, 'backgroundColor': '#e3f2fd', 'fontWeight': 'bold'}
-                                            ],
-                                            page_action="none",
-                                            style_table={'maxHeight': '480px', 'overflowY': 'auto'}
-                                        )
-                                    ])
-                                ], className="p-1")
-                            ], className="h-100")
-                        ], md=3)
+                        ], md=4)
                     ]),
                     
                     dcc.Store(id="region-data-store", data=data_filtered.to_dict('records')),
@@ -3931,29 +4023,49 @@ def get_participacion_embalses(df_embalses):
     
     return df_final
 
-def get_embalses_completa_para_tabla(region=None, start_date=None, end_date=None):
+def get_embalses_completa_para_tabla(region=None, start_date=None, end_date=None, embalses_df_preconsultado=None):
     """
     Función unificada que combina participación y volumen útil en UNA SOLA tabla.
     Retorna: Embalse, Participación (%), Volumen Útil (%), Riesgo
     USA LAS FUNCIONES QUE YA FUNCIONAN (get_tabla_regiones_embalses)
+    
+    Args:
+        region: Región a filtrar (opcional)
+        start_date: Fecha inicio (opcional)
+        end_date: Fecha fin (opcional)
+        embalses_df_preconsultado: DataFrame ya consultado de get_embalses_capacidad() para evitar consultas redundantes (opcional)
     """
-    print(f"🔥🔥🔥 [INIT] get_embalses_completa_para_tabla LLAMADA: region={region}, dates={start_date} to {end_date}")
+    print(f"🔥🔥🔥 [INIT] get_embalses_completa_para_tabla LLAMADA: region={region}, dates={start_date} to {end_date}, preconsultado={'SÍ' if embalses_df_preconsultado is not None else 'NO'}")
     try:
-        # Usar la función que SÍ FUNCIONA para obtener datos
-        regiones_totales, df_embalses = get_tabla_regiones_embalses(start_date, end_date)
-        
-        print(f"🔥 [AFTER_CALL] get_tabla_regiones_embalses retornó: {len(df_embalses)} embalses")
+        # ⚡ OPTIMIZACIÓN: Si ya se pasaron datos pre-consultados, usarlos directamente
+        if embalses_df_preconsultado is not None and not embalses_df_preconsultado.empty:
+            print(f"⚡ [OPTIMIZADO] Usando datos pre-consultados: {len(embalses_df_preconsultado)} embalses")
+            df_embalses = embalses_df_preconsultado.copy()
+            
+            # El DataFrame pre-consultado ya tiene las columnas necesarias
+            # Solo necesitamos filtrar por región si aplica
+            if region and region != "__ALL_REGIONS__":
+                region_normalized = region.strip().upper()
+                if 'Región' in df_embalses.columns:
+                    df_embalses = df_embalses[df_embalses['Región'] == region_normalized]
+                    print(f"🔥 [FILTER] Filtrado por región {region_normalized}: {len(df_embalses)} embalses")
+        else:
+            # Consultar datos si no se pasaron pre-consultados
+            print(f"📊 [CONSULTA] Consultando datos de embalses...")
+            regiones_totales, df_embalses = get_tabla_regiones_embalses(start_date, end_date)
+            
+            print(f"🔥 [AFTER_CALL] get_tabla_regiones_embalses retornó: {len(df_embalses)} embalses")
+            
+            # Filtrar por región si se especificó
+            if region and region != "__ALL_REGIONS__":
+                # ✅ FIX ERROR #3: UPPER en lugar de title
+                region_normalized = region.strip().upper()
+                df_embalses = df_embalses[df_embalses['Región'] == region_normalized]
+                print(f"🔥 [FILTER] Filtrado por región {region_normalized}: {len(df_embalses)} embalses")
         
         if df_embalses.empty:
             print(f"⚠️ [RETURN_EMPTY] DataFrame vacío")
             return []
-        
-        # Filtrar por región si se especificó
-        if region and region != "__ALL_REGIONS__":
-            # ✅ FIX ERROR #3: UPPER en lugar de title
-            region_normalized = region.strip().upper()
-            df_embalses = df_embalses[df_embalses['Región'] == region_normalized]
-            print(f"🔥 [FILTER] Filtrado por región {region_normalized}: {len(df_embalses)} embalses")
         
         if df_embalses.empty:
             print(f"⚠️ [RETURN_EMPTY] No hay embalses en región {region}")
@@ -5876,6 +5988,59 @@ def create_porcapor_kpi(fecha_inicio, fecha_fin, region=None, rio=None):
            "minHeight": "200px"
        })
 
+def agregar_datos_hidrologia_inteligente(df_hidrologia, dias_periodo):
+    """
+    Agrupa los datos de hidrología según el período para optimizar rendimiento:
+    - <= 60 días: datos diarios (sin cambios, máxima granularidad)
+    - 61-180 días: datos semanales (reduce ~7x puntos)
+    - > 180 días: datos mensuales (reduce ~30x puntos)
+    
+    IMPORTANTE: Mantiene el coloreado dinámico en todos los rangos,
+    solo reduce la cantidad de puntos a renderizar.
+    """
+    if df_hidrologia.empty:
+        return df_hidrologia
+    
+    # Asegurar que Date sea datetime
+    df_hidrologia['Date'] = pd.to_datetime(df_hidrologia['Date'])
+    
+    # Determinar nivel de agregación
+    if dias_periodo <= 60:
+        # Datos diarios - no cambiar (máxima granularidad)
+        logger.info(f"📊 Sin agregación: {dias_periodo} días (≤60) - Datos diarios")
+        return df_hidrologia
+    elif dias_periodo <= 180:
+        # Agrupar por semana
+        df_hidrologia['Periodo'] = df_hidrologia['Date'].dt.to_period('W').dt.start_time
+        periodo_label = 'Semana'
+        logger.info(f"📊 Agrupación SEMANAL: {dias_periodo} días → ~{dias_periodo//7} semanas")
+    else:
+        # Agrupar por mes
+        df_hidrologia['Periodo'] = df_hidrologia['Date'].dt.to_period('M').dt.start_time
+        periodo_label = 'Mes'
+        logger.info(f"📊 Agrupación MENSUAL: {dias_periodo} días → ~{dias_periodo//30} meses")
+    
+    # Agregar datos (promediar Value)
+    columnas_grupo = ['Periodo']
+    
+    # Detectar si hay columnas adicionales que mantener
+    if 'Name' in df_hidrologia.columns:
+        columnas_grupo.append('Name')
+    if 'Region' in df_hidrologia.columns:
+        columnas_grupo.append('Region')
+    
+    # Agrupar y promediar valores (para hidrología usamos promedio, no suma)
+    df_agregado = df_hidrologia.groupby(columnas_grupo, as_index=False).agg({
+        'Value': 'mean'  # Promedio de aportes en el período
+    })
+    
+    # Renombrar Periodo a Date
+    df_agregado.rename(columns={'Periodo': 'Date'}, inplace=True)
+    
+    logger.info(f"✅ Datos agregados: {len(df_hidrologia)} registros → {len(df_agregado)} {periodo_label}s (reducción {100*(1-len(df_agregado)/len(df_hidrologia)):.1f}%)")
+    
+    return df_agregado
+
 def create_total_timeline_chart(data, metric_name, region_filter=None, rio_filter=None):
     """
     Crear gráfico de línea temporal con total nacional/regional/río por día incluyendo media histórica filtrada
@@ -6067,60 +6232,62 @@ def create_total_timeline_chart(data, metric_name, region_filter=None, rio_filte
             # Calcular porcentaje: (real / histórico) * 100
             merged_data['porcentaje'] = (merged_data['Value_real'] / merged_data['Value_hist']) * 100
             
-            # Crear segmentos de línea coloreados según estado
+            # ✅ COLOREADO DINÁMICO COMPLETO (restaurado)
             # Verde: > 100% (húmedo), Cyan: 90-100% (normal), Naranja: 70-90% (seco moderado), Rojo: < 70% (muy seco)
+            logger.info(f"✅ Usando COLOREADO DINÁMICO para {len(merged_data)} puntos")
+            
             for i in range(len(merged_data) - 1):
-                # ✅ FIX: Convertir a float explícitamente para evitar errores de formato
-                porcentaje = float(merged_data.iloc[i]['porcentaje'])
-                valor_real = float(merged_data.iloc[i]['Value_real'])
-                valor_hist = float(merged_data.iloc[i]['Value_hist'])
-                
-                # Calcular variación porcentual (formato estándar)
-                variacion = float(porcentaje - 100)
-                signo = '+' if variacion >= 0 else ''
-                
-                # Determinar color según porcentaje
-                if porcentaje >= 100:
-                    color = '#28a745'  # Verde - Húmedo
-                    estado = 'Húmedo'
-                    emoji = '💧'
-                elif porcentaje >= 90:
-                    color = '#17a2b8'  # Cyan - Normal
-                    estado = 'Normal'
-                    emoji = '✓'
-                elif porcentaje >= 70:
-                    color = '#ffc107'  # Amarillo/Naranja - Moderadamente seco
-                    estado = 'Moderadamente seco'
-                    emoji = '⚠️'
-                else:
-                    color = '#dc3545'  # Rojo - Muy seco
-                    estado = 'Muy seco'
-                    emoji = '🔴'
-                
-                # Tooltip mejorado con formato estándar de variación porcentual
-                hover_text = (
-                    f'<b>📅 Fecha:</b> %{{x|%d/%m/%Y}}<br>'
-                    f'<b>📊 Media Histórica:</b> %{{y:.2f}} GWh<br>'
-                    f'<b>⚡ Aportes Reales:</b> {valor_real:.2f} GWh<br>'
-                    f'<b>━━━━━━━━━━━━━━━━</b><br>'
-                    f'<b>{emoji} Estado:</b> {estado}<br>'
-                    f'<b>📈 Variación:</b> {signo}{variacion:.1f}% vs histórico<br>'
-                    f'<b>📐 Fórmula:</b> ({valor_real:.1f} / {valor_hist:.1f}) × 100 = {porcentaje:.1f}%<br>'
-                    f'<b>🧮 Diferencia:</b> {porcentaje:.1f}% - 100% = {signo}{variacion:.1f}%'
-                    f'<extra></extra>'
-                )
-                
-                # Agregar segmento de línea
-                fig.add_trace(go.Scatter(
-                    x=merged_data['Date'].iloc[i:i+2],
-                    y=merged_data['Value_hist'].iloc[i:i+2],
-                    mode='lines',
-                    name='Media Histórica' if i == 0 else None,  # Solo mostrar leyenda una vez
-                    showlegend=(i == 0),
-                    line=dict(width=3, color=color, dash='dash'),
-                    hovertemplate=hover_text,
-                    legendgroup='media_historica'
-                ))
+                    # ✅ FIX: Convertir a float explícitamente para evitar errores de formato
+                    porcentaje = float(merged_data.iloc[i]['porcentaje'])
+                    valor_real = float(merged_data.iloc[i]['Value_real'])
+                    valor_hist = float(merged_data.iloc[i]['Value_hist'])
+                    
+                    # Calcular variación porcentual (formato estándar)
+                    variacion = float(porcentaje - 100)
+                    signo = '+' if variacion >= 0 else ''
+                    
+                    # Determinar color según porcentaje
+                    if porcentaje >= 100:
+                        color = '#28a745'  # Verde - Húmedo
+                        estado = 'Húmedo'
+                        emoji = '💧'
+                    elif porcentaje >= 90:
+                        color = '#17a2b8'  # Cyan - Normal
+                        estado = 'Normal'
+                        emoji = '✓'
+                    elif porcentaje >= 70:
+                        color = '#ffc107'  # Amarillo/Naranja - Moderadamente seco
+                        estado = 'Moderadamente seco'
+                        emoji = '⚠️'
+                    else:
+                        color = '#dc3545'  # Rojo - Muy seco
+                        estado = 'Muy seco'
+                        emoji = '🔴'
+                    
+                    # Tooltip mejorado con formato estándar de variación porcentual
+                    hover_text = (
+                        f'<b>📅 Fecha:</b> %{{x|%d/%m/%Y}}<br>'
+                        f'<b>📊 Media Histórica:</b> %{{y:.2f}} GWh<br>'
+                        f'<b>⚡ Aportes Reales:</b> {valor_real:.2f} GWh<br>'
+                        f'<b>━━━━━━━━━━━━━━━━</b><br>'
+                        f'<b>{emoji} Estado:</b> {estado}<br>'
+                        f'<b>📈 Variación:</b> {signo}{variacion:.1f}% vs histórico<br>'
+                        f'<b>📐 Fórmula:</b> ({valor_real:.1f} / {valor_hist:.1f}) × 100 = {porcentaje:.1f}%<br>'
+                        f'<b>🧮 Diferencia:</b> {porcentaje:.1f}% - 100% = {signo}{variacion:.1f}%'
+                        f'<extra></extra>'
+                    )
+                    
+                    # Agregar segmento de línea
+                    fig.add_trace(go.Scatter(
+                        x=merged_data['Date'].iloc[i:i+2],
+                        y=merged_data['Value_hist'].iloc[i:i+2],
+                        mode='lines',
+                        name='Media Histórica' if i == 0 else None,  # Solo mostrar leyenda una vez
+                        showlegend=(i == 0),
+                        line=dict(width=3, color=color, dash='dash'),
+                        hovertemplate=hover_text,
+                        legendgroup='media_historica'
+                    ))
         else:
             # Fallback: línea azul simple si no hay datos para comparar
             fig.add_trace(go.Scatter(

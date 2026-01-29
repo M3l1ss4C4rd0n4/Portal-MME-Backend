@@ -2047,8 +2047,8 @@ def layout():
     # Store oculto para tracking
     dcc.Store(id='store-pagina-cargada', data={'loaded': True}),
     
-    # Store para datos del chatbot (se actualiza automáticamente con cada cambio)
-    dcc.Store(id='store-datos-chatbot-generacion', data={}),
+    # ℹ️ Store 'store-datos-chatbot-generacion' ahora es GLOBAL (definido en app.py)
+    # Todas las páginas pueden actualizarlo para dar contexto al chatbot
     
     crear_navbar_horizontal(),
     
@@ -2314,6 +2314,15 @@ def layout():
                     dbc.Button("Cerrar", id="close-modal-predicciones", className="ms-auto", n_clicks=0)
                 )
             ], id="modal-info-predicciones", is_open=False, size="lg"),
+            
+            # MODAL: VALIDACIÓN DE PREDICCIÓN (CLICK EN PUNTO)
+            dbc.Modal([
+                dbc.ModalHeader(dbc.ModalTitle(id="titulo-modal-validacion")),
+                dbc.ModalBody(id="contenido-modal-validacion", style={'padding': '15px'}),
+                dbc.ModalFooter(
+                    dbc.Button("Cerrar", id="close-modal-validacion", className="ms-auto", n_clicks=0)
+                )
+            ], id="modal-validacion-prediccion", is_open=False, size="xl"),
             
             # FILTROS DE PREDICCIÓN
             dbc.Card([
@@ -3779,7 +3788,11 @@ def generar_predicciones(n_clicks, active_tab, horizonte_meses, fuentes_seleccio
         
         contenido_graficas = dbc.Row([
             dbc.Col([
-                dcc.Graph(figure=fig_prediccion, config={'displayModeBar': True})
+                dcc.Graph(
+                    id='grafico-predicciones-validacion',
+                    figure=fig_prediccion, 
+                    config={'displayModeBar': True}
+                )
             ], md=12)
         ])
         
@@ -3795,3 +3808,253 @@ def generar_predicciones(n_clicks, active_tab, horizonte_meses, fuentes_seleccio
             html.Small(str(e))
         ], color="danger")
         return (error_msg, error_msg)
+
+# ==================================================================
+# CALLBACK: VALIDACIÓN DE PREDICCIONES (CLICK EN GRÁFICA)
+# ==================================================================
+
+@callback(
+    Output("modal-validacion-prediccion", "is_open"),
+    [Input("close-modal-validacion", "n_clicks")],
+    State("modal-validacion-prediccion", "is_open")
+)
+def toggle_modal_validacion(n_close, is_open):
+    """Cierra modal de validación"""
+    if n_close:
+        return not is_open
+    return is_open
+
+
+@callback(
+    [Output('modal-validacion-prediccion', 'is_open', allow_duplicate=True),
+     Output('titulo-modal-validacion', 'children'),
+     Output('contenido-modal-validacion', 'children')],
+    Input('grafico-predicciones-validacion', 'clickData'),
+    prevent_initial_call=True
+)
+def mostrar_validacion_prediccion(clickData):
+    """
+    Muestra tabla de validación al hacer click en un punto de la gráfica
+    Compara predicción vs datos reales (si la fecha ya pasó)
+    """
+    if not clickData:
+        raise PreventUpdate
+    
+    try:
+        import sqlite3
+        from datetime import datetime
+        
+        # Obtener fecha del punto clickeado
+        punto = clickData['points'][0]
+        fecha_click = punto['x']
+        fecha_dt = pd.to_datetime(fecha_click)
+        fecha_str = fecha_dt.strftime('%Y-%m-%d')
+        fecha_display = fecha_dt.strftime('%d de %B de %Y')
+        
+        # Conectar a BD
+        conn = sqlite3.connect('/home/admonctrlxm/server/portal_energetico.db')
+        
+        # ==================================================================
+        # 1. OBTENER PREDICCIONES PARA ESA FECHA
+        # ==================================================================
+        query_pred = """
+        SELECT fuente, valor_gwh_predicho, intervalo_inferior, intervalo_superior
+        FROM predictions
+        WHERE DATE(fecha_prediccion) = ?
+        ORDER BY 
+            CASE fuente
+                WHEN 'Hidráulica' THEN 1
+                WHEN 'Térmica' THEN 2
+                WHEN 'Solar' THEN 3
+                WHEN 'Eólica' THEN 4
+                WHEN 'Biomasa' THEN 5
+            END
+        """
+        df_pred = pd.read_sql_query(query_pred, conn, params=[fecha_str])
+        
+        if df_pred.empty:
+            conn.close()
+            return (True, 
+                   f"Fecha: {fecha_display}",
+                   dbc.Alert("No hay predicciones disponibles para esta fecha", color="warning"))
+        
+        # ==================================================================
+        # 2. VERIFICAR SI HAY DATOS REALES (fecha ya pasó)
+        # ==================================================================
+        hoy = datetime.now().date()
+        fecha_comparar = fecha_dt.date()
+        hay_datos_reales = fecha_comparar < hoy
+        
+        df_real = None
+        if hay_datos_reales:
+            # Obtener catálogo con clasificación
+            catalogo = pd.read_sql("""
+                SELECT codigo, tipo
+                FROM catalogos
+                WHERE catalogo = 'ListadoRecursos' AND tipo IS NOT NULL
+            """, conn)
+            
+            # Normalizar y mapear tipos
+            catalogo['tipo_norm'] = catalogo['tipo'].str.upper().str.strip()
+            tipo_map = {
+                'HIDRAULICA': 'Hidráulica',
+                'TERMICA': 'Térmica',
+                'SOLAR': 'Solar',
+                'EOLICA': 'Eólica',
+                'BIOMASA': 'Biomasa',
+                'BIOMAS': 'Biomasa',
+                'COGENER': 'Biomasa',
+                'BAGAZO': 'Biomasa',
+                'RESIDUO': 'Biomasa'
+            }
+            catalogo['fuente'] = catalogo['tipo_norm'].map(tipo_map)
+            clasificados = catalogo[catalogo['fuente'].notna()]
+            
+            # Obtener generación real
+            query_real = """
+            SELECT recurso, SUM(valor_mwh) as valor_mwh
+            FROM metrics_hourly
+            WHERE metrica = 'Gene' AND entidad = 'Recurso' AND fecha = ?
+            GROUP BY recurso
+            """
+            df_gene = pd.read_sql_query(query_real, conn, params=[fecha_str])
+            
+            if not df_gene.empty:
+                # Clasificar recursos
+                df_gene_clasificado = df_gene.merge(
+                    clasificados[['codigo', 'fuente']],
+                    left_on='recurso',
+                    right_on='codigo',
+                    how='left'
+                )
+                
+                # Agrupar por fuente
+                df_real = df_gene_clasificado[df_gene_clasificado['fuente'].notna()].groupby('fuente').agg({
+                    'valor_mwh': 'sum'
+                }).reset_index()
+                df_real['valor_gwh'] = df_real['valor_mwh'] / 1000.0
+        
+        conn.close()
+        
+        # ==================================================================
+        # 3. GENERAR TABLA DE COMPARACIÓN
+        # ==================================================================
+        
+        # Merge predicciones con datos reales
+        if hay_datos_reales and df_real is not None and not df_real.empty:
+            df_comparacion = df_pred.merge(
+                df_real[['fuente', 'valor_gwh']],
+                on='fuente',
+                how='left'
+            )
+            df_comparacion['diferencia'] = df_comparacion['valor_gwh'] - df_comparacion['valor_gwh_predicho']
+            df_comparacion['error_pct'] = (abs(df_comparacion['diferencia']) / df_comparacion['valor_gwh'] * 100)
+            df_comparacion['en_intervalo'] = (
+                (df_comparacion['valor_gwh'] >= df_comparacion['intervalo_inferior']) &
+                (df_comparacion['valor_gwh'] <= df_comparacion['intervalo_superior'])
+            )
+        else:
+            df_comparacion = df_pred.copy()
+            df_comparacion['valor_gwh'] = None
+            df_comparacion['diferencia'] = None
+            df_comparacion['error_pct'] = None
+            df_comparacion['en_intervalo'] = None
+        
+        # Generar filas de la tabla
+        tabla_filas = []
+        for _, row in df_comparacion.iterrows():
+            fuente = row['fuente']
+            pred = row['valor_gwh_predicho']
+            real = row['valor_gwh']
+            diff = row['diferencia']
+            error = row['error_pct']
+            en_int = row['en_intervalo']
+            
+            # Columnas base
+            fila = [
+                html.Td(fuente, style={'fontWeight': 'bold'}),
+                html.Td(f"{pred:.2f} GWh", style={'textAlign': 'center'}),
+            ]
+            
+            if hay_datos_reales and real is not None and not pd.isna(real):
+                # Colorear según error
+                color_error = '#22c55e' if error < 5 else ('#f59e0b' if error < 10 else '#ef4444')
+                
+                fila.extend([
+                    html.Td(f"{real:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold'}),
+                    html.Td(f"{diff:+.2f} GWh", style={'textAlign': 'center', 'color': '#3b82f6'}),
+                    html.Td(f"{error:.1f}%", style={'textAlign': 'center', 'fontWeight': 'bold', 'color': color_error})
+                ])
+            else:
+                fila.extend([
+                    html.Td("—", style={'textAlign': 'center', 'color': '#999'}),
+                    html.Td("—", style={'textAlign': 'center', 'color': '#999'}),
+                    html.Td("—", style={'textAlign': 'center', 'color': '#999'})
+                ])
+            
+            tabla_filas.append(html.Tr(fila))
+        
+        # Fila de TOTAL
+        total_pred = df_comparacion['valor_gwh_predicho'].sum()
+        if hay_datos_reales and df_real is not None:
+            total_real = df_comparacion['valor_gwh'].sum()
+            total_diff = total_real - total_pred
+            total_error = abs(total_diff) / total_real * 100 if total_real > 0 else 0
+            color_total = '#22c55e' if total_error < 5 else ('#f59e0b' if total_error < 10 else '#ef4444')
+            
+            fila_total = html.Tr([
+                html.Td("TOTAL", style={'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td(f"{total_pred:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td(f"{total_real:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td(f"{total_diff:+.2f} GWh", style={'textAlign': 'center', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6', 'color': '#3b82f6'}),
+                html.Td(f"{total_error:.1f}%", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6', 'color': color_total})
+            ])
+        else:
+            fila_total = html.Tr([
+                html.Td("TOTAL", style={'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td(f"{total_pred:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td("—", style={'textAlign': 'center', 'backgroundColor': '#f3f4f6', 'color': '#999'}),
+                html.Td("—", style={'textAlign': 'center', 'backgroundColor': '#f3f4f6', 'color': '#999'}),
+                html.Td("—", style={'textAlign': 'center', 'backgroundColor': '#f3f4f6', 'color': '#999'})
+            ])
+        
+        tabla_filas.append(fila_total)
+        
+        # Encabezados
+        if hay_datos_reales and df_real is not None:
+            encabezados = [
+                html.Th("Fuente", style={'width': '20%'}),
+                html.Th("Predicho", style={'textAlign': 'center', 'width': '20%'}),
+                html.Th("Real (XM)", style={'textAlign': 'center', 'width': '20%'}),
+                html.Th("Diferencia", style={'textAlign': 'center', 'width': '20%'}),
+                html.Th("Error %", style={'textAlign': 'center', 'width': '20%'})
+            ]
+        else:
+            encabezados = [
+                html.Th("Fuente", style={'width': '20%'}),
+                html.Th("Predicho", style={'textAlign': 'center', 'width': '20%'}),
+                html.Th("Real (XM)", style={'textAlign': 'center', 'width': '20%'}),
+                html.Th("Diferencia", style={'textAlign': 'center', 'width': '20%'}),
+                html.Th("Error %", style={'textAlign': 'center', 'width': '20%'})
+            ]
+        
+        # Tabla completa
+        tabla = dbc.Table([
+            html.Thead(html.Tr(encabezados)),
+            html.Tbody(tabla_filas)
+        ], bordered=True, hover=True, responsive=True, striped=True,
+           style={'fontSize': '0.9rem', 'marginTop': '10px'})
+        
+        # Sin mensaje adicional - diseño minimalista
+        contenido = tabla
+        
+        titulo = f"Validación de Predicción - {fecha_display}"
+        
+        return (True, titulo, contenido)
+        
+    except Exception as e:
+        logger.error(f"Error en validación: {e}")
+        traceback.print_exc()
+        return (True,
+               "Error",
+               dbc.Alert(f"Error al cargar datos: {str(e)}", color="danger"))

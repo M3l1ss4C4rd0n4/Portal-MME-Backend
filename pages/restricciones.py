@@ -5,7 +5,7 @@ def get_plotly_modules():
     import plotly.graph_objects as go
     return px, go
 
-from dash import dcc, html, Input, Output, State, callback, register_page
+from dash import dcc, html, Input, Output, callback, register_page
 import dash_bootstrap_components as dbc
 import pandas as pd
 from datetime import date, timedelta, datetime
@@ -69,11 +69,12 @@ def layout():
 registrar_callback_filtro_fechas('restricciones')
 
 @callback(
-    Output('restricciones-container', 'children'),
+    [Output('restricciones-container', 'children'),
+     Output('store-datos-chatbot-generacion', 'data', allow_duplicate=True)],
     [Input('btn-actualizar-restricciones', 'n_clicks'),
      Input('fecha-inicio-restricciones', 'date'),
      Input('fecha-fin-restricciones', 'date')],
-    prevent_initial_call=False
+    prevent_initial_call=True
 )
 def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
     """Actualizar análisis de restricciones operativas"""
@@ -82,7 +83,8 @@ def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
     try:
         # Validar fechas
         if not fecha_inicio or not fecha_fin:
-            return dbc.Alert("Por favor seleccione ambas fechas", color="warning", className="alert-professional warning")
+            datos_error = {'pagina': 'restricciones', 'error': 'Fechas no seleccionadas'}
+            return dbc.Alert("Por favor seleccione ambas fechas", color="warning", className="alert-professional warning"), datos_error
         
         # Convertir fechas
         fecha_ini = pd.to_datetime(fecha_inicio).strftime('%Y-%m-%d')
@@ -95,6 +97,7 @@ def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
         
         # Verificar que haya datos
         if (rest_aliv is None or rest_aliv.empty) and (rest_sin_aliv is None or rest_sin_aliv.empty):
+            datos_vacio = {'pagina': 'restricciones', 'error': 'Sin datos para el período'}
             return dbc.Alert([
                 html.H5("ℹ️ Datos no disponibles", className="alert-heading"),
                 html.P("No se encontraron datos de restricciones para el período seleccionado."),
@@ -105,7 +108,7 @@ def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
                     html.Li("El rango de fechas seleccionado no tiene datos disponibles"),
                     html.Li("Las restricciones son poco frecuentes en este período")
                 ])
-            ], color="info")
+            ], color="info"), datos_vacio
         
         # Calcular estadísticas
         rest_aliv_total = rest_aliv['Value'].sum() if rest_aliv is not None and not rest_aliv.empty else 0
@@ -289,7 +292,7 @@ def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
             )
         
         # Layout final
-        return html.Div([
+        contenido = html.Div([
             kpis,
             
             dbc.Row([
@@ -317,10 +320,22 @@ def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
             ])
         ])
         
+        # Preparar datos para chatbot
+        datos_chatbot = {
+            'pagina': 'restricciones',
+            'timestamp': pd.Timestamp.now().isoformat(),
+            'restricciones_aliviadas_gwh': float(rest_aliv_total),
+            'restricciones_sin_aliviar_gwh': float(rest_sin_aliv_total),
+            'respuesta_agc_gwh': float(resp_agc_total)
+        }
+        
+        return contenido, datos_chatbot
+        
     except Exception as e:
+        datos_error = {'pagina': 'restricciones', 'error': str(e)}
         return dbc.Alert([
             html.H5("Error al cargar datos", className="alert-heading"),
             html.P(f"Detalle: {str(e)}"),
             html.Hr(),
             html.P("Por favor, intente nuevamente o contacte al administrador.", className="mb-0")
-        ], color="danger")
+        ], color="danger"), datos_error

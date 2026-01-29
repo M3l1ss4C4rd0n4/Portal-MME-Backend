@@ -1,4 +1,4 @@
-from dash import dcc, html, Input, Output, State, dash_table, ALL, callback, register_page
+from dash import dcc, html, Input, Output, dash_table, ALL, callback, register_page
 import dash_bootstrap_components as dbc
 import plotly.express as px
 import pandas as pd

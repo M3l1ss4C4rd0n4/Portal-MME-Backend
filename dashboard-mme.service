@@ -1,5 +1,5 @@
 [Unit]
-Description=Dashboard Multipage MME - Ministerio de Minas y Energía
+Description=Dashboard Portal Energético MME
 After=network.target
 
 [Service]
@@ -7,17 +7,29 @@ Type=notify
 User=admonctrlxm
 Group=admonctrlxm
 WorkingDirectory=/home/admonctrlxm/server
-Environment="PATH=/home/admonctrlxm/.local/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="PYTHONPATH=/home/admonctrlxm/server"
-ExecStart=/home/admonctrlxm/.local/bin/gunicorn -c gunicorn_config.py "app:server"
+Environment="PATH=/home/admonctrlxm/.local/bin:/usr/bin"
+ExecStart=/home/admonctrlxm/.local/bin/gunicorn -c gunicorn_config.py app:server
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/admonctrlxm/server/logs/dashboard.log
-StandardError=append:/home/admonctrlxm/server/logs/dashboard-error.log
+
+# Límites de recursos
+LimitNOFILE=65536
+LimitNPROC=4096
 
 # Security
 NoNewPrivileges=true
-PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/admonctrlxm/server/logs
+ReadWritePaths=/home/admonctrlxm/server/portal_energetico.db
+ReadWritePaths=/home/admonctrlxm/server/portal_energetico.db-shm
+ReadWritePaths=/home/admonctrlxm/server/portal_energetico.db-wal
+ReadWritePaths=/tmp
 
 [Install]
 WantedBy=multi-user.target
