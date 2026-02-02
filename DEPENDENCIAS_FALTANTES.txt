@@ -1,0 +1,22 @@
+DEPENDENCIAS ADICIONALES NECESARIAS
+===================================
+
+Descarga estos 3 archivos en tu PC con internet:
+
+cd ~/descarga_mme/redis
+apt-get download libjemalloc2 liblzf1 musl
+
+Archivos esperados:
+- libjemalloc2_5.3.0-2build1_amd64.deb
+- liblzf1_3.6-3build3_amd64.deb
+- musl_1.2.4-2_amd64.deb
+
+URLs alternativas:
+- https://packages.ubuntu.com/noble/libjemalloc2
+- https://packages.ubuntu.com/noble/liblzf1
+- https://packages.ubuntu.com/noble/musl
+
+Sube estos 3 archivos a:
+/home/admonctrlxm/server/install_packages/redis/
+
+Luego avísame para completar Redis, Grafana y Celery.

@@ -20,17 +20,18 @@ flask==3.0.0
 
 # Monitoreo
 psutil==5.9.8
+prometheus-client==0.20.0
 
-# Base de datos PostgreSQL
-psycopg2-binary==2.9.9
+# Base de datos (SQLite nativo)
 python-dotenv==1.0.0
-sqlalchemy==2.0.23
 
 # IA y Agente Inteligente (Chat IA)
-openai==2.9.0
+openai==1.61.0  # Actualizado para soporte Groq/OpenRouter
 
 # Machine Learning para Predicciones (FASE 2)
 prophet==1.1.6
 pmdarima==2.0.4
 statsmodels==0.14.4
 scikit-learn==1.5.2
+pydantic-settings
+prometheus-client

@@ -108,16 +108,39 @@ backups/
 backups_migracion/
 *backup*
 *.backup
+*.sql.gz
+*.tar.gz
 E-2010-006481
+legacy_archive/
 
 # Instaladores (archivos binarios grandes)
 *.msi
 *.deb
 instaladores-offline/postgresql-packages/
 instaladores-offline/*.md
+install_packages/
+
+# Celery y Redis
+celerybeat-schedule
+celerybeat.pid
+control/
+celery_data/
+celery_results/
 
 # SIEA: Variables de entorno sensibles
 siea/.env
 siea/venv/
 siea/**/__pycache__/
 *.pyo
+
+# Base de datos SQLite (deprecada, usar PostgreSQL)
+*.db
+*.db-shm
+*.db-wal
+
+# Archivos temporales de sistema
+ystemctl*
+
+# Archivos de validación y debug temporal
+validate_fixes.sh
+test_*_debug.py

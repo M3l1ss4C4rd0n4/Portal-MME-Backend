@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # BASE DE DATOS - PostgreSQL (preparado para futuro)
     # ═══════════════════════════════════════════════════════════
     
+    USE_POSTGRES: bool = Field(
+        default=True,
+        description="Usar PostgreSQL en lugar de SQLite"
+    )
+    
     POSTGRES_HOST: str = Field(
         default="localhost",
         description="Host de PostgreSQL"
@@ -91,12 +96,12 @@ class Settings(BaseSettings):
     )
     
     POSTGRES_DB: str = Field(
-        default="dashboard_mme",
+        default="portal_energetico",
         description="Nombre de base de datos PostgreSQL"
     )
     
     POSTGRES_USER: str = Field(
-        default="dashboard_user",
+        default="postgres",
         description="Usuario de PostgreSQL"
     )
     

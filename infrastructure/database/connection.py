@@ -1,19 +1,76 @@
 """
 Gestión de conexiones a base de datos
 Capa Infrastructure - Database
+Soporte para SQLite y PostgreSQL
 """
 
 import sqlite3
+import psycopg2
+import psycopg2.extras
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Generator, Optional
+from typing import Generator, Optional, Union
 
 # Importar settings si están disponibles
 try:
     from core.config import settings
     DB_PATH = settings.DATABASE_PATH
+    USE_POSTGRES = getattr(settings, 'USE_POSTGRES', False)
 except Exception:
     DB_PATH = Path(__file__).parent.parent.parent / "portal_energetico.db"
+    USE_POSTGRES = False
+
+
+class PostgreSQLConnectionManager:
+    """Gestor de conexiones PostgreSQL"""
+    
+    def __init__(self):
+        try:
+            from core.config import settings
+            self.host = settings.POSTGRES_HOST
+            self.port = settings.POSTGRES_PORT
+            self.database = settings.POSTGRES_DB
+            self.user = settings.POSTGRES_USER
+            self.password = settings.POSTGRES_PASSWORD
+        except Exception:
+            self.host = "localhost"
+            self.port = 5432
+            self.database = "portal_energetico"
+            self.user = "postgres"
+            self.password = ""
+    
+    @contextmanager
+    def get_connection(self) -> Generator[psycopg2.extensions.connection, None, None]:
+        """
+        Context manager para conexión PostgreSQL
+        
+        Yields:
+            psycopg2.connection: Conexión activa
+        """
+        conn = None
+        try:
+            # Construir parámetros de conexión
+            conn_params = {
+                'host': self.host,
+                'port': self.port,
+                'database': self.database,
+                'user': self.user,
+                'cursor_factory': psycopg2.extras.RealDictCursor
+            }
+            # Solo agregar password si no está vacío
+            if self.password:
+                conn_params['password'] = self.password
+            
+            conn = psycopg2.connect(**conn_params)
+            conn.autocommit = False
+            yield conn
+        except psycopg2.Error as e:
+            if conn:
+                conn.rollback()
+            raise RuntimeError(f"Error de conexión PostgreSQL: {e}")
+        finally:
+            if conn:
+                conn.close()
 
 
 class SQLiteConnectionManager:
@@ -56,10 +113,13 @@ class SQLiteConnectionManager:
                 conn.close()
 
 
-# Instancia global
-connection_manager = SQLiteConnectionManager()
+# Instancia global basada en configuración
+if USE_POSTGRES:
+    connection_manager = PostgreSQLConnectionManager()
+else:
+    connection_manager = SQLiteConnectionManager()
 
 
-def get_connection() -> Generator[sqlite3.Connection, None, None]:
+def get_connection() -> Generator[Union[psycopg2.extensions.connection, sqlite3.Connection], None, None]:
     """Acceso rápido al context manager"""
     return connection_manager.get_connection()

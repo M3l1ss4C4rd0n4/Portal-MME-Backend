@@ -10,8 +10,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import sqlite3
 from datetime import datetime, timedelta
-from utils._xm import get_objetoAPI
-from utils.db_manager import upsert_metrics_bulk
+# from utils._xm import get_objetoAPI  <-- REEMPLAZADO
+from infrastructure.external.xm_service import XMService
+# from utils.db_manager import upsert_metrics_bulk <-- REEMPLAZADO
+from infrastructure.database.manager import DatabaseManager
 import logging
 import pandas as pd
 
@@ -74,7 +76,7 @@ def obtener_ultima_fecha(metrica, entidad):
     except:
         return None
 
-def actualizar_metrica(api, metrica, entidad, nombre):
+def actualizar_metrica(xm_service, metrica, entidad, nombre):
     """Actualiza una métrica específica desde última fecha hasta hoy"""
     logger.info(f"\n{'='*60}")
     logger.info(f"📡 {nombre} ({metrica}/{entidad})")
@@ -97,7 +99,7 @@ def actualizar_metrica(api, metrica, entidad, nombre):
     logger.info(f"   Rango: {fecha_inicio} a {fecha_fin}")
     
     try:
-        df = api.request_data(
+        df = xm_service.request_data(
             metrica, 
             entidad,
             fecha_inicio.strftime('%Y-%m-%d'),
@@ -148,7 +150,8 @@ def actualizar_metrica(api, metrica, entidad, nombre):
             metrics_data.append((fecha, metrica, entidad, recurso_val, valor_convertido, 'GWh'))
         
         # Insertar en BD
-        registros = upsert_metrics_bulk(metrics_data)
+        db = DatabaseManager()
+        registros = db.upsert_metrics_bulk(metrics_data)
         logger.info(f"   ✅ {registros} registros actualizados")
         
         # Mostrar rango de fechas actualizado
@@ -174,9 +177,9 @@ def main():
     logger.info("="*60)
     logger.info(f"Inicio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-    print("[DEBUG] Antes de get_objetoAPI()")
-    api = get_objetoAPI()
-    print("[DEBUG] Después de get_objetoAPI()")
+    print("[DEBUG] Antes de XMService()")
+    api = XMService()
+    print("[DEBUG] Después de XMService()")
 
     metricas = [
         ('VoluUtilDiarEner', 'Embalse', 'Volumen Útil Diario (kWh→GWh)'),
@@ -203,21 +206,22 @@ def main():
     # Auto-corrección automática después de cada actualización
     logger.info("\n" + "="*60)
     logger.info("🔧 INICIANDO AUTO-CORRECCIÓN POST-ACTUALIZACIÓN")
+    logger.info("⚠️ Auto-corrección deshabilitada temporalmente (módulo en legacy_archive)")
     logger.info("="*60)
     
-    try:
-        # Importar y ejecutar auto-corrección
-        from autocorreccion import AutoCorrector
-        corrector = AutoCorrector(db_path=DB_PATH, dry_run=False)
-        exito = corrector.ejecutar_todo()
-        
-        if exito:
-            logger.info("✅ Auto-corrección completada exitosamente")
-        else:
-            logger.warning("⚠️ Auto-corrección completada con advertencias")
-    except Exception as e:
-        logger.error(f"❌ Error en auto-corrección: {e}")
-        logger.info("⚠️ Continuando sin auto-corrección (actualización fue exitosa)")
+    # try:
+    #     # Importar y ejecutar auto-corrección
+    #     from autocorreccion import AutoCorrector
+    #     corrector = AutoCorrector(db_path=DB_PATH, dry_run=False)
+    #     exito = corrector.ejecutar_todo()
+    #     
+    #     if exito:
+    #         logger.info("✅ Auto-corrección completada exitosamente")
+    #     else:
+    #         logger.warning("⚠️ Auto-corrección completada con advertencias")
+    # except Exception as e:
+    #     logger.error(f"❌ Error en auto-corrección: {e}")
+    #     logger.info("⚠️ Continuando sin auto-corrección (actualización fue exitosa)")
 
 if __name__ == '__main__':
     main()

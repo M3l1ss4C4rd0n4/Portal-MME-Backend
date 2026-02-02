@@ -39,7 +39,7 @@ def calcular_perdidas(n_clicks, fecha_inicio_str, fecha_fin_str):
     px, go = get_plotly_modules()
     
     try:
-        from utils._xm import obtener_datos_inteligente
+        from infrastructure.external.xm_service import obtener_datos_inteligente
         
         fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
         fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').date()
@@ -207,7 +207,7 @@ def actualizar_restricciones(n_clicks, fecha_inicio_str, fecha_fin_str):
     px, go = get_plotly_modules()
     
     try:
-        from utils._xm import obtener_datos_inteligente
+        from infrastructure.external.xm_service import obtener_datos_inteligente
         
         fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
         fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').date()

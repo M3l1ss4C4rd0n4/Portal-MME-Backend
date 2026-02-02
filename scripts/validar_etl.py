@@ -19,8 +19,8 @@ from datetime import datetime, timedelta
 import logging
 from typing import Dict, List, Tuple
 
-# Importar desde utils la función para obtener API XM
-from utils._xm import get_objetoAPI
+# Importar desde infrastructure la función para obtener API XM
+from infrastructure.external.xm_service import XMService
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,8 +35,8 @@ class ValidadorETL:
             db_path = os.path.join(os.path.dirname(__file__), '..', db_path)
         
         self.db_path = db_path
-        self.api = get_objetoAPI()
-        if not self.api:
+        self.xm_service = XMService()
+        if not self.xm_service:
             logger.error("❌ No se pudo inicializar la API XM")
         self.resultados = {
             'metricas_validadas': 0,
@@ -92,7 +92,7 @@ class ValidadorETL:
             fecha_inicio = fecha_fin - timedelta(days=7)
             
             # Consultar API
-            df = self.api.request_data(
+            df = self.xm_service.request_data(
                 metrica, 
                 entidad,
                 fecha_inicio.strftime('%Y-%m-%d'),

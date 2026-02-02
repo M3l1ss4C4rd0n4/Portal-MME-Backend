@@ -23,12 +23,9 @@ LimitNPROC=4096
 
 # Security
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
+ProtectSystem=full
+ProtectHome=false
 ReadWritePaths=/home/admonctrlxm/server/logs
-ReadWritePaths=/home/admonctrlxm/server/portal_energetico.db
-ReadWritePaths=/home/admonctrlxm/server/portal_energetico.db-shm
-ReadWritePaths=/home/admonctrlxm/server/portal_energetico.db-wal
 ReadWritePaths=/tmp
 
 [Install]

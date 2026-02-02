@@ -181,6 +181,34 @@ METRICAS_CONFIG = {
             'dias_history': 7
         }
     ],
+
+    # Métricas de Restricciones (NUEVO - Corregido 2026-01-30)
+    'metricas_restricciones': [
+        {
+            'metric': 'RestAliv',
+            'entity': 'Sistema',
+            'conversion': 'sum_hours', # Suma horaria sin dividir
+            'dias_history': 365,
+            'batch_size': 30,
+            'descripcion': 'Restricciones Aliviadas'
+        },
+        {
+            'metric': 'RestSinAliv',
+            'entity': 'Sistema',
+            'conversion': 'sum_hours', # Suma horaria sin dividir
+            'dias_history': 365,
+            'batch_size': 30,
+            'descripcion': 'Restricciones Sin Alivio'
+        },
+        {
+            'metric': 'RespComerAGC',
+            'entity': 'Sistema',
+            'conversion': 'sum_hours', # Suma horaria sin dividir
+            'dias_history': 365,
+            'batch_size': 30,
+            'descripcion': 'Responsabilidad Comercial AGC'
+        }
+    ],
     
     # Métricas de Pérdidas (NUEVO - Validado 2025-12-03)
     'metricas_perdidas': [

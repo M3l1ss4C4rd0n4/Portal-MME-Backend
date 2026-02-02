@@ -4,7 +4,7 @@ ETL COMPLETO: Descarga TODAS las métricas de XM (193 métricas)
 ================================================================
 
 Este script consulta la API de XM, obtiene la lista completa de métricas
-disponibles y las descarga todas a la base de datos SQLite.
+disponibles y las descarga todas a la base de datos PostgreSQL.
 
 Uso:
     python3 etl/etl_todas_metricas_xm.py [--dias 90] [--solo-nuevas]
@@ -18,24 +18,24 @@ Argumentos:
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from pydataxm.pydataxm import ReadDB
-from datetime import datetime, timedelta
 import time
 import logging
-import pandas as pd
 import argparse
-import sqlite3
-from utils import db_manager
+from datetime import datetime, timedelta
+import pandas as pd
+from pydataxm.pydataxm import ReadDB
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from infrastructure.database.manager import db_manager
+from core.config import settings
 
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
-DB_PATH = '/home/admonctrlxm/server/portal_energetico.db'
 
 # Clasificación de métricas por sección
 METRICAS_POR_SECCION = {
@@ -97,11 +97,11 @@ def obtener_todas_metricas_xm(obj_api):
 def obtener_metricas_en_bd():
     """Obtener lista de métricas que ya están en la base de datos"""
     try:
-        conn = sqlite3.connect(DB_PATH)
         query = "SELECT DISTINCT metrica FROM metrics"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return set(df['metrica'].tolist())
+        df = db_manager.query_df(query)
+        if not df.empty:
+            return set(df['metrica'].tolist())
+        return set()
     except Exception as e:
         logging.error(f"❌ Error al consultar BD: {e}")
         return set()
@@ -125,12 +125,20 @@ def detectar_conversion(metric_id, entity):
     if 'Dema' in metric_id:
         return 'horas_a_GWh'
     
+    # ✅ FIX CRÍTICO: Restricciones - promedio $/kWh → Millones COP
+    if metric_id in ['RestAliv', 'RestSinAliv']:
+        return 'restricciones_a_MCOP'
+    
     # Precios, cargos - sin conversión
     if 'Prec' in metric_id or 'Cargo' in metric_id or 'Cost' in metric_id:
         return 'sin_conversion'
     
     # Transacciones - suma horaria generalmente
     if 'Comp' in metric_id or 'Vent' in metric_id or 'Trans' in metric_id:
+        return 'horas_a_GWh'
+    
+    # Pérdidas - suma horaria (kWh -> GWh)
+    if 'Perdidas' in metric_id:
         return 'horas_a_GWh'
     
     # Por defecto
@@ -142,6 +150,10 @@ def convertir_unidades(df, metric, conversion_type):
         return df
     
     df = df.copy()
+
+    # Normalizar nombre de columna value si viene en minúscula
+    if 'Value' not in df.columns and 'value' in df.columns:
+        df['Value'] = df['value']
     
     try:
         if conversion_type == 'Wh_a_GWh':
@@ -153,6 +165,20 @@ def convertir_unidades(df, metric, conversion_type):
             if 'Value' in df.columns:
                 df['Value'] = df['Value'] / 1_000_000
                 logging.info(f"  ✅ Convertido kWh → GWh")
+        
+        elif conversion_type == 'restricciones_a_MCOP':
+            # ✅ FIX CRÍTICO: Restricciones vienen en $/kWh horario
+            # Promediar 24 horas y convertir a Millones COP
+            hour_cols = [f'Values_Hour{i:02d}' for i in range(1, 25)]
+            existing_cols = [col for col in hour_cols if col in df.columns]
+            
+            if existing_cols:
+                df['Value'] = df[existing_cols].mean(axis=1) / 1_000_000  # → Millones COP
+                df = df.dropna(subset=['Value'])
+                logging.info(f"  ✅ Promediado 24h: $/kWh → Millones COP")
+            elif 'Value' in df.columns:
+                df['Value'] = df['Value'] / 1_000_000
+                logging.info(f"  ✅ Convertido $/kWh → Millones COP")
         
         elif conversion_type == 'horas_a_MW':
             # Disponibilidad: Promediar valores horarios
@@ -185,6 +211,40 @@ def convertir_unidades(df, metric, conversion_type):
     
     return df
 
+
+def asegurar_columna_valor(df, conversion_type):
+    """Asegura que exista columna 'Value' para el ETL"""
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    # Normalizar nombre
+    if 'Value' not in df.columns and 'value' in df.columns:
+        df['Value'] = df['value']
+
+    if 'Value' in df.columns:
+        return df
+
+    # Intentar derivar desde columnas horarias
+    hour_cols = [f'Values_Hour{i:02d}' for i in range(1, 25)]
+    existing_cols = [col for col in hour_cols if col in df.columns]
+
+    if not existing_cols:
+        return df
+
+    if conversion_type == 'horas_a_MW':
+        df['Value'] = df[existing_cols].mean(axis=1) / 1_000
+        logging.info(f"  ✅ Derivado Value desde horas (MW)")
+    elif conversion_type in ['horas_a_GWh', 'Wh_a_GWh', 'kWh_a_GWh']:
+        df['Value'] = df[existing_cols].sum(axis=1) / 1_000_000
+        logging.info(f"  ✅ Derivado Value desde horas (GWh)")
+    else:
+        df['Value'] = df[existing_cols].mean(axis=1)
+        logging.info(f"  ✅ Derivado Value desde horas (promedio)")
+
+    return df
+
 def descargar_metrica(obj_api, metric_id, entity, dias_historia=90):
     """Descargar una métrica específica de XM"""
     fecha_fin = datetime.now() - timedelta(days=1)
@@ -212,17 +272,43 @@ def descargar_metrica(obj_api, metric_id, entity, dias_historia=90):
         # Detectar y aplicar conversión
         conversion = detectar_conversion(metric_id, entity)
         df = convertir_unidades(df, metric_id, conversion)
+        df = asegurar_columna_valor(df, conversion)
         
         if df.empty:
             logging.warning(f"  ⚠️ Sin datos después de conversión")
             return 0
         
+        # ✅ FIX: Determinar unidad según conversión
+        if conversion == 'restricciones_a_MCOP':
+            unidad = 'COP'  # Millones COP
+        elif conversion in ['Wh_a_GWh', 'horas_a_GWh', 'kWh_a_GWh']:
+            unidad = 'GWh'
+        elif conversion == 'horas_a_MW':
+            unidad = 'MW'
+        else:
+            unidad = None
+        
         # Preparar datos para inserción
         registros = []
         
         # Detectar columnas relevantes
-        fecha_col = 'Date' if 'Date' in df.columns else 'date'
-        valor_col = 'Value'
+        if 'Date' in df.columns:
+            fecha_col = 'Date'
+        elif 'date' in df.columns:
+            fecha_col = 'date'
+        elif 'Fecha' in df.columns:
+            fecha_col = 'Fecha'
+        else:
+            logging.warning("  ⚠️ No se encontró columna de fecha")
+            return 0
+
+        if 'Value' in df.columns:
+            valor_col = 'Value'
+        elif 'value' in df.columns:
+            valor_col = 'value'
+        else:
+            logging.warning("  ⚠️ No se encontró columna de valor")
+            return 0
         
         # Columnas de identificación (priorizar Name sobre Id)
         id_cols = []
@@ -253,27 +339,38 @@ def descargar_metrica(obj_api, metric_id, entity, dias_historia=90):
                     'metrica': metric_id,
                     'entidad': entity,
                     'recurso': recurso,
-                    'valor_gwh': valor
+                    'valor_gwh': valor,
+                    'unidad': unidad  # ✅ FIX: Incluir unidad
                 })
         
         # Insertar en BD
         if registros:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            
-            for reg in registros:
-                cursor.execute("""
-                    INSERT OR REPLACE INTO metrics 
-                    (fecha, metrica, entidad, recurso, valor_gwh, fecha_actualizacion)
-                    VALUES (?, ?, ?, ?, ?, datetime('now'))
-                """, (reg['fecha'], reg['metrica'], reg['entidad'], 
-                      reg['recurso'], reg['valor_gwh']))
-            
-            conn.commit()
-            conn.close()
-            
-            logging.info(f"  💾 Insertados {len(registros)} registros en BD")
-            return len(registros)
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    data_tuples = [(
+                        reg['fecha'], 
+                        reg['metrica'], 
+                        reg['entidad'], 
+                        reg['recurso'], 
+                        reg['valor_gwh'],
+                        reg['unidad']  # ✅ FIX: Incluir unidad en tuple
+                    ) for reg in registros]
+                    
+                    cursor.executemany("""
+                        INSERT OR REPLACE INTO metrics 
+                        (fecha, metrica, entidad, recurso, valor_gwh, unidad, fecha_actualizacion)
+                        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                    """, data_tuples)
+                    
+                    conn.commit()
+                
+                logging.info(f"  💾 Insertados {len(registros)} registros en BD")
+                return len(registros)
+            except Exception as e:
+                logging.error(f"  ❌ Error insertando en BD: {e}")
+                return 0
         else:
             logging.warning(f"  ⚠️ No hay registros para insertar")
             return 0
@@ -294,7 +391,7 @@ def ejecutar_etl_completo(dias=90, solo_nuevas=False, metrica_especifica=None, s
     }
     
     logging.info("╔══════════════════════════════════════════════════════════════╗")
-    logging.info("║     ETL COMPLETO - TODAS LAS MÉTRICAS XM → SQLite           ║")
+    logging.info("║     ETL COMPLETO - TODAS LAS MÉTRICAS XM → PostgreSQL       ║")
     logging.info("╚══════════════════════════════════════════════════════════════╝")
     logging.info(f"📅 Días de historia: {dias}")
     logging.info(f"🔄 Solo nuevas: {'Sí' if solo_nuevas else 'No'}")
@@ -362,8 +459,7 @@ def ejecutar_etl_completo(dias=90, solo_nuevas=False, metrica_especifica=None, s
     
     # Estadísticas de BD
     try:
-        conn = sqlite3.connect(DB_PATH)
-        df_stats = pd.read_sql_query("""
+        query_stats = """
             SELECT 
                 COUNT(*) as total_registros,
                 COUNT(DISTINCT metrica) as metricas_unicas,
@@ -371,10 +467,11 @@ def ejecutar_etl_completo(dias=90, solo_nuevas=False, metrica_especifica=None, s
                 MIN(fecha) as fecha_min,
                 MAX(fecha) as fecha_max
             FROM metrics
-        """, conn)
-        conn.close()
+        """
+        df_stats = db_manager.query_df(query_stats)
         
-        logging.info(f"\n📈 Estadísticas de Base de Datos:")
+        if not df_stats.empty:
+            logging.info(f"\n📈 Estadísticas de Base de Datos:")
         logging.info(f"  Total registros: {df_stats['total_registros'][0]:,}")
         logging.info(f"  Métricas únicas: {df_stats['metricas_unicas'][0]}")
         logging.info(f"  Días únicos: {df_stats['dias_unicos'][0]}")

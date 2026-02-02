@@ -1,0 +1,254 @@
+# domain/services/generation_service.py
+import pandas as pd
+import logging
+from datetime import date, timedelta
+from typing import Dict, List, Any, Optional
+
+# Imports de infraestructura
+from infrastructure.external.xm_service import (
+    obtener_datos_desde_sqlite,
+    obtener_datos_inteligente
+)
+
+logger = logging.getLogger(__name__)
+
+class GenerationService:
+    """
+    Servicio de Dominio para manejar la lógica de negocio relativa a la Generación de Energía.
+    Actúa como fachada sobre la capa de infraestructura (SQLite/API XM).
+    """
+
+    def __init__(self):
+        self._cache = {}
+
+    def obtener_generacion_diaria_sistema(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """Obtiene la generación total del SIN día a día para una métrica (ej. Gene)."""
+        try:
+            # Lógica extraída de los componentes visuales:
+            # Gene / Sistema (Diario)
+            df, warning = obtener_datos_inteligente(
+                metric='Gene',
+                entity='Sistema',
+                fecha_inicio=start_date,
+                fecha_fin=end_date,
+                recurso=None
+            )
+            
+            if warning:
+                logger.warning(f"Advertencia en generación diaria: {warning}")
+            
+            if df.empty:
+                return pd.DataFrame()
+
+            # Asegurar formato estándar
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date']).dt.date
+            
+            return df
+        except Exception as e:
+            logger.error(f"Error obteniendo generación diaria sistema: {e}")
+            return pd.DataFrame()
+
+    def obtener_generacion_por_recurso(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """
+        Obtiene la generación desglosada por Recurso, unida con metadatos.
+        """
+        try:
+            # 1. Obtener Metadatos (ListadoRecursos) desde la tabla 'catalogos'
+            query_meta = """
+                SELECT codigo as 'Values_Code', 
+                       nombre as 'Values_Name', 
+                       tipo as 'Values_Type', 
+                       'OTROS' as 'Values_Fuel' 
+                FROM catalogos 
+                WHERE catalogo='ListadoRecursos'
+            """
+            df_recursos = obtener_datos_desde_sqlite(query_meta)
+            
+            # Mapeo simple: codigo -> info
+            map_recursos = {}
+            if df_recursos is not None and not df_recursos.empty:
+                for _, row in df_recursos.iterrows():
+                    code = row.get('Values_Code')
+                    if code:
+                        map_recursos[code] = {
+                            'Nombre': row.get('Values_Name', code),
+                            'Tipo': row.get('Values_Type', 'NO DEFINIDO')
+                        }
+
+            # 2. Obtener Datos Horarios (Gene / Recurso)
+            # Esto puede ser muy pesado. Usamos la función optimizada de infraestructura
+            df_gene, warn = obtener_datos_inteligente(
+                metric='Gene',
+                entity='Recurso',
+                fecha_inicio=start_date,
+                fecha_fin=end_date
+            )
+            
+            if df_gene.empty:
+                return pd.DataFrame()
+
+            # 3. Enriquecer DataFrame
+            # Mapear columnas Resources_Code (o similar) a nombres y tipos
+            # Adaptación para estructura de datos de pydataxm / SQLite
+            
+            # Validar columna de código
+            id_col = next((c for c in ['Id', 'Values_Code', 'Code'] if c in df_gene.columns), None)
+            
+            if not id_col:
+                # Si viene en formato ancho (fechas en filas, recursos en columnas o viceversa)
+                # Esta lógica depende de cómo devuelve 'obtener_datos_inteligente' los datos por recurso
+                # Por ahora, devolvemos raw para no romper sin testear estructura real
+                return df_gene
+            
+            # Si logramos identificar ID, enriquecemos
+            df_gene['Nombre'] = df_gene[id_col].apply(lambda x: map_recursos.get(x, {}).get('Nombre', x))
+            df_gene['Tipo'] = df_gene[id_col].apply(lambda x: map_recursos.get(x, {}).get('Tipo', 'DESCONOCIDO'))
+            df_gene['Combustible'] = df_gene[id_col].apply(lambda x: map_recursos.get(x, {}).get('Combustible', 'OTROS'))
+            
+            return df_gene
+
+        except Exception as e:
+            logger.error(f"Error en servicio de generación por recurso: {e}")
+            return pd.DataFrame()
+
+    def get_latest_valid_date(self) -> date:
+        """Obtiene la última fecha con datos válidos de generación."""
+        # Se puede mejorar consultando MAX(Date) en SQLite
+        return date.today() - timedelta(days=1)
+
+    def get_resources_by_type(self, source_type: str = 'EOLICA') -> pd.DataFrame:
+        """
+        Obtiene el listado de recursos filtrado por tipo de fuente.
+        """
+        try:
+            # Usamos una ventana reciente para obtener el catálogo activo
+            today = date.today()
+            start_date = today - timedelta(days=7)
+
+            # Obtener métrica ListadoRecursos
+            df_recursos, _ = obtener_datos_inteligente(
+                metric="ListadoRecursos",
+                entity="Sistema",
+                fecha_inicio=start_date,
+                fecha_fin=today
+            )
+            
+            if df_recursos.empty:
+                logger.warning("⚠️ ListadoRecursos vacío en infraestructura.")
+                return pd.DataFrame()
+
+            # Normalizar columnas si es necesario (el mapper original)
+            if 'codigo' in df_recursos.columns and 'Values_Code' not in df_recursos.columns:
+                df_recursos = df_recursos.rename(columns={
+                    'codigo': 'Values_Code',
+                    'nombre': 'Values_Name',
+                    'tipo': 'Values_Type',
+                    'region': 'Values_Region',
+                    'capacidad': 'Values_Capacity'
+                })
+            
+            return self._filter_resources_by_type(df_recursos, source_type)
+
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo listado recursos: {e}")
+            return pd.DataFrame()
+
+    def _filter_resources_by_type(self, df_recursos: pd.DataFrame, source_type: str) -> pd.DataFrame:
+        """Lógica de filtrado de recursos por tipo de combustible/fuente."""
+        if df_recursos.empty or 'Values_Type' not in df_recursos.columns:
+            return df_recursos
+        
+        type_upper = source_type.upper()
+        
+        # Caso TODAS
+        if type_upper == 'TODAS':
+            return df_recursos
+        
+        # Caso BIOMASA (Múltiples términos)
+        if type_upper == 'BIOMASA':
+            terms = ['BIOMASA', 'BIOMAS', 'COGENER', 'BAGAZO', 'RESIDUO']
+            # Construir regex o iterar
+            mask = df_recursos['Values_Type'].str.contains('|'.join(terms), case=False, na=False)
+            return df_recursos[mask].drop_duplicates(subset=['Values_Code']) if not df_recursos[mask].empty else pd.DataFrame()
+        
+        # Otros tipos
+        mask = df_recursos['Values_Type'].str.contains(type_upper, case=False, na=False)
+        return df_recursos[mask]
+
+    def get_aggregated_generation_by_type(self, start_date: date, end_date: date, source_type: str = 'HIDRAULICA') -> pd.DataFrame:
+        """
+        Obtiene la generación agregada para un tipo de fuente específico.
+        """
+        try:
+            # 1. Obtener listado de recursos del tipo
+            resources_df = self.get_resources_by_type(source_type)
+            if resources_df.empty:
+                logger.warning(f"⚠️ No se encontraron recursos de tipo {source_type}")
+                return pd.DataFrame()
+            
+            target_codes = resources_df['Values_Code'].unique().tolist()
+            logger.info(f"📋 {len(target_codes)} códigos de {source_type} para consulta agregada")
+
+            # 2. Consultar Generación por Recurso
+            df_gene, _ = obtener_datos_inteligente(
+                metric="Gene",
+                entity="Recurso",
+                fecha_inicio=start_date,
+                fecha_fin=end_date
+            )
+            
+            if df_gene.empty:
+                return pd.DataFrame()
+
+            # 3. Filtrar por los códigos del tipo seleccionado
+            # Asumimos que la columna de código en Gene es 'Values_Code' o similar
+            
+            # Normalización de columna de código en df_gene
+            col_code = next((c for c in ['Values_Code', 'recurso', 'Codigo', 'Code'] if c in df_gene.columns), None)
+            
+            if not col_code:
+                logger.warning("⚠️ No se encontró columna de código en datos de generación")
+                return pd.DataFrame()
+
+            # Filtrar
+            filtered_df = df_gene[df_gene[col_code].isin(target_codes)].copy()
+            
+            if filtered_df.empty:
+                return pd.DataFrame()
+
+            # Renombrar para estandarizar salida: Fecha, Generacion_GWh
+            col_date = next((c for c in ['Date', 'fecha', 'Fecha'] if c in filtered_df.columns), None)
+            col_val = next((c for c in ['Value', 'valor', 'Valor'] if c in filtered_df.columns), None)
+            
+            if col_date and col_val:
+                filtered_df = filtered_df.rename(columns={col_date: 'Fecha', col_val: 'Generacion_GWh'})
+            
+            # Asegurar tipos
+            filtered_df['Fecha'] = pd.to_datetime(filtered_df['Fecha']).dt.date
+            
+            # 4. Agregar columnas Tipo y Planta desde resources_df
+            # Hacer merge con resources_df para agregar información adicional
+            col_name = next((c for c in ['Values_Name', 'nombre', 'Nombre', 'Name'] if c in resources_df.columns), None)
+            col_type = next((c for c in ['Values_Type', 'tipo', 'Tipo', 'Type'] if c in resources_df.columns), None)
+            
+            if col_name and col_type:
+                # Crear diccionarios de mapeo
+                code_to_name = dict(zip(resources_df['Values_Code'], resources_df[col_name]))
+                code_to_type = dict(zip(resources_df['Values_Code'], resources_df[col_type]))
+                
+                # Mapear columnas
+                filtered_df['Planta'] = filtered_df[col_code].map(code_to_name)
+                filtered_df['Tipo'] = filtered_df[col_code].map(code_to_type)
+                filtered_df['Codigo'] = filtered_df[col_code]
+            else:
+                # Fallback: usar el source_type como Tipo
+                filtered_df['Tipo'] = source_type.title()
+                filtered_df['Planta'] = filtered_df[col_code]
+                filtered_df['Codigo'] = filtered_df[col_code]
+            
+            return filtered_df
+
+        except Exception as e:
+            logger.error(f"❌ Error en agregación de generación por tipo: {e}")
+            return pd.DataFrame()

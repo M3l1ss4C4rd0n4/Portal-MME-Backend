@@ -1707,10 +1707,14 @@ body {
     max-width: 100%;
 }
 
-/* Espaciado para que el contenido no quede tapado por el navbar fijo */
+/* (ELIMINADO) El padding superior del layout ahora se controla explícitamente
+   en core/app_factory.py sobre el contenedor de page_container.
+   Antes: body > div > div { padding-top: 80px; } */
+/* 
 body > div > div {
     padding-top: 80px;
-}
+} 
+*/
 
 .navbar-logo {
     display: flex;

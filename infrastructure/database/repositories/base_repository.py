@@ -1,19 +1,26 @@
 """
-Repositorio base para acceso a SQLite
+Repositorio base para acceso a base de datos (PostgreSQL o SQLite)
 Proporciona métodos comunes para consultas
 """
 
 from typing import Any, Dict, List, Optional
 import pandas as pd
 
-from infrastructure.database.connection import SQLiteConnectionManager
+from infrastructure.database.connection import SQLiteConnectionManager, PostgreSQLConnectionManager, USE_POSTGRES
 
 
 class BaseRepository:
     """Repositorio base con utilidades comunes"""
     
-    def __init__(self, connection_manager: Optional[SQLiteConnectionManager] = None):
-        self.connection_manager = connection_manager or SQLiteConnectionManager()
+    def __init__(self, connection_manager=None):
+        if connection_manager is None:
+            # Usar PostgreSQL si USE_POSTGRES=True, sino SQLite
+            if USE_POSTGRES:
+                self.connection_manager = PostgreSQLConnectionManager()
+            else:
+                self.connection_manager = SQLiteConnectionManager()
+        else:
+            self.connection_manager = connection_manager
     
     def execute_query(self, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
         """

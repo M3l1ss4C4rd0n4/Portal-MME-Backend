@@ -378,3 +378,125 @@ def get_fuente_config(fuente: str) -> Dict:
 def get_color_by_index(index: int) -> str:
     """Obtiene un color de la paleta por índice"""
     return CHART_COLORS[index % len(CHART_COLORS)]
+
+# Compatibility classes
+class UIColors:
+    text = '#1E293B'
+    background = '#F8FAFC'
+    card_bg = '#FFFFFF'
+    primary = '#1E3A8A'
+    secondary = '#3B82F6'
+    accent = '#10B981'
+    success = '#10B981'
+    warning = '#F59E0B'
+    danger = '#EF4444'
+    info = '#3B82F6'
+
+class MapConfig:
+    mapbox_style = "open-street-map"
+    zoom_default = 5
+    center_default = {"lat": 4.5709, "lon": -74.2973}
+
+# Uppercase aliases for UIColors
+UIColors.PRIMARY = UIColors.primary
+UIColors.SECONDARY = UIColors.secondary
+UIColors.ACCENT = UIColors.accent
+UIColors.SUCCESS = UIColors.success
+UIColors.WARNING = UIColors.warning
+UIColors.DANGER = UIColors.danger
+UIColors.INFO = UIColors.info
+UIColors.TEXT_PRIMARY = '#1E293B'
+UIColors.TEXT_SECONDARY = '#64748B'
+UIColors.TEXT_MUTED = '#94A3B8'
+UIColors.BORDER = '#E2E8F0'
+UIColors.BACKGROUND = UIColors.background
+UIColors.CARD_BG = UIColors.card_bg
+
+
+# Hybrid Dict/Object for UIColors to support legacy code
+class SmartDict(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Allow attribute access to dict keys
+    
+    def __getattr__(self, key):
+        if key in self:
+            return self[key]
+        raise AttributeError(f"SmartDict has no attribute '{key}'")
+
+colors_dict = {
+    'primary': '#1E3A8A',
+    'secondary': '#3B82F6',
+    'accent': '#10B981',
+    'success': '#10B981',
+    'warning': '#F59E0B',
+    'danger': '#EF4444',
+    'info': '#3B82F6',
+    'text': '#1E293B',
+    'text_primary': '#1E293B',
+    'text_secondary': '#64748B',
+    'text_muted': '#94A3B8',
+    'background': '#F8FAFC',
+    'bg_main': '#F8FAFC',
+    'card_bg': '#FFFFFF',
+    'border': '#E2E8F0',
+    # Uppercase
+    'PRIMARY': '#1E3A8A',
+    'SECONDARY': '#3B82F6',
+    'ACCENT': '#10B981',
+    'SUCCESS': '#10B981',
+    'WARNING': '#F59E0B',
+    'DANGER': '#EF4444',
+    'INFO': '#3B82F6',
+    'TEXT_PRIMARY': '#1E293B',
+    'TEXT_SECONDARY': '#64748B',
+    'TEXT_MUTED': '#94A3B8',
+    'BACKGROUND': '#F8FAFC',
+    'CARD_BG': '#FFFFFF',
+    'BORDER': '#E2E8F0'
+}
+
+UIColors = SmartDict(colors_dict)
+
+# Robust UIColors Definition
+class SmartDict(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def __getattr__(self, key):
+        if key in self: return self[key]
+        if key.lower() in self: return self[key.lower()]
+        if key.upper() in self: return self[key.upper()]
+        return "#CCCCCC" # Safe fallback
+        
+    def __getitem__(self, key):
+        if key in self: return super().__getitem__(key)
+        if key.lower() in self: return super().__getitem__(key.lower())
+        if key.upper() in self: return super().__getitem__(key.upper())
+        return "#CCCCCC" # Safe fallback
+
+colors_data = {
+    'primary': '#1E3A8A',
+    'secondary': '#3B82F6',
+    'accent': '#10B981',
+    'success': '#10B981',
+    'warning': '#F59E0B',
+    'danger': '#EF4444',
+    'info': '#3B82F6',
+    'text': '#1E293B',
+    'text_primary': '#1E293B',
+    'text_secondary': '#64748B',
+    'text_muted': '#94A3B8',
+    'background': '#F8FAFC',
+    'bg_main': '#F8FAFC',
+    'card_bg': '#FFFFFF',
+    'border': '#E2E8F0',
+    # Specific Domain Colors
+    'energia_hidraulica': '#0088FE',
+    'energia_termica': '#FF8042',
+    'energia_solar': '#FFBB28',
+    'energia_eolica': '#00C49F',
+    'energia_biomasa': '#82ca9d',
+}
+
+UIColors = SmartDict(colors_data)

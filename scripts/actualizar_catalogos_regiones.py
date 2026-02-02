@@ -10,8 +10,8 @@ from pathlib import Path
 # Agregar path del proyecto
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils import db_manager
-from utils._xm import obtener_datos_inteligente
+from infrastructure.database.manager import DatabaseManager
+from infrastructure.external.xm_service import obtener_datos_inteligente
 from datetime import datetime, timedelta
 import logging
 
@@ -50,7 +50,8 @@ def actualizar_regiones_embalses():
         errores = 0
         
         import sqlite3
-        conn = sqlite3.connect(str(db_manager.DB_PATH))
+        db_manager = DatabaseManager()
+        conn = sqlite3.connect(str(db_manager.db_path))
         cursor = conn.cursor()
         
         for _, row in df.iterrows():
@@ -121,7 +122,8 @@ def actualizar_regiones_rios():
         errores = 0
         
         import sqlite3
-        conn = sqlite3.connect(str(db_manager.DB_PATH))
+        db_manager = DatabaseManager()
+        conn = sqlite3.connect(str(db_manager.db_path))
         cursor = conn.cursor()
         
         for _, row in df.iterrows():
