@@ -1,7 +1,7 @@
 # 📚 Índice de Documentación - Implementación XM Sinergox
 
 **Portal MME - Dashboard Colombia**  
-**Última actualización:** 31 de enero de 2026
+**Última actualización:** 3 de febrero de 2026
 
 ---
 
@@ -38,7 +38,7 @@
 
 | Archivo | Contenido |
 |---------|-----------|
-| [INFORME_ARQUITECTURA_COMPLETA_2026-01-31.md](INFORME_ARQUITECTURA_COMPLETA_2026-01-31.md) | Arquitectura del sistema |
+| [INFORME_ARQUITECTURA_COMPLETA_2026-02-03.md](INFORME_ARQUITECTURA_COMPLETA_2026-02-03.md) | 🆕 Arquitectura completa del sistema (ACTUALIZADO) |
 | [REPORTE_BUGS_CAPA_DATOS.md](REPORTE_BUGS_CAPA_DATOS.md) | Bugs identificados y corregidos |
 | [MEJORAS_MONITOREO_2026-02-01.md](MEJORAS_MONITOREO_2026-02-01.md) | Mejoras de monitoreo |
 
