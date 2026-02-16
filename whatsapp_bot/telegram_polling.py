@@ -80,7 +80,7 @@ _redis = redis.Redis(
 # ═══════════════════════════════════════════════════════════
 
 def track_telegram_user(user_id: int, username: str = None, first_name: str = None):
-    """Registra usuario de Telegram en Redis para broadcasts de alertas"""
+    """Registra usuario de Telegram en Redis (rápido) + PostgreSQL (persistente)"""
     try:
         _redis.sadd('bot:known_telegram_users', str(user_id))
         _redis.hset(f'telegram_user:{user_id}', mapping={
@@ -91,7 +91,14 @@ def track_telegram_user(user_id: int, username: str = None, first_name: str = No
             'platform': 'telegram'
         })
     except Exception as e:
-        logger.error(f"Error tracking usuario Telegram {user_id}: {e}")
+        logger.error(f"Error tracking usuario Telegram {user_id} en Redis: {e}")
+
+    # Persistir en PostgreSQL (best-effort, no bloquea)
+    try:
+        from domain.services.notification_service import persist_telegram_user
+        persist_telegram_user(user_id, username, first_name)
+    except Exception as e:
+        logger.debug(f"Error persistiendo usuario {user_id} en PostgreSQL: {e}")
 
 
 # ═══════════════════════════════════════════════════════════

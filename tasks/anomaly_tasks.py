@@ -235,9 +235,18 @@ def check_anomalies(self):
                 f"_Portal Energético - Ministerio de Minas y Energía_"
             )
 
-            # Enviar broadcast
-            broadcast_result = _broadcast_alert_via_bot(alert_message, max_severity)
-            enviados = broadcast_result.get('sent', 0)
+            # Enviar broadcast (Telegram + email)
+            from domain.services.notification_service import broadcast_alert as ns_broadcast
+
+            broadcast_result = ns_broadcast(
+                message=alert_message,
+                severity=max_severity,
+                is_daily=False,
+            )
+            enviados = (
+                broadcast_result.get('telegram', {}).get('sent', 0)
+                + broadcast_result.get('email', {}).get('sent', 0)
+            )
 
             # Registrar en BD
             _registrar_alerta_bd(alertas_criticas, enviados)
@@ -261,86 +270,208 @@ def check_anomalies(self):
 @shared_task(name='tasks.anomaly_tasks.send_daily_summary')
 def send_daily_summary():
     """
-    Envía resumen diario automático con los 3 KPIs clave a las 7:00 AM.
+    Tarea diaria (7:00 AM): genera el informe ejecutivo completo con IA,
+    crea un PDF y lo envía a todos los usuarios vía Telegram + email.
+
+    Flujo:
+       1. Llama al orquestador (HTTP) para obtener el informe ejecutivo.
+       2. Genera el PDF con report_service.
+       3. Envía por Telegram (texto + PDF adjunto) y email (HTML + PDF adjunto)
+          usando NotificationService.
     """
     try:
-        logger.info("📊 [RESUMEN DIARIO] Generando resumen con datos reales...")
+        logger.info("📊 [RESUMEN DIARIO] Generando informe ejecutivo completo…")
 
-        from domain.services.generation_service import GenerationService
-        from domain.services.hydrology_service import HydrologyService
-        from domain.services.metrics_service import MetricsService
-
-        gen_service = GenerationService()
-        hydro_service = HydrologyService()
-        metrics_service = MetricsService()
-
-        end = date.today()
-        start = end - timedelta(days=1)
-
-        # KPI 1: Generación Total
-        gen_total = 'N/D'
-        try:
-            df_gen = gen_service.get_daily_generation_system(start, end)
-            if not df_gen.empty:
-                gen_total = f"{round(df_gen['valor_gwh'].sum(), 1)} GWh"
-        except Exception as e:
-            logger.warning(f"Error obteniendo generación: {e}")
-
-        # KPI 2: Precio de Bolsa
-        precio = 'N/D'
-        try:
-            df_precio = metrics_service.get_metric_data('PrecBolsNaci', start, end)
-            if not df_precio.empty:
-                col_valor = 'valor' if 'valor' in df_precio.columns else df_precio.columns[-1]
-                precio = f"{round(df_precio[col_valor].mean(), 2)} COP/kWh"
-        except Exception as e:
-            logger.warning(f"Error obteniendo precio: {e}")
-
-        # KPI 3: Embalses
-        embalses = 'N/D'
-        try:
-            emb_data = hydro_service.get_hydrology_summary(start, end)
-            if emb_data and 'porcentaje_embalses' in emb_data:
-                embalses = f"{round(emb_data['porcentaje_embalses'], 1)}%"
-        except Exception as e:
-            logger.warning(f"Error obteniendo embalses: {e}")
-
-        # Mix energético
-        mix_text = ""
-        try:
-            df_fuentes = gen_service.get_generation_by_sources(start, end)
-            if not df_fuentes.empty:
-                total = df_fuentes['valor_gwh'].sum()
-                if total > 0:
-                    mix = df_fuentes.groupby('recurso')['valor_gwh'].sum()
-                    icons = {'Hidráulica': '💧', 'Térmica': '🔥', 'Solar': '☀️',
-                             'Eólica': '🌬️', 'Biomasa': '🌿'}
-                    for recurso, valor in mix.sort_values(ascending=False).items():
-                        pct = round((valor / total) * 100, 1)
-                        icon = icons.get(recurso, '⚡')
-                        mix_text += f"  {icon} {recurso}: {pct}%\n"
-        except Exception as e:
-            logger.warning(f"Error obteniendo mix: {e}")
-
-        if not mix_text:
-            mix_text = "  Datos de mix no disponibles\n"
-
-        message = (
-            f"📊 *RESUMEN DIARIO DEL SIN*\n\n"
-            f"📅 Fecha: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-            f"⚡ *Generación Total:* {gen_total}\n"
-            f"💰 *Precio de Bolsa:* {precio}\n"
-            f"💧 *Embalses:* {embalses}\n\n"
-            f"*Mix Energético:*\n{mix_text}\n"
-            f"_Portal Energético - Ministerio de Minas y Energía_"
+        import requests
+        from domain.services.report_service import generar_pdf_informe
+        from domain.services.notification_service import (
+            broadcast_alert as ns_broadcast,
+            build_daily_email_html,
         )
 
-        broadcast_result = _broadcast_alert_via_bot(message, "INFO")
-        enviados = broadcast_result.get('sent', 0)
+        # ── 1. Obtener el informe ejecutivo del orquestador ──
+        API_BASE = "http://localhost:8000"
+        API_KEY = os.getenv(
+            'API_KEY', 'mme-portal-energetico-2026-secret-key'
+        )
 
-        logger.info(f"📤 [RESUMEN DIARIO] Enviado a {enviados} usuarios")
-        return {"status": "completed", "users_notified": enviados}
+        informe_texto = None
+        generado_con_ia = False
+        fecha_generacion = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        try:
+            resp = requests.post(
+                f"{API_BASE}/api/v1/orchestrator/query",
+                json={"intent": "informe_ejecutivo", "parameters": {}},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-Key": API_KEY,
+                },
+                timeout=120,
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                data = body.get('data', {})
+                informe_texto = data.get('informe')
+                generado_con_ia = data.get('generado_con_ia', False)
+                fecha_generacion = data.get(
+                    'fecha_generacion', fecha_generacion
+                )
+                if informe_texto:
+                    logger.info(
+                        f"[RESUMEN DIARIO] Informe obtenido del orquestador "
+                        f"(IA={generado_con_ia}, {len(informe_texto)} chars)"
+                    )
+            else:
+                logger.warning(
+                    f"[RESUMEN DIARIO] Orquestador respondió "
+                    f"{resp.status_code}: {resp.text[:200]}"
+                )
+        except Exception as e:
+            logger.warning(f"[RESUMEN DIARIO] Error llamando orquestador: {e}")
+
+        # ── Fallback: KPIs básicos si el orquestador no responde ──
+        if not informe_texto:
+            logger.info("[RESUMEN DIARIO] Usando fallback de KPIs básicos")
+            informe_texto = _build_kpi_fallback()
+            generado_con_ia = False
+
+        # ── 2. Generar PDF ──
+        pdf_path = None
+        try:
+            pdf_path = generar_pdf_informe(
+                informe_texto, fecha_generacion, generado_con_ia
+            )
+            if pdf_path:
+                logger.info(f"[RESUMEN DIARIO] PDF generado: {pdf_path}")
+        except Exception as e:
+            logger.warning(f"[RESUMEN DIARIO] Error generando PDF: {e}")
+
+        # ── 3. Construir mensaje Telegram ──
+        tg_message = (
+            f"📊 *INFORME EJECUTIVO DIARIO DEL SIN*\n\n"
+            f"📅 Fecha: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+            f"{informe_texto}\n\n"
+            f"_Portal Energético — Ministerio de Minas y Energía_"
+        )
+
+        # Telegram tiene límite de 4096 caracteres
+        if len(tg_message) > 4000:
+            # Recortar y poner nota de que el PDF tiene el informe completo
+            tg_message = (
+                tg_message[:3900] + "\n\n"
+                "_(Informe recortado — consulte el PDF adjunto para "
+                "la versión completa)_"
+            )
+
+        # ── 4. Enviar por todos los canales ──
+        email_html = build_daily_email_html(informe_texto)
+
+        result = ns_broadcast(
+            message=tg_message,
+            severity="INFO",
+            pdf_path=pdf_path,
+            email_subject=(
+                f"📊 Informe Ejecutivo del Sector Eléctrico — "
+                f"{datetime.now().strftime('%Y-%m-%d')}"
+            ),
+            email_body_html=email_html,
+            is_daily=True,
+        )
+
+        total_sent = (
+            result.get("telegram", {}).get("sent", 0)
+            + result.get("email", {}).get("sent", 0)
+        )
+        logger.info(
+            f"📤 [RESUMEN DIARIO] Completado: {total_sent} notificaciones "
+            f"(TG={result['telegram']['sent']}, "
+            f"Email={result['email']['sent']})"
+        )
+
+        # Limpiar PDF temporal
+        if pdf_path and os.path.isfile(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except OSError:
+                pass
+
+        return {
+            "status": "completed",
+            "informe_ia": generado_con_ia,
+            "telegram_sent": result["telegram"]["sent"],
+            "email_sent": result["email"]["sent"],
+        }
 
     except Exception as e:
-        logger.error(f"❌ [RESUMEN DIARIO] Error: {str(e)}", exc_info=True)
+        logger.error(
+            f"❌ [RESUMEN DIARIO] Error: {str(e)}", exc_info=True
+        )
         return {"status": "error", "error": str(e)}
+
+
+def _build_kpi_fallback() -> str:
+    """Genera un resumen básico con 3 KPIs cuando el orquestador no responde."""
+    from domain.services.generation_service import GenerationService
+    from domain.services.hydrology_service import HydrologyService
+    from domain.services.metrics_service import MetricsService
+
+    gen_service = GenerationService()
+    hydro_service = HydrologyService()
+    metrics_service = MetricsService()
+
+    end = date.today()
+    start = end - timedelta(days=1)
+
+    gen_total = 'N/D'
+    try:
+        df_gen = gen_service.get_daily_generation_system(start, end)
+        if not df_gen.empty:
+            gen_total = f"{round(df_gen['valor_gwh'].sum(), 1)} GWh"
+    except Exception:
+        pass
+
+    precio = 'N/D'
+    try:
+        df_precio = metrics_service.get_metric_data('PrecBolsNaci', start, end)
+        if not df_precio.empty:
+            col = 'valor' if 'valor' in df_precio.columns else df_precio.columns[-1]
+            precio = f"{round(df_precio[col].mean(), 2)} COP/kWh"
+    except Exception:
+        pass
+
+    embalses = 'N/D'
+    try:
+        emb_data = hydro_service.get_hydrology_summary(start, end)
+        if emb_data and 'porcentaje_embalses' in emb_data:
+            embalses = f"{round(emb_data['porcentaje_embalses'], 1)}%"
+    except Exception:
+        pass
+
+    mix_text = ""
+    try:
+        df_fuentes = gen_service.get_generation_by_sources(start, end)
+        if not df_fuentes.empty:
+            total = df_fuentes['valor_gwh'].sum()
+            if total > 0:
+                mix = df_fuentes.groupby('recurso')['valor_gwh'].sum()
+                icons = {
+                    'Hidráulica': '💧', 'Térmica': '🔥', 'Solar': '☀️',
+                    'Eólica': '🌬️', 'Biomasa': '🌿',
+                }
+                for recurso, valor in mix.sort_values(ascending=False).items():
+                    pct = round((valor / total) * 100, 1)
+                    icon = icons.get(recurso, '⚡')
+                    mix_text += f"  {icon} {recurso}: {pct}%\n"
+    except Exception:
+        pass
+
+    if not mix_text:
+        mix_text = "  Datos de mix no disponibles\n"
+
+    return (
+        f"⚡ *Generación Total:* {gen_total}\n"
+        f"💰 *Precio de Bolsa:* {precio}\n"
+        f"💧 *Embalses:* {embalses}\n\n"
+        f"*Mix Energético:*\n{mix_text}"
+    )
