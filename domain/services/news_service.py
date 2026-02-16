@@ -24,21 +24,60 @@ logger = logging.getLogger(__name__)
 
 # ── Scoring keywords ──────────────────────────────────────
 
+# PUERTA DE RELEVANCIA: el artículo DEBE mencionar al menos 1
+# de estos términos para ser considerado.  Sin esto → descartado.
+KEYWORDS_GATE = [
+    # Sector eléctrico
+    "energía", "energético", "energetico", "eléctric", "electric",
+    "generación", "generacion", "transmisión", "transmision",
+    "distribución eléctrica", "embalse", "hidroeléctric",
+    "termoeléctr", "termoeléctrica", "renovable", "eólico", "eólica",
+    "fotovoltaic", "panel solar", "granja solar", "parque solar",
+    "parque eólico", "bioenergía", "biomasa", "geotérm",
+    # Gas / petróleo / minería
+    "gas natural", "regasificación", "regasificacion",
+    "petróleo", "petroleo", "hidrocarburo", "gasoducto",
+    "oleoducto", "refinería", "refineria", "gnl", "lng",
+    "fracking", "exploración petrolera", "minería", "mineria",
+    "carbón", "carbon mineral", "niquel", "oro minero",
+    " gas ", "precio del gas", "producción de gas",
+    "importar gas", "exportar gas", "suministro de gas",
+    # Institucional / regulación
+    "minminas", "minenergía", "minenergia", "creg", "upme",
+    "anh", "anla", "xm s.a", "isa ", "isagén", "isagen",
+    "celsia", "enel colombia", "codensa", "epm", "epsa",
+    "transporte de gas", "promigas", "tgi",
+    # Política energética
+    "tarifa eléctric", "tarifa de energía", "tarifa de gas",
+    "racionamiento", "apagón", "apagon", "subsidio energétic",
+    "transición energética", "transicion energetica",
+    "interconexión eléctrica", "interconexion electrica",
+    "operación del sistema", "despacho de energía",
+    "suministro eléctric", "suministro de gas",
+    "importación de gas", "importacion de gas",
+    "precio de energía", "plan energético",
+    # Movilidad eléctrica
+    "vehículo eléctric", "vehiculo electric", "movilidad eléctric",
+    "carro eléctric", "bus eléctric", "electrolinera",
+]
+
 # +2 puntos si el título/lead menciona Colombia + energía
 KEYWORDS_HIGH = [
     "colombia", "energía", "eléctrico", "electricidad",
     "embalses", "generación", "sector eléctrico",
-    "tarifas", "minería", "hidrocarburos", "gas natural",
-    "petróleo", "renovables", "eólico", "solar",
+    "tarifas de energía", "minería", "hidrocarburos", "gas natural",
+    "petróleo", "renovables", "eólico", "fotovoltaica",
     "transmisión", "interconexión", "transición energética",
+    "racionamiento", "apagón", "embalse",
 ]
 
 # +1-2 si menciona gobierno/regulador/instituciones clave
 KEYWORDS_GOVT = [
-    "gobierno", "ministro", "ministerio", "creg", "xm",
-    "isa", "epm", "decreto", "regulador", "minminas",
-    "minenergía", "minenergia", "viceministro", "anla",
-    "upme", "racionamiento", "suministro", "anh",
+    "gobierno", "ministro de minas", "ministerio de minas",
+    "creg", "xm", "isa", "epm", "decreto",
+    "regulador", "minminas", "minenergía", "minenergia",
+    "viceministro", "anla", "upme", "anh",
+    "racionamiento", "suministro",
     "celsia", "enel", "isagén", "codensa",
 ]
 
@@ -48,15 +87,48 @@ KEYWORDS_PENALIZE = [
     "cotización", "nasdaq", "nyse", "s&p",
 ]
 
-# -3 si es política/diplomacia sin relación energética directa
+# -3 si es política/diplomacia/entretenimiento sin relación energética
 KEYWORDS_NOISE = [
+    # Política internacional no energética
     "trump", "canciller", "cancillería", "deportación",
-    "inmigración", "ofac", "sanciones", "rendición de cuentas",
-    "fútbol", "selección", "farándula", "entretenimiento",
-    "accidente de tránsito", "homicidio", "secuestro",
+    "inmigración", "rendición de cuentas", "imposición de condiciones",
+    "aranceles", "visa", "pasaporte", "embajada",
+    # Entretenimiento / farándula
+    "fútbol", "selección colombia futbol", "farándula",
+    "entretenimiento", "accidente de tránsito", "homicidio",
+    "secuestro", "celebridad", "gol", "reality",
+    "cantante", "artista", "concierto", "recital",
+    "reggaeton", "turizo", "shakira", "influencer",
+    "instagram", "tiktok", "youtube", "streamer",
+    # Electoral
     "elecciones", "campaña electoral", "senado", "congreso",
-    "celebridad", "gol", "reality",
+    "senador", "representante a la cámara",
+    # Astronomía (falso positivo por "solar")
+    "eclipse solar", "anillo de fuego", "eclipse anular",
+    "eclipse lunar", "lluvia de estrellas", "meteorito",
+    # Desastres no energéticos (caridad genérica)
+    "damnificados", "recaudaron", "donación benéfica",
 ]
+
+# Patrones que cancelan falsos positivos de KEYWORDS_HIGH
+# Si alguno de estos aparece, eliminar score de "solar"/"eléctric"
+FALSE_POSITIVE_PATTERNS = [
+    r"eclipse\s+solar",
+    r"anillo\s+de\s+fuego",
+    r"eclipse\s+anular",
+    r"carro\s+(?:de|para)\s+juguete",
+    r"bicicleta\s+eléctrica\s+(?:robada|hurtada)",
+]
+
+
+def _passes_relevance_gate(title: str, description: str) -> bool:
+    """
+    Puerta de relevancia estricta: el artículo DEBE mencionar
+    al menos 1 término del vocabulario energético para ser considerado.
+    Esto evita que noticias genéricas pasen solo por decir "Colombia".
+    """
+    text = f"{title} {description}".lower()
+    return any(kw in text for kw in KEYWORDS_GATE)
 
 
 def _compute_score(title: str, description: str,
@@ -65,12 +137,20 @@ def _compute_score(title: str, description: str,
     text = f"{title} {description}".lower()
     score = 0
 
-    # +2 por keywords de alto impacto
-    high_hits = sum(1 for kw in KEYWORDS_HIGH if kw in text)
-    if high_hits >= 2:
-        score += 2
-    elif high_hits >= 1:
-        score += 1
+    # Chequear falsos positivos primero
+    is_false_positive = any(
+        re.search(pat, text) for pat in FALSE_POSITIVE_PATTERNS
+    )
+
+    # +2 por keywords de alto impacto (ignorar si es falso positivo)
+    if not is_false_positive:
+        high_hits = sum(1 for kw in KEYWORDS_HIGH if kw in text)
+        if high_hits >= 2:
+            score += 3
+        elif high_hits >= 1:
+            score += 1
+    else:
+        score -= 2  # penalizar falsos positivos
 
     # +1-2 por Keywords de gobierno/regulador
     govt_hits = sum(1 for kw in KEYWORDS_GOVT if kw in text)
@@ -83,7 +163,7 @@ def _compute_score(title: str, description: str,
     elif "colombia" in text:
         score += 2
 
-    # +1 si país es de la región andina/sudamericana
+    # +1 si país es de la región andina/sudamericana con contexto energético
     if country and country.lower() in ("ec", "pe", "br", "mx", "cl"):
         if any(kw in text for kw in ["interconexión", "mercado regional",
                                       "exportación", "importación"]):
@@ -98,6 +178,8 @@ def _compute_score(title: str, description: str,
     noise_hits = sum(1 for kw in KEYWORDS_NOISE if kw in text)
     if noise_hits >= 1:
         score -= 3
+    if noise_hits >= 2:
+        score -= 2  # penalización extra por doble ruido
 
     return score
 
@@ -222,12 +304,13 @@ class NewsService:
         self, articles: List[dict]
     ) -> List[dict]:
         """
-        Deduplicar, aplicar scoring, filtrar ruido y ordenar.
-        Retorna lista ordenada por score desc.
+        Deduplicar, aplicar puerta de relevancia, scoring, filtrar
+        ruido y ordenar.  Retorna lista ordenada por score desc.
         """
         seen_urls: set = set()
         seen_titles: set = set()
         scored: List[dict] = []
+        rejected_gate = 0
 
         for art in articles:
             titulo = art.get("titulo", "").strip()
@@ -247,6 +330,13 @@ class NewsService:
                 continue
             seen_titles.add(tkey)
 
+            # ── PUERTA DE RELEVANCIA ──
+            # El artículo DEBE mencionar al menos 1 término energético.
+            # Esto bloquea noticias genéricas que solo dicen "Colombia".
+            if not _passes_relevance_gate(titulo, art.get("resumen", "")):
+                rejected_gate += 1
+                continue
+
             score = _compute_score(
                 titulo,
                 art.get("resumen", ""),
@@ -255,14 +345,21 @@ class NewsService:
             art["_score"] = score
             scored.append(art)
 
-        # Filtrar score < 0 (ruido)
-        scored = [a for a in scored if a["_score"] >= 0]
+        # Filtrar score < 1 (requiere al menos alguna relevancia)
+        scored = [a for a in scored if a["_score"] >= 1]
 
         # Ordenar por score desc, luego fecha desc
         scored.sort(
             key=lambda x: (x["_score"], x.get("fecha", "")),
             reverse=True,
         )
+
+        if rejected_gate:
+            logger.info(
+                f"[NEWS_SERVICE] Puerta de relevancia descartó "
+                f"{rejected_gate} artículos sin vocabulario energético"
+            )
+
         return scored
 
     async def get_top_news(
