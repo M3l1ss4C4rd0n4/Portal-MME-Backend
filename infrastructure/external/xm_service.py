@@ -12,14 +12,21 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-try:
-    from pydataxm.pydataxm import ReadDB
-    _PYDATAXM_AVAILABLE = True
-except Exception:
-    ReadDB = None
-    _PYDATAXM_AVAILABLE = False
-
 _objetoAPI = None
+_PYDATAXM_AVAILABLE = None  # Lazy check
+
+def _check_pydataxm():
+    """Lazy import of pydataxm to avoid nest_asyncio/uvloop conflict at module load."""
+    global _PYDATAXM_AVAILABLE
+    if _PYDATAXM_AVAILABLE is not None:
+        return _PYDATAXM_AVAILABLE
+    try:
+        from pydataxm.pydataxm import ReadDB  # noqa: F811
+        _PYDATAXM_AVAILABLE = True
+        return True
+    except Exception:
+        _PYDATAXM_AVAILABLE = False
+        return False
 
 def get_objetoAPI():
     """Retorna una instancia única de ReadDB si está disponible, o None."""
@@ -28,12 +35,13 @@ def get_objetoAPI():
         return _objetoAPI
 
     logger = logging.getLogger('xm_helper')
-    if not _PYDATAXM_AVAILABLE:
+    if not _check_pydataxm():
         logger.warning('pydataxm no disponible (get_objetoAPI)')
         _objetoAPI = None
         return None
 
     try:
+        from pydataxm.pydataxm import ReadDB
         logger.info('Iniciando conexión a API XM...')
         _objetoAPI = ReadDB()
         logger.info('✅ pydataxm ReadDB inicializada correctamente')
@@ -197,11 +205,11 @@ def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin,
         # CASO 1: Datos recientes (>= 2020) - Usar SQLite (rápido)
         logger.info(f"📊 [SQLite] Consultando {metric}/{entity} desde {fecha_inicio_str} hasta {fecha_fin_str}")
         
-        # Para métricas de nivel Sistema, usar recurso='_SISTEMA_' para evitar duplicados
+        # Para métricas de nivel Sistema, filtrar por recurso='Sistema' para evitar duplicados
         recurso_filtro = recurso
         if entity == 'Sistema' and recurso is None:
-            recurso_filtro = '_SISTEMA_'
-            logger.info(f"🔍 [Filtro] Aplicando recurso='_SISTEMA_' para evitar datos duplicados")
+            recurso_filtro = 'Sistema'
+            logger.info(f"🔍 [Filtro] Aplicando recurso='Sistema' para consulta de nivel sistema")
         
         repo = MetricsRepository()
         df = repo.get_metric_data_by_entity(

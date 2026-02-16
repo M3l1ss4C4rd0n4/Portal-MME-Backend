@@ -1,6 +1,7 @@
 """
-Servicio de Dominio para Distribución Eléctrica
-Gestiona datos de consumo, pérdidas y activos de distribución
+Servicio de Dominio para Distribución Eléctrica.
+Gestiona datos de consumo, pérdidas y activos de distribución.
+Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)
 """
 
 import pandas as pd
@@ -8,6 +9,7 @@ from datetime import datetime, date
 from typing import Optional, List, Dict
 import logging
 
+from domain.interfaces.repositories import IDistributionRepository
 from infrastructure.database.repositories.distribution_repository import DistributionRepository
 from infrastructure.external.xm_service import XMService
 from core.exceptions import DataNotFoundError, ExternalAPIError
@@ -19,11 +21,19 @@ class DistributionService:
     """
     Servicio de dominio para gestión de datos de distribución.
     Implementa patrón Repository con fallback a API externa.
+    Implementa Inyección de Dependencias - Depende de IDistributionRepository.
     """
     
-    def __init__(self):
-        self.repository = DistributionRepository()
-        self.xm_service = XMService()
+    def __init__(self, repository: Optional[IDistributionRepository] = None, xm_service: Optional[XMService] = None):
+        """
+        Inicializa el servicio con inyección de dependencias opcional.
+        
+        Args:
+            repository: Implementación de IDistributionRepository. Si es None, usa DistributionRepository() por defecto.
+            xm_service: Servicio para API de XM. Si es None, usa XMService() por defecto.
+        """
+        self.repository = repository if repository is not None else DistributionRepository()
+        self.xm_service = xm_service if xm_service is not None else XMService()
     
     def get_agents_list(self) -> pd.DataFrame:
         """
@@ -59,11 +69,33 @@ class DistributionService:
             
             agentes_estadisticas['advertencia'] = agentes_estadisticas.apply(generar_advertencia, axis=1)
             
-            # 3. Enriquecer con catálogo (Nombres) - Usamos API para esto por ahora
-            # Idealmente esto debería venir de un 'AgentRepository'
-            # Usamos los códigos como Nombres por defecto
+            # 3. Enriquecer con catálogo (Nombres de agentes reales)
             agentes_estadisticas['Values_Code'] = agentes_estadisticas['code']
-            agentes_estadisticas['Values_Name'] = agentes_estadisticas['code']
+            
+            # MAPEAR CÓDIGOS A NOMBRES usando tabla catalogos
+            try:
+                query_catalogos = """
+                    SELECT codigo, nombre 
+                    FROM catalogos 
+                    WHERE catalogo = 'ListadoAgentes'
+                """
+                df_catalogos = self.repository.db_manager.query_df(query_catalogos)
+                if not df_catalogos.empty:
+                    # Crear diccionario código -> nombre
+                    mapa_nombres = dict(zip(df_catalogos['codigo'], df_catalogos['nombre']))
+                    # Aplicar mapeo: usar nombre si existe, si no mantener código
+                    agentes_estadisticas['Values_Name'] = agentes_estadisticas['code'].apply(
+                        lambda x: mapa_nombres.get(x, x)
+                    )
+                    logger.info(f"✅ Mapeados {len(mapa_nombres)} códigos de agentes a nombres")
+                else:
+                    # Fallback: usar códigos como nombres
+                    agentes_estadisticas['Values_Name'] = agentes_estadisticas['code']
+                    logger.warning("⚠️ No se encontraron nombres de agentes en catalogos")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudieron mapear nombres de agentes: {e}")
+                # Fallback: usar códigos como nombres
+                agentes_estadisticas['Values_Name'] = agentes_estadisticas['code']
             
             return agentes_estadisticas
 
@@ -116,10 +148,9 @@ class DistributionService:
             if df.empty:
                 return pd.DataFrame()
             
-            # Conversión de unidad
-            # Asumimos que la data raw (API o DB) viene en kWh (TXR unit map says kWh). 
-            # DemaCome viene en kWh de XM.
-            df['Demanda_GWh'] = df['valor'] / 1_000_000  # kWh -> GWh
+            # ✅ FIX: Los datos en PostgreSQL ya están en GWh (columna valor_gwh)
+            # NO hacer conversión adicional
+            df['Demanda_GWh'] = df['valor']  # Ya en GWh desde PostgreSQL
 
             # LÓGICA DE DEDUPLICACIÓN DE SISTEMA vs AGENTES
             # Si para un día, la suma de los agentes 'reales' es significativa (> 1 GWh),
@@ -129,21 +160,20 @@ class DistributionService:
             clean_dfs = []
             
             for fecha, group in df.groupby('fecha'):
-                 # Agentes reales: ni Sistema ni Agente (el agregado) ni SIN
-                 # Aunque 'Agente' suele ser el nombre del recurso agregado cuando entidad=Agente
-                 real_agents = group[~group['agente'].isin(['Sistema', 'Agente', 'SIN', 'MercadoComercializacion'])]
+                 # Agentes reales: excluir Sistema, Agente agregado, SIN, y Mercado
+                 # El código de sistema puede ser '_SISTEMA_', 'Sistema', o 'SIN'
+                 real_agents = group[~group['agente'].isin(['_SISTEMA_', 'Sistema', 'Agente', 'SIN', 'MercadoComercializacion'])]
                  
                  # Calcular suma de demanda de agentes reales
-                 # Ya está en GWh en 'Demanda_GWh' pero ojo: df['valor'] es lo que convertimos arriba
-                 # La conversión a Demanda_GWh es columna calculada. Usémosla.
                  sum_real = real_agents['Demanda_GWh'].sum()
                  
-                 # Si tenemos datos granulares válidos (> 0.5 GWh)
+                 # Si tenemos datos granulares válidos (> 0.5 GWh), usar solo agentes
                  if sum_real > 0.5:
                      clean_dfs.append(real_agents)
                  else:
-                     # Si no, buscamos el mejor total disponible: Sistema > Agente > Mercado...
-                     sistema_row = group[group['agente'] == 'Sistema']
+                     # Si no hay agentes, buscar el total del sistema
+                     # Buscar tanto '_SISTEMA_' como 'Sistema'
+                     sistema_row = group[group['agente'].isin(['_SISTEMA_', 'Sistema'])]
                      if not sistema_row.empty:
                          clean_dfs.append(sistema_row)
                      else:
@@ -335,3 +365,37 @@ class DistributionService:
             Lista de dicts con {codigo, nombre}
         """
         return self.repository.fetch_available_agents()
+
+    # NOTA: El método get_distribution_data principal está definido arriba (línea ~208).
+    # Se eliminó un método duplicado aquí que siempre retornaba DataFrame vacío,
+    # causando que el tablero de distribución mostrara 0.00 en todos los indicadores.
+
+    def get_operators(self) -> pd.DataFrame:
+        """
+        Obtiene catálogo de operadores de red.
+        
+        Returns:
+            DataFrame con columnas: operador, region, area_cobertura
+        """
+        try:
+            agents = self.get_available_agents()
+            
+            if not agents:
+                logger.warning("⚠️ No hay operadores disponibles")
+                return pd.DataFrame()
+            
+            # Convertir a DataFrame
+            df = pd.DataFrame(agents)
+            
+            # Renombrar columnas para API
+            if 'codigo' in df.columns and 'nombre' in df.columns:
+                df = df.rename(columns={'nombre': 'operador'})
+                df['region'] = None  # Agregar si está disponible
+                df['area_cobertura'] = None  # Agregar si está disponible
+            
+            logger.info(f"✅ {len(df)} operadores obtenidos")
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo operadores: {e}")
+            return pd.DataFrame()

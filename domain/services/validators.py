@@ -30,7 +30,7 @@ class MetricValidators:
         # ========================================
         # HIDROLOGÍA (%)
         # ========================================
-        'AportesHidricos': (30, 150),    # % vs media histórica (30% en Niño extremo, 150% en Niña)
+        'AportesHidricos': (20, 250),    # % vs media histórica (20% en Niño extremo, 250% en Niña fuerte)
         'ReservasHidricas': (30, 100),   # % de capacidad útil de embalses
         
         # ========================================

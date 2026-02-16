@@ -1,9 +1,9 @@
 """
 Repositorio de datos de distribución eléctrica.
-Gestiona persistencia en SQLite.
+Gestiona persistencia en PostgreSQL.
+Implementa IDistributionRepository (Arquitectura Limpia - Inversión de Dependencias)
 """
 
-import sqlite3
 import pandas as pd
 from datetime import date
 from typing import Optional, List, Dict
@@ -11,56 +11,20 @@ import logging
 
 from infrastructure.database.manager import db_manager
 from core.exceptions import DatabaseError
+from domain.interfaces.repositories import IDistributionRepository
 
 logger = logging.getLogger(__name__)
 
 
-class DistributionRepository:
+class DistributionRepository(IDistributionRepository):
     """
     Repositorio para datos de distribución eléctrica.
-    Acceso directo a tabla 'distribution_metrics' en SQLite.
+    Acceso a tabla 'distribution_metrics' en PostgreSQL.
+    Implementa IDistributionRepository para cumplir con arquitectura limpia.
     """
     
     def __init__(self):
         self.db_manager = db_manager
-        self._ensure_table_exists()
-    
-    def _ensure_table_exists(self):
-        """
-        Crea tabla distribution_metrics si no existe (solo para SQLite).
-        En PostgreSQL las tablas ya deben existir.
-        """
-        # Si usamos PostgreSQL, asumir que las tablas ya existen
-        if self.db_manager.use_postgres:
-            logger.info("✅ Usando PostgreSQL - tablas preexistentes")
-            return
-            
-        create_table_sql = """
-        CREATE TABLE IF NOT EXISTS distribution_metrics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            metric_code TEXT NOT NULL,
-            fecha DATE NOT NULL,
-            valor REAL,
-            unidad TEXT,
-            agente TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(metric_code, fecha, agente)
-        );
-        
-        CREATE INDEX IF NOT EXISTS idx_distribution_date 
-        ON distribution_metrics(metric_code, fecha);
-        
-        CREATE INDEX IF NOT EXISTS idx_distribution_agent 
-        ON distribution_metrics(agente);
-        """
-        
-        try:
-            with self.db_manager.get_connection() as conn:
-                conn.executescript(create_table_sql)
-                conn.commit()
-                logger.info("✅ Tabla distribution_metrics verificada")
-        except Exception as e:
-            logger.error(f"❌ Error creando tabla: {str(e)}")
     
     def fetch_agent_statistics(self) -> pd.DataFrame:
         """
@@ -84,11 +48,9 @@ class DistributionRepository:
         """
         
         try:
-            with self.db_manager.get_connection() as conn:
-                df = pd.read_sql_query(query, conn)
-                logger.info(f"📊 Estadísticas de agentes: {len(df)} encontrados")
-                return df
-                
+            df = self.db_manager.query_df(query)
+            logger.info(f"📊 Estadísticas de agentes: {len(df)} encontrados")
+            return df
         except Exception as e:
             logger.error(f"❌ Error obteniendo estadísticas de agentes: {str(e)}")
             return pd.DataFrame()
@@ -102,7 +64,7 @@ class DistributionRepository:
         entities: Optional[List[str]] = None
     ) -> pd.DataFrame:
         """
-        Consulta métricas de distribución desde SQLite (Tabla Unified metrics).
+        Consulta métricas de distribución desde PostgreSQL (Tabla Unified metrics).
         
         Args:
             metric_code: Código de la métrica
@@ -117,7 +79,7 @@ class DistributionRepository:
         if entities is None:
             entities = ['Agente']
             
-        entities_placeholder = ','.join(['?'] * len(entities))
+        entities_placeholder = ','.join(['%s'] * len(entities))
 
         query = f"""
         SELECT 
@@ -126,28 +88,27 @@ class DistributionRepository:
             unidad,
             recurso as agente
         FROM metrics
-        WHERE metrica = ?
+        WHERE metrica = %s
           AND entidad IN ({entities_placeholder})
-          AND fecha BETWEEN ? AND ?
+          AND fecha BETWEEN %s AND %s
         """
         
         params = [metric_code] + entities + [start_date, end_date]
         
         if agente:
-            query += " AND recurso = ?"
+            query += " AND recurso = %s"
             params.append(agente)
         
         query += " ORDER BY fecha ASC"
         
         try:
-            with self.db_manager.get_connection() as conn:
-                df = pd.read_sql_query(query, conn, params=params)
-                
-                if not df.empty:
-                    df['fecha'] = pd.to_datetime(df['fecha']).dt.date
-                
-                logger.info(f"📊 Query retornó {len(df)} registros para {metric_code}")
-                return df
+            df = self.db_manager.query_df(query, params=params)
+            
+            if not df.empty:
+                df['fecha'] = pd.to_datetime(df['fecha']).dt.date
+            
+            logger.info(f"📊 Query retornó {len(df)} registros para {metric_code}")
+            return df
         
         except Exception as e:
             logger.error(f"❌ Error ejecutando query: {str(e)}")
@@ -155,7 +116,7 @@ class DistributionRepository:
     
     def save_metrics(self, df: pd.DataFrame, metric_code: str) -> int:
         """
-        Inserta o actualiza métricas en batch.
+        Inserta o actualiza métricas en batch en PostgreSQL.
         
         Args:
             df: DataFrame con columnas [fecha, valor, unidad, agente]
@@ -168,9 +129,11 @@ class DistributionRepository:
             return 0
         
         insert_sql = """
-        INSERT OR REPLACE INTO distribution_metrics 
+        INSERT INTO distribution_metrics 
         (metric_code, fecha, valor, unidad, agente, extra_data)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (metric_code, fecha, agente)
+        DO UPDATE SET valor = EXCLUDED.valor, unidad = EXCLUDED.unidad
         """
         
         try:
@@ -188,9 +151,8 @@ class DistributionRepository:
                 logger.info(f"✅ Guardados {rows_affected} registros de {metric_code}")
                 return rows_affected
         
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"❌ Error guardando datos: {str(e)}")
-            # raise DatabaseError(f"Error persistiendo datos: {str(e)}")
             return 0
     
     def fetch_available_agents(self) -> List[Dict[str, str]]:
@@ -208,14 +170,13 @@ class DistributionRepository:
         """
         
         try:
-            with self.db_manager.get_connection() as conn:
-                df = pd.read_sql_query(query, conn)
-                
-                # Opcional: Mapear códigos a nombres completos (crear tabla lookup)
-                agents = [{'codigo': row['codigo'], 'nombre': row['codigo']} 
-                         for _, row in df.iterrows()]
-                
-                return agents
+            df = self.db_manager.query_df(query)
+            
+            # Opcional: Mapear códigos a nombres completos (crear tabla lookup)
+            agents = [{'codigo': row['codigo'], 'nombre': row['codigo']} 
+                     for _, row in df.iterrows()]
+            
+            return agents
         
         except Exception as e:
             logger.error(f"❌ Error obteniendo agentes: {str(e)}")
@@ -233,7 +194,7 @@ class DistributionRepository:
         """
         delete_sql = """
         DELETE FROM distribution_metrics
-        WHERE fecha < date('now', '-' || ? || ' days')
+        WHERE fecha < NOW() - INTERVAL '%s days'
         """
         
         try:
@@ -246,6 +207,64 @@ class DistributionRepository:
                 logger.info(f"🗑️ Eliminados {deleted} registros antiguos")
                 return deleted
         
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"❌ Error limpiando datos: {str(e)}")
-            return 0
+            return 0    
+    # Métodos adicionales para cumplir con IDistributionRepository
+    
+    def fetch_date_range(self, metric_code: str) -> Optional[tuple]:
+        """
+        Obtiene rango min/max de fechas disponible para una métrica.
+        Implementa método requerido por IDistributionRepository.
+        """
+        query = """
+        SELECT MIN(fecha), MAX(fecha) 
+        FROM metrics 
+        WHERE metrica = %s AND entidad = 'Agente'
+        """
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (metric_code,))
+                return cursor.fetchone()
+        except Exception:
+            return None
+    
+    def get_distributors(self) -> List[str]:
+        """
+        Obtiene lista de distribuidores (agentes).
+        Implementa método requerido por IDistributionRepository.
+        """
+        query = """
+        SELECT DISTINCT recurso 
+        FROM metrics 
+        WHERE metrica IN ('DemaCome', 'DemaReal', 'DemaRealReg', 'DemaRealNoReg')
+          AND entidad = 'Agente' 
+          AND recurso IS NOT NULL
+        ORDER BY recurso
+        """
+        try:
+            df = self.db_manager.query_df(query)
+            return df['recurso'].tolist() if not df.empty else []
+        except Exception as e:
+            logger.error(f"Error obteniendo distribuidores: {e}")
+            return []
+    
+    def get_available_metrics(self) -> List[str]:
+        """
+        Obtiene lista de métricas de distribución disponibles.
+        Implementa método requerido por IDistributionRepository.
+        """
+        query = """
+        SELECT DISTINCT metrica 
+        FROM metrics 
+        WHERE entidad = 'Agente' 
+          AND metrica IN ('DemaCome', 'DemaReal', 'DemaRealReg', 'DemaRealNoReg')
+        ORDER BY metrica
+        """
+        try:
+            df = self.db_manager.query_df(query)
+            return df['metrica'].tolist() if not df.empty else []
+        except Exception as e:
+            logger.error(f"Error obteniendo métricas disponibles: {e}")
+            return []

@@ -31,6 +31,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from infrastructure.database.manager import db_manager
 from core.config import settings
 
+# Reglas centralizadas — fuente única de verdad para conversiones y unidades
+from etl.etl_rules import (
+    get_expected_unit,
+    get_conversion_type as rules_get_conversion,
+    validate_metric_df,
+    ConversionType,
+)
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -107,10 +115,36 @@ def obtener_metricas_en_bd():
         return set()
 
 def detectar_conversion(metric_id, entity):
-    """Detectar tipo de conversión necesaria basado en el nombre de la métrica"""
-    # Hidrología - datos en Wh
+    """Detectar tipo de conversión necesaria basado en el nombre de la métrica.
+    
+    NOTA: Primero consulta las reglas centralizadas (etl_rules.py).
+    Si la métrica tiene regla, usa esa conversión.
+    Si no, cae a la lógica local de pattern matching (legacy).
+    """
+    # ── Consultar reglas centralizadas primero ──
+    conv_enum = rules_get_conversion(metric_id)
+    if conv_enum != ConversionType.NONE or metric_id in (
+        'PrecBolsNaci', 'PrecBolsNaciTX1', 'PrecOferDesp', 'PrecOferIdeal',
+        'PrecEsca', 'PrecEscaAct', 'PrecEscaMarg', 'CostMargDesp',
+        'PrecPromCont', 'MaxPrecOferNal', 'AporCaudal', 'AporCaudalMediHist',
+        'VoluUtilDiarMasa', 'CapaUtilDiarMasa', 'CapEfecNeta', 'ConsCombustibleMBTU',
+    ):
+        # La métrica está en las reglas — usar su conversión
+        from etl.etl_rules import get_rule
+        rule = get_rule(metric_id)
+        if rule is not None:
+            return rule.conversion.value  # Retorna string compatible con convertir_unidades()
+    
+    # ── Fallback: lógica legacy de pattern matching ──
+    # Hidrología - datos en Wh (incluye medias históricas y series)
     if metric_id in ['AporEner', 'VoluUtilDiarEner', 'CapaUtilDiarEner', 'VertEner', 
-                     'AporValorEner', 'VoluFinalMensEner', 'EneIndisp']:
+                     'AporValorEner', 'VoluFinalMensEner', 'EneIndisp',
+                     'AporEnerMediHist', 'AportHidricoMens', 'VolUtilesMens', 'VolUtilAgre',
+                     'SeriesHistAport', 'MediaHist', 'PromediosAlDia']:
+        return 'Wh_a_GWh'
+    
+    # Energía firme y DDV - datos en kWh
+    if metric_id in ['ENFICC', 'ObligEnerFirme', 'DDVContratada']:
         return 'Wh_a_GWh'
     
     # Disponibilidad - promedio horario
@@ -125,11 +159,22 @@ def detectar_conversion(metric_id, entity):
     if 'Dema' in metric_id:
         return 'horas_a_GWh'
     
-    # ✅ FIX CRÍTICO: Restricciones - promedio $/kWh → Millones COP
+    # Restricciones - promedio $/kWh → Millones COP
     if metric_id in ['RestAliv', 'RestSinAliv']:
         return 'restricciones_a_MCOP'
     
-    # Precios, cargos - sin conversión
+    # Responsabilidad AGC y garantías - COP diario → Millones COP
+    if metric_id in ['RespComerAGC', 'EjecGarantRestr', 'RentasCongestRestr',
+                     'DesvMoneda', 'RecoNegMoneda', 'RecoPosMoneda',
+                     'ComContRespEner', 'RemuRealIndiv', 'FAZNI']:
+        return 'COP_a_MCOP'
+    
+    # Desviaciones energía - kWh → GWh
+    if metric_id in ['DesvEner', 'RecoNegEner', 'RecoPosEner',
+                     'DesvGenVariableDesp', 'DesvGenVariableRedesp']:
+        return 'Wh_a_GWh'
+    
+    # Precios, cargos - sin conversión (ya vienen en $/kWh)
     if 'Prec' in metric_id or 'Cargo' in metric_id or 'Cost' in metric_id:
         return 'sin_conversion'
     
@@ -179,6 +224,20 @@ def convertir_unidades(df, metric, conversion_type):
             elif 'Value' in df.columns:
                 df['Value'] = df['Value'] / 1_000_000
                 logging.info(f"  ✅ Convertido $/kWh → Millones COP")
+        
+        elif conversion_type == 'COP_a_MCOP':
+            # Valores monetarios diarios en COP → Millones COP
+            if 'Value' in df.columns:
+                df['Value'] = df['Value'] / 1_000_000
+                logging.info(f"  ✅ Convertido COP → Millones COP")
+            else:
+                # Si viene con columnas horarias, sumar y convertir
+                hour_cols = [f'Values_Hour{i:02d}' for i in range(1, 25)]
+                existing_cols = [col for col in hour_cols if col in df.columns]
+                if existing_cols:
+                    df['Value'] = df[existing_cols].sum(axis=1) / 1_000_000
+                    df = df.dropna(subset=['Value'])
+                    logging.info(f"  ✅ Sumado {len(existing_cols)} horas COP → Millones COP")
         
         elif conversion_type == 'horas_a_MW':
             # Disponibilidad: Promediar valores horarios
@@ -239,6 +298,12 @@ def asegurar_columna_valor(df, conversion_type):
     elif conversion_type in ['horas_a_GWh', 'Wh_a_GWh', 'kWh_a_GWh']:
         df['Value'] = df[existing_cols].sum(axis=1) / 1_000_000
         logging.info(f"  ✅ Derivado Value desde horas (GWh)")
+    elif conversion_type == 'COP_a_MCOP':
+        df['Value'] = df[existing_cols].sum(axis=1) / 1_000_000
+        logging.info(f"  ✅ Derivado Value desde horas (Millones COP)")
+    elif conversion_type == 'restricciones_a_MCOP':
+        df['Value'] = df[existing_cols].mean(axis=1) / 1_000_000
+        logging.info(f"  ✅ Derivado Value desde horas restricciones (Millones COP)")
     else:
         df['Value'] = df[existing_cols].mean(axis=1)
         logging.info(f"  ✅ Derivado Value desde horas (promedio)")
@@ -278,15 +343,36 @@ def descargar_metrica(obj_api, metric_id, entity, dias_historia=90):
             logging.warning(f"  ⚠️ Sin datos después de conversión")
             return 0
         
-        # ✅ FIX: Determinar unidad según conversión
-        if conversion == 'restricciones_a_MCOP':
-            unidad = 'COP'  # Millones COP
-        elif conversion in ['Wh_a_GWh', 'horas_a_GWh', 'kWh_a_GWh']:
-            unidad = 'GWh'
-        elif conversion == 'horas_a_MW':
-            unidad = 'MW'
-        else:
-            unidad = None
+        # ✅ FIX: Determinar unidad desde reglas centralizadas (fallback a lógica local)
+        unidad = get_expected_unit(metric_id)
+        if unidad is None:
+            # Fallback para métricas sin regla definida
+            if conversion in ['restricciones_a_MCOP', 'COP_a_MCOP']:
+                unidad = 'Millones COP'
+            elif conversion in ['Wh_a_GWh', 'horas_a_GWh', 'kWh_a_GWh']:
+                unidad = 'GWh'
+            elif conversion == 'horas_a_MW':
+                unidad = 'MW'
+            else:
+                unidad = None
+        
+        # ✅ VALIDACIÓN PRE-INSERT: verificar datos antes de insertar en BD
+        if 'Value' in df.columns or 'value' in df.columns:
+            v_col = 'Value' if 'Value' in df.columns else 'value'
+            df_check = df.copy()
+            df_check['valor_gwh'] = df_check[v_col]
+            df_check['unidad'] = unidad
+            issues = validate_metric_df(df_check, metric_id, value_col='valor_gwh', unit_col='unidad')
+            for issue in issues:
+                if issue.startswith("ERROR"):
+                    logging.error(f"  🛑 {issue}")
+                else:
+                    logging.warning(f"  ⚠️ {issue}")
+            # Solo bloquear inserción por errores de UNIDAD (no por rangos/warnings)
+            error_criticos = [i for i in issues if i.startswith("ERROR UNIDAD")]
+            if error_criticos:
+                logging.error(f"  🛑 Inserción BLOQUEADA para {metric_id}: error de unidad crítico")
+                return 0
         
         # Preparar datos para inserción
         registros = []
@@ -310,9 +396,11 @@ def descargar_metrica(obj_api, metric_id, entity, dias_historia=90):
             logging.warning("  ⚠️ No se encontró columna de valor")
             return 0
         
-        # Columnas de identificación (priorizar Name sobre Id)
+        # Columnas de identificación (priorizar Values_code para distinguir agentes individuales)
         id_cols = []
-        if 'Name' in df.columns:
+        if 'Values_code' in df.columns:
+            id_cols.append('Values_code')  # AAGG, ASCC, etc. para Agente; "Sistema" para Sistema
+        elif 'Name' in df.columns:
             id_cols.append('Name')
         elif 'Code' in df.columns:
             id_cols.append('Code')
@@ -355,13 +443,18 @@ def descargar_metrica(obj_api, metric_id, entity, dias_historia=90):
                         reg['entidad'], 
                         reg['recurso'], 
                         reg['valor_gwh'],
-                        reg['unidad']  # ✅ FIX: Incluir unidad en tuple
+                        reg['unidad']
                     ) for reg in registros]
                     
                     cursor.executemany("""
-                        INSERT OR REPLACE INTO metrics 
+                        INSERT INTO metrics 
                         (fecha, metrica, entidad, recurso, valor_gwh, unidad, fecha_actualizacion)
-                        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (fecha, metrica, entidad, recurso) 
+                        DO UPDATE SET 
+                            valor_gwh = EXCLUDED.valor_gwh,
+                            unidad = EXCLUDED.unidad,
+                            fecha_actualizacion = CURRENT_TIMESTAMP
                     """, data_tuples)
                     
                     conn.commit()

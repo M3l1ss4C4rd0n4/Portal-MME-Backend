@@ -2,28 +2,23 @@
 ╔══════════════════════════════════════════════════════════════╗
 ║               ENDPOINT DE HEALTH CHECK                       ║
 ║                                                              ║
-║  Endpoint para monitorear la salud del sistema ETL-SQLite   ║
-║  Verifica: SQLite disponible, datos actualizados, sin errores
+║  Endpoint para monitorear la salud del sistema ETL-PostgreSQL
+║  Verifica: PostgreSQL disponible, datos actualizados, sin errores
 ╚══════════════════════════════════════════════════════════════╝
 """
 
-import sqlite3
+import psycopg2
 from datetime import datetime, timedelta
 from typing import Dict, Any
-import os
 from core.config import settings
 
-def verificar_salud_sistema(db_path: str = None) -> Dict[str, Any]:
+def verificar_salud_sistema() -> Dict[str, Any]:
     """
-    Verifica la salud del sistema completo
+    Verifica la salud del sistema completo conectándose a PostgreSQL
     
     Returns:
         Dict con status, checks individuales y mensaje
     """
-    # Usar path de configuración si no se provee
-    if db_path is None:
-        db_path = str(settings.DATABASE_PATH)
-        
     resultado = {
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
@@ -33,30 +28,33 @@ def verificar_salud_sistema(db_path: str = None) -> Dict[str, Any]:
     }
     
     try:
-        # 1. Verificar que existe la base de datos
-        if not os.path.exists(db_path):
-            resultado['checks']['database_exists'] = False
-            resultado['errors'].append('Base de datos no encontrada')
-            resultado['status'] = 'unhealthy'
-            return resultado
-        
-        resultado['checks']['database_exists'] = True
-        
-        # Conectar a SQLite
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        # 1. Verificar conexión a PostgreSQL
+        conn = psycopg2.connect(
+            host=settings.POSTGRES_HOST,
+            port=settings.POSTGRES_PORT,
+            database=settings.POSTGRES_DB,
+            user=settings.POSTGRES_USER,
+            password=settings.POSTGRES_PASSWORD
+        )
         cursor = conn.cursor()
         
-        # 2. Verificar tamaño de la base de datos
-        db_size_mb = os.path.getsize(db_path) / (1024 * 1024)
-        resultado['checks']['database_size_mb'] = round(db_size_mb, 2)
+        resultado['checks']['database_connection'] = True
         
-        if db_size_mb < 100:
-            resultado['warnings'].append(f'Base de datos pequeña: {db_size_mb:.2f} MB')
+        # 2. Verificar tamaño de la base de datos PostgreSQL
+        cursor.execute("""
+            SELECT pg_size_pretty(pg_database_size(current_database())) as size,
+                   pg_database_size(current_database()) as size_bytes
+        """)
+        row = cursor.fetchone()
+        resultado['checks']['database_size'] = row[0]
         
-        # Verificar tablas principales
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tablas = [row['name'] for row in cursor.fetchall()]
+        # 3. Verificar tablas principales
+        cursor.execute("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+        """)
+        tablas = [row[0] for row in cursor.fetchall()]
         
         tablas_requeridas = ['metrics', 'catalogos']
         tablas_faltantes = [t for t in tablas_requeridas if t not in tablas]
@@ -69,8 +67,8 @@ def verificar_salud_sistema(db_path: str = None) -> Dict[str, Any]:
         resultado['checks']['tables_found'] = len(tablas)
         
         # 4. Verificar cantidad de registros
-        cursor.execute("SELECT COUNT(*) as count FROM metrics")
-        total_registros = cursor.fetchone()['count']
+        cursor.execute("SELECT COUNT(*) FROM metrics")
+        total_registros = cursor.fetchone()[0]
         resultado['checks']['total_records'] = total_registros
         
         if total_registros < 100000:
@@ -80,15 +78,18 @@ def verificar_salud_sistema(db_path: str = None) -> Dict[str, Any]:
         cursor.execute("""
             SELECT MAX(fecha) as fecha_max
             FROM metrics
-            WHERE metrica = 'Gene' AND entidad = 'Sistema' AND recurso = '_SISTEMA_'
+            WHERE metrica = 'Gene' AND entidad = 'Sistema' AND recurso = 'Sistema'
         """)
         
         row = cursor.fetchone()
-        if row and row['fecha_max']:
-            fecha_max = datetime.strptime(row['fecha_max'], '%Y-%m-%d')
+        if row and row[0]:
+            fecha_max = row[0]
+            if isinstance(fecha_max, str):
+                fecha_max = datetime.strptime(fecha_max, '%Y-%m-%d')
+            
             dias_antiguedad = (datetime.now() - fecha_max).days
             
-            resultado['checks']['latest_data_date'] = row['fecha_max']
+            resultado['checks']['latest_data_date'] = str(fecha_max.date())
             resultado['checks']['data_age_days'] = dias_antiguedad
             
             if dias_antiguedad > 3:
@@ -105,14 +106,14 @@ def verificar_salud_sistema(db_path: str = None) -> Dict[str, Any]:
         cursor.execute("""
             SELECT COUNT(*) as count
             FROM (
-                SELECT metrica, entidad, recurso, fecha, COUNT(*) as n
+                SELECT metrica, entidad, recurso, fecha
                 FROM metrics
                 GROUP BY metrica, entidad, recurso, fecha
                 HAVING COUNT(*) > 1
-            )
+            ) sub
         """)
         
-        duplicados = cursor.fetchone()['count']
+        duplicados = cursor.fetchone()[0]
         resultado['checks']['duplicate_records'] = duplicados
         
         if duplicados > 0:
@@ -126,10 +127,10 @@ def verificar_salud_sistema(db_path: str = None) -> Dict[str, Any]:
             cursor.execute("""
                 SELECT COUNT(*) as count
                 FROM metrics
-                WHERE metrica = ? AND entidad = 'Sistema' AND recurso = '_SISTEMA_'
+                WHERE metrica = %s AND entidad = 'Sistema' AND recurso = 'Sistema'
             """, (metrica,))
             
-            count = cursor.fetchone()['count']
+            count = cursor.fetchone()[0]
             if count == 0:
                 metricas_faltantes.append(metrica)
         

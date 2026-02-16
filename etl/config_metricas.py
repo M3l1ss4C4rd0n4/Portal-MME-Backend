@@ -3,6 +3,79 @@ Configuración de Métricas para ETL
 Portal Energético MME
 """
 
+# Mapeo explícito de unidades por métrica (según documentación XM)
+UNIDADES_POR_METRICA = {
+    # Energía (GWh)
+    'Gene': 'GWh',
+    'DemaCome': 'GWh',
+    'DemaReal': 'GWh',
+    'DemaRealReg': 'GWh',
+    'DemaRealNoReg': 'GWh',
+    'AporEner': 'GWh',
+    'AporEnerMediHist': 'GWh',
+    'VoluUtilDiarEner': 'GWh',
+    'CapaUtilDiarEner': 'GWh',
+    'VertEner': 'GWh',
+    'GeneIdea': 'GWh',
+    'GeneProgDesp': 'GWh',
+    'GeneFueraMerito': 'GWh',
+    'ImpoEner': 'GWh',
+    'ExpoEner': 'GWh',
+    'PerdidasEner': 'GWh',
+    'DemaNoAtenProg': 'GWh',
+    'DemaNoAtenNoProg': 'GWh',
+    'ENFICC': 'GWh',
+    'ObligEnerFirme': 'GWh',
+    'DDVContratada': 'GWh',
+    
+    # Potencia (MW)
+    'DispoCome': 'MW',
+    'DispoReal': 'MW',
+    'DispoDeclarada': 'MW',
+    'CapEfecNeta': 'MW',
+    
+    # Precios ($/kWh)
+    'PrecBolsNaci': '$/kWh',
+    'PrecBolsNaciTX1': '$/kWh',
+    'PrecOferDesp': '$/kWh',
+    'PrecOferIdeal': '$/kWh',
+    'PrecEsca': '$/kWh',
+    'PrecEscaAct': '$/kWh',
+    'PrecEscaMarg': '$/kWh',
+    'PrecEscaPon': '$/kWh',
+    'CostMargDesp': '$/kWh',
+    'PrecCargConf': '$/kWh',
+    'PrecPromCont': '$/kWh',
+    'MaxPrecOferNal': '$/kWh',
+    
+    # Caudales (m³/s)
+    'AporCaudal': 'm³/s',
+    'AporCaudalMediHist': 'm³/s',
+    
+    # Moneda (COP) - RESTRICCIONES, NO CONVERTIR A GWh
+    'RestAliv': 'COP',
+    'RestSinAliv': 'COP',
+    'RentasCongestRestr': 'COP',
+    
+    # Masas (Hm³)
+    'VolTurbMasa': 'Hm³',
+    'VoluUtilDiarMasa': 'Hm³',
+    'VertMasa': 'Hm³',
+    'CapaUtilDiarMasa': 'Hm³',
+    
+    # Porcentajes (%)
+    'PorcApor': '%',
+    'PorcVoluUtilDiar': '%',
+}
+
+# Rangos de validación por métrica/entidad (min, max)
+RANGOS_VALIDACION = {
+    'DemaCome/Sistema': (150, 350),      # GWh/día
+    'Gene/Sistema': (100, 400),          # GWh/día
+    'AporEner/Sistema': (10, 800),       # GWh/día (muy variable)
+    'DemaReal/Sistema': (150, 350),      # GWh/día
+}
+
 # Métricas a poblar en la base de datos
 METRICAS_CONFIG = {
     # Indicadores principales página Generación
@@ -287,7 +360,7 @@ METRICAS_CONFIG = {
         {
             'metric': 'GeneSeguridad',
             'entity': 'Recurso',
-            'conversion': 'sin_conversion',  # Ya en MW
+            'conversion': 'horas_a_diario',  # Suma horaria kWh → GWh
             'dias_history': 90,  # 3 meses (varios recursos)
             'batch_size': 15,
             'descripcion': 'Generación de seguridad por recurso'
@@ -307,7 +380,7 @@ METRICAS_CONFIG = {
         {
             'metric': 'PrecBolsNaci',
             'entity': 'Sistema',
-            'conversion': 'sin_conversion',  # Ya en $/kWh
+            'conversion': 'horas_a_diario',  # Promedio horario $/kWh
             'dias_history': 1826,  # 5 años para análisis histórico precios
             'batch_size': 30,
             'descripcion': 'Precio bolsa nacional'
@@ -315,7 +388,7 @@ METRICAS_CONFIG = {
         {
             'metric': 'CostMargDesp',
             'entity': 'Sistema',
-            'conversion': 'sin_conversion',  # Ya en $/kWh
+            'conversion': 'horas_a_diario',  # Promedio horario $/kWh
             'dias_history': 1826,  # 5 años
             'batch_size': 30,
             'descripcion': 'Costo marginal de despacho'

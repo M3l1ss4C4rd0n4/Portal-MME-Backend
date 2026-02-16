@@ -47,7 +47,7 @@ class AgentIA:
         """Obtiene datos recientes de una tabla específica desde SQLite"""
         try:
             # Nota: Validar nombre de tabla si viniera de input usuario
-            query = f"SELECT * FROM {tabla} ORDER BY Date DESC LIMIT ?"
+            query = f"SELECT * FROM {tabla} ORDER BY Date DESC LIMIT %s"
             df = db_manager.query_df(query, params=(limite,))
             
             if df.empty:
@@ -63,9 +63,9 @@ class AgentIA:
             query = """
                 SELECT fecha, valor_gwh, metrica, entidad, recurso
                 FROM metrics
-                WHERE metrica = ?
+                WHERE metrica = %s
                 ORDER BY fecha DESC
-                LIMIT ?
+                LIMIT %s
             """
             df = db_manager.query_df(query, params=(metric_code, limite))
             
@@ -273,7 +273,7 @@ Tienes acceso a datos en tiempo real del Sistema Interconectado Nacional (SIN).
 PREGUNTA DEL USUARIO:
 {pregunta}
 
-🎯 **ESTILO DE COMUNICACIÓN OBLIGATORIO:**
+**ESTILO DE COMUNICACIÓN OBLIGATORIO:**
 
 **1. Tono conversacional y humano**
 Escribe como hablaría un analista experimentado, no como un reporte técnico rígido.
@@ -298,7 +298,7 @@ Termina con una conclusión sobre el estado del sistema: ¿está estable? ¿hay 
 
 **EJEMPLO DE RESPUESTA IDEAL:**
 
-"⚡ La generación hoy se mantiene en **244 GWh**, un nivel que cubre cómodamente la demanda del país. La diferencia entre generación y consumo es amplia, lo que muestra que el sistema está operando con tranquilidad.
+"La generación hoy se mantiene en **244 GWh**, un nivel que cubre cómodamente la demanda del país. La diferencia entre generación y consumo es amplia, lo que muestra que el sistema está operando con tranquilidad.
 
 🌊 Aunque no hay datos desagregados de renovables, por la composición usual del SIN es probable que la mayor parte provenga de hidráulicas. Esto es positivo porque reduce costos de generación térmica.
 

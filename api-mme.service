@@ -1,0 +1,33 @@
+[Unit]
+Description=API RESTful Portal Energético MME
+After=network.target postgresql.service
+
+[Service]
+Type=notify
+User=admonctrlxm
+Group=admonctrlxm
+WorkingDirectory=/home/admonctrlxm/server
+Environment="PATH=/home/admonctrlxm/.local/bin:/usr/bin"
+Environment="PYTHONPATH=/home/admonctrlxm/server"
+ExecStart=/home/admonctrlxm/.local/bin/gunicorn api.main:app --workers 4 --threads 4 --worker-class uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000 --timeout 120 --max-requests 1000 --max-requests-jitter 100 --access-logfile /home/admonctrlxm/server/logs/api-access.log --error-logfile /home/admonctrlxm/server/logs/api-error.log --log-level info
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+Restart=always
+RestartSec=10
+
+# Límites de recursos
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/home/admonctrlxm/server/logs
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target

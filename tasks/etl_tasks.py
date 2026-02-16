@@ -69,42 +69,75 @@ def fetch_metric_data(self, metric_code: str, start_date: str, end_date: str):
         end_date: Fecha fin formato 'YYYY-MM-DD'
     """
     try:
-        from infrastructure.external.xm_service import fetch_metric_from_api
-        from infrastructure.database.connection import get_connection
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from infrastructure.external.xm_service import fetch_metric_data as xm_fetch
+        from infrastructure.database.connection import PostgreSQLConnectionManager
         
         logger.info(f"Iniciando descarga de {metric_code} desde {start_date} hasta {end_date}")
         
-        # Descargar datos
-        data = fetch_metric_from_api(metric_code, start_date, end_date)
+        # Determinar entidad según la métrica
+        entity_map = {
+            'Gene': 'Recurso',
+            'PrecBolsNaci': 'Sistema',
+            'DEM': 'Sistema',
+            'DemaReal': 'Sistema',
+            'TRAN': 'Sistema',
+            'PerdidasEner': 'Sistema',
+            'AporEner': 'Recurso',
+            'CapaUtilDiarEner': 'Recurso',
+            'PorcVoluUtilDiar': 'Recurso',
+        }
+        entity = entity_map.get(metric_code, 'Sistema')
         
-        if not data:
+        # Descargar datos usando la función correcta del xm_service
+        from datetime import date as date_type
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date() if isinstance(start_date, str) else start_date
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d').date() if isinstance(end_date, str) else end_date
+        
+        df = xm_fetch(metric_code, entity, start_dt, end_dt)
+        
+        if df is None or df.empty:
             logger.warning(f"No se obtuvieron datos para {metric_code}")
             return {"status": "no_data", "metric": metric_code}
         
         # Guardar en PostgreSQL
-        with get_connection() as conn:
-            cur = conn.cursor()
-            inserted = 0
-            
-            for record in data:
-                try:
-                    cur.execute("""
-                        INSERT INTO metrics (metrica, fecha, valor, unidad)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (metrica, fecha) DO UPDATE
-                        SET valor = EXCLUDED.valor, unidad = EXCLUDED.unidad
-                    """, (
-                        record.get('metrica', metric_code),
-                        record.get('fecha'),
-                        record.get('valor'),
-                        record.get('unidad', 'kWh')
-                    ))
-                    inserted += 1
-                except Exception as e:
-                    logger.error(f"Error insertando registro: {e}")
-                    continue
-            
-            conn.commit()
+        manager = PostgreSQLConnectionManager()
+        import psycopg2
+        conn_params = {
+            'host': manager.host, 'port': manager.port,
+            'database': manager.database, 'user': manager.user
+        }
+        if manager.password:
+            conn_params['password'] = manager.password
+        conn = psycopg2.connect(**conn_params)
+        
+        cur = conn.cursor()
+        inserted = 0
+        
+        for _, row in df.iterrows():
+            try:
+                cur.execute("""
+                    INSERT INTO metrics (metrica, fecha, entidad, recurso, valor_gwh, unidad)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (metrica, fecha, entidad, COALESCE(recurso, '')) DO UPDATE
+                    SET valor_gwh = EXCLUDED.valor_gwh, unidad = EXCLUDED.unidad
+                """, (
+                    metric_code,
+                    row.get('Date', row.get('fecha')),
+                    entity,
+                    row.get('Values_code', row.get('recurso', None)),
+                    row.get('Values', row.get('valor_gwh', row.get('valor'))),
+                    'kWh' if 'Prec' in metric_code else 'GWh'
+                ))
+                inserted += 1
+            except Exception as e:
+                logger.error(f"Error insertando registro: {e}")
+                continue
+        
+        conn.commit()
+        cur.close()
+        conn.close()
         
         logger.info(f"✅ {metric_code}: {inserted} registros procesados")
         return {

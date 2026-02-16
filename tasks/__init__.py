@@ -4,13 +4,20 @@ Celery Application Configuration
 from celery import Celery
 from celery.schedules import crontab
 import os
+import sys
+
+# Asegurar que el directorio raíz del proyecto esté en sys.path
+# para que los workers puedan importar scripts, infrastructure, etc.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 # Configuración de Celery
 app = Celery(
     'portal_mme',
     broker='redis://localhost:6379/0',
     backend='redis://localhost:6379/1',
-    include=['tasks.etl_tasks']
+    include=['tasks.etl_tasks', 'tasks.anomaly_tasks']
 )
 
 # Configuración adicional
@@ -35,6 +42,16 @@ app.conf.beat_schedule = {
     'limpieza-logs-diaria': {
         'task': 'tasks.etl_tasks.clean_old_logs',
         'schedule': crontab(hour=3, minute=0),  # 3:00 AM diario
+    },
+    # Detección de anomalías cada 30 minutos
+    'check-anomalies-every-30-minutes': {
+        'task': 'tasks.anomaly_tasks.check_anomalies',
+        'schedule': crontab(minute='*/30'),  # Cada 30 minutos
+    },
+    # Resumen diario a las 7:00 AM
+    'send-daily-summary-7am': {
+        'task': 'tasks.anomaly_tasks.send_daily_summary',
+        'schedule': crontab(hour=7, minute=0),  # Diario a las 7 AM
     },
 }
 

@@ -390,14 +390,14 @@ def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
             fig_mensual = go.Figure()
             fig_mensual.add_trace(go.Bar(
                 x=df_mensual['Mes'],
-                y=df_mensual['Aliviadas'] / 1_000_000,
+                y=df_mensual['Aliviadas'],  # ✅ FIX: Ya está en Millones COP desde ETL, no dividir
                 name='Aliviadas',
                 marker_color='#28a745',
                 hovertemplate='$%{y:,.0f} Millones<br>%{x}'
             ))
             fig_mensual.add_trace(go.Bar(
                 x=df_mensual['Mes'],
-                y=df_mensual['Sin Alivio'] / 1_000_000,
+                y=df_mensual['Sin Alivio'],  # ✅ FIX: Ya está en Millones COP desde ETL, no dividir
                 name='Sin Alivio',
                 marker_color='#dc3545',
                 hovertemplate='$%{y:,.0f} Millones<br>%{x}'

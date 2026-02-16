@@ -140,60 +140,133 @@ def crear_grafica_precios(df_bolsa, df_escasez, df_escasez_act, df_escasez_sup=N
     
     return fig
 
-def crear_tabla_horaria(datos_hora, fecha_seleccionada):
-    """Crear tabla con datos horarios de un día específico"""
-    if not datos_hora or not isinstance(datos_hora, dict):
-        return html.Div("No hay datos horarios disponibles", 
-                       className="alert alert-warning")
+def crear_tabla_horaria_unificada(datos_metricas, valores_diarios, fecha_seleccionada):
+    """Crear dos tablas: una con Precio Bolsa por hora, otra con métricas diarias
     
-    # Extraer valores de cada hora
-    horas = []
-    valores = []
+    Args:
+        datos_metricas: Dict con claves 'bolsa', 'escasez_act', 'escasez_sup', 'escasez_inf'
+                       Cada valor es un dict con datos horarios o None
+        valores_diarios: Dict con valores diarios de cada métrica para la fecha seleccionada
+    """
     
-    for i in range(1, 25):
-        col_name = f'Values_Hour{i:02d}'
-        if col_name in datos_hora:
-            horas.append(f"Hora {i:02d}")
-            valores.append(f"${datos_hora[col_name]:.2f}")
+    # ========== TABLA 1: PRECIO BOLSA NACIONAL POR HORA ==========
+    datos_bolsa = datos_metricas.get('bolsa')
     
-    if not horas:
-        return html.Div("No hay datos horarios disponibles", 
-                       className="alert alert-warning")
-    
-    # Crear DataFrame para la tabla
-    df_tabla = pd.DataFrame({
-        'Hora': horas,
-        'Precio ($/kWh)': valores
-    })
-    
-    # Dividir en 3 columnas para mejor visualización
-    n = len(horas)
-    tercio = n // 3
-    
-    col1 = df_tabla.iloc[:tercio]
-    col2 = df_tabla.iloc[tercio:tercio*2]
-    col3 = df_tabla.iloc[tercio*2:]
-    
-    def crear_mini_tabla(df_mini):
-        return html.Table([
-            html.Thead(html.Tr([
-                html.Th("Hora", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6'}),
-                html.Th("Precio", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6', 'textAlign': 'right'})
-            ])),
-            html.Tbody([
-                html.Tr([
-                    html.Td(row['Hora'], style={'padding': '6px'}),
-                    html.Td(row['Precio ($/kWh)'], style={'padding': '6px', 'textAlign': 'right', 'fontWeight': 'bold'})
-                ]) for _, row in df_mini.iterrows()
-            ])
-        ], className="table table-sm table-hover", style={'marginBottom': '0'})
-    
-    return html.Div([
-        dbc.Row([
-            dbc.Col(crear_mini_tabla(col1), md=4),
-            dbc.Col(crear_mini_tabla(col2), md=4),
-            dbc.Col(crear_mini_tabla(col3), md=4)
+    if datos_bolsa and isinstance(datos_bolsa, dict):
+        # Extraer valores horarios
+        valores_horarios_bolsa = []
+        for i in range(1, 25):
+            col_name = f'Hora_{i:02d}'
+            col_name_alt = f'Values_Hour{i:02d}'
+            
+            valor = None
+            if col_name in datos_bolsa:
+                valor = datos_bolsa[col_name]
+            elif col_name_alt in datos_bolsa:
+                valor = datos_bolsa[col_name_alt]
+            
+            valores_horarios_bolsa.append({
+                'hora': f"Hora {i:02d}",
+                'valor': valor
+            })
+        
+        # Calcular total y promedio Bolsa
+        valores_bolsa = [v['valor'] for v in valores_horarios_bolsa if v['valor'] is not None]
+        total_bolsa = sum(valores_bolsa) if valores_bolsa else None
+        promedio_bolsa = total_bolsa / len(valores_bolsa) if valores_bolsa else None
+        
+        # Crear filas para tabla Bolsa
+        filas_bolsa = []
+        for item in valores_horarios_bolsa:
+            filas_bolsa.append(html.Tr([
+                html.Td(item['hora'], style={'padding': '8px', 'fontWeight': '500', 'backgroundColor': '#fff8e1'}),
+                html.Td(
+                    f"${item['valor']:.2f}" if item['valor'] is not None else "-",
+                    style={'padding': '8px', 'textAlign': 'right', 'fontFamily': 'monospace', 'fontWeight': 'bold'}
+                )
+            ]))
+        
+        tabla_bolsa = html.Div([
+            html.H6("💰 Precio Bolsa Nacional", style={'color': '#FFB800', 'marginBottom': '10px', 'fontWeight': 'bold'}),
+            html.Div([
+                html.Table([
+                    html.Thead(html.Tr([
+                        html.Th("HORA", style={'padding': '10px', 'backgroundColor': '#FFB800', 'color': 'white', 'position': 'sticky', 'top': 0}),
+                        html.Th("PRECIO ($/kWh)", style={'padding': '10px', 'backgroundColor': '#FFB800', 'color': 'white', 'textAlign': 'right', 'position': 'sticky', 'top': 0})
+                    ])),
+                    html.Tbody(filas_bolsa + [
+                        html.Tr([
+                            html.Td("TOTAL (24h)", style={'padding': '10px', 'fontWeight': 'bold', 'fontSize': '15px', 'backgroundColor': '#0d6efd', 'color': 'white'}),
+                            html.Td(
+                                f"${total_bolsa:.2f}" if total_bolsa is not None else "-",
+                                style={'padding': '10px', 'textAlign': 'right', 'fontWeight': 'bold', 'fontSize': '15px', 'backgroundColor': '#0d6efd', 'color': 'white', 'fontFamily': 'monospace'}
+                            )
+                        ]),
+                        html.Tr([
+                            html.Td("PROMEDIO", style={'padding': '10px', 'fontWeight': 'bold', 'fontSize': '15px', 'backgroundColor': '#28a745', 'color': 'white'}),
+                            html.Td(
+                                f"${promedio_bolsa:.2f}" if promedio_bolsa is not None else "-",
+                                style={'padding': '10px', 'textAlign': 'right', 'fontWeight': 'bold', 'fontSize': '15px', 'backgroundColor': '#28a745', 'color': 'white', 'fontFamily': 'monospace'}
+                            )
+                        ])
+                    ])
+                ], className="table table-sm table-striped", style={'marginBottom': '0', 'fontSize': '14px'})
+            ], style={'maxHeight': '600px', 'overflowY': 'auto'})
         ])
+    else:
+        tabla_bolsa = html.Div(
+            "No hay datos horarios de Precio Bolsa disponibles",
+            className="alert alert-warning"
+        )
+    
+    # ========== TABLA 2: OTRAS MÉTRICAS (VALORES DIARIOS) ==========
+    metricas_diarias = [
+        ('escasez', 'Precio Escasez', '#DC3545'),
+        ('escasez_act', 'Escasez Activación', '#28A745'),
+        ('escasez_sup', 'Escasez Superior', '#FF6B6B'),
+        ('escasez_inf', 'Escasez Inferior', '#4ECDC4')
+    ]
+    
+    filas_metricas = []
+    for key, nombre, color in metricas_diarias:
+        # Obtener el valor diario directamente del parámetro
+        valor_diario = valores_diarios.get(key)
+        
+        filas_metricas.append(html.Tr([
+            html.Td(nombre, style={'padding': '12px', 'fontWeight': 'bold', 'backgroundColor': color, 'color': 'white'}),
+            html.Td(
+                f"${valor_diario:.2f}" if valor_diario is not None else "Sin datos",
+                style={
+                    'padding': '12px',
+                    'textAlign': 'right',
+                    'fontFamily': 'monospace',
+                    'fontSize': '16px',
+                    'fontWeight': 'bold',
+                    'color': '#000' if valor_diario is not None else '#999'
+                }
+            )
+        ]))
+    
+    tabla_metricas = html.Div([
+        html.H6("📊 Otras Métricas (Valor Diario)", style={'color': '#495057', 'marginBottom': '10px', 'fontWeight': 'bold'}),
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th("MÉTRICA", style={'padding': '10px', 'backgroundColor': '#6c757d', 'color': 'white'}),
+                html.Th("VALOR ($/kWh)", style={'padding': '10px', 'backgroundColor': '#6c757d', 'color': 'white', 'textAlign': 'right'})
+            ])),
+            html.Tbody(filas_metricas)
+        ], className="table table-bordered", style={'marginBottom': '0', 'fontSize': '14px'}),
+        html.Small(
+            "ℹ️ Estas métricas no tienen desagregación horaria en XM",
+            className="text-muted d-block mt-2",
+            style={'fontSize': '12px'}
+        )
+    ])
+    
+    # ========== LAYOUT: DOS COLUMNAS ==========
+    return dbc.Row([
+        dbc.Col(tabla_bolsa, md=7),
+        dbc.Col(tabla_metricas, md=5)
     ])
 
 # ==================== LAYOUT ====================
@@ -543,29 +616,54 @@ def actualizar_datos_comercializacion(n_clicks, fecha_inicio_str, fecha_fin_str)
             spread_escasez = valor_sup - valor_inf
         
         # Guardar datos en store (TODAS las métricas)
-        # Para bolsa, guardar también los datos horarios por separado
-        bolsa_json = None
-        datos_horarios = {}
+        # Extraer datos horarios de TODAS las métricas
+        datos_horarios = {
+            'bolsa': {},
+            'escasez_act': {},
+            'escasez_sup': {},
+            'escasez_inf': {}
+        }
         
-        if not df_bolsa.empty:
-            # Extraer y guardar datos horarios antes de serializar
-            if 'Datos_Horarios' in df_bolsa.columns:
-                for idx, row in df_bolsa.iterrows():
+        # Función auxiliar para extraer datos horarios
+        def extraer_datos_horarios(df, key):
+            if not df.empty and 'Datos_Horarios' in df.columns:
+                for idx, row in df.iterrows():
                     fecha_str = row['Date'].strftime('%Y-%m-%d')
-                    datos_horarios[fecha_str] = row['Datos_Horarios']
-                # Remover columna de objetos para poder serializar
-                df_bolsa_sin_horarios = df_bolsa.drop(columns=['Datos_Horarios'])
-                bolsa_json = df_bolsa_sin_horarios.to_json(date_format='iso', orient='split')
-            else:
-                bolsa_json = df_bolsa.to_json(date_format='iso', orient='split')
+                    if row['Datos_Horarios']:  # Solo si tiene datos
+                        datos_horarios[key][fecha_str] = row['Datos_Horarios']
+        
+        # Extraer de todas las métricas
+        extraer_datos_horarios(df_bolsa, 'bolsa')
+        extraer_datos_horarios(df_escasez_act, 'escasez_act')
+        extraer_datos_horarios(df_escasez_sup, 'escasez_sup')
+        extraer_datos_horarios(df_escasez_inf, 'escasez_inf')
+        
+        # Preparar DataFrames para serialización (sin columna Datos_Horarios)
+        def preparar_df(df):
+            if df.empty:
+                return None
+            if 'Datos_Horarios' in df.columns:
+                return df.drop(columns=['Datos_Horarios']).to_json(date_format='iso', orient='split')
+            return df.to_json(date_format='iso', orient='split')
+        
+        # Extraer valores diarios por fecha para cada métrica
+        valores_diarios = {}
+        for df, key in [(df_bolsa, 'bolsa'), (df_escasez, 'escasez'), (df_escasez_act, 'escasez_act'), 
+                        (df_escasez_sup, 'escasez_sup'), (df_escasez_inf, 'escasez_inf')]:
+            valores_diarios[key] = {}
+            if not df.empty and 'Date' in df.columns and 'Value' in df.columns:
+                for idx, row in df.iterrows():
+                    fecha_str = row['Date'].strftime('%Y-%m-%d')
+                    valores_diarios[key][fecha_str] = float(row['Value'])
         
         store_data = {
-            'bolsa': bolsa_json,
-            'escasez': df_escasez.to_json(date_format='iso', orient='split') if not df_escasez.empty else None,
-            'escasez_act': df_escasez_act.to_json(date_format='iso', orient='split') if not df_escasez_act.empty else None,
-            'escasez_sup': df_escasez_sup.to_json(date_format='iso', orient='split') if not df_escasez_sup.empty else None,
-            'escasez_inf': df_escasez_inf.to_json(date_format='iso', orient='split') if not df_escasez_inf.empty else None,
-            'datos_horarios': datos_horarios  # Guardar datos horarios por separado
+            'bolsa': preparar_df(df_bolsa),
+            'escasez': preparar_df(df_escasez),
+            'escasez_act': preparar_df(df_escasez_act),
+            'escasez_sup': preparar_df(df_escasez_sup),
+            'escasez_inf': preparar_df(df_escasez_inf),
+            'datos_horarios': datos_horarios,  # Dict con 4 claves, cada una con datos por fecha
+            'valores_diarios': valores_diarios  # Valores diarios por fecha para cada métrica
         }
         
         return (
@@ -604,53 +702,110 @@ def toggle_modal_detalle(clickData, close_clicks, store_data, is_open):
     
     from dash import callback_context as ctx
     
+    logger.info("="*80)
+    logger.info("🔔 toggle_modal_detalle EJECUTADO")
+    logger.info(f"clickData: {clickData}")
+    logger.info(f"ctx.triggered: {ctx.triggered}")
+    logger.info("="*80)
+    
     if not ctx.triggered:
+        logger.warning("No hay triggered context")
         return False, "", ""
     
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    logger.info(f"Trigger ID: {trigger_id}")
     
     # Cerrar modal
     if trigger_id == 'modal-cerrar-comercializacion':
+        logger.info("Cerrando modal")
         return False, "", ""
     
     # Abrir modal con datos
     if trigger_id == 'grafica-precios-comercializacion' and clickData:
         try:
-            # Extraer información del click
+            # Logging para debug
+            logger.info(f"clickData recibido: {clickData}")
+            
+            # Obtener el primer punto (Plotly devuelve múltiples puntos en el mismo X)
+            if not clickData.get('points'):
+                return False, "", ""
+            
             punto = clickData['points'][0]
+            
+            # Extraer fecha del punto
             fecha_click = pd.to_datetime(punto['x']).date()
-            metrica = punto['data']['name']
             
-            # Solo mostrar detalle horario para Precio Bolsa Nacional
-            if metrica != 'Precio Bolsa Nacional':
-                return False, "", ""
+            logger.info(f"Fecha seleccionada: {fecha_click}, abriendo modal con todas las métricas")
             
-            if not store_data or not store_data.get('datos_horarios'):
-                return False, "", ""
-            
-            # Buscar datos horarios para esa fecha
-            fecha_str = fecha_click.strftime('%Y-%m-%d')
-            datos_horarios = store_data['datos_horarios'].get(fecha_str)
-            
-            if not datos_horarios:
-                return True, f"Detalle del {fecha_click}", html.Div(
-                    "No hay datos horarios disponibles para esta fecha",
+            # Validar que store_data existe y tiene la estructura correcta
+            if not store_data:
+                logger.warning("store_data es None")
+                return True, "Sin datos", html.Div(
+                    "No hay datos disponibles. Por favor, haga click en 'Actualizar' primero.",
                     className="alert alert-warning"
                 )
             
-            tabla = crear_tabla_horaria(datos_horarios, fecha_click)
+            if not isinstance(store_data, dict):
+                logger.error(f"store_data no es dict: {type(store_data)}")
+                return True, "Error de datos", html.Div(
+                    f"Error en la estructura de datos (tipo: {type(store_data).__name__})",
+                    className="alert alert-danger"
+                )
             
-            titulo = f"📊 Detalle Horario - Precio Bolsa Nacional - {fecha_click}"
+            if 'datos_horarios' not in store_data:
+                logger.warning(f"store_data keys: {store_data.keys()}")
+                return True, "Datos no disponibles", html.Div(
+                    "Los datos horarios no están disponibles para este rango de fechas.",
+                    className="alert alert-info"
+                )
+            
+            # Buscar datos horarios de TODAS las métricas para esa fecha
+            fecha_str = fecha_click.strftime('%Y-%m-%d')
+            datos_horarios_all = store_data['datos_horarios']
+            valores_diarios_all = store_data.get('valores_diarios', {})
+            
+            # Recopilar datos de todas las métricas disponibles
+            datos_metricas = {}
+            valores_diarios = {}
+            metricas_disponibles = []
+            
+            for metrica_key in ['bolsa', 'escasez', 'escasez_act', 'escasez_sup', 'escasez_inf']:
+                # Datos horarios
+                datos_metrica = datos_horarios_all.get(metrica_key, {}).get(fecha_str)
+                datos_metricas[metrica_key] = datos_metrica
+                
+                # Valores diarios
+                valor_diario = valores_diarios_all.get(metrica_key, {}).get(fecha_str)
+                valores_diarios[metrica_key] = valor_diario
+                
+                if datos_metrica or valor_diario:
+                    metricas_disponibles.append(metrica_key)
+            
+            logger.info(f"Métricas disponibles para {fecha_str}: {metricas_disponibles}")
+            logger.info(f"Valores diarios: {valores_diarios}")
+            
+            # Verificar que al menos una métrica tenga datos
+            if not metricas_disponibles:
+                return True, f"Detalle del {fecha_click.strftime('%d/%m/%Y')}", html.Div(
+                    f"No hay datos disponibles para {fecha_click.strftime('%d/%m/%Y')}",
+                    className="alert alert-warning"
+                )
+            
+            # Crear tabla unificada con todas las métricas
+            tabla = crear_tabla_horaria_unificada(datos_metricas, valores_diarios, fecha_click)
+            
+            titulo = f"📊 Detalle Horario Completo - {fecha_click.strftime('%d/%m/%Y')}"
             
             return True, titulo, tabla
             
         except Exception as e:
             logger.error(f"Error mostrando detalle: {e}")
+            logger.error(f"clickData completo: {clickData}")
             traceback.print_exc()
-            return True, "Error", html.Div(
-                f"Error al cargar datos: {str(e)}",
-                className="alert alert-danger"
-            )
+            return True, "Error", html.Div([
+                html.P(f"Error al cargar datos: '{str(e)}'", className="text-danger"),
+                html.P(f"Detalles técnicos: {str(clickData)[:200]}", className="text-muted small")
+            ], className="alert alert-danger")
     
     return is_open, "", ""
 

@@ -1,0 +1,150 @@
+version: '3.8'
+
+services:
+  # ═══════════════════════════════════════════════════════════
+  # WhatsApp Bot Service
+  # ═══════════════════════════════════════════════════════════
+  whatsapp-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-bot
+    ports:
+      - "8001:8001"
+    environment:
+      - WHATSAPP_PROVIDER=${WHATSAPP_PROVIDER}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_WHATSAPP_NUMBER=${TWILIO_WHATSAPP_NUMBER}
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/portal_energetico
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin123
+      - PORTAL_API_URL=${PORTAL_API_URL}
+      - APP_ENV=production
+    depends_on:
+      - redis
+      - postgres
+      - minio
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - whatsapp-network
+
+  # ═══════════════════════════════════════════════════════════
+  # Redis - Cache & Session Store
+  # ═══════════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - whatsapp-network
+
+  # ═══════════════════════════════════════════════════════════
+  # PostgreSQL - Database
+  # ═══════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:15-alpine
+    container_name: whatsapp-postgres
+    environment:
+      POSTGRES_DB: portal_energetico
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - whatsapp-network
+
+  # ═══════════════════════════════════════════════════════════
+  # MinIO - S3-compatible Storage for Images
+  # ═══════════════════════════════════════════════════════════
+  minio:
+    image: minio/minio:latest
+    container_name: whatsapp-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - whatsapp-network
+
+  # ═══════════════════════════════════════════════════════════
+  # Celery Worker - Async Task Processing
+  # ═══════════════════════════════════════════════════════════
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-celery-worker
+    command: celery -A app.tasks worker --loglevel=info --concurrency=4
+    environment:
+      - REDIS_HOST=redis
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/portal_energetico
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - S3_ENDPOINT_URL=http://minio:9000
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - whatsapp-network
+
+  # ═══════════════════════════════════════════════════════════
+  # Celery Beat - Schedule Tasks
+  # ═══════════════════════════════════════════════════════════
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-celery-beat
+    command: celery -A app.tasks beat --loglevel=info
+    environment:
+      - REDIS_HOST=redis
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/portal_energetico
+    depends_on:
+      - redis
+    volumes:
+      - ./celery_data:/app/celery_data
+    restart: unless-stopped
+    networks:
+      - whatsapp-network
+
+# ═══════════════════════════════════════════════════════════
+# Volumes
+# ═══════════════════════════════════════════════════════════
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+
+# ═══════════════════════════════════════════════════════════
+# Networks
+# ═══════════════════════════════════════════════════════════
+networks:
+  whatsapp-network:
+    driver: bridge

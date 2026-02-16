@@ -1,0 +1,22 @@
+[Unit]
+Description=Telegram Bot Polling - Portal Energetico MME
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=admonctrlxm
+WorkingDirectory=/home/admonctrlxm/server/whatsapp_bot
+EnvironmentFile=/home/admonctrlxm/server/whatsapp_bot/.env
+ExecStart=/home/admonctrlxm/server/whatsapp_bot/venv/bin/python /home/admonctrlxm/server/whatsapp_bot/telegram_polling.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/admonctrlxm/server/whatsapp_bot/logs/telegram_polling.log
+StandardError=append:/home/admonctrlxm/server/whatsapp_bot/logs/telegram_polling_error.log
+
+# Límites de recursos
+LimitNOFILE=65536
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

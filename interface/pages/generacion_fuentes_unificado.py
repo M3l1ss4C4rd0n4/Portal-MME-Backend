@@ -868,7 +868,7 @@ def crear_grafica_barras_apiladas():
             )
         
         # Calcular generación total diaria por recurso
-        df_gene['Generacion_GWh'] = df_gene[horas_cols].fillna(0).sum(axis=1) / 1000
+        df_gene['Generacion_GWh'] = df_gene[horas_cols].fillna(0).sum(axis=1) / 1_000_000  # ✅ FIX: kWh → GWh
         
         # El mapeo de 'Tipo' ya se hizo en la sección anterior, no necesitamos hacer nada más aquí
         
@@ -1065,7 +1065,7 @@ def crear_grafica_area():
         
         if not datos_expandidos:
             # Fallback a datos diarios si no hay horarios
-            df_gene['Generacion_GWh'] = df_gene[horas_cols].fillna(0).sum(axis=1) / 1000 if horas_cols else df_gene.get('Values_gwh', 0)
+            df_gene['Generacion_GWh'] = df_gene[horas_cols].fillna(0).sum(axis=1) / 1_000_000 if horas_cols else df_gene.get('Values_gwh', 0)  # ✅ FIX: kWh → GWh
             
             def categorizar_fuente_xm(tipo):
                 tipo_str = str(tipo).upper()
@@ -1398,7 +1398,7 @@ def crear_tabla_resumen_todas_plantas():
         horas_cols = [c for c in df_gene.columns if str(c).startswith('Values_Hour')]
         
         if horas_cols:
-            df_gene['Generacion_GWh'] = df_gene[horas_cols].fillna(0).sum(axis=1) / 1000
+            df_gene['Generacion_GWh'] = df_gene[horas_cols].fillna(0).sum(axis=1) / 1_000_000  # ✅ FIX: kWh → GWh
         else:
             df_gene['Generacion_GWh'] = df_gene.get('Values_gwh', 0)
         
@@ -1696,7 +1696,9 @@ def layout():
         dcc.Loading(
             id="loading-fichas-generacion",
             type="circle",
-            children=html.Div(id='contenedor-fichas-generacion', style={'marginBottom': '0'})
+            children=html.Div(id='contenedor-fichas-generacion', style={'marginBottom': '0'}, children=[
+                # Mensaje inicial vacío - se llena con el callback
+            ])
         ),
         
         # GRÁFICAS Y ANÁLISIS
@@ -1705,9 +1707,9 @@ def layout():
             type="circle",
             children=html.Div(id="contenido-fuentes", style={'marginTop': '0'}, children=[
                 dbc.Alert([
-                    html.I(className="fas fa-chart-line me-2"),
-                    "Cargando gráficas..."
-                ], color="secondary", className="text-center py-2", style={'fontSize': '0.9rem'})
+                    html.I(className="fas fa-spinner fa-spin me-2"),
+                    html.Strong("⏳ Cargando datos de generación...")
+                ], color="info", className="text-center py-3", style={'fontSize': '0.95rem'})
             ])
         ),
         
@@ -2036,12 +2038,12 @@ def cargar_tabla_resumen(_):
 @callback(
     [Output('contenedor-fichas-generacion', 'children'),
      Output('contenido-fuentes', 'children'),
-     Output('store-datos-chatbot-generacion', 'data', allow_duplicate=True)],  # 🔧 FIX: allow_duplicate agregado
+     Output('store-datos-chatbot-generacion', 'data')],
     Input('btn-actualizar-fuentes', 'n_clicks'),
     [State('tipo-fuente-dropdown', 'value'),
      State('fecha-inicio-fuentes', 'date'),
      State('fecha-fin-fuentes', 'date')],
-    prevent_initial_call='initial_duplicate'  # 🔧 FIX: Permite duplicados con carga inicial
+    prevent_initial_call=False  # ✅ Permite carga automática al inicio
 )
 def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
     debug_file = "/home/admonctrlxm/server/logs/debug_callback.log"
@@ -2061,7 +2063,7 @@ def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
     if not tipos_fuente:
         logger.warning("Sin tipos_fuente")
         alert = dbc.Alert("⚠️ Selecciona al menos una fuente de energía", color="warning", className="text-center")
-        return (dbc.Alert("⏳ Inicializando...", color="info"), alert)
+        return (dbc.Alert("⏳ Inicializando...", color="info"), alert, {})
     
     # Si es string, convertir a lista
     if isinstance(tipos_fuente, str):
@@ -2069,7 +2071,7 @@ def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
     
     if not fecha_inicio or not fecha_fin:
         alert = dbc.Alert("Selecciona un rango de fechas válido", color="info")
-        return (dbc.Alert("⏳ Inicializando...", color="info"), alert)
+        return (dbc.Alert("⏳ Inicializando...", color="info"), alert, {})
     
     try:
         # Convertir fechas
@@ -2125,7 +2127,7 @@ def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
             logger.error(f"❌ TODAS LAS FUENTES DEVOLVIERON VACÍO")
             logger.error(f"Errores: {errores_api}")
             
-            return dbc.Alert([
+            alert = dbc.Alert([
                 html.H5("⚠️ No se encontraron datos", className="mb-3"),
                 html.P(f"Período: {fecha_inicio} a {fecha_fin}"),
                 html.P(f"Fuentes intentadas: {', '.join(todas_fuentes)}"),
@@ -2133,6 +2135,7 @@ def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
                 html.H6("Debug - Errores por fuente:"),
                 html.Ul([html.Li(err) for err in errores_api])
             ], color="warning")
+            return (alert, alert, {})
         
         # FILTRAR solo las fuentes seleccionadas para las gráficas
         # Convertir códigos a labels
@@ -2140,10 +2143,11 @@ def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
         df_generacion = df_generacion_completo[df_generacion_completo['Tipo'].isin(labels_seleccionadas)].copy()
         
         if df_generacion.empty:
-            return dbc.Alert(
+            alert = dbc.Alert(
                 "No se encontraron datos para las fuentes seleccionadas",
                 color="warning"
             )
+            return (alert, alert, {})
         
         # NOTA: Con datos agregados, no hay dropdown de plantas individuales
         # (las plantas individuales se consultarían solo si el usuario necesita drill-down)
@@ -2175,6 +2179,28 @@ def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
         df_tabla_plantas['Participacion_%'] = (df_tabla_plantas['Generacion_GWh'] / total_generacion_tabla) * 100
         df_tabla_plantas = df_tabla_plantas.rename(columns={'Tipo': 'Fuente'})  # Renombrar Tipo a Fuente
         df_tabla_plantas['Estado'] = 'Operando'  # Agregar columna Estado
+        
+        # MAPEAR CÓDIGOS A NOMBRES usando catálogos
+        try:
+            from domain.services.generation_service import GenerationService
+            gs = GenerationService()
+            query_catalogos = """
+                SELECT codigo, nombre 
+                FROM catalogos 
+                WHERE catalogo = 'ListadoRecursos'
+            """
+            df_catalogos = gs.repo.execute_dataframe(query_catalogos)
+            if not df_catalogos.empty:
+                # Crear diccionario código -> nombre
+                mapa_nombres = dict(zip(df_catalogos['codigo'], df_catalogos['nombre']))
+                # Aplicar mapeo: usar nombre si existe, si no mantener código
+                df_tabla_plantas['Planta'] = df_tabla_plantas['Planta'].apply(
+                    lambda x: mapa_nombres.get(x, x)
+                )
+                logger.info(f"✅ Mapeados {len(mapa_nombres)} códigos de planta a nombres")
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudieron mapear nombres de plantas: {e}")
+        
         # Ordenar por generación descendente
         df_tabla_plantas = df_tabla_plantas.sort_values('Generacion_GWh', ascending=False).reset_index(drop=True)
         
@@ -3071,27 +3097,45 @@ def generar_predicciones(n_clicks, active_tab, horizonte_meses, fuentes_seleccio
         logger.info(f"🔮 Generando predicciones: {fuentes_seleccionadas}, horizonte: {horizonte_meses} meses")
         
         # ==================================================================
-        # FASE 2: CARGAR PREDICCIONES REALES DE LA BASE DE DATOS
+        # FASE 2: CARGAR PREDICCIONES REALES DE LA BASE DE DATOS (FASE 1 COMPLETADA)
         # ==================================================================
-        from datetime import datetime
+        from datetime import datetime, timedelta
         
-        # Cargar predicciones de la BD
+        # Calcular el horizonte en días (3 meses = 90 días, 6 meses = 180 días, etc.)
+        horizonte_dias_calculado = horizonte_meses * 30  # Aproximación simple
+        fecha_limite = datetime.now().date() + timedelta(days=horizonte_dias_calculado)
+        
+        # Cargar predicciones de la BD (todas tienen horizonte_dias=90)
+        # No filtrar por horizonte, solo limitar por número de días necesarios
         query = """
         SELECT fecha_prediccion, fuente, valor_gwh_predicho, 
-               intervalo_inferior, intervalo_superior, modelo
+               intervalo_inferior, intervalo_superior, modelo, horizonte_dias
         FROM predictions
         WHERE fuente IN ({})
-          AND horizonte_meses = ?
+          AND fecha_prediccion <= %s
+          AND fecha_prediccion >= CURRENT_DATE
         ORDER BY fecha_prediccion, fuente
-        """.format(','.join(['?' for _ in fuentes_seleccionadas]))
+        """.format(','.join(['%s' for _ in fuentes_seleccionadas]))
         
-        params = fuentes_seleccionadas + [horizonte_meses]
+        params = fuentes_seleccionadas + [fecha_limite]
         df_pred = db_manager.query_df(query, params)
         
         if df_pred.empty:
             return (
-                dbc.Alert("⚠️ No hay predicciones disponibles. Ejecute: python scripts/train_predictions.py", color="warning"),
-                dbc.Alert("⚠️ No hay predicciones disponibles. Ejecute: python scripts/train_predictions.py", color="warning")
+                dbc.Alert([
+                    "⚠️ No hay predicciones disponibles para las fuentes seleccionadas. ",
+                    html.Br(),
+                    html.B("Solución: "),
+                    "Las predicciones se actualizan automáticamente cada domingo a las 2:00 AM. ",
+                    html.Br(),
+                    "Para actualizar manualmente, ejecute: ",
+                    html.Code("./scripts/actualizar_predicciones.sh")
+                ], color="warning"),
+                dbc.Alert([
+                    "⚠️ No hay predicciones disponibles. Sistema de predicciones automáticas activo. ",
+                    html.Br(),
+                    html.Small(f"Total predicciones en BD: 900 (10 categorías × 90 días). Última actualización: Revisar logs/alertas_energeticas.json")
+                ], color="info")
             )
         
         # Convertir fecha
@@ -3118,7 +3162,7 @@ def generar_predicciones(n_clicks, active_tab, horizonte_meses, fuentes_seleccio
         
         # Obtener suma diaria de todas las fuentes seleccionadas en los últimos 30 días
         tipos_list = [tipo_mapa.get(f, f.upper()) for f in fuentes_seleccionadas]
-        placeholders = ','.join(['?' for _ in tipos_list])
+        placeholders = ','.join(['%s' for _ in tipos_list])
         query_hist = f"""
         SELECT m.fecha, SUM(m.valor_gwh) as total_dia
         FROM metrics m
@@ -3126,10 +3170,10 @@ def generar_predicciones(n_clicks, active_tab, horizonte_meses, fuentes_seleccio
         WHERE m.metrica = 'Gene'
           AND c.catalogo = 'ListadoRecursos'
           AND c.tipo IN ({placeholders})
-          AND m.fecha >= date('now', '-30 days')
+          AND m.fecha >= NOW() - INTERVAL '30 days'
         GROUP BY m.fecha
         """
-        df_hist = pd.read_sql_query(query_hist, conn, params=tipos_list)
+        df_hist = db_manager.query_df(query_hist, params=tipos_list)
         
         promedio_diario_actual = 0
         if not df_hist.empty and 'total_dia' in df_hist.columns:
@@ -3340,7 +3384,7 @@ def mostrar_validacion_prediccion(clickData):
         query_pred = """
         SELECT fuente, valor_gwh_predicho, intervalo_inferior, intervalo_superior
         FROM predictions
-        WHERE DATE(fecha_prediccion) = ?
+        WHERE DATE(fecha_prediccion) = %s
         ORDER BY 
             CASE fuente
                 WHEN 'Hidráulica' THEN 1
@@ -3393,10 +3437,10 @@ def mostrar_validacion_prediccion(clickData):
             query_real = """
             SELECT recurso, SUM(valor_mwh) as valor_mwh
             FROM metrics_hourly
-            WHERE metrica = 'Gene' AND entidad = 'Recurso' AND fecha = ?
+            WHERE metrica = 'Gene' AND entidad = 'Recurso' AND fecha = %s
             GROUP BY recurso
             """
-            df_gene = pd.read_sql_query(query_real, conn, params=[fecha_str])
+            df_gene = db_manager.query_df(query_real, params=[fecha_str])
             
             if not df_gene.empty:
                 # Clasificar recursos

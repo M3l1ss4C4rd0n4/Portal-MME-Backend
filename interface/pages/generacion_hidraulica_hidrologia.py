@@ -1300,7 +1300,7 @@ def crear_fichas_sin(fecha=None, region=None, rio=None):
         aportes_gwh_str = f"{aportes_gwh:,.0f} GWh".replace(",", ".") if aportes_gwh is not None else "N/D"
     else:
         contexto = "SIN Completo"
-        reservas_pct, reservas_gwh = get_reservas_hidricas(fecha_calculo)
+        reservas_pct, reservas_gwh, _ = get_reservas_hidricas(fecha_calculo)
         aportes_pct, aportes_gwh = get_aportes_hidricos(fecha_calculo)
         reservas_pct_str = f"{reservas_pct:.2f}%" if reservas_pct is not None else "N/D"
         reservas_gwh_str = f"{reservas_gwh:,.0f} GWh".replace(",", ".") if reservas_gwh is not None else "N/D"

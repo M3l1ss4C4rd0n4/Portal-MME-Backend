@@ -144,3 +144,8 @@ ystemctl*
 # Archivos de validación y debug temporal
 validate_fixes.sh
 test_*_debug.py
+node_modules/
+*.log
+
+# Archivo con credenciales internas
+docs/LINKS_ACCESO.md

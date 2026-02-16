@@ -1,14 +1,19 @@
 """
-Repositorio para métricas energéticas
+Repositorio para métricas energéticas.
+Implementa IMetricsRepository (Arquitectura Limpia - Inversión de Dependencias)
 """
 
 from typing import List, Optional, Dict, Any
 import pandas as pd
 from infrastructure.database.repositories.base_repository import BaseRepository
+from domain.interfaces.repositories import IMetricsRepository
 
 
-class MetricsRepository(BaseRepository):
-    """Repositorio para tabla metrics y métricas relacionadas"""
+class MetricsRepository(BaseRepository, IMetricsRepository):
+    """
+    Repositorio para tabla metrics y métricas relacionadas.
+    Implementa IMetricsRepository para cumplir con arquitectura limpia.
+    """
     
     def get_total_records(self) -> int:
         query = "SELECT COUNT(*) as count FROM metrics"
@@ -32,25 +37,25 @@ class MetricsRepository(BaseRepository):
         """
         Obtiene serie temporal de una métrica
         """
-        query_parts = ["SELECT fecha, valor_gwh FROM metrics WHERE metrica = ?"]
+        query_parts = ["SELECT fecha, valor_gwh FROM metrics WHERE metrica = %s"]
         params = [metric_id]
 
         # Filtro de unidad opcional
         if unit:
-            query_parts.append("AND unidad = ?")
+            query_parts.append("AND unidad = %s")
             params.append(unit)
             
         # Filtro de entidad opcional
         if entity:
-            query_parts.append("AND entidad = ?")
+            query_parts.append("AND entidad = %s")
             params.append(entity)
 
         # Filtros de fecha
         if end_date:
-            query_parts.append("AND fecha BETWEEN ? AND ?")
+            query_parts.append("AND fecha BETWEEN %s AND %s")
             params.extend([start_date, end_date])
         else:
-            query_parts.append("AND fecha >= ?")
+            query_parts.append("AND fecha >= %s")
             params.append(start_date)
         
         # Ordenamiento
@@ -58,7 +63,7 @@ class MetricsRepository(BaseRepository):
 
         # Limite
         if limit:
-            query_parts.append("LIMIT ?")
+            query_parts.append("LIMIT %s")
             params.append(limit)
         
         query = " ".join(query_parts)
@@ -77,12 +82,12 @@ class MetricsRepository(BaseRepository):
         if not metrics_list:
             return None
             
-        placeholders = ','.join(['?'] * len(metrics_list))
+        placeholders = ','.join(['%s'] * len(metrics_list))
         query = f"""
             SELECT fecha, metrica, AVG(valor_gwh) as valor
             FROM metrics
             WHERE metrica IN ({placeholders})
-            AND fecha BETWEEN ? AND ?
+            AND fecha BETWEEN %s AND %s
             GROUP BY fecha, metrica
             ORDER BY fecha
         """
@@ -98,7 +103,7 @@ class MetricsRepository(BaseRepository):
              SELECT metrica, COUNT(*) as records,
                  MIN(fecha) as min_date, MAX(fecha) as max_date
             FROM metrics
-             WHERE fecha BETWEEN ? AND ?
+             WHERE fecha BETWEEN %s AND %s
              GROUP BY metrica
             ORDER BY records DESC
         """
@@ -110,7 +115,7 @@ class MetricsRepository(BaseRepository):
             query = """
                 SELECT fecha, valor_gwh, recurso, entidad
                 FROM metrics
-                WHERE metrica = ? AND entidad = ? AND recurso = ? AND fecha BETWEEN ? AND ?
+                WHERE metrica = %s AND entidad = %s AND recurso = %s AND fecha BETWEEN %s AND %s
                 ORDER BY fecha ASC
             """
             return self.execute_dataframe(query, (metric_id, entity, resource, start_date, end_date))
@@ -118,7 +123,7 @@ class MetricsRepository(BaseRepository):
             query = """
                 SELECT fecha, valor_gwh, recurso, entidad
                 FROM metrics
-                WHERE metrica = ? AND entidad = ? AND fecha BETWEEN ? AND ?
+                WHERE metrica = %s AND entidad = %s AND fecha BETWEEN %s AND %s
                 ORDER BY fecha ASC
             """
             return self.execute_dataframe(query, (metric_id, entity, start_date, end_date))
@@ -145,12 +150,12 @@ class MetricsRepository(BaseRepository):
     def get_hourly_data(self, metric_id: str, entity_type: str, date_str: str) -> pd.DataFrame:
         """Obtiene datos horarios de la tabla metrics_hourly"""
         # Fix: use correct column names (metrica, entidad, fecha)
-        query = "SELECT * FROM metrics_hourly WHERE metrica = ? AND entidad = ? AND fecha = ?"
+        query = "SELECT * FROM metrics_hourly WHERE metrica = %s AND entidad = %s AND fecha = %s"
         return self.execute_dataframe(query, (metric_id, entity_type, date_str))
 
     def get_catalogue_mapping(self, catalogue_name: str) -> Dict[str, str]:
         """Obtiene diccionario {codigo: nombre} de un catálogo"""
-        query = "SELECT codigo, nombre FROM catalogos WHERE catalogo = ?"
+        query = "SELECT codigo, nombre FROM catalogos WHERE catalogo = %s"
         df = self.execute_dataframe(query, (catalogue_name,))
         if df is not None and not df.empty:
             return dict(zip(df['codigo'], df['nombre']))

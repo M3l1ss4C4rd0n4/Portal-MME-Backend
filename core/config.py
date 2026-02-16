@@ -5,7 +5,7 @@ Usa Pydantic Settings para validación y gestión de variables de entorno
 import os
 import multiprocessing
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -168,6 +168,12 @@ class Settings(BaseSettings):
         description="Modelo de backup en OpenRouter"
     )
     
+    # GNews API (noticias del sector)
+    GNEWS_API_KEY: str = Field(
+        default="",
+        description="API Key de GNews (gnews.io) para noticias del sector"
+    )
+    
     # Configuración de IA
     AI_MAX_TOKENS: int = Field(
         default=2000,
@@ -312,16 +318,11 @@ class Settings(BaseSettings):
     )
     
     # ═══════════════════════════════════════════════════════════
-    # INTEGRACIÓN API REST (preparado para futuro)
+    # API REST - FastAPI
     # ═══════════════════════════════════════════════════════════
     
-    API_ENERGIA_URL: str = Field(
-        default="http://localhost:3000",
-        description="URL del API REST de energía"
-    )
-    
     API_ENABLED: bool = Field(
-        default=False,
+        default=True,
         description="Habilitar API REST (FastAPI)"
     )
     
@@ -332,8 +333,50 @@ class Settings(BaseSettings):
     
     API_DOCS_ENABLED: bool = Field(
         default=True,
-        description="Habilitar documentación Swagger"
+        description="Habilitar documentación Swagger/ReDoc"
     )
+    
+    # Seguridad de API
+    API_KEY_ENABLED: bool = Field(
+        default=True,
+        description="Habilitar validación de API Key"
+    )
+    
+    API_KEY: str = Field(
+        default="mme-portal-energetico-2026-secret-key",
+        description="API Key principal para autenticación"
+    )
+    
+    API_KEYS_WHITELIST: str = Field(
+        default="",
+        description="Lista de API Keys válidas separadas por comas (adicionales a API_KEY)"
+    )
+    
+    @property
+    def api_keys_list(self) -> List[str]:
+        """Lista de API Keys válidas"""
+        keys = [self.API_KEY]  # Siempre incluir la API Key principal
+        if self.API_KEYS_WHITELIST:
+            keys.extend([key.strip() for key in self.API_KEYS_WHITELIST.split(",") if key.strip()])
+        return keys
+    
+    API_RATE_LIMIT: str = Field(
+        default="100/minute",
+        description="Límite de requests por minuto (formato: 'N/period')"
+    )
+    
+    API_CORS_ORIGINS_STR: str = Field(
+        default="*",
+        description="Orígenes CORS permitidos (separados por comas)",
+        alias="API_CORS_ORIGINS"
+    )
+    
+    @property
+    def API_CORS_ORIGINS(self) -> List[str]:
+        """Lista de orígenes CORS permitidos"""
+        if self.API_CORS_ORIGINS_STR == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.API_CORS_ORIGINS_STR.split(",") if origin.strip()]
     
     # ═══════════════════════════════════════════════════════════
     # CONFIGURACIÓN DE PYDANTIC

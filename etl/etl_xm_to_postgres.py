@@ -11,6 +11,8 @@ Ejecución:
     Automático: Cron 3×/día (06:30, 12:30, 20:30)
     Manual: python3 etl/etl_xm_to_postgres.py
     Manual (sin timeout): python3 etl/etl_xm_to_postgres.py --sin-timeout
+    
+NOTA: Todos los datos se almacenan en PostgreSQL (NO SQLite)
 """
 
 import sys
@@ -132,7 +134,7 @@ def convertir_unidades(df, metric, conversion_type):
 
 def poblar_catalogo(obj_api, catalogo_name: str) -> int:
     """
-    Consulta y guarda un catálogo de XM en SQLite (ListadoRecursos, ListadoEmbalses, etc.)
+    Consulta y guarda un catálogo de XM en PostgreSQL (ListadoRecursos, ListadoEmbalses, etc.)
     Los catálogos son datos estáticos/semi-estáticos que mapean códigos a nombres.
     
     Args:
@@ -222,9 +224,9 @@ def poblar_catalogo(obj_api, catalogo_name: str) -> int:
             logging.warning(f"⚠️ {catalogo_name}: No se pudieron extraer registros válidos")
             return 0
         
-        # Guardar en SQLite
+        # Guardar en PostgreSQL
         registros_guardados = db_manager.upsert_catalogo_bulk(catalogo_name, registros)
-        logging.info(f"✅ {catalogo_name}: {registros_guardados} registros guardados en SQLite")
+        logging.info(f"✅ {catalogo_name}: {registros_guardados} registros guardados en PostgreSQL")
         
         return registros_guardados
         
@@ -237,7 +239,7 @@ def poblar_catalogo(obj_api, catalogo_name: str) -> int:
 
 def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha_inicio_custom=None, fecha_fin_custom=None):
     """
-    Consulta API XM y popula SQLite para una métrica
+    Consulta API XM y popula PostgreSQL para una métrica
     
     Args:
         obj_api: Objeto ReadDB de pydataxm
@@ -368,11 +370,22 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
             fecha = str(row['Date'])[:10]  # 'YYYY-MM-DD'
             valor_gwh = float(row['Value'])
             
-            # VALIDACIÓN: Rechazar DemaCome con valores anormalmente bajos
-            # Threshold reducido de 100 a 10 GWh para permitir datos parciales válidos
-            if metric == 'DemaCome' and entity == 'Sistema' and valor_gwh < 10:
-                logging.warning(f"⚠️  {metric}/{entity} ({fecha}): Valor {valor_gwh:.2f} GWh muy bajo, RECHAZADO (posible dato incompleto de API XM)")
-                continue  # Saltar este registro
+            # VALIDACIÓN MEJORADA: Rechazar DemaCome/Sistema con valores anormales
+            # La demanda nacional DEBE estar entre 150-350 GWh/día
+            if metric == 'DemaCome' and entity == 'Sistema':
+                if valor_gwh < 150:
+                    logging.error(f"❌ DATO PARCIAL/INCOMPLETO RECHAZADO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh (esperado: 150-350 GWh/día)")
+                    continue  # NO insertar datos parciales
+                if valor_gwh > 350:
+                    logging.warning(f"⚠️  VALOR ALTO SOSPECHOSO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh (revisar)")
+            
+            # VALIDACIÓN: Gene/Sistema debe estar en rango razonable
+            if metric == 'Gene' and entity == 'Sistema':
+                if valor_gwh < 100:
+                    logging.error(f"❌ DATO PARCIAL RECHAZADO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh (esperado: 100-400 GWh/día)")
+                    continue
+                if valor_gwh > 400:
+                    logging.warning(f"⚠️  VALOR ALTO SOSPECHOSO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh")
             
             # VALIDACIÓN: Para DemaCome/DemaReal por Agente, rechazar valores muy bajos (probablemente errores)
             if metric in ['DemaCome', 'DemaReal'] and entity == 'Agente' and valor_gwh < 0.001:
@@ -418,18 +431,24 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
                         logging.warning(f"⚠️  Embalse sin mapeo: '{recurso}' no encontrado en catálogo")
                         # Mantener el nombre original si no se encuentra código
             
+            # VALIDACIÓN: Rechazar códigos genéricos o vacíos
+            if entity in ['Recurso', 'Agente', 'Embalse', 'Rio']:
+                if recurso is None or str(recurso).strip().upper() in ['RECURSO', 'AGENTE', 'EMBALSE', 'RIO', '', 'NULL', 'NONE']:
+                    logging.warning(f"⚠️  Código genérico/vacío RECHAZADO: {metric}/{entity} - recurso='{recurso}'")
+                    continue  # Saltar este registro
+            
             # FIX DUPLICADOS: Para entidad=Sistema, si recurso=None, usar placeholder
-            # Esto evita que SQLite inserte múltiples NULL (no los considera iguales en UNIQUE)
+            # Esto evita que PostgreSQL inserte múltiples NULL en constraint UNIQUE
             if entity == 'Sistema' and recurso is None:
                 recurso = '_SISTEMA_'
             
-            # Detectar unidad correcta según métrica
-            if 'Prec' in metric or 'Cost' in metric:
-                unidad = '$/kWh'
-            elif 'Dispo' in metric:
-                unidad = 'MW'
-            else:
-                unidad = 'GWh'
+            # Detectar unidad correcta usando mapeo explícito
+            from etl.config_metricas import UNIDADES_POR_METRICA
+            unidad = UNIDADES_POR_METRICA.get(metric, 'GWh')  # Default GWh si no está mapeada
+            
+            # Log si la métrica no tiene mapeo explícito
+            if metric not in UNIDADES_POR_METRICA:
+                logging.debug(f"⚠️  Métrica sin mapeo de unidad: {metric} → usando 'GWh' por defecto")
             
             metrics_to_insert.append((
                 fecha,
@@ -440,10 +459,10 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
                 unidad
             ))
         
-        # Insertar en SQLite (bulk)
+        # Insertar en PostgreSQL (bulk)
         if metrics_to_insert:
             total_insertados = db_manager.upsert_metrics_bulk(metrics_to_insert)
-            logging.info(f"✅ {metric}/{entity}: {total_insertados} registros guardados en SQLite")
+            logging.info(f"✅ {metric}/{entity}: {total_insertados} registros guardados en PostgreSQL")
         
         # =========================================================================
         # GUARDAR DATOS HORARIOS (si existen columnas Values_Hour01-24)
@@ -511,7 +530,7 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
 
 def ejecutar_etl(usar_timeout=True, fecha_inicio_custom=None, fecha_fin_custom=None):
     """
-    Ejecuta ETL completo: consulta API XM y popula SQLite
+    Ejecuta ETL completo: consulta API XM y popula PostgreSQL
     
     Args:
         usar_timeout: Si False, espera indefinidamente en API lenta
@@ -524,7 +543,7 @@ def ejecutar_etl(usar_timeout=True, fecha_inicio_custom=None, fecha_fin_custom=N
     inicio_global = time.time()
     
     logging.info("╔══════════════════════════════════════════════════════════════╗")
-    logging.info("║       ETL: Portal Energético MME (XM API → SQLite)          ║")
+    logging.info("║    ETL: Portal Energético MME (XM API → PostgreSQL)         ║")
     logging.info("╚══════════════════════════════════════════════════════════════╝")
     logging.info(f"Inicio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
@@ -540,9 +559,15 @@ def ejecutar_etl(usar_timeout=True, fecha_inicio_custom=None, fecha_fin_custom=N
         return {'exito': False, 'error': str(e)}
     
     # Verificar base de datos
-    if not db_manager.test_connection():
-        logging.error("❌ Error de conexión a SQLite")
-        return {'exito': False, 'error': 'Conexión SQLite fallida'}
+    try:
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+        logging.info("✅ Conexión a PostgreSQL verificada")
+    except Exception as e:
+        logging.error(f"❌ Error de conexión a PostgreSQL: {e}")
+        return {'exito': False, 'error': f'Conexión PostgreSQL fallida: {e}'}
     
     # Estadísticas
     stats = {
@@ -643,7 +668,7 @@ def ejecutar_etl(usar_timeout=True, fecha_inicio_custom=None, fecha_fin_custom=N
 
 if __name__ == "__main__":
     # Parse argumentos
-    parser = argparse.ArgumentParser(description='ETL: XM API → SQLite')
+    parser = argparse.ArgumentParser(description='ETL: XM API → PostgreSQL')
     parser.add_argument(
         '--sin-timeout',
         action='store_true',

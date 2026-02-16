@@ -1,21 +1,35 @@
 """
-Servicio de dominio para métricas
-Lógica de negocio que usa repositorios
+Servicio de dominio para métricas.
+Lógica de negocio que usa repositorios.
+Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)
 """
 
 from typing import Optional, List, Dict, Any
 import pandas as pd
 from datetime import date, datetime
 
+from domain.interfaces.repositories import IMetricsRepository
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
-from infrastructure.external import xm_service
+from infrastructure.logging.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class MetricsService:
-    """Servicio de métricas"""
+    """
+    Servicio de métricas con inyección de dependencias.
+    Depende de IMetricsRepository (interfaz), no de implementación concreta.
+    """
     
-    def __init__(self, repo: Optional[MetricsRepository] = None):
-        self.repo = repo or MetricsRepository()
+    def __init__(self, repository: Optional[IMetricsRepository] = None):
+        """
+        Inicializa el servicio con inyección de dependencias opcional.
+        
+        Args:
+            repository: Implementación de IMetricsRepository. 
+                       Si es None, usa MetricsRepository() por defecto.
+        """
+        self.repo = repository if repository is not None else MetricsRepository()
     
     def get_latest_date(self) -> Optional[str]:
         """Obtiene la fecha más reciente de datos"""
@@ -60,36 +74,49 @@ class MetricsService:
         # Renombrar columnas existentes
         df = df.rename(columns=col_map)
         
-        # 2. Validar existencia de columnas obligatorias
+        # 2. Caso especial: Datos horarios de API XM (Values_Hour01, Values_Hour02, etc)
+        if 'Date' in df.columns and 'Value' not in df.columns:
+            hour_cols = [col for col in df.columns if col.startswith('Values_Hour')]
+            if hour_cols:
+                # Calcular promedio de todas las horas como 'Value'
+                df['Value'] = df[hour_cols].mean(axis=1)
+        
+        # 3. Validar existencia de columnas obligatorias
         if 'Date' not in df.columns or 'Value' not in df.columns:
-            # Caso especial: a veces la API devuelve 'Values_code' o similar, pero si no hay Value claro
-            # intentamos inferir o loggear error.
-            # Verificamos si solo faltó el rename
-            pass
+            print(f"⚠️ [MetricsService] Error de normalización: columnas faltantes. Disponible: {df.columns.tolist()}")
+            return pd.DataFrame(columns=['Date', 'Value'])
             
-        # 3. Asegurar tipos de datos
+        # 4. Asegurar tipos de datos
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         
         if 'Value' in df.columns:
             df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
             
-        # 4. Si después de todo faltan columnas, retornar vacío seguro
-        if 'Date' not in df.columns or 'Value' not in df.columns:
-            print(f"⚠️ [MetricsService] Error de normalización: columnas faltantes. Disponible: {df.columns.tolist()}")
-            return pd.DataFrame(columns=['Date', 'Value'])
-            
         return df
 
     def get_metrics_metadata(self) -> pd.DataFrame:
         """
-        Obtiene metadatos de todas las métricas disponibles (desde XM API o caché).
-        Retorna DataFrame con columnas: MetricId, MetricName, Entity, etc.
+        Obtiene metadatos de todas las métricas disponibles desde PostgreSQL.
+        Retorna DataFrame con columnas compatibles: MetricId, MetricName, Entity
         """
-        api = xm_service.get_objetoAPI()
-        if api:
-            return api.get_collections()
-        return pd.DataFrame()
+        # Consultar métricas únicas en la base de datos
+        query = """
+            SELECT DISTINCT 
+                metrica as "MetricId",
+                metrica as "MetricName",
+                entidad as "Entity",
+                COUNT(*) as "RecordCount"
+            FROM metrics
+            GROUP BY metrica, entidad
+            ORDER BY metrica, entidad;
+        """
+        try:
+            df = self.repo.execute_dataframe(query)
+            return df
+        except Exception as e:
+            logger.error(f"Error obteniendo metadata de métricas: {e}")
+            return pd.DataFrame()
 
     def get_metric_series_hybrid(
         self,
@@ -99,9 +126,9 @@ class MetricsService:
         end_date: str
     ) -> pd.DataFrame:
         """
-        Obtiene serie temporal intentando primero DB y luego API XM si es necesario.
+        Obtiene serie temporal SOLO desde PostgreSQL (arquitectura robusta).
+        Eliminado fallback a API - todos los datos deben estar en BD.
         """
-        # 1. Intentar DB primero (rápido)
         try:
             df = self.repo.get_metric_data_by_entity(metric_id, entity, start_date, end_date)
             
@@ -113,13 +140,14 @@ class MetricsService:
                     # Esto evita que el frontend divida por 1,000,000 nuevamente
                     df_norm['valor_gwh'] = df_norm['Value']
                     return df_norm
+            
+            # Si no hay datos, retornar DataFrame vacío
+            logger.warning(f"⚠️ No hay datos en PostgreSQL para {metric_id}/{entity} ({start_date} a {end_date})")
+            return pd.DataFrame(columns=['Date', 'Value'])
+            
         except Exception as e:
-            print(f"⚠️ [MetricsService] Error consultando SQLite: {e}")
-        
-        # 2. Fallback API XM
-        # Para mantener consistencia con "fetch_metric_data" que devuelve formato API:
-        df = xm_service.fetch_metric_data(metric_id, entity, start_date, end_date)
-        return self._normalize_time_series(df)
+            logger.error(f"❌ [MetricsService] Error consultando PostgreSQL: {e}")
+            return pd.DataFrame(columns=['Date', 'Value'])
     
     def get_metric_series_by_entity(
         self,

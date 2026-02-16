@@ -1844,3 +1844,43 @@ body > div:first-child {
         margin-right: 0 !important;
     }
 }
+
+/* ============================================
+   FIX: Fila TOTAL en modal detalle horario
+   ============================================ */
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner tr td[data-dash-column*="Hora"] {
+    /* Permitir que el estilo inline funcione */
+}
+
+/* Forzar color blanco en fila TOTAL - mayor especificidad */
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner tbody tr td {
+    /* Permitir override de color inline */
+}
+
+/* Override específico para cualquier celda con fondo azul (fila TOTAL) */
+.dash-table-container td[style*="background-color: rgb(13, 110, 253)"],
+.dash-table-container td[style*="background-color: #0d6efd"],
+.dash-table-container td[style*="backgroundColor: #0d6efd"] {
+    color: white !important;
+}
+/* ============================================
+   FIX DEFINITIVO: Fila TOTAL con texto blanco
+   ============================================ */
+
+/* Sobrescribir CUALQUIER color en celdas con fondo azul oscuro */
+.dash-table-container .dash-spreadsheet-container table tbody tr td[style*="background"] {
+    color: inherit;
+}
+
+/* Forzar blanco en TODO lo que tenga fondo azul primario */
+.dash-table-container table td[style*="#0d6efd"],
+.dash-table-container table td[style*="rgb(13, 110, 253)"],
+.dash-table-container table td[style*="rgb(13,110,253)"] {
+    color: #ffffff !important;
+}
+
+/* Por si el div interno tiene el color */
+.dash-table-container table td[style*="#0d6efd"] div,
+.dash-table-container table td[style*="rgb(13, 110, 253)"] div {
+    color: #ffffff !important;
+}

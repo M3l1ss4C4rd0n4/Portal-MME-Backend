@@ -49,7 +49,7 @@ class IndicatorsService:
             query = """
                 SELECT fecha, valor_gwh as valor, unidad
                 FROM metrics
-                WHERE metrica = ? AND entidad = ?
+                WHERE metrica = %s AND entidad = %s
                 ORDER BY fecha DESC
                 LIMIT 2
             """
@@ -151,9 +151,9 @@ class IndicatorsService:
         query = """
             SELECT fecha, valor_gwh as valor
             FROM metrics
-            WHERE metrica = ? AND entidad = ?
+            WHERE metrica = %s AND entidad = %s
             ORDER BY fecha DESC
-            LIMIT ?
+            LIMIT %s
         """
         df_history = db_manager.query_df(query, params=(metric_id, entity, days))
         

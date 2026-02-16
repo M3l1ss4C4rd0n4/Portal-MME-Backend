@@ -4,28 +4,48 @@
 ║                                                                               ║
 ║  Servicio de dominio para gestionar datos de generación eléctrica            ║
 ║  Migrado completamente a PostgreSQL (tabla: metrics)                         ║
+║  Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)        ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
+from domain.interfaces.repositories import IMetricsRepository
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_date(d: Union[date, str]) -> date:
+    """Convierte string a date si es necesario"""
+    if isinstance(d, str):
+        return datetime.strptime(d, '%Y-%m-%d').date()
+    return d
 
 
 class GenerationService:
     """
     Servicio de dominio para gestionar datos de generación eléctrica.
     Actúa como fachada sobre PostgreSQL a través de MetricsRepository.
+    
+    Implementa Inyección de Dependencias:
+    - Acepta IMetricsRepository como parámetro opcional
+    - Si no se provee, usa MetricsRepository() por defecto (backward compatible)
     """
 
-    def __init__(self):
-        self.repo = MetricsRepository()
+    def __init__(self, repository: Optional[IMetricsRepository] = None):
+        """
+        Inicializa el servicio con inyección de dependencias opcional.
+        
+        Args:
+            repository: Implementación de IMetricsRepository. 
+                       Si es None, usa MetricsRepository() por defecto.
+        """
+        self.repo = repository if repository is not None else MetricsRepository()
 
     def get_daily_generation_system(self, start_date: date, end_date: date) -> pd.DataFrame:
         """
@@ -39,6 +59,9 @@ class GenerationService:
             DataFrame con columnas: fecha, valor_gwh
         """
         try:
+            start_date = _ensure_date(start_date)
+            end_date = _ensure_date(end_date)
+            
             df = self.repo.get_metric_data_by_entity(
                 metric_id='Gene',
                 entity='Sistema',
@@ -59,6 +82,7 @@ class GenerationService:
     def get_resources_by_type(self, source_type: str = 'EOLICA') -> pd.DataFrame:
         """
         Obtiene listado de recursos (plantas) filtrados por tipo de fuente.
+        Consulta la tabla catalogos para obtener el tipo real de cada recurso.
         
         Args:
             source_type: 'HIDRAULICA', 'TERMICA', 'EOLICA', 'SOLAR', 'BIOMASA', 'TODAS'
@@ -67,33 +91,39 @@ class GenerationService:
             DataFrame con columnas: recurso, tipo_clasificado
         """
         try:
-            # Obtener recursos únicos de Gene/Recurso
-            query = """
-                SELECT DISTINCT recurso
-                FROM metrics
-                WHERE metrica = 'Gene' 
-                AND entidad = 'Recurso'
-                AND recurso IS NOT NULL
-                ORDER BY recurso
-            """
+            # Mapear BIOMASA a COGENERADOR (así está en la tabla catalogos)
+            tipo_consulta = 'COGENERADOR' if source_type.upper() == 'BIOMASA' else source_type.upper()
+            
+            # Obtener recursos del catálogo con su tipo
+            if source_type.upper() == 'TODAS':
+                query = """
+                    SELECT codigo as recurso, tipo as tipo_clasificado
+                    FROM catalogos
+                    WHERE catalogo = 'ListadoRecursos'
+                    AND tipo IS NOT NULL
+                    ORDER BY codigo
+                """
+            else:
+                query = f"""
+                    SELECT codigo as recurso, tipo as tipo_clasificado
+                    FROM catalogos
+                    WHERE catalogo = 'ListadoRecursos'
+                    AND tipo = '{tipo_consulta}'
+                    ORDER BY codigo
+                """
             
             df_recursos = self.repo.execute_dataframe(query)
             
             if df_recursos is None or df_recursos.empty:
-                logger.warning("⚠️ No se encontraron recursos en PostgreSQL")
+                logger.warning(f"⚠️ No se encontraron recursos de tipo {source_type} en catalogos")
                 return pd.DataFrame()
             
-            # Clasificar recursos por tipo basándose en su código
-            df_recursos['tipo_clasificado'] = df_recursos['recurso'].apply(self._classify_resource_type)
+            # Si es BIOMASA, renombrar el tipo a BIOMASA en el resultado
+            if source_type.upper() == 'BIOMASA':
+                df_recursos['tipo_clasificado'] = 'BIOMASA'
             
-            # Filtrar por tipo solicitado
-            if source_type.upper() == 'TODAS':
-                filtered = df_recursos
-            else:
-                filtered = df_recursos[df_recursos['tipo_clasificado'] == source_type.upper()]
-            
-            logger.info(f"📋 {len(filtered)} recursos de tipo {source_type} (de {len(df_recursos)} totales)")
-            return filtered
+            logger.info(f"📋 {len(df_recursos)} recursos de tipo {source_type} encontrados en catalogos")
+            return df_recursos
             
         except Exception as e:
             logger.error(f"❌ Error obteniendo recursos por tipo: {e}")
@@ -169,16 +199,44 @@ class GenerationService:
                 ORDER BY fecha, recurso
             """.format(','.join(['%s'] * len(target_codes)))
             
-            params = [start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')] + target_codes
+            params = [_ensure_date(start_date).strftime('%Y-%m-%d'), _ensure_date(end_date).strftime('%Y-%m-%d')] + target_codes
             df_gene = self.repo.execute_dataframe(query, tuple(params))
             
             if df_gene is None or df_gene.empty:
                 logger.warning(f"⚠️ Sin datos de generación para {source_type} en {start_date} - {end_date}")
                 return pd.DataFrame()
 
-            # 3. Agregar columnas Tipo y Planta
-            df_gene['tipo_clasificado'] = df_gene['recurso'].apply(self._classify_resource_type)
+            # 3. Hacer merge con el catálogo para obtener el tipo real
+            df_gene = df_gene.merge(
+                resources_df[['recurso', 'tipo_clasificado']], 
+                on='recurso', 
+                how='left'
+            )
+            
+            # Usar el tipo que viene del parámetro para los que no hicieron match
+            df_gene['tipo_clasificado'] = df_gene['tipo_clasificado'].fillna(source_type.upper())
+            
+            # Agregar columna Planta
             df_gene['planta'] = df_gene['recurso']  # Usar código como nombre por ahora
+            
+            # ✅ FIX: Capitalizar el tipo para que coincida con el filtro del tablero
+            def capitalizar_tipo(tipo_str):
+                """Convierte HIDRAULICA → Hidráulica, TERMICA → Térmica, etc."""
+                tipo_upper = str(tipo_str).upper()
+                if tipo_upper == 'HIDRAULICA':
+                    return 'Hidráulica'
+                elif tipo_upper == 'TERMICA':
+                    return 'Térmica'
+                elif tipo_upper == 'EOLICA':
+                    return 'Eólica'
+                elif tipo_upper == 'SOLAR':
+                    return 'Solar'
+                elif tipo_upper == 'BIOMASA':
+                    return 'Biomasa'
+                else:
+                    return tipo_str.capitalize()
+            
+            df_gene['tipo_clasificado'] = df_gene['tipo_clasificado'].apply(capitalizar_tipo)
             
             # Renombrar columnas para compatibilidad
             df_gene = df_gene.rename(columns={
@@ -303,4 +361,86 @@ class GenerationService:
             
         except Exception as e:
             logger.error(f"❌ Error obteniendo resumen de generación: {e}")
+            return pd.DataFrame()
+
+    def get_generation_by_source(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """
+        Obtiene generación desagregada por TODOS los tipos de fuente.
+        
+        Args:
+            start_date: Fecha inicial
+            end_date: Fecha final
+        
+        Returns:
+            DataFrame con columnas: fecha, tipo, valor_gwh
+        """
+        try:
+            tipos = ['HIDRAULICA', 'TERMICA', 'EOLICA', 'SOLAR', 'COGENERADOR']
+            resultados = []
+            
+            for tipo in tipos:
+                df = self.get_aggregated_generation_by_type(start_date, end_date, tipo)
+                if not df.empty:
+                    # Agrupar por fecha
+                    df_grouped = df.groupby('Fecha').agg({
+                        'Generacion_GWh': 'sum'
+                    }).reset_index()
+                    df_grouped['tipo'] = tipo
+                    resultados.append(df_grouped)
+            
+            if resultados:
+                df_final = pd.concat(resultados, ignore_index=True)
+                return df_final.rename(columns={
+                    'Fecha': 'fecha',
+                    'Generacion_GWh': 'valor_gwh'
+                })
+            
+            return pd.DataFrame()
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo generación por fuente: {e}")
+            return pd.DataFrame()
+
+    def get_generation_mix(self, target_date: date) -> pd.DataFrame:
+        """
+        Calcula el mix energético para una fecha específica.
+        Muestra el porcentaje de participación de cada fuente.
+        
+        Args:
+            target_date: Fecha específica
+        
+        Returns:
+            DataFrame con columnas: tipo, generacion_gwh, porcentaje
+        """
+        try:
+            # Obtener generación por tipo para la fecha
+            tipos = ['HIDRAULICA', 'TERMICA', 'EOLICA', 'SOLAR', 'COGENERADOR']
+            data = []
+            
+            for tipo in tipos:
+                df = self.get_aggregated_generation_by_type(target_date, target_date, tipo)
+                if not df.empty:
+                    total = df['Generacion_GWh'].sum()
+                    if total > 0:
+                        data.append({
+                            'tipo': tipo,
+                            'generacion_gwh': total
+                        })
+            
+            if not data:
+                logger.warning(f"⚠️ No se encontraron datos de mix para {target_date}")
+                return pd.DataFrame()
+            
+            # Crear DataFrame
+            df_mix = pd.DataFrame(data)
+            
+            # Calcular porcentajes
+            total_generacion = df_mix['generacion_gwh'].sum()
+            df_mix['porcentaje'] = (df_mix['generacion_gwh'] / total_generacion * 100)
+            
+            logger.info(f"✅ Mix energético calculado para {target_date}: {len(df_mix)} fuentes")
+            return df_mix.sort_values('generacion_gwh', ascending=False)
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculando mix energético: {e}")
             return pd.DataFrame()

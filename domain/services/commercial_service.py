@@ -1,6 +1,7 @@
 """
-Servicio de Dominio para Comercialización de Energía
-Gestiona precios de bolsa, contratos bilaterales y liquidaciones
+Servicio de Dominio para Comercialización de Energía.
+Gestiona precios de bolsa, contratos bilaterales y liquidaciones.
+Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)
 """
 
 import pandas as pd
@@ -8,6 +9,7 @@ from datetime import datetime, date
 from typing import Optional, List, Dict
 import logging
 
+from domain.interfaces.repositories import ICommercialRepository
 from infrastructure.database.repositories.commercial_repository import CommercialRepository
 from infrastructure.external.xm_service import XMService
 from core.exceptions import DataNotFoundError
@@ -18,11 +20,19 @@ logger = logging.getLogger(__name__)
 class CommercialService:
     """
     Servicio de dominio para gestión de datos de comercialización.
+    Implementa Inyección de Dependencias - Depende de ICommercialRepository.
     """
     
-    def __init__(self):
-        self.repository = CommercialRepository()
-        self.xm_service = XMService()
+    def __init__(self, repository: Optional[ICommercialRepository] = None, xm_service: Optional[XMService] = None):
+        """
+        Inicializa el servicio con inyección de dependencias opcional.
+        
+        Args:
+            repository: Implementación de ICommercialRepository. Si es None, usa CommercialRepository() por defecto.
+            xm_service: Servicio para API de XM. Si es None, usa XMService() por defecto.
+        """
+        self.repository = repository if repository is not None else CommercialRepository()
+        self.xm_service = xm_service if xm_service is not None else XMService()
     
     def get_date_range(self) -> tuple:
         """Obtiene rango de fechas disponible para precios"""
@@ -218,3 +228,53 @@ class CommercialService:
         
     def get_available_buyers(self):
         return self.repository.get_available_buyers()
+
+    def get_commercial_prices(self, start_date, end_date, agent: Optional[str] = None) -> pd.DataFrame:
+        """
+        Obtiene precios comerciales de energía.
+        
+        Args:
+            start_date: Fecha inicial
+            end_date: Fecha final
+            agent: Agente específico (opcional)
+        
+        Returns:
+            DataFrame con columnas: fecha, agente, precio ($/kWh)
+        """
+        try:
+            from datetime import date as date_type
+            
+            # Convertir fechas
+            if isinstance(start_date, date_type):
+                start_date_obj = start_date
+            else:
+                start_date_obj = pd.to_datetime(start_date).date()
+            
+            if isinstance(end_date, date_type):
+                end_date_obj = end_date
+            else:
+                end_date_obj = pd.to_datetime(end_date).date()
+            
+            # Usar método existente para obtener precios de bolsa
+            df = self.get_stock_price(start_date_obj, end_date_obj)
+            
+            if df.empty:
+                logger.warning("⚠️ No hay datos de precios comerciales")
+                return pd.DataFrame()
+            
+            # Adaptar formato para API
+            resultado = pd.DataFrame()
+            resultado['fecha'] = df['fecha']
+            resultado['precio'] = df['valor']
+            
+            if agent:
+                resultado['agente'] = agent
+            else:
+                resultado['agente'] = 'Sistema'
+            
+            logger.info(f"✅ {len(resultado)} registros de precios obtenidos")
+            return resultado
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo precios comerciales: {e}")
+            return pd.DataFrame()

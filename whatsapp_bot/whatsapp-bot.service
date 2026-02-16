@@ -1,0 +1,31 @@
+[Unit]
+Description=WhatsApp Bot - Portal Energético MME
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=admonctrlxm
+Group=admonctrlxm
+WorkingDirectory=/home/admonctrlxm/server/whatsapp_bot
+
+# Entorno
+Environment="PATH=/home/admonctrlxm/server/whatsapp_bot/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/home/admonctrlxm/server/whatsapp_bot/.env
+
+# Comando de inicio
+ExecStart=/home/admonctrlxm/server/whatsapp_bot/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
+
+# Restart automático
+Restart=always
+RestartSec=10
+
+# Logs
+StandardOutput=append:/home/admonctrlxm/server/whatsapp_bot/logs/service.log
+StandardError=append:/home/admonctrlxm/server/whatsapp_bot/logs/service.error.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

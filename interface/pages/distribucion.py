@@ -1055,6 +1055,10 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
     # Si se hizo click en la gráfica
     if trigger_id == 'grafica-lineas-demanda' and clickData:
         try:
+            logger.info("="*80)
+            logger.info("🚀 CALLBACK MOSTRAR_DETALLE_HORARIO EJECUTADO")
+            logger.info("="*80)
+            
             # Obtener datos del punto clickeado
             point_data = clickData['points'][0]
             fecha_seleccionada = point_data['x']
@@ -1066,13 +1070,28 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
             logger.info(f"🎯 Click en gráfica - Fecha: {fecha_str}")
             
             # =========================================================================
-            # OBTENER DATOS HORARIOS AGREGADOS DE SQLite (suma de todos los agentes)
+            # OBTENER DATOS HORARIOS AGREGADOS DE PostgreSQL (suma de todos los agentes)
             # =========================================================================
-            df_horas_come = db_manager.get_hourly_data_aggregated('DemaCome', 'Agente', fecha_str)
-            df_horas_real = db_manager.get_hourly_data_aggregated('DemaReal', 'Agente', fecha_str)
+            df_horas_come_raw = db_manager.get_hourly_data_aggregated('DemaCome', 'Agente', fecha_str)
+            df_horas_real_raw = db_manager.get_hourly_data_aggregated('DemaReal', 'Agente', fecha_str)
             
-            if df_horas_come.empty and df_horas_real.empty:
+            if df_horas_come_raw.empty and df_horas_real_raw.empty:
                 return False, html.Div("No hay datos horarios disponibles para esta fecha"), "Sin datos", ""
+            
+            # ✅ FIX: AGREGAR datos por hora (suma de todos los agentes)
+            if not df_horas_come_raw.empty:
+                logger.info(f"📥 DemaCome RAW: {len(df_horas_come_raw)} filas antes de agregar")
+                df_horas_come = df_horas_come_raw.groupby('hora')['valor_mwh'].sum().reset_index()
+                logger.info(f"✅ DemaCome AGREGADO: {len(df_horas_come)} filas, primer valor: {df_horas_come.iloc[0]['valor_mwh']:.2f} MWh")
+            else:
+                df_horas_come = pd.DataFrame()
+            
+            if not df_horas_real_raw.empty:
+                logger.info(f"📥 DemaReal RAW: {len(df_horas_real_raw)} filas antes de agregar")
+                df_horas_real = df_horas_real_raw.groupby('hora')['valor_mwh'].sum().reset_index()
+                logger.info(f"✅ DemaReal AGREGADO: {len(df_horas_real)} filas, primer valor: {df_horas_real.iloc[0]['valor_mwh']:.2f} MWh")
+            else:
+                df_horas_real = pd.DataFrame()
             
             # =========================================================================
             # CREAR DATAFRAME CON 24 HORAS
@@ -1106,6 +1125,8 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
             # Convertir MWh → GWh
             df_horas['DemaCome_GWh'] = df_horas['DemaCome_MWh'] / 1000
             df_horas['DemaReal_GWh'] = df_horas['DemaReal_MWh'] / 1000
+            
+            logger.info(f"🔢 Primeros valores en GWh - Hora 1: DemaCome={df_horas.iloc[0]['DemaCome_GWh']:.3f}, DemaReal={df_horas.iloc[0]['DemaReal_GWh']:.3f}")
             
             # =========================================================================
             # CALCULAR DIFERENCIA EN PORCENTAJE
@@ -1169,8 +1190,13 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
             
             # Crear tabla horaria
             tabla = dash_table.DataTable(
+                id='tabla-detalle-horario',
                 data=data_with_total,
                 columns=[{"name": col, "id": col} for col in df_tabla.columns],
+                css=[{
+                    'selector': '.dash-spreadsheet td.cell--selected',
+                    'rule': 'background-color: inherit !important;'
+                }],
                 style_cell={
                     'textAlign': 'left',
                     'padding': '12px',
@@ -1194,52 +1220,68 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
                         'backgroundColor': 'white'
                     },
                     {
-                        # Destacar fila TOTAL
-                        'if': {'filter_query': '{Hora} = "TOTAL"'},
-                        'backgroundColor': COLORS.get('primary', '#0d6efd'),
-                        'color': 'white',
-                        'fontWeight': 'bold'
-                    },
-                    {
-                        # Diferencia positiva en verde
+                        # Diferencia positiva en verde (solo si NO es fila TOTAL)
                         'if': {
-                            'filter_query': '{Diferencia (%)} contains "+"',
+                            'filter_query': '{Diferencia (%)} contains "+" && {Hora} != "TOTAL"',
                             'column_id': 'Diferencia (%)'
                         },
                         'color': COLORS.get('success', '#28a745'),
                         'fontWeight': 'bold'
                     },
                     {
-                        # Diferencia negativa en rojo
+                        # Diferencia negativa en rojo (solo si NO es fila TOTAL)
                         'if': {
-                            'filter_query': '{Diferencia (%)} contains "-"',
+                            'filter_query': '{Diferencia (%)} contains "-" && {Hora} != "TOTAL"',
                             'column_id': 'Diferencia (%)'
                         },
                         'color': COLORS.get('danger', '#dc3545'),
                         'fontWeight': 'bold'
                     },
                     {
-                        # Alinear columnas numéricas a la derecha
-                        'if': {'column_id': 'Demanda Comercial (GWh)'},
+                        # Alinear columnas numéricas a la derecha (excepto TOTAL)
+                        'if': {
+                            'column_id': 'Demanda Comercial (GWh)',
+                            'filter_query': '{Hora} != "TOTAL"'
+                        },
                         'textAlign': 'right'
                     },
                     {
-                        'if': {'column_id': 'Demanda Real (GWh)'},
+                        'if': {
+                            'column_id': 'Demanda Real (GWh)',
+                            'filter_query': '{Hora} != "TOTAL"'
+                        },
                         'textAlign': 'right'
                     },
                     {
-                        'if': {'column_id': 'Diferencia (%)'},
+                        'if': {
+                            'column_id': 'Diferencia (%)',
+                            'filter_query': '{Hora} != "TOTAL"'
+                        },
                         'textAlign': 'right'
                     },
                     {
-                        'if': {'column_id': 'Participación Horaria (%)'},
+                        'if': {
+                            'column_id': 'Participación Horaria (%)',
+                            'filter_query': '{Hora} != "TOTAL"'
+                        },
                         'textAlign': 'right'
                     },
                     {
-                        # Centrar columna Hora
-                        'if': {'column_id': 'Hora'},
+                        # Centrar columna Hora (excepto TOTAL)
+                        'if': {
+                            'column_id': 'Hora',
+                            'filter_query': '{Hora} != "TOTAL"'
+                        },
                         'textAlign': 'center',
                         'fontWeight': '500'
+                    },
+                    {
+                        # Fila TOTAL - fondo azul y letras blancas
+                        'if': {'filter_query': '{Hora} = "TOTAL"'},
+                        'backgroundColor': COLORS.get('primary', '#0d6efd'),
+                        'color': 'white',
+                        'fontWeight': 'bold',
+                        'textAlign': 'center'
                     }
                 ],
                 page_size=25,  # Mostrar todas las 24 horas + TOTAL sin scroll

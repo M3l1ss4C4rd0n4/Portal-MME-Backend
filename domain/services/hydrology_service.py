@@ -17,7 +17,7 @@ class HydrologyService:
     def __init__(self):
         pass
 
-    def get_reservas_hidricas(self, fecha: str) -> Tuple[Optional[float], Optional[float]]:
+    def get_reservas_hidricas(self, fecha: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
         """
         Calcula las reservas hídricas del SIN para una fecha específica.
         Delega en la función unificada de cálculo de volumen útil.
@@ -26,13 +26,14 @@ class HydrologyService:
             fecha: Fecha en formato 'YYYY-MM-DD'
             
         Returns:
-            tuple: (porcentaje, valor_GWh) o (None, None) si hay error
+            tuple: (porcentaje, valor_GWh, fecha_datos) o (None, None, None) si hay error
+                   fecha_datos es la fecha real del último dato disponible en BD (YYYY-MM-DD)
         """
         resultado = self.calcular_volumen_util_unificado(fecha)
         if resultado:
-            return resultado['porcentaje'], resultado['volumen_gwh']
+            return resultado['porcentaje'], resultado['volumen_gwh'], resultado.get('fecha_datos')
         else:
-            return None, None
+            return None, None, None
 
     def get_aportes_hidricos(self, fecha: str) -> Tuple[Optional[float], Optional[float]]:
         """
@@ -84,12 +85,13 @@ class HydrologyService:
                 num_rios_aportes = df_aportes['recurso'].nunique() if 'recurso' in df_aportes.columns else len(df_aportes)
                 logger.info(f"✅ Aportes: {num_rios_aportes} ríos, total {aportes_valor:.1f} GWh")
                 
-                # - Media histórica: Es un valor CONSTANTE por río (se repite cada día)
-                #   Tomar solo la PRIMERA FECHA y sumar por río
-                primera_fecha_media = df_media['fecha'].min()
-                df_media_un_dia = df_media[df_media['fecha'] == primera_fecha_media]
-                media_valor = df_media_un_dia['valor_gwh'].sum()
-                logger.info(f"✅ Media histórica: {len(df_media_un_dia)} ríos, total {media_valor:.1f} GWh")
+                # - Media histórica: Sumar TODOS los días y ríos del mismo rango
+                #   (La media se repite cada día, así que sumar N días da N × media_diaria,
+                #    lo cual es correcto porque aportes también suma N días)
+                media_valor = df_media['valor_gwh'].sum()
+                num_rios_media = df_media['recurso'].nunique() if 'recurso' in df_media.columns else len(df_media)
+                num_dias_media = df_media['fecha'].nunique() if 'fecha' in df_media.columns else 1
+                logger.info(f"✅ Media histórica: {num_rios_media} ríos, {num_dias_media} días, total {media_valor:.1f} GWh")
                 
                 if media_valor == 0:
                     logger.warning(f"Media histórica = 0 para {fecha}")
@@ -130,40 +132,45 @@ class HydrologyService:
             if not(df_vol is not None and df_cap is not None and fecha_vol == fecha_cap):
                 return None
 
-            # Obtener catálogo de embalses (caché inteligente)
-            today = datetime.now().strftime('%Y-%m-%d')
-            prev_day = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-            embalses_info, _ = obtener_datos_inteligente('ListadoEmbalses','Sistema', prev_day, today)
-            
-            # Mapeo de regiones
-            if embalses_info is not None and not embalses_info.empty:
-                embalses_info['Values_Name'] = embalses_info['Values_Name'].str.strip().str.upper()
-                embalses_info['Values_HydroRegion'] = embalses_info['Values_HydroRegion'].str.strip().str.upper()
-                embalse_region_dict = dict(zip(embalses_info['Values_Name'], embalses_info['Values_HydroRegion']))
-                
-                df_vol['Region'] = df_vol['Embalse'].map(embalse_region_dict)
-                df_cap['Region'] = df_cap['Embalse'].map(embalse_region_dict)
-            else:
-                return None
+            # Intentar obtener catálogo de embalses para mapeo de regiones
+            embalse_region_dict = {}
+            try:
+                # Primero intentar desde la tabla catalogos (fuente confiable)
+                df_catalogo = self.get_embalses()
+                if df_catalogo is not None and not df_catalogo.empty and 'region' in df_catalogo.columns:
+                    df_catalogo['embalse'] = df_catalogo['embalse'].str.strip().str.upper()
+                    df_catalogo['region'] = df_catalogo['region'].fillna('').str.strip().str.upper()
+                    embalse_region_dict = dict(zip(df_catalogo['embalse'], df_catalogo['region']))
+                    logger.debug(f"Catálogo de embalses cargado: {len(embalse_region_dict)} embalses")
+            except Exception as e_cat:
+                logger.warning(f"No se pudo cargar catálogo de embalses: {e_cat}")
 
-            # Filtros
-            if region:
+            # Asignar regiones si hay mapeo disponible
+            if embalse_region_dict:
+                df_vol['Region'] = df_vol['Embalse'].str.strip().str.upper().map(embalse_region_dict)
+                df_cap['Region'] = df_cap['Embalse'].str.strip().str.upper().map(embalse_region_dict)
+
+            # Filtro por región (solo si hay mapeo de regiones)
+            if region and embalse_region_dict:
                 reg_norm = region.strip().upper()
                 df_vol = df_vol[df_vol['Region'] == reg_norm]
                 df_cap = df_cap[df_cap['Region'] == reg_norm]
+            elif region and not embalse_region_dict:
+                logger.warning(f"Filtro por región '{region}' solicitado pero no hay catálogo de regiones disponible. Calculando total nacional.")
             
+            # Filtro por embalse específico
             if embalse:
                 emb_norm = embalse.strip().upper()
-                df_vol = df_vol[df_vol['Embalse'] == emb_norm]
-                df_cap = df_cap[df_cap['Embalse'] == emb_norm]
+                df_vol = df_vol[df_vol['Embalse'].str.strip().str.upper() == emb_norm]
+                df_cap = df_cap[df_cap['Embalse'].str.strip().str.upper() == emb_norm]
 
             if df_vol.empty or df_cap.empty:
                 return None
 
             # Cálculo final
-            # Misma lógica que el dashboard original: SQLite devuelve Wh, convertir a GWh (1e9)
-            total_vol = df_vol['Value'].sum() / 1e9 
-            total_cap = df_cap['Value'].sum() / 1e9
+            # Los datos de VoluUtilDiarEner y CapaUtilDiarEner ya vienen en GWh
+            total_vol = df_vol['Value'].sum()
+            total_cap = df_cap['Value'].sum()
             
             embalses_incluidos = list(set(df_vol['Embalse'].tolist()) & set(df_cap['Embalse'].tolist()))
 
@@ -191,3 +198,127 @@ class HydrologyService:
             except Exception:
                 continue
         return None
+
+    def get_aportes_diarios(self, start_date, end_date, reservoir: str = 'Sistema') -> pd.DataFrame:
+        """
+        Obtiene aportes hídricos diarios para un rango de fechas.
+        
+        Args:
+            start_date: Fecha inicial (date o str)
+            end_date: Fecha final (date o str)
+            reservoir: Embalse específico o 'Sistema' para total
+        
+        Returns:
+            DataFrame con columnas: fecha, valor (en m³/s o GWh-día según disponibilidad)
+        """
+        try:
+            from datetime import date as date_type
+            
+            # Convertir fechas
+            if isinstance(start_date, date_type):
+                start_str = start_date.strftime('%Y-%m-%d')
+            else:
+                start_str = str(start_date)
+            
+            if isinstance(end_date, date_type):
+                end_str = end_date.strftime('%Y-%m-%d')
+            else:
+                end_str = str(end_date)
+            
+            # Intentar obtener aportes energía (AporEner)
+            df, _ = obtener_datos_inteligente('AporEner', reservoir, start_str, end_str)
+            
+            if df is None or df.empty:
+                # Fallback: agregar por ríos si es Sistema
+                if reservoir == 'Sistema':
+                    df, _ = obtener_datos_desde_bd('AporEner', 'Rio', start_str, end_str)
+                    if df is not None and not df.empty:
+                        # Agrupar por fecha
+                        df = df.groupby('fecha').agg({'valor': 'sum'}).reset_index()
+            
+            if df is None or df.empty:
+                logger.warning(f"⚠️ Sin datos de aportes para {reservoir}")
+                return pd.DataFrame()
+            
+            # Asegurar que tenga las columnas correctas
+            if 'fecha' in df.columns and 'valor' in df.columns:
+                return df[['fecha', 'valor']]
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo aportes diarios: {e}")
+            return pd.DataFrame()
+
+    def get_embalses(self) -> pd.DataFrame:
+        """
+        Obtiene catálogo de embalses del SIN.
+        
+        Returns:
+            DataFrame con columnas: embalse, capacidad_util_gwh, rio, region
+        """
+        try:
+            from infrastructure.database.repositories.metrics_repository import MetricsRepository
+            repo = MetricsRepository()
+            
+            query = """
+                SELECT 
+                    codigo as embalse,
+                    CAST(valor_numerico as FLOAT) as capacidad_util_gwh,
+                    atributo1 as rio,
+                    atributo2 as region
+                FROM catalogos
+                WHERE catalogo = 'ListadoEmbalses'
+                AND codigo IS NOT NULL
+                ORDER BY codigo
+            """
+            
+            df = repo.execute_dataframe(query)
+            
+            if df is None or df.empty:
+                logger.warning("⚠️ No se encontraron embalses en catálogo")
+                return pd.DataFrame()
+            
+            logger.info(f"✅ {len(df)} embalses encontrados")
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo embalses: {e}")
+            return pd.DataFrame()
+
+    def get_energia_embalsada(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Obtiene energía embalsada del sistema.
+        
+        Returns:
+            DataFrame con columnas: fecha, valor (en GWh-día)
+        """
+        try:
+            from datetime import date as date_type
+            
+            # Convertir fechas
+            if isinstance(start_date, date_type):
+                start_str = start_date.strftime('%Y-%m-%d')
+            else:
+                start_str = str(start_date)
+            
+            if isinstance(end_date, date_type):
+                end_str = end_date.strftime('%Y-%m-%d')
+            else:
+                end_str = str(end_date)
+            
+            # Intentar DERTOVe (Energía Útil Almacenada)
+            df, _ = obtener_datos_inteligente('DERTOVe', 'Sistema', start_str, end_str)
+            
+            if df is None or df.empty:
+                logger.warning("⚠️ Sin datos de energía embalsada")
+                return pd.DataFrame()
+            
+            if 'fecha' in df.columns and 'valor' in df.columns:
+                return df[['fecha', 'valor']]
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo energía embalsada: {e}")
+            return pd.DataFrame()
