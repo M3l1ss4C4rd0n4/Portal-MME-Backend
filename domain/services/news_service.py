@@ -2,17 +2,23 @@
 Servicio de noticias del sector energético colombiano.
 
 Responsabilidades:
-- Obtener noticias vía NewsClient (GNews).
-- Aplicar scoring para priorizar noticias "de ministro".
+- Obtener noticias de MÚLTIPLES fuentes (GNews, Mediastack, etc.).
+- Normalizar a formato común.
+- Deduplicar por URL y título.
+- Aplicar scoring "revisión bibliográfica" para priorizar noticias.
 - Cache in-memory con TTL de 30 minutos.
-- Devolver top 3 noticias depuradas.
+- Devolver top 3 + lista extendida (máx. 7 adicionales).
+- Generar resumen general IA con los titulares del día.
 """
 
+import asyncio
 import logging
 import re
 import time
-from typing import List, Dict, Optional
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple
 from infrastructure.news.news_client import NewsClient
+from infrastructure.news.mediastack_client import MediastackClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +28,18 @@ logger = logging.getLogger(__name__)
 KEYWORDS_HIGH = [
     "colombia", "energía", "eléctrico", "electricidad",
     "embalses", "generación", "sector eléctrico",
+    "tarifas", "minería", "hidrocarburos", "gas natural",
+    "petróleo", "renovables", "eólico", "solar",
+    "transmisión", "interconexión", "transición energética",
 ]
 
-# +1 si menciona gobierno/regulador/instituciones clave
+# +1-2 si menciona gobierno/regulador/instituciones clave
 KEYWORDS_GOVT = [
     "gobierno", "ministro", "ministerio", "creg", "xm",
     "isa", "epm", "decreto", "regulador", "minminas",
     "minenergía", "minenergia", "viceministro", "anla",
-    "upme", "transición energética", "racionamiento",
-    "suministro", "interconexión",
+    "upme", "racionamiento", "suministro", "anh",
+    "celsia", "enel", "isagén", "codensa",
 ]
 
 # -2 si es puramente financiera/corporativa sin impacto sistémico
@@ -46,11 +55,13 @@ KEYWORDS_NOISE = [
     "fútbol", "selección", "farándula", "entretenimiento",
     "accidente de tránsito", "homicidio", "secuestro",
     "elecciones", "campaña electoral", "senado", "congreso",
+    "celebridad", "gol", "reality",
 ]
 
 
-def _compute_score(title: str, description: str) -> int:
-    """Calcula score de relevancia para una noticia."""
+def _compute_score(title: str, description: str,
+                   country: Optional[str] = None) -> int:
+    """Calcula score de relevancia para una noticia (revisión bibliográfica)."""
     text = f"{title} {description}".lower()
     score = 0
 
@@ -61,10 +72,22 @@ def _compute_score(title: str, description: str) -> int:
     elif high_hits >= 1:
         score += 1
 
-    # +1 por Keywords de gobierno/regulador
+    # +1-2 por Keywords de gobierno/regulador
     govt_hits = sum(1 for kw in KEYWORDS_GOVT if kw in text)
     if govt_hits >= 1:
         score += min(govt_hits, 2)  # máx +2
+
+    # +2 si país es Colombia o texto menciona "colombia"
+    if country and country.lower() in ("co", "colombia"):
+        score += 2
+    elif "colombia" in text:
+        score += 2
+
+    # +1 si país es de la región andina/sudamericana
+    if country and country.lower() in ("ec", "pe", "br", "mx", "cl"):
+        if any(kw in text for kw in ["interconexión", "mercado regional",
+                                      "exportación", "importación"]):
+            score += 1
 
     # -2 por keywords financieras sin impacto sistémico
     pen_hits = sum(1 for kw in KEYWORDS_PENALIZE if kw in text)
@@ -92,105 +115,248 @@ def _clean_text(text: str, max_len: int = 120) -> str:
     return text
 
 
+def _normalize_gnews(raw: dict) -> dict:
+    """Normaliza un artículo crudo de GNews al formato común."""
+    fecha_raw = raw.get("publishedAt", "")
+    return {
+        "titulo": (raw.get("title") or "").strip(),
+        "resumen": (raw.get("description") or "").strip(),
+        "url": raw.get("url", ""),
+        "fuente": raw.get("source", ""),
+        "fecha": fecha_raw[:10] if fecha_raw else "",
+        "pais": "co",  # GNews ya filtramos por CO
+        "idioma": "es",
+        "origen_api": "gnews",
+    }
+
+
+def _normalize_mediastack(raw: dict) -> dict:
+    """Normaliza un artículo crudo de Mediastack al formato común."""
+    fecha_raw = raw.get("published_at", "")
+    # Mediastack fecha: "2026-02-16T10:30:00+00:00"
+    fecha_fmt = fecha_raw[:10] if fecha_raw else ""
+    return {
+        "titulo": (raw.get("title") or "").strip(),
+        "resumen": (raw.get("description") or "").strip(),
+        "url": raw.get("url", ""),
+        "fuente": raw.get("source", ""),
+        "fecha": fecha_fmt,
+        "pais": raw.get("country", ""),
+        "idioma": raw.get("language", "es"),
+        "origen_api": "mediastack",
+    }
+
+
+def _dedup_key(titulo: str) -> str:
+    """Genera clave de dedup a partir del título."""
+    return re.sub(r'\W+', '', titulo.lower())[:80]
+
+
 class NewsService:
-    """Servicio de noticias con scoring y cache."""
+    """Servicio de noticias multi-fuente con scoring y cache."""
 
     CACHE_TTL = 1800  # 30 minutos en segundos
 
     def __init__(self, api_key: Optional[str] = None):
-        self.client = NewsClient(api_key=api_key)
+        self.gnews_client = NewsClient(api_key=api_key)
+        self.mediastack_client = MediastackClient()
         self._cache: Dict[str, dict] = {}  # key → {data, timestamp}
 
-    def _get_cached(self, key: str) -> Optional[List[Dict]]:
+    def _get_cached(self, key: str) -> Optional[dict]:
         cached = self._cache.get(key)
         if cached and (time.time() - cached["timestamp"]) < self.CACHE_TTL:
             logger.info(f"[NEWS_SERVICE] Cache hit para '{key}'")
             return cached["data"]
         return None
 
-    def _set_cache(self, key: str, data: List[Dict]):
+    def _set_cache(self, key: str, data: dict):
         self._cache[key] = {"data": data, "timestamp": time.time()}
 
-    async def get_top_news(self, max_items: int = 3) -> List[Dict]:
+    async def _fetch_all_sources(self) -> List[dict]:
         """
-        Obtiene las top N noticias relevantes para el sector energético.
-
-        Returns:
-            Lista de dicts: {titulo, resumen_corto, url, fuente, fecha_publicacion}
+        Obtiene noticias de todas las fuentes disponibles en paralelo,
+        normaliza y fusiona en una lista común.
         """
-        cache_key = "top_news"
-        cached = self._get_cached(cache_key)
-        if cached is not None:
-            return cached[:max_items]
+        all_normalized: List[dict] = []
 
-        # Obtener artículos crudos
-        raw_articles = await self.client.fetch_raw_news(
-            max_results=10, country="co", lang="es"
-        )
-
-        if not raw_articles:
-            # Intentar query regional si no hay resultados para CO
-            logger.info("[NEWS_SERVICE] Sin resultados para CO, probando región")
-            for country in ["co", ""]:
+        # ── GNews (fuente primaria) ──
+        try:
+            gnews_raw = await self.gnews_client.fetch_raw_news(
+                max_results=10, country="co", lang="es"
+            )
+            if not gnews_raw:
+                # Fallback: queries alternativas
                 for query in [
                     "energía eléctrica Colombia",
                     "sector energético Colombia embalses",
                 ]:
-                    raw_articles = await self.client.fetch_raw_news(
-                        query=query, country=country, max_results=10
+                    gnews_raw = await self.gnews_client.fetch_raw_news(
+                        query=query, country="", max_results=10
                     )
-                    if raw_articles:
+                    if gnews_raw:
                         break
-                if raw_articles:
-                    break
 
-        if not raw_articles:
-            logger.warning("[NEWS_SERVICE] No se encontraron noticias")
-            result = []
-            self._set_cache(cache_key, result)
-            return result
+            for art in gnews_raw:
+                all_normalized.append(_normalize_gnews(art))
+            logger.info(
+                f"[NEWS_SERVICE] GNews aportó {len(gnews_raw)} artículos"
+            )
+        except Exception as e:
+            logger.warning(f"[NEWS_SERVICE] Error GNews: {e}")
 
-        # Aplicar scoring
-        scored = []
-        seen_titles = set()
-        for art in raw_articles:
-            title = art.get("title", "").strip()
-            if not title:
+        # ── Mediastack (fuente secundaria, solo si hay key) ──
+        if self.mediastack_client.is_available:
+            try:
+                ms_raw = await self.mediastack_client.fetch_energy_news(limit=20)
+                for art in ms_raw:
+                    all_normalized.append(_normalize_mediastack(art))
+                logger.info(
+                    f"[NEWS_SERVICE] Mediastack aportó {len(ms_raw)} artículos"
+                )
+            except Exception as e:
+                logger.warning(f"[NEWS_SERVICE] Error Mediastack: {e}")
+
+        return all_normalized
+
+    def _score_and_rank(
+        self, articles: List[dict]
+    ) -> List[dict]:
+        """
+        Deduplicar, aplicar scoring, filtrar ruido y ordenar.
+        Retorna lista ordenada por score desc.
+        """
+        seen_urls: set = set()
+        seen_titles: set = set()
+        scored: List[dict] = []
+
+        for art in articles:
+            titulo = art.get("titulo", "").strip()
+            url = art.get("url", "").strip()
+            if not titulo:
                 continue
-            # Deduplicar por título similar
-            title_key = re.sub(r'\W+', '', title.lower())[:50]
-            if title_key in seen_titles:
+
+            # Dedup por URL
+            if url and url in seen_urls:
                 continue
-            seen_titles.add(title_key)
+            if url:
+                seen_urls.add(url)
 
-            score = _compute_score(title, art.get("description", ""))
-            scored.append((score, art))
+            # Dedup por título similar
+            tkey = _dedup_key(titulo)
+            if tkey in seen_titles:
+                continue
+            seen_titles.add(tkey)
 
-        # Ordenar por score desc, luego por fecha desc
-        scored.sort(key=lambda x: (x[0], x[1].get("publishedAt", "")), reverse=True)
+            score = _compute_score(
+                titulo,
+                art.get("resumen", ""),
+                art.get("pais"),
+            )
+            art["_score"] = score
+            scored.append(art)
 
-        # Filtrar noticias con score < 0 (ruido)
-        scored = [(s, a) for s, a in scored if s >= 0]
+        # Filtrar score < 0 (ruido)
+        scored = [a for a in scored if a["_score"] >= 0]
 
-        # Construir resultado limpio
-        result = []
-        for score, art in scored[:max_items]:
-            fecha_raw = art.get("publishedAt", "")
-            # Formatear fecha: "2026-02-16T10:30:00Z" → "16 Feb 2026"
-            fecha_fmt = fecha_raw[:10] if fecha_raw else ""
+        # Ordenar por score desc, luego fecha desc
+        scored.sort(
+            key=lambda x: (x["_score"], x.get("fecha", "")),
+            reverse=True,
+        )
+        return scored
 
-            result.append({
-                "titulo": art["title"],
-                "resumen_corto": _clean_text(art.get("description", "")),
+    async def get_top_news(
+        self, max_items: int = 3
+    ) -> List[Dict]:
+        """
+        Compatibilidad: devuelve solo las top N noticias.
+        Usa internamente get_enriched_news().
+
+        Returns:
+            Lista de dicts: {titulo, resumen_corto, url, fuente,
+                            fecha_publicacion, _score}
+        """
+        result = await self.get_enriched_news(
+            max_top=max_items, max_extra=0
+        )
+        return result["top"]
+
+    async def get_enriched_news(
+        self,
+        max_top: int = 3,
+        max_extra: int = 7,
+    ) -> Dict:
+        """
+        Obtiene noticias enriquecidas con fusión multi-fuente.
+
+        Returns:
+            {
+                "top": [ {titulo, resumen_corto, url, fuente,
+                          fecha_publicacion, origen_api, _score}, ... ],
+                "otras": [ ... ],  # máx max_extra adicionales
+                "fuentes_usadas": ["gnews", "mediastack", ...],
+                "total_analizadas": int,
+            }
+        """
+        cache_key = "enriched_news"
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            # Ajustar slicing al max pedido
+            return {
+                "top": cached["top"][:max_top],
+                "otras": cached["otras"][:max_extra],
+                "fuentes_usadas": cached["fuentes_usadas"],
+                "total_analizadas": cached["total_analizadas"],
+            }
+
+        # Obtener artículos de todas las fuentes
+        all_articles = await self._fetch_all_sources()
+
+        if not all_articles:
+            logger.warning("[NEWS_SERVICE] No se encontraron noticias en ninguna fuente")
+            empty = {
+                "top": [],
+                "otras": [],
+                "fuentes_usadas": [],
+                "total_analizadas": 0,
+            }
+            self._set_cache(cache_key, empty)
+            return empty
+
+        # Scoring y ranking
+        ranked = self._score_and_rank(all_articles)
+
+        # Fuentes que aportaron artículos
+        fuentes = list({a.get("origen_api", "?") for a in all_articles})
+
+        # Formatear noticias al formato de salida
+        def _fmt(art: dict) -> dict:
+            return {
+                "titulo": art["titulo"],
+                "resumen_corto": _clean_text(art.get("resumen", ""), 180),
                 "url": art.get("url", ""),
-                "fuente": art.get("source", ""),
-                "fecha_publicacion": fecha_fmt,
-                "_score": score,  # útil para debug
-            })
+                "fuente": art.get("fuente", ""),
+                "fecha_publicacion": art.get("fecha", ""),
+                "origen_api": art.get("origen_api", ""),
+                "_score": art.get("_score", 0),
+            }
+
+        top = [_fmt(a) for a in ranked[:max_top]]
+        otras = [_fmt(a) for a in ranked[max_top:max_top + max_extra]]
+
+        result = {
+            "top": top,
+            "otras": otras,
+            "fuentes_usadas": fuentes,
+            "total_analizadas": len(all_articles),
+        }
 
         logger.info(
-            f"[NEWS_SERVICE] {len(result)} noticias seleccionadas "
-            f"(scores: {[r['_score'] for r in result]})"
+            f"[NEWS_SERVICE] {len(top)} top + {len(otras)} extra "
+            f"(total analizadas: {len(all_articles)}, "
+            f"fuentes: {fuentes}, "
+            f"scores top: {[r['_score'] for r in top]})"
         )
         self._set_cache(cache_key, result)
         return result
+

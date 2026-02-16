@@ -2707,7 +2707,7 @@ class ChatbotOrchestratorService:
     ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
         """
         Handler: Noticias relevantes del sector energético colombiano.
-        Usa NewsService para obtener las 3 noticias más relevantes.
+        Usa NewsService multi-fuente: top 3 + lista extendida + resumen IA.
         """
         data = {}
         errors = []
@@ -2720,11 +2720,15 @@ class ChatbotOrchestratorService:
             return data, errors
         
         try:
-            noticias = await asyncio.wait_for(
-                self.news_service.get_top_news(max_items=3),
+            enriched = await asyncio.wait_for(
+                self.news_service.get_enriched_news(max_top=3, max_extra=7),
                 timeout=self.SERVICE_TIMEOUT
             )
             
+            top = enriched.get("top", [])
+            otras = enriched.get("otras", [])
+            
+            # Top 3 noticias (contrato existente — sin cambios)
             data["noticias"] = [
                 {
                     "titulo": n["titulo"],
@@ -2733,22 +2737,48 @@ class ChatbotOrchestratorService:
                     "fuente": n["fuente"],
                     "fecha": n["fecha_publicacion"],
                 }
-                for n in noticias
+                for n in top
             ]
-            data["total"] = len(noticias)
+            data["total"] = len(top)
             data["opcion_regresar"] = {
                 "id": "menu",
                 "titulo": "🔙 Regresar al menú principal"
             }
             
-            if not noticias:
+            # Lista extendida (nuevo campo)
+            if otras:
+                data["otras_noticias"] = [
+                    {
+                        "titulo": n["titulo"],
+                        "resumen": n["resumen_corto"],
+                        "url": n["url"],
+                        "fuente": n["fuente"],
+                        "fecha": n["fecha_publicacion"],
+                    }
+                    for n in otras
+                ]
+            
+            if not top:
                 data["nota"] = (
                     "No se encontraron noticias relevantes sobre "
                     "el sector energético para hoy."
                 )
             
+            # Resumen general IA (best-effort)
+            data["resumen_general"] = None
+            all_for_summary = top + otras
+            if len(all_for_summary) >= 3:
+                try:
+                    resumen = await self._generar_resumen_noticias(all_for_summary)
+                    data["resumen_general"] = resumen
+                except Exception as e:
+                    logger.warning(f"[NOTICIAS] Resumen IA falló (no crítico): {e}")
+            
             logger.info(
-                f"[NOTICIAS] {len(noticias)} noticias devueltas"
+                f"[NOTICIAS] {len(top)} principales + "
+                f"{len(otras)} extras, "
+                f"fuentes={enriched.get('fuentes_usadas', [])}, "
+                f"resumen={'sí' if data.get('resumen_general') else 'no'}"
             )
             
         except asyncio.TimeoutError:
@@ -2764,6 +2794,89 @@ class ChatbotOrchestratorService:
             ))
         
         return data, errors
+    
+    async def _generar_resumen_noticias(
+        self, noticias: List[Dict]
+    ) -> Optional[str]:
+        """
+        Genera un resumen general de 3-4 frases con los titulares
+        del día, orientado al Viceministro.
+        
+        Reutiliza AgentIA (Groq/OpenRouter) con patrón threadpool.
+        Retorna None si la IA no está disponible o falla.
+        """
+        try:
+            from domain.services.ai_service import AgentIA
+            agent = AgentIA()
+            
+            if not agent.client:
+                return None
+            
+            # Construir contexto con titulares
+            titulares_ctx = "\n".join(
+                f"- {n.get('titulo', '')} (Fuente: {n.get('fuente', '?')}, "
+                f"Fecha: {n.get('fecha_publicacion', n.get('fecha', '?'))})"
+                for n in noticias[:10]
+            )
+            
+            system_prompt = (
+                "Eres un analista senior del sector energético colombiano "
+                "que asesora al Viceministro de Minas y Energía.\n\n"
+                "Se te proporcionan los titulares de noticias del día.\n\n"
+                "TAREA: Escribe un resumen ejecutivo de exactamente 3-4 frases "
+                "que identifique los 2-3 grandes temas del día.\n\n"
+                "REGLAS:\n"
+                "- Centra el análisis en implicaciones para política pública "
+                "y operación del sistema eléctrico colombiano.\n"
+                "- NO repitas literalmente los titulares.\n"
+                "- NO uses bullets ni listas; solo párrafo continuo.\n"
+                "- Evita detalles triviales.\n"
+                "- Máximo 120 palabras.\n"
+                "- Escribe en español, tono profesional."
+            )
+            
+            user_prompt = (
+                f"Titulares de noticias energéticas de hoy:\n\n"
+                f"{titulares_ctx}\n\n"
+                f"Genera el resumen ejecutivo breve."
+            )
+            
+            def _call_ai():
+                return agent.client.chat.completions.create(
+                    model=agent.modelo,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.4,
+                    max_tokens=300,
+                )
+            
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_call_ai),
+                timeout=15,
+            )
+            
+            texto = response.choices[0].message.content.strip()
+            if len(texto) < 30:
+                logger.warning(
+                    f"[NOTICIAS_RESUMEN] Respuesta demasiado corta "
+                    f"({len(texto)} chars)"
+                )
+                return None
+            
+            logger.info(
+                f"[NOTICIAS_RESUMEN] Resumen generado con "
+                f"{agent.provider}/{agent.modelo} ({len(texto)} chars)"
+            )
+            return texto
+            
+        except asyncio.TimeoutError:
+            logger.warning("[NOTICIAS_RESUMEN] Timeout IA")
+            return None
+        except Exception as e:
+            logger.warning(f"[NOTICIAS_RESUMEN] Error IA: {e}")
+            return None
     
     # ═══════════════════════════════════════════════════════════
     # HANDLER: MENÚ / AYUDA - Opciones del Chatbot WhatsApp

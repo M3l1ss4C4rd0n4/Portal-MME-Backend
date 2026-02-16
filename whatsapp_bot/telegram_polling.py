@@ -669,8 +669,11 @@ def render_noticias(data: dict) -> tuple:
 
     Cada noticia: emoji + título negrita, resumen itálica (≤180 chars),
     fuente/fecha, y botón URL individual "Leer la noticia".
+    Incluye resumen IA si disponible y botón "Ver más" si hay extras.
     """
     noticias = data.get("noticias", [])
+    otras = data.get("otras_noticias", [])
+    resumen_ia = data.get("resumen_general")
     nota = data.get("nota", "")
 
     text = "📰 *Noticias clave del sector energético*\n"
@@ -687,6 +690,12 @@ def render_noticias(data: dict) -> tuple:
             [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")],
         ]
         return text, InlineKeyboardMarkup(keyboard)
+
+    # Resumen ejecutivo IA (si disponible)
+    if resumen_ia:
+        text += "🧠 *Panorama del día*\n"
+        text += f"_{resumen_ia}_\n\n"
+        text += "─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n\n"
 
     keyboard = []
     for i, noticia in enumerate(noticias, 1):
@@ -729,8 +738,65 @@ def render_noticias(data: dict) -> tuple:
             )])
 
     # Botones de acción al final
-    keyboard.append([
+    action_row = [
         InlineKeyboardButton("🔄 Actualizar", callback_data="news_refresh"),
+    ]
+    if otras:
+        action_row.insert(0, InlineKeyboardButton(
+            f"📚 Ver más ({len(otras)})",
+            callback_data="news_more",
+        ))
+    keyboard.append(action_row)
+    keyboard.append([
+        InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu"),
+    ])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def render_noticias_extra(data: dict) -> tuple:
+    """
+    Renderiza la lista extendida de noticias ("otras_noticias").
+    Formato compacto: número + título + fuente, con botones URL.
+    """
+    otras = data.get("otras_noticias", [])
+
+    text = "📚 *Más noticias del sector energético*\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    if not otras:
+        text += "No hay noticias adicionales disponibles.\n"
+        keyboard = [[InlineKeyboardButton(
+            "⬅ Volver a principales", callback_data="news_back"
+        )]]
+        return text, InlineKeyboardMarkup(keyboard)
+
+    keyboard = []
+    for i, noticia in enumerate(otras, 1):
+        titulo = noticia.get("titulo", "Sin título")
+        fuente = noticia.get("fuente", "")
+        fecha = noticia.get("fecha", noticia.get("fecha_publicacion", ""))
+        url = noticia.get("url", "")
+
+        emoji = _NEWS_EMOJIS[(i - 1) % len(_NEWS_EMOJIS)]
+        text += f"{i}) {emoji} *{titulo}*\n"
+
+        meta = []
+        if fuente:
+            meta.append(f"🏷 {fuente}")
+        if fecha:
+            fecha_fmt = fecha[:10] if len(fecha) >= 10 else fecha
+            meta.append(f"📅 {fecha_fmt}")
+        if meta:
+            text += f"{'  ·  '.join(meta)}\n"
+        text += "\n"
+
+        if url:
+            keyboard.append([InlineKeyboardButton(
+                f"🔗 Leer noticia {i}", url=url
+            )])
+
+    keyboard.append([
+        InlineKeyboardButton("⬅ Volver a principales", callback_data="news_back"),
         InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu"),
     ])
     return text, InlineKeyboardMarkup(keyboard)
@@ -1032,7 +1098,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await chat.send_action("typing")
             result = await call_orchestrator(get_session_id(user.id), "noticias_sector")
             if result.get("status") == "SUCCESS":
-                text, kb = render_noticias(result.get("data", {}))
+                news_data = result.get("data", {})
+                context.user_data["news_cache"] = news_data
+                text, kb = render_noticias(news_data)
             else:
                 text = f"❌ {result.get('message', 'Error al obtener noticias')}"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton(
@@ -1215,12 +1283,54 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await chat.send_action("typing")
         result = await call_orchestrator(get_session_id(user.id), "noticias_sector")
         if result.get("status") == "SUCCESS":
-            text, kb = render_noticias(result.get("data", {}))
+            news_data = result.get("data", {})
+            context.user_data["news_cache"] = news_data
+            text, kb = render_noticias(news_data)
         else:
             text = "❌ No se pudieron actualizar las noticias."
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
                 "🔙 Menú", callback_data="intent:menu"
             )]])
+        try:
+            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+        except Exception:
+            try:
+                await query.edit_message_text(text, reply_markup=kb)
+            except Exception:
+                await _safe_send(chat, text, kb)
+
+    # Noticias — botón "📚 Ver más" muestra lista extendida
+    elif data == "news_more":
+        track_telegram_user(user.id, user.username, user.first_name)
+        cached = context.user_data.get("news_cache", {})
+        text, kb = render_noticias_extra(cached)
+        try:
+            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+        except Exception:
+            try:
+                await query.edit_message_text(text, reply_markup=kb)
+            except Exception:
+                await _safe_send(chat, text, kb)
+
+    # Noticias — botón "⬅ Volver a principales"
+    elif data == "news_back":
+        track_telegram_user(user.id, user.username, user.first_name)
+        cached = context.user_data.get("news_cache", {})
+        if cached:
+            text, kb = render_noticias(cached)
+        else:
+            # Si no hay cache, recarga desde API
+            await chat.send_action("typing")
+            result = await call_orchestrator(get_session_id(user.id), "noticias_sector")
+            if result.get("status") == "SUCCESS":
+                news_data = result.get("data", {})
+                context.user_data["news_cache"] = news_data
+                text, kb = render_noticias(news_data)
+            else:
+                text = "❌ No se pudieron cargar las noticias."
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "🔙 Menú", callback_data="intent:menu"
+                )]])
         try:
             await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
         except Exception:

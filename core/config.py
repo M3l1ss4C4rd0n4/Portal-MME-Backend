@@ -174,6 +174,12 @@ class Settings(BaseSettings):
         description="API Key de GNews (gnews.io) para noticias del sector"
     )
     
+    # Mediastack API (segunda fuente de noticias)
+    MEDIASTACK_API_KEY: str = Field(
+        default="",
+        description="API Key de Mediastack (mediastack.com) para noticias — opcional"
+    )
+    
     # Configuración de IA
     AI_MAX_TOKENS: int = Field(
         default=2000,
