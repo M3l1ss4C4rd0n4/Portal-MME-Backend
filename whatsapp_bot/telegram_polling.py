@@ -207,21 +207,29 @@ def render_fichas(data: dict) -> tuple:
 
         # FASE A: Línea 3 — Prom 7d · Variación · Tendencia en una sola línea
         if contexto:
-            parts = []
             promedio = contexto.get("promedio_7_dias")
             variacion = contexto.get("variacion_vs_promedio_pct")
             tendencia = contexto.get("tendencia", "")
 
             if promedio is not None:
+                # Indicadores con promedio 7d (Generación, Precio)
+                parts = []
                 parts.append(f"Prom 7d: {_r(promedio)} {unidad}")
-            if variacion is not None:
-                signo = "+" if variacion > 0 else ""
-                parts.append(f"Var: {signo}{_r(variacion, 1)}%")
-            if tendencia:
-                parts.append(tendencia)
-
-            if parts:
+                if variacion is not None:
+                    signo = "+" if variacion > 0 else ""
+                    parts.append(f"Var: {signo}{_r(variacion, 1)}%")
+                if tendencia:
+                    parts.append(tendencia)
                 text += f"   {' · '.join(parts)}\n"
+
+            # Embalses: estado + referencia histórica (2020-presente)
+            estado_emb = contexto.get("estado")
+            ref_hist = contexto.get("referencia_historica")
+            if estado_emb:
+                text += f"   {estado_emb}\n"
+            if ref_hist:
+                text += f"   _{ref_hist}_\n"
+
         text += "\n"
 
     regresar = data.get("opcion_regresar", {})
@@ -407,32 +415,28 @@ def render_anomalias(data: dict) -> tuple:
             # FASE A: Línea 2 — Actual vs promedio compacto
             if valor is not None and avg_hist is not None:
                 delta_h = a.get('delta_hist_pct', 0)
-                text += (f"   Actual: *{_r(valor)} {unidad}* vs "
-                         f"prom 30d: {_r(avg_hist)} {unidad} "
+                text += (f"▸ Actual: *{_r(valor)} {unidad}*\n"
+                         f"▸ Prom 30d: {_r(avg_hist)} {unidad} "
                          f"(desvío *{_r(desv, 1)}%*)\n")
             elif valor is not None:
                 fecha = a.get('fecha_dato', '')
-                text += f"   Actual: *{_r(valor)} {unidad}* ({fecha})\n"
+                text += f"▸ Actual: *{_r(valor)} {unidad}* ({fecha})\n"
 
             # FASE A: Línea 3 — Predicción o motivo de exclusión
             if predicho is not None and not pred_excluida:
                 delta_p = a.get('delta_pred_pct', '?')
-                text += f"   Predicción: {_r(predicho)} {unidad} (desvío {delta_p}%)\n"
+                text += f"▸ Predicción: {_r(predicho)} {unidad} (desvío {delta_p}%)\n"
             elif pred_excluida:
                 comentario_conf = a.get('comentario_confianza', '')
                 if comentario_conf:
-                    text += f"   _{comentario_conf}_\n"
+                    text += f"▸ _{comentario_conf}_\n"
                 else:
-                    text += f"   _Detección basada solo en histórico; predicción excluida por baja confianza._\n"
+                    text += "▸ _Predicción excluida por baja confianza_\n"
 
             text += "\n"
 
-    # FASE A: Disclaimer general compacto
-    text += "_Severidad influida por predicciones MUY\\_CONFIABLE/CONFIABLE; "
-    text += "EXPERIMENTAL se excluyen._\n"
-
     if "resumen" in data:
-        text += f"\n📋 _{data['resumen']}_\n"
+        text += f"📋 _{data['resumen']}_\n"
 
     # FASE B: Detail buttons per indicator
     detalle_completo = data.get("detalle_completo", [])
@@ -471,7 +475,7 @@ def render_anomalia_detalle(det: dict) -> tuple:
     delta_p = det.get("delta_pred_pct")
     desv = det.get("desviacion_pct", 0)
     pred_excluida = det.get("prediccion_excluida", False)
-    nivel_pred = det.get("nivel_confianza_prediccion", "")
+    nivel_pred = det.get("nivel_confianza_prediccion", "").replace("_", " ")
     motivo = det.get("motivo_exclusion", "")
     comentario = det.get("comentario_confianza", "")
 
@@ -494,11 +498,11 @@ def render_anomalia_detalle(det: dict) -> tuple:
             text += f"▸ Desvío vs predicción: {_r(delta_p, 1)}%\n"
         text += f"▸ Confianza modelo: {nivel_pred}\n"
     elif pred_excluida:
-        text += "▸ Predicción: _excluida del cálculo de severidad_\n"
+        text += "▸ Predicción excluida de severidad\n"
         if motivo:
-            text += f"▸ Motivo: _{motivo}_\n"
+            text += f"▸ Motivo: {motivo}\n"
         if comentario:
-            text += f"▸ _{comentario}_\n"
+            text += f"▸ {comentario}\n"
         text += f"▸ Nivel modelo: {nivel_pred}\n"
     else:
         text += "▸ Predicción: no disponible\n"
@@ -607,51 +611,116 @@ def render_informe_seccion(sections: dict, num: int) -> tuple:
 
 
 def render_informe_completo(data: dict) -> tuple:
-    """FASE C: Informe completo con botones de navegación al final"""
+    """FASE C: Informe completo — LEGACY, redirige a cards"""
+    # Mantener por compatibilidad; cmd_informe ahora usa render_informe_cards
+    cards = render_informe_cards(data)
+    if cards:
+        # Unir todas las cards en un solo texto (fallback)
+        text = "\n\n".join(c[0] for c in cards)
+        keyboard = cards[-1][1]
+        return text, keyboard
+    return "No se pudo generar el informe.", InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")]]
+    )
+
+
+def render_informe_cards(data: dict) -> list:
+    """
+    Render informe ejecutivo como lista de tarjetas (mensajes separados).
+    Retorna: list of (text, keyboard_or_None)
+    Cada elemento es un mensaje independiente para enviar en secuencia.
+    """
     import re as _re
     informe = data.get("informe", "")
     fecha_gen = data.get("fecha_generacion", "")
     con_ia = data.get("generado_con_ia", False)
 
-    text = "📊 *Informe Ejecutivo del Sector Eléctrico*\n"
-    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    if not informe:
+        text = "❌ No se pudo generar el informe.\n"
+        if data.get("nota_fallback"):
+            text += f"\n⚠️ _{data['nota_fallback']}_\n"
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")]]
+        )
+        return [(text, kb)]
+
+    # Parsear secciones del informe de IA
+    sections = _parse_informe_sections(informe)
+    cards = []
+
+    # ── Card 0: Header ──
+    header = "📊 *Informe Ejecutivo del Sector Eléctrico*\n"
+    header += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     if fecha_gen:
-        text += f"🕐 {fecha_gen}"
+        header += f"🕐 {fecha_gen}"
         if con_ia:
-            text += "  •  Asistido por IA"
-        text += "\n"
-    text += "\n"
-
-    if informe:
-        informe_clean = _re.sub(r'^##\s*(.+)$', r'*\1*', informe, flags=_re.MULTILINE)
-        informe_clean = _re.sub(r'^###\s*(.+)$', r'_\1_', informe_clean, flags=_re.MULTILINE)
-        lineas_finales = []
-        for linea in informe_clean.split('\n'):
-            if len(linea) > 200 and '. ' in linea and not linea.startswith('*'):
-                partes = linea.split('. ')
-                acumulador = ''
-                for p in partes:
-                    if acumulador and len(acumulador) + len(p) > 160:
-                        lineas_finales.append(acumulador.rstrip() + '.')
-                        acumulador = p
-                    else:
-                        acumulador = (acumulador + '. ' + p) if acumulador else p
-                if acumulador:
-                    lineas_finales.append(acumulador.rstrip())
-            else:
-                lineas_finales.append(linea)
-        text += '\n'.join(lineas_finales)
-    else:
-        text += "No se pudo generar el informe.\n"
-
+            header += "  •  Asistido por IA"
+        header += "\n"
+    header += "\n"
+    header += "📋 Informe completo en 4 secciones:\n"
+    header += "▸ 1️⃣ Situación actual\n"
+    header += "▸ 2️⃣ Tendencias y proyecciones\n"
+    header += "▸ 3️⃣ Riesgos y oportunidades\n"
+    header += "▸ 4️⃣ Recomendaciones técnicas\n"
     if data.get("nota_fallback"):
-        text += f"\n\n⚠️ _{data['nota_fallback']}_"
+        header += f"\n⚠️ _{data['nota_fallback']}_\n"
+    cards.append((header, None))
 
-    keyboard = [
+    # Emojis y decoración por sección
+    sec_config = {
+        1: {"emoji": "📍", "title_fallback": "Situación actual del sistema"},
+        2: {"emoji": "📈", "title_fallback": "Tendencias y proyecciones"},
+        3: {"emoji": "⚠️", "title_fallback": "Riesgos y oportunidades"},
+        4: {"emoji": "✅", "title_fallback": "Recomendaciones técnicas"},
+    }
+
+    for num in range(1, 5):
+        cfg = sec_config.get(num, {"emoji": "📌", "title_fallback": f"Sección {num}"})
+        sec = sections.get(num)
+        if sec:
+            title = sec["title"]
+            content = sec["content"]
+        else:
+            title = cfg["title_fallback"]
+            content = "Información no disponible."
+
+        # Limpiar markdown de IA → Telegram Markdown v1
+        content_clean = _re.sub(r'\*\*(.+?)\*\*', r'*\1*', content)
+        # ### subtítulos → emoji + negrita
+        content_clean = _re.sub(
+            r'^###?\s*\d*\.?\d*\s*(.+)$',
+            lambda m: f"\n{'─' * 20}\n{cfg['emoji']} *{m.group(1).strip()}*",
+            content_clean,
+            flags=_re.MULTILINE,
+        )
+        # Reemplazar guiones de lista con ▸ 
+        content_clean = _re.sub(
+            r'^[\-•]\s*',
+            '▸ ',
+            content_clean,
+            flags=_re.MULTILINE,
+        )
+        # Limpiar underscores en nombres tipo MUY_CONFIABLE
+        content_clean = content_clean.replace("MUY_CONFIABLE", "MUY CONFIABLE")
+        content_clean = content_clean.replace("PRECIO_BOLSA", "PRECIO DE BOLSA")
+
+        # Construir la tarjeta
+        card = f"{cfg['emoji']} *{num}. {title}*\n"
+        card += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        card += content_clean.strip() + "\n"
+
+        cards.append((card, None))
+
+    # ── Card final: Botones ──
+    final = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    final += "📊 _Fin del informe ejecutivo_\n"
+    kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 Descargar PDF", callback_data="inf_pdf")],
-        [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")]
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
+        [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")],
+    ])
+    cards.append((final, kb))
+
+    return cards
 
 
 def render_mas_informacion_submenu() -> tuple:
@@ -1004,8 +1073,54 @@ async def cmd_anomalias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, kb = render_response("anomalias_sector", result)
     await _safe_send(chat, text, kb)
 
+async def _send_informe_with_charts(chat, result_data: dict):
+    """
+    Envía el informe ejecutivo como tarjetas + gráficos intercalados.
+    Genera los 3 charts en paralelo con la renderización de cards.
+
+    Orden de envío:
+      Card 0 (header)  →  📊 Pie Generación
+      Card 1 (sec. 1)  →  🗺️ Mapa Embalses
+      Card 2 (sec. 2)  →  💰 Precio Evolución
+      Card 3 (sec. 3)
+      Card 4 (sec. 4)
+      Card 5 (footer + botones)
+    """
+    import os as _os
+
+    cards = render_informe_cards(result_data)
+
+    # Generar gráficos en hilo aparte (Plotly + kaleido son sync)
+    charts = {}
+    try:
+        from services.informe_charts import generate_all_informe_charts
+        charts = await asyncio.to_thread(generate_all_informe_charts)
+    except Exception as e:
+        logger.warning(f"[INFORME] No se pudieron generar gráficos: {e}")
+
+    # Mapeo: después de qué card (índice) enviar cada gráfico
+    chart_after_card = {
+        0: 'generacion',   # tras header → pie de generación
+        1: 'embalses',     # tras sección 1 → mapa de embalses
+        2: 'precios',      # tras sección 2 → evolución de precios
+    }
+
+    for idx, (card_text, card_kb) in enumerate(cards):
+        await _safe_send(chat, card_text, card_kb)
+
+        chart_key = chart_after_card.get(idx)
+        if chart_key and chart_key in charts:
+            filepath, caption, _ = charts[chart_key]
+            if filepath and _os.path.exists(filepath):
+                try:
+                    with open(filepath, 'rb') as img:
+                        await chat.send_photo(photo=img, caption=caption)
+                except Exception as e:
+                    logger.warning(f"[INFORME] Error enviando gráfico {chart_key}: {e}")
+
+
 async def cmd_informe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Mostrar informe completo directamente
+    # Mostrar informe como tarjetas + gráficos
     user = update.effective_user
     chat = update.effective_chat
     track_telegram_user(user.id, user.username, user.first_name)
@@ -1014,10 +1129,10 @@ async def cmd_informe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result.get("status") == "SUCCESS":
         result_data = result.get("data", {})
         context.user_data["informe_data"] = result_data
-        text, kb = render_informe_completo(result_data)
+        await _send_informe_with_charts(chat, result_data)
     else:
         text, kb = render_response("informe_ejecutivo", result)
-    await _safe_send(chat, text, kb)
+        await _safe_send(chat, text, kb)
 
 async def cmd_noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_orchestrated(update.effective_chat, update.effective_user, "noticias_sector")
@@ -1078,7 +1193,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _safe_send(chat, text, kb)
             return
 
-        # Informe ejecutivo — mostrar completo directamente
+        # Informe ejecutivo — mostrar como tarjetas + gráficos
         if intent in ("informe_ejecutivo", "generar_informe", "informe_completo", "reporte_ejecutivo"):
             track_telegram_user(user.id, user.username, user.first_name)
             await chat.send_action("typing")
@@ -1086,13 +1201,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if result.get("status") == "SUCCESS":
                 result_data = result.get("data", {})
                 context.user_data["informe_data"] = result_data
-                text, kb = render_informe_completo(result_data)
+                await _send_informe_with_charts(chat, result_data)
             else:
                 text = f"❌ {result.get('message', 'Error desconocido')}"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton(
                     "🔙 Menú", callback_data="intent:menu"
                 )]])
-            await _safe_send(chat, text, kb)
+                await _safe_send(chat, text, kb)
             return
 
         # Noticias del sector — editMessageText para que 🔄 Actualizar funcione in-place
