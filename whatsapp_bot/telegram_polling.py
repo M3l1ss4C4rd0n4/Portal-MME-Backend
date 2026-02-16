@@ -555,7 +555,8 @@ def render_informe_ejecutivo(data: dict) -> tuple:
          InlineKeyboardButton("2️⃣ Tendencias", callback_data="inf_sec:2")],
         [InlineKeyboardButton("3️⃣ Riesgos", callback_data="inf_sec:3"),
          InlineKeyboardButton("4️⃣ Recomendaciones", callback_data="inf_sec:4")],
-        [InlineKeyboardButton("📄 Ver informe completo", callback_data="inf_sec:full")],
+        [InlineKeyboardButton("📄 Ver informe completo", callback_data="inf_sec:full"),
+         InlineKeyboardButton("📥 Descargar PDF", callback_data="inf_pdf")],
         [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")]
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -639,9 +640,8 @@ def render_informe_completo(data: dict) -> tuple:
     if data.get("nota_fallback"):
         text += f"\n\n⚠️ _{data['nota_fallback']}_"
 
-    sec_btns = [InlineKeyboardButton(str(i), callback_data=f"inf_sec:{i}") for i in range(1, 5)]
     keyboard = [
-        sec_btns,
+        [InlineKeyboardButton("📥 Descargar PDF", callback_data="inf_pdf")],
         [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")]
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -998,7 +998,7 @@ async def cmd_anomalias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _safe_send(chat, text, kb)
 
 async def cmd_informe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # FASE C: Cache informe for section navigation
+    # Mostrar informe completo directamente
     user = update.effective_user
     chat = update.effective_chat
     track_telegram_user(user.id, user.username, user.first_name)
@@ -1006,10 +1006,8 @@ async def cmd_informe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await call_orchestrator(get_session_id(user.id), "informe_ejecutivo")
     if result.get("status") == "SUCCESS":
         result_data = result.get("data", {})
-        informe = result_data.get("informe", "")
         context.user_data["informe_data"] = result_data
-        context.user_data["informe_sections"] = _parse_informe_sections(informe)
-        text, kb = render_informe_ejecutivo(result_data)
+        text, kb = render_informe_completo(result_data)
     else:
         text, kb = render_response("informe_ejecutivo", result)
     await _safe_send(chat, text, kb)
@@ -1025,8 +1023,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📊 /estado — Estado actual del sector
 🔮 /predicciones — Predicciones del sector
 🚨 /anomalias — Anomalías detectadas
-� /noticias — Noticias clave del sector
-�📋 /informe — Informe ejecutivo completo
+📰 /noticias — Noticias clave del sector
+📋 /informe — Informe ejecutivo completo
 🔙 /menu — Menú principal
 ❓ /ayuda — Esta ayuda
 
@@ -1073,17 +1071,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _safe_send(chat, text, kb)
             return
 
-        # FASE C: Informe ejecutivo con cache para navegación por secciones
+        # Informe ejecutivo — mostrar completo directamente
         if intent in ("informe_ejecutivo", "generar_informe", "informe_completo", "reporte_ejecutivo"):
             track_telegram_user(user.id, user.username, user.first_name)
             await chat.send_action("typing")
             result = await call_orchestrator(get_session_id(user.id), intent)
             if result.get("status") == "SUCCESS":
                 result_data = result.get("data", {})
-                informe = result_data.get("informe", "")
                 context.user_data["informe_data"] = result_data
-                context.user_data["informe_sections"] = _parse_informe_sections(informe)
-                text, kb = render_informe_ejecutivo(result_data)
+                text, kb = render_informe_completo(result_data)
             else:
                 text = f"❌ {result.get('message', 'Error desconocido')}"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton(
@@ -1241,6 +1237,57 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(text, reply_markup=kb)
             except Exception:
                 await _safe_send(chat, text, kb)
+
+    # FASE C: Informe ejecutivo — descargar PDF
+    elif data == "inf_pdf":
+        track_telegram_user(user.id, user.username, user.first_name)
+        informe_data = context.user_data.get("informe_data", {})
+        informe_texto = informe_data.get("informe", "")
+        if not informe_texto:
+            await _safe_send(chat, "No hay informe en cache. Genera uno nuevo con /informe", None)
+            return
+
+        await chat.send_action("upload_document")
+        try:
+            from domain.services.report_service import generar_pdf_informe
+            pdf_path = generar_pdf_informe(
+                informe_texto,
+                fecha_generacion=informe_data.get("fecha_generacion", ""),
+                generado_con_ia=informe_data.get("generado_con_ia", True),
+            )
+            if pdf_path:
+                import os
+                from datetime import date as _date
+                filename = f"Informe_Ejecutivo_MME_{_date.today().isoformat()}.pdf"
+                with open(pdf_path, "rb") as pdf_file:
+                    await chat.send_document(
+                        document=pdf_file,
+                        filename=filename,
+                        caption="📊 Informe Ejecutivo del Sector Eléctrico — MME",
+                    )
+                # Limpiar archivo temporal
+                try:
+                    os.remove(pdf_path)
+                except OSError:
+                    pass
+                logger.info(f"[PDF] Enviado a {user.id} (@{user.username})")
+            else:
+                await _safe_send(
+                    chat,
+                    "❌ Error al generar el PDF. Intenta de nuevo.",
+                    InlineKeyboardMarkup([[InlineKeyboardButton(
+                        "🔙 Menú", callback_data="intent:menu"
+                    )]]),
+                )
+        except Exception as e:
+            logger.error(f"[PDF] Error: {e}", exc_info=True)
+            await _safe_send(
+                chat,
+                "❌ No se pudo generar el PDF.",
+                InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "🔙 Menú", callback_data="intent:menu"
+                )]]),
+            )
 
     # FASE C: Informe ejecutivo — navegación por secciones
     elif data.startswith("inf_sec:"):
@@ -1455,7 +1502,21 @@ def main():
     logger.info(f"   Orquestador: {ORCHESTRATOR_ENDPOINT}")
     logger.info("=" * 60)
 
-    app = Application.builder().token(token).build()
+    async def post_init(application):
+        """Registrar comandos visibles en menú de Telegram"""
+        from telegram import BotCommand
+        await application.bot.set_my_commands([
+            BotCommand("menu", "Menú principal"),
+            BotCommand("estado", "Estado actual del sector eléctrico"),
+            BotCommand("predicciones", "Predicciones del sector"),
+            BotCommand("anomalias", "Anomalías detectadas"),
+            BotCommand("noticias", "Noticias clave del sector"),
+            BotCommand("informe", "Informe ejecutivo completo"),
+            BotCommand("ayuda", "Ayuda y comandos disponibles"),
+        ])
+        logger.info("✅ Comandos del menú registrados")
+
+    app = Application.builder().token(token).post_init(post_init).build()
 
     # Comandos
     app.add_handler(CommandHandler("start", cmd_start))

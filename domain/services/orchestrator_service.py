@@ -2389,6 +2389,52 @@ class ChatbotOrchestratorService:
             data_pred_6m, _ = _safe_unpack(results[2])
             data_anomalias, _ = _safe_unpack(results[3])
             
+            # ── 1b. Obtener noticias filtradas (best-effort) ──
+            noticias_ctx = {}
+            try:
+                if self.news_service:
+                    enriched = await asyncio.wait_for(
+                        self.news_service.get_enriched_news(max_top=3, max_extra=5),
+                        timeout=15,
+                    )
+                    top_noticias = enriched.get("top", [])
+                    otras_noticias = enriched.get("otras", [])
+                    
+                    # Construir resumen compacto para la IA
+                    titulares = []
+                    for n in top_noticias + otras_noticias:
+                        t = n.get("titulo", "")
+                        f = n.get("fuente", "")
+                        if t:
+                            titulares.append(f"{t} ({f})" if f else t)
+                    
+                    # Obtener resumen IA de noticias (puede estar en cache)
+                    resumen_prensa = None
+                    noticias_result = await asyncio.wait_for(
+                        self._handle_noticias_sector(parameters),
+                        timeout=20,
+                    )
+                    if isinstance(noticias_result, tuple):
+                        noticias_data = noticias_result[0] if noticias_result[0] else {}
+                        resumen_prensa = noticias_data.get("resumen_general")
+                    
+                    if titulares:
+                        noticias_ctx = {
+                            "titulares_del_dia": titulares[:8],
+                            "resumen_prensa": resumen_prensa or "",
+                            "total_fuentes": len(enriched.get("fuentes_usadas", [])),
+                        }
+                        logger.info(
+                            f"[INFORME_EJECUTIVO_IA] Noticias inyectadas: "
+                            f"{len(titulares)} titulares, "
+                            f"resumen={'sí' if resumen_prensa else 'no'}"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"[INFORME_EJECUTIVO_IA] Noticias no disponibles "
+                    f"(no crítico): {e}"
+                )
+            
             # ── 2. Construir contexto estructurado para la IA ──
             hoy = date.today().strftime('%Y-%m-%d')
             
@@ -2463,6 +2509,10 @@ class ChatbotOrchestratorService:
                 },
             }
             
+            # Inyectar noticias si disponibles
+            if noticias_ctx:
+                contexto["prensa_del_dia"] = noticias_ctx
+            
             logger.info(
                 f"[INFORME_EJECUTIVO_IA] Contexto armado: "
                 f"fichas={len(contexto['estado_actual']['fichas'])}, "
@@ -2532,7 +2582,8 @@ class ChatbotOrchestratorService:
             system_prompt = (
                 "Eres un ingeniero eléctrico senior que asesora al Viceministro "
                 "de Minas y Energía de Colombia. Recibes un JSON con estado actual, "
-                "predicciones y anomalías del sistema eléctrico.\n\n"
+                "predicciones, anomalías del sistema eléctrico y, opcionalmente, "
+                "titulares de prensa energética del día.\n\n"
                 "Elabora un informe ejecutivo en 4 secciones:\n"
                 "1) **Situación actual del sistema** — un bullet por indicador: "
                 "valor, unidad y fecha del dato.\n"
@@ -2540,11 +2591,21 @@ class ChatbotOrchestratorService:
                 "con promedio esperado, rango, cambio vs 30d y tendencia. "
                 "Para cada indicador, usa máximo 2 líneas de texto.\n"
                 "3) **Riesgos y oportunidades** — bullets cortos (1-2 líneas cada "
-                "uno), empezando por los críticos.\n"
-                "4) **Recomendaciones técnicas** — 3-4 bullets concretos y "
-                "accionables.\n\n"
+                "uno), empezando por los críticos. Incluye tres sub-apartados:\n"
+                "   3.1 Riesgos operativos (embalses, precios, generación).\n"
+                "   3.2 Oportunidades de transición (renovables, movilidad eléctrica, etc.).\n"
+                "   3.3 Perspectiva de prensa — Si el JSON contiene 'prensa_del_dia', "
+                "escribe 2-3 frases que conecten los titulares energéticos del día con "
+                "los riesgos/oportunidades ya detectados por datos. Ejemplo: 'Los titulares "
+                "de hoy sobre diálogos de gas con Venezuela refuerzan el riesgo de dependencia "
+                "externa…'. NO repitas los titulares literalmente, solo interpreta su impacto "
+                "en el sector. Si no hay 'prensa_del_dia' en el JSON, omite esta sub-sección.\n"
+                "4) **Recomendaciones técnicas** — 3-5 bullets concretos y "
+                "accionables. Si las noticias sugieren riesgos adicionales "
+                "(caída de gas, retrasos regulatorios, conflictos regionales), "
+                "incluye recomendaciones específicas asociadas a esos temas.\n\n"
                 "FORMATO Y ESTILO:\n"
-                "- Máximo 450 palabras. Párrafos de 2-3 líneas máximo.\n"
+                "- Máximo 550 palabras. Párrafos de 2-3 líneas máximo.\n"
                 "- Usa bullets (- o •) en vez de párrafos largos.\n"
                 "- Redondea rangos a enteros (ej. '180–298 GWh', '63–77%').\n"
                 "- Valores principales: máximo 2 decimales.\n"
@@ -2588,7 +2649,7 @@ class ChatbotOrchestratorService:
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.4,
-                    max_tokens=1500,
+                    max_tokens=1800,
                 )
             
             response = await asyncio.wait_for(
