@@ -1079,12 +1079,18 @@ async def _send_informe_with_charts(chat, result_data: dict):
     Genera los 3 charts en paralelo con la renderización de cards.
 
     Orden de envío:
-      Card 0 (header)  →  📊 Pie Generación
-      Card 1 (sec. 1)  →  🗺️ Mapa Embalses
-      Card 2 (sec. 2)  →  💰 Precio Evolución
-      Card 3 (sec. 3)
-      Card 4 (sec. 4)
-      Card 5 (footer + botones)
+      Card 0  (header)
+      Card 1  (sec. 1 — Situación actual)
+      ─── 📊 Pie Generación ───
+      ─── 🗺️ Mapa Embalses  ───
+      ─── 💰 Precio Evolución ───
+      Card 2  (sec. 2 — Tendencias)
+      Card 3  (sec. 3 — Riesgos)
+      Card 4  (sec. 4 — Recomendaciones)
+      Card 5  (footer + botones)
+
+    Los 3 gráficos se envían juntos justo después de la
+    sección 1 (Situación actual) para mantener coherencia visual.
     """
     import os as _os
 
@@ -1098,25 +1104,23 @@ async def _send_informe_with_charts(chat, result_data: dict):
     except Exception as e:
         logger.warning(f"[INFORME] No se pudieron generar gráficos: {e}")
 
-    # Mapeo: después de qué card (índice) enviar cada gráfico
-    chart_after_card = {
-        0: 'generacion',   # tras header → pie de generación
-        1: 'embalses',     # tras sección 1 → mapa de embalses
-        2: 'precios',      # tras sección 2 → evolución de precios
-    }
+    # Orden de gráficos a enviar después de la sección 1 (card index 1)
+    chart_order = ['generacion', 'embalses', 'precios']
 
     for idx, (card_text, card_kb) in enumerate(cards):
         await _safe_send(chat, card_text, card_kb)
 
-        chart_key = chart_after_card.get(idx)
-        if chart_key and chart_key in charts:
-            filepath, caption, _ = charts[chart_key]
-            if filepath and _os.path.exists(filepath):
-                try:
-                    with open(filepath, 'rb') as img:
-                        await chat.send_photo(photo=img, caption=caption)
-                except Exception as e:
-                    logger.warning(f"[INFORME] Error enviando gráfico {chart_key}: {e}")
+        # Después de card 1 (Sección 1: Situación actual) → enviar los 3 gráficos
+        if idx == 1 and charts:
+            for chart_key in chart_order:
+                if chart_key in charts:
+                    filepath, caption, _ = charts[chart_key]
+                    if filepath and _os.path.exists(filepath):
+                        try:
+                            with open(filepath, 'rb') as img:
+                                await chat.send_photo(photo=img, caption=caption)
+                        except Exception as e:
+                            logger.warning(f"[INFORME] Error enviando gráfico {chart_key}: {e}")
 
 
 async def cmd_informe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1371,11 +1375,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await chat.send_action("upload_document")
         try:
+            # Generar gráficos para incrustar en el PDF
+            chart_paths = []
+            try:
+                from services.informe_charts import generate_all_informe_charts
+                charts = await asyncio.to_thread(generate_all_informe_charts)
+                for key in ['generacion', 'embalses', 'precios']:
+                    if key in charts:
+                        filepath = charts[key][0]
+                        if filepath:
+                            chart_paths.append(filepath)
+            except Exception as ce:
+                logger.warning(f"[PDF] No se pudieron generar gráficos para PDF: {ce}")
+
             from domain.services.report_service import generar_pdf_informe
             pdf_path = generar_pdf_informe(
                 informe_texto,
                 fecha_generacion=informe_data.get("fecha_generacion", ""),
                 generado_con_ia=informe_data.get("generado_con_ia", True),
+                chart_paths=chart_paths,
             )
             if pdf_path:
                 import os

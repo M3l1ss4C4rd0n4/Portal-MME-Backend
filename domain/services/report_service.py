@@ -6,12 +6,13 @@ y luego a PDF usando WeasyPrint. Los PDFs se generan en /tmp
 y se eliminan después de enviarse.
 """
 
+import base64
 import logging
 import os
 import re
 import tempfile
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -208,13 +209,92 @@ em {
     color: #888;
     text-align: center;
 }
+
+.charts-section {
+    margin: 20px 0;
+    page-break-inside: avoid;
+}
+
+.charts-section h3 {
+    text-align: center;
+    color: #1a5276;
+    font-size: 13pt;
+    margin-bottom: 12px;
+}
+
+.chart-container {
+    text-align: center;
+    margin: 16px 0;
+    page-break-inside: avoid;
+}
+
+.chart-container img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.chart-caption {
+    font-size: 8pt;
+    color: #64748b;
+    text-align: center;
+    margin-top: 4px;
+    font-style: italic;
+}
 """
+
+
+def _build_charts_html(chart_paths: List[str]) -> str:
+    """
+    Convierte una lista de paths a imágenes PNG en HTML con data URIs base64.
+    Las imágenes se incrustan directamente en el HTML para que WeasyPrint las renderice.
+    """
+    if not chart_paths:
+        return ""
+
+    captions = {
+        'gen_pie': 'Participación por fuente de generación',
+        'embalses_map': 'Nivel de embalses por región hidrológica',
+        'precio_evol': 'Evolución del Precio de Bolsa Nacional (90 días)',
+    }
+
+    img_blocks = []
+    for path in chart_paths:
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, 'rb') as f:
+                b64 = base64.b64encode(f.read()).decode('utf-8')
+
+            fname = os.path.basename(path).split('_202')[0]  # gen_pie, embalses_map, etc.
+            caption = captions.get(fname, '')
+
+            block = f'<div class="chart-container">'
+            block += f'<img src="data:image/png;base64,{b64}" alt="{caption}">'
+            if caption:
+                block += f'<p class="chart-caption">{caption}</p>'
+            block += '</div>'
+            img_blocks.append(block)
+        except Exception as e:
+            logger.warning(f"[REPORT] Error embediendo imagen {path}: {e}")
+
+    if not img_blocks:
+        return ""
+
+    html = '<div class="charts-section">'
+    html += '<h3>📊 Gráficos del Sector</h3>'
+    html += '\n'.join(img_blocks)
+    html += '</div>'
+    return html
 
 
 def generar_pdf_informe(
     informe_texto: str,
     fecha_generacion: str = "",
     generado_con_ia: bool = True,
+    chart_paths: Optional[List[str]] = None,
 ) -> Optional[str]:
     """
     Genera un PDF del informe ejecutivo.
@@ -223,6 +303,8 @@ def generar_pdf_informe(
         informe_texto: Texto Markdown del informe.
         fecha_generacion: Fecha/hora de generación.
         generado_con_ia: Si fue generado con IA.
+        chart_paths: Lista de paths a imágenes PNG de gráficos para incrustar
+                     después de la sección 1 (Situación actual).
 
     Returns:
         Ruta absoluta al archivo PDF temporal, o None si falla.
@@ -232,6 +314,19 @@ def generar_pdf_informe(
 
         # Convertir Markdown → HTML
         body_html = _markdown_to_html(informe_texto)
+
+        # Incrustar gráficos después de la sección 1 ("Situación actual")
+        charts_html = _build_charts_html(chart_paths or [])
+        if charts_html:
+            # Insertar después del primer </h2> + su contenido (sección 1)
+            # Buscamos el cierre de la primera sección (inicio de la segunda <h2>)
+            h2_positions = [m.start() for m in re.finditer(r'<h2>', body_html)]
+            if len(h2_positions) >= 2:
+                insert_pos = h2_positions[1]
+                body_html = body_html[:insert_pos] + charts_html + body_html[insert_pos:]
+            else:
+                # Si no hay 2 secciones, agregar al final del body
+                body_html += charts_html
 
         hoy = fecha_generacion or datetime.now().strftime('%Y-%m-%d %H:%M')
         metodo = "Asistido por IA" if generado_con_ia else "Datos consolidados"
