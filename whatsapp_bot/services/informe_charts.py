@@ -215,10 +215,55 @@ def generate_generation_pie() -> Tuple[Optional[str], str, str]:
 # 2. MAPA — Nivel de embalses por región hidrológica
 # ═══════════════════════════════════════════════════════════
 
+def _clasificar_riesgo_embalse(participacion: float, volumen_pct: float) -> str:
+    """
+    Replica la lógica exacta del semáforo del dashboard
+    (generacion_hidraulica_hidrologia.py → clasificar_riesgo_embalse).
+
+    Matriz 2D: participación (importancia estratégica) × volumen útil (%).
+
+    Returns: '🔴' | '🟡' | '🟢'
+    """
+    if participacion >= 15:
+        if volumen_pct < 30:
+            return '🔴'
+        elif volumen_pct < 70:
+            return '🟡'
+        else:
+            return '🟢'
+    elif participacion >= 10:
+        if volumen_pct < 20:
+            return '🔴'
+        elif volumen_pct < 60:
+            return '🟡'
+        else:
+            return '🟢'
+    elif participacion >= 5:
+        if volumen_pct < 15:
+            return '🔴'
+        elif volumen_pct < 50:
+            return '🟡'
+        else:
+            return '🟢'
+    else:  # participación < 5%
+        if volumen_pct < 25:
+            return '🟡'
+        else:
+            return '🟢'
+
+
+_RIESGO_COLOR = {'🔴': '#dc3545', '🟡': '#ffc107', '🟢': '#28a745'}
+_RIESGO_ORDEN = {'🔴': 3, '🟡': 2, '🟢': 1}
+_RIESGO_LABEL = {'🔴': 'Alto', '🟡': 'Medio', '🟢': 'Bajo'}
+
+
 def generate_embalses_map() -> Tuple[Optional[str], str, str]:
     """
     Mapa de Colombia con puntos por región mostrando nivel de embalses.
-    Color semáforo: 🟢 ≥60% | 🟡 30-60% | 🔴 <30%
+
+    Semáforo = misma lógica del dashboard (matriz participación × volumen).
+    Color de región = peor riesgo entre sus embalses (conservador).
+
     Returns: (filepath | None, caption, fecha_str)
     """
     try:
@@ -265,10 +310,20 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
             else str(fecha)[:10]
         )
 
+        # Participación nacional por embalse (capacidad / total nacional)
+        cap_total_nacional = float(df['capacidad'].sum())
+        df['participacion'] = (df['capacidad'] / cap_total_nacional * 100) if cap_total_nacional > 0 else 0
+
+        # Clasificar riesgo por embalse (lógica dashboard)
+        df['riesgo'] = df.apply(
+            lambda r: _clasificar_riesgo_embalse(r['participacion'], r['pct']),
+            axis=1
+        )
+
         # Asignar región
         df['region'] = df['recurso'].map(EMBALSE_REGION).fillna('OTRO')
 
-        # Agregar por región
+        # Agregar por región — color = peor riesgo de la región
         regions = {}
         for region, grp in df.groupby('region'):
             if region == 'OTRO' or region not in REGIONES_COORDENADAS:
@@ -278,12 +333,9 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
             overall_pct = (total_vol / total_cap * 100) if total_cap > 0 else 0
             n = len(grp)
 
-            if overall_pct >= 60:
-                color = '#28a745'
-            elif overall_pct >= 30:
-                color = '#ffc107'
-            else:
-                color = '#dc3545'
+            # Riesgo máximo entre embalses de la región (como el dashboard)
+            riesgo_max = max(grp['riesgo'], key=lambda r: _RIESGO_ORDEN[r])
+            color = _RIESGO_COLOR[riesgo_max]
 
             coord = REGIONES_COORDENADAS[region]
             regions[region] = {
@@ -293,6 +345,8 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
                 'pct': overall_pct,
                 'n': n,
                 'color': color,
+                'riesgo': riesgo_max,
+                'riesgo_label': _RIESGO_LABEL[riesgo_max],
                 'vol': total_vol,
                 'cap': total_cap,
             }
@@ -322,10 +376,11 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
                 textfont=dict(
                     size=11, color='#2c3e50', family='Arial Black',
                 ),
-                name=f"{data['nombre']} ({data['pct']:.0f}%)",
+                name=f"{data['riesgo']} {data['nombre']} ({data['pct']:.0f}%) — Riesgo {data['riesgo_label']}",
                 hovertext=(
                     f"<b>{data['nombre']}</b><br>"
                     f"Nivel: {data['pct']:.1f}%<br>"
+                    f"Riesgo: {data['riesgo']} {data['riesgo_label']}<br>"
                     f"Embalses: {data['n']}<br>"
                     f"Volumen: {data['vol']:.0f} GWh"
                 ),
@@ -354,7 +409,11 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
             ),
             annotations=[
                 dict(
-                    text=f'🟢 ≥60%  |  🟡 30-60%  |  🔴 <30%   •   {PORTAL_URL}',
+                    text=(
+                        '🔴 Alto  |  🟡 Medio  |  🟢 Bajo'
+                        '  (participación × volumen)   •   '
+                        f'{PORTAL_URL}'
+                    ),
                     xref='paper', yref='paper',
                     x=0.5, y=-0.02,
                     showarrow=False,
