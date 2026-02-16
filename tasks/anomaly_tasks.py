@@ -301,8 +301,12 @@ def send_daily_summary():
 
         try:
             resp = requests.post(
-                f"{API_BASE}/api/v1/orchestrator/query",
-                json={"intent": "informe_ejecutivo", "parameters": {}},
+                f"{API_BASE}/v1/chatbot/orchestrator",
+                json={
+                    "sessionId": f"daily_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    "intent": "informe_ejecutivo",
+                    "parameters": {},
+                },
                 headers={
                     "Content-Type": "application/json",
                     "X-API-Key": API_KEY,
