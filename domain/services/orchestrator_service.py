@@ -2366,12 +2366,15 @@ class ChatbotOrchestratorService:
             logger.info("[INFORME_EJECUTIVO_IA] Recopilando datos de contexto…")
             
             estado_task = self._handle_estado_actual(parameters)
+            pred_1s_task = self._handle_predicciones_sector({'horizonte': '1_semana'})
             pred_1m_task = self._handle_predicciones_sector({'horizonte': '1_mes'})
             pred_6m_task = self._handle_predicciones_sector({'horizonte': '6_meses'})
+            pred_1a_task = self._handle_predicciones_sector({'horizonte': '1_ano'})
             anomalias_task = self._handle_anomalias_detectadas(parameters)
             
             results = await asyncio.gather(
-                estado_task, pred_1m_task, pred_6m_task, anomalias_task,
+                estado_task, pred_1s_task, pred_1m_task, pred_6m_task,
+                pred_1a_task, anomalias_task,
                 return_exceptions=True
             )
             
@@ -2385,9 +2388,11 @@ class ChatbotOrchestratorService:
                 return {}, []
             
             data_estado, _ = _safe_unpack(results[0])
-            data_pred_1m, _ = _safe_unpack(results[1])
-            data_pred_6m, _ = _safe_unpack(results[2])
-            data_anomalias, _ = _safe_unpack(results[3])
+            data_pred_1s, _ = _safe_unpack(results[1])
+            data_pred_1m, _ = _safe_unpack(results[2])
+            data_pred_6m, _ = _safe_unpack(results[3])
+            data_pred_1a, _ = _safe_unpack(results[4])
+            data_anomalias, _ = _safe_unpack(results[5])
             
             # ── 1b. Obtener noticias filtradas (best-effort) ──
             noticias_ctx = {}
@@ -2444,6 +2449,12 @@ class ChatbotOrchestratorService:
                     "fichas": data_estado.get('fichas', []),
                 },
                 "predicciones": {
+                    "1_semana": {
+                        "horizonte_titulo": data_pred_1s.get('horizonte_titulo', 'Próxima semana'),
+                        "fecha_inicio": data_pred_1s.get('fecha_inicio'),
+                        "fecha_fin": data_pred_1s.get('fecha_fin'),
+                        "indicadores": data_pred_1s.get('predicciones', []),
+                    },
                     "1_mes": {
                         "horizonte_titulo": data_pred_1m.get('horizonte_titulo', 'Próximo mes'),
                         "fecha_inicio": data_pred_1m.get('fecha_inicio'),
@@ -2455,6 +2466,12 @@ class ChatbotOrchestratorService:
                         "fecha_inicio": data_pred_6m.get('fecha_inicio'),
                         "fecha_fin": data_pred_6m.get('fecha_fin'),
                         "indicadores": data_pred_6m.get('predicciones', []),
+                    },
+                    "1_ano": {
+                        "horizonte_titulo": data_pred_1a.get('horizonte_titulo', 'Próximo año'),
+                        "fecha_inicio": data_pred_1a.get('fecha_inicio'),
+                        "fecha_fin": data_pred_1a.get('fecha_fin'),
+                        "indicadores": data_pred_1a.get('predicciones', []),
                     },
                 },
                 "anomalias": {
@@ -2516,8 +2533,10 @@ class ChatbotOrchestratorService:
             logger.info(
                 f"[INFORME_EJECUTIVO_IA] Contexto armado: "
                 f"fichas={len(contexto['estado_actual']['fichas'])}, "
+                f"pred_1s={len(contexto['predicciones']['1_semana']['indicadores'])}, "
                 f"pred_1m={len(contexto['predicciones']['1_mes']['indicadores'])}, "
                 f"pred_6m={len(contexto['predicciones']['6_meses']['indicadores'])}, "
+                f"pred_1a={len(contexto['predicciones']['1_ano']['indicadores'])}, "
                 f"anomalías={contexto['anomalias']['total_anomalias']}"
             )
             
@@ -2587,13 +2606,20 @@ class ChatbotOrchestratorService:
                 "Elabora un informe ejecutivo en 4 secciones:\n"
                 "1) **Situación actual del sistema** — un bullet por indicador: "
                 "valor, unidad y fecha del dato.\n"
-                "2) **Tendencias y proyecciones** — un sub-bloque por indicador "
-                "con promedio esperado, rango, cambio vs 30d y tendencia. "
-                "Para cada indicador, usa máximo 2 líneas de texto.\n"
-                "3) **Riesgos y oportunidades** — bullets cortos (1-2 líneas cada "
-                "uno), empezando por los críticos. Incluye tres sub-apartados:\n"
-                "   3.1 Riesgos operativos (embalses, precios, generación).\n"
-                "   3.2 Oportunidades de transición (renovables, movilidad eléctrica, etc.).\n"
+                "2) **Tendencias y proyecciones** — El JSON incluye 4 horizontes: "
+                "1_semana, 1_mes, 6_meses y 1_ano. Presenta un sub-bloque por "
+                "horizonte temporal (ej. 'Próxima semana', 'Próximo mes', etc.) y "
+                "dentro de cada uno, un bullet por indicador con promedio esperado, "
+                "rango, cambio vs 30d y tendencia. Máximo 2 líneas por indicador.\n"
+                "3) **Riesgos y oportunidades** — análisis detallado, empezando "
+                "por los críticos. Incluye tres sub-apartados:\n"
+                "   3.1 Riesgos operativos — analiza cada anomalía del JSON, "
+                "explica su impacto concreto en el SIN (Sistema Interconectado "
+                "Nacional) y describe posibles consecuencias. Incluye nivel de "
+                "embalses vs umbrales (crítico <30%, alerta <40%, óptimo 50-85%), "
+                "desviaciones de precio y generación.\n"
+                "   3.2 Oportunidades de transición — renovables, eficiencia "
+                "energética, movilidad eléctrica, con datos del JSON.\n"
                 "   3.3 Perspectiva de prensa — Si el JSON contiene 'prensa_del_dia', "
                 "escribe 2-3 frases que conecten los titulares energéticos del día con "
                 "los riesgos/oportunidades ya detectados por datos. Ejemplo: 'Los titulares "
@@ -2605,7 +2631,7 @@ class ChatbotOrchestratorService:
                 "(caída de gas, retrasos regulatorios, conflictos regionales), "
                 "incluye recomendaciones específicas asociadas a esos temas.\n\n"
                 "FORMATO Y ESTILO:\n"
-                "- Máximo 550 palabras. Párrafos de 2-3 líneas máximo.\n"
+                "- Máximo 800 palabras. Párrafos de 2-3 líneas máximo.\n"
                 "- Usa bullets (- o •) en vez de párrafos largos.\n"
                 "- Redondea rangos a enteros (ej. '180–298 GWh', '63–77%').\n"
                 "- Valores principales: máximo 2 decimales.\n"
@@ -2649,7 +2675,7 @@ class ChatbotOrchestratorService:
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.4,
-                    max_tokens=1800,
+                    max_tokens=2400,
                 )
             
             response = await asyncio.wait_for(
@@ -2714,7 +2740,7 @@ class ChatbotOrchestratorService:
         
         # ── Sección 2: Predicciones ──
         lines.append("*2. Tendencias y proyecciones*")
-        for horizonte_key in ['1_mes', '6_meses']:
+        for horizonte_key in ['1_semana', '1_mes', '6_meses', '1_ano']:
             pred_data = contexto.get('predicciones', {}).get(horizonte_key, {})
             titulo = pred_data.get('horizonte_titulo', horizonte_key)
             lines.append(f"  *{titulo}*:")
@@ -2730,28 +2756,115 @@ class ChatbotOrchestratorService:
                 lines.append(f"    {emoji_p} {ind}: {avg} {und} (hist 30d: {hist}, cambio: {cambio}%) {tend}")
         lines.append("")
         
-        # ── Sección 3: Anomalías ──
+        # ── Sección 3: Riesgos y oportunidades ──
         lines.append("*3. Riesgos y oportunidades*")
+        lines.append("  *3.1 Riesgos operativos:*")
         anom_data = contexto.get('anomalias', {})
         anomalias_list = anom_data.get('lista', [])
         if anomalias_list:
             sev_emoji = {'crítico': '🔴', 'alerta': '🟠'}
             for a in anomalias_list:
                 se = sev_emoji.get(a.get('severidad', ''), '⚪')
+                indicador = a.get('indicador', '?')
+                valor = a.get('valor_actual', '?')
+                unidad = a.get('unidad', '')
+                desv = a.get('desviacion_pct', '?')
+                sev = a.get('severidad', '?')
                 lines.append(
-                    f"  {se} {a.get('indicador', '?')}: {a.get('valor_actual', '?')} "
-                    f"{a.get('unidad', '')} — desvío {a.get('desviacion_pct', '?')}% "
-                    f"({a.get('severidad', '?')})"
+                    f"  {se} {indicador}: {valor} {unidad} — desvío {desv}% ({sev})"
                 )
+                # Análisis de impacto por tipo de indicador
+                if 'embalse' in indicador.lower() or 'porcentaje' in indicador.lower():
+                    try:
+                        v = float(valor) if valor != '?' else None
+                    except (ValueError, TypeError):
+                        v = None
+                    if v is not None:
+                        if v < 30:
+                            lines.append(f"     → Nivel CRÍTICO: riesgo de racionamiento eléctrico.")
+                        elif v < 40:
+                            lines.append(f"     → Nivel de ALERTA: reservas hídricas por debajo del óptimo.")
+                        elif v > 85:
+                            lines.append(f"     → Nivel ALTO: posible vertimiento en embalses.")
+                        else:
+                            lines.append(f"     → Nivel dentro del rango óptimo (50-85%).")
+                elif 'precio' in indicador.lower() or 'bolsa' in indicador.lower():
+                    try:
+                        d = float(desv) if desv != '?' else 0
+                    except (ValueError, TypeError):
+                        d = 0
+                    if d > 40:
+                        lines.append(f"     → Desvío CRÍTICO en precios: revisar oferta vs demanda.")
+                    elif d > 20:
+                        lines.append(f"     → Volatilidad moderada en precio de bolsa.")
+                elif 'generaci' in indicador.lower():
+                    lines.append(f"     → Evaluar composición de la matriz y disponibilidad térmica.")
         else:
-            lines.append("  ✅ No se detectaron anomalías significativas.")
+            lines.append("  ✅ No se detectaron anomalías significativas en los indicadores.")
+        
+        # Contexto de embalses si hay datos
+        fichas = contexto.get('estado_actual', {}).get('fichas', [])
+        for f in fichas:
+            if 'embalse' in f.get('indicador', '').lower() or 'porcentaje' in f.get('indicador', '').lower():
+                try:
+                    v = float(f.get('valor', 0))
+                except (ValueError, TypeError):
+                    v = 0
+                if v < 40:
+                    lines.append(f"  ⚠️ Embalses en {v}% — monitoreo prioritario recomendado.")
+                elif v > 75:
+                    lines.append(f"  ✅ Embalses en {v}% — condición hidrológica favorable.")
+        
+        lines.append("")
+        lines.append("  *3.2 Oportunidades:*")
+        # Analizar participación renovable si hay datos
+        gen_total = None
+        gen_hidro = None
+        for f in fichas:
+            ind = f.get('indicador', '').lower()
+            if 'generación total' in ind or 'gene total' in ind:
+                try:
+                    gen_total = float(f.get('valor', 0))
+                except (ValueError, TypeError):
+                    pass
+        lines.append("  • Potencial de expansión en generación solar y eólica.")
+        lines.append("  • Oportunidades en eficiencia energética del lado de la demanda.")
+        lines.append("  • Avance en transición energética y movilidad eléctrica.")
         lines.append("")
         
         # ── Sección 4: Recomendaciones ──
         lines.append("*4. Recomendaciones técnicas*")
-        lines.append("  • Monitorear indicadores con desvío > 15%.")
-        lines.append("  • Verificar niveles de embalses semanalmente.")
-        lines.append("  • Revisar tendencia de precios si cambio > 20%.")
+        # Recomendaciones contextuales basadas en datos
+        recomendaciones = []
+        if anomalias_list:
+            for a in anomalias_list:
+                indicador = a.get('indicador', '').lower()
+                sev = a.get('severidad', '')
+                try:
+                    desv = float(a.get('desviacion_pct', 0))
+                except (ValueError, TypeError):
+                    desv = 0
+                if 'precio' in indicador or 'bolsa' in indicador:
+                    if desv > 20:
+                        recomendaciones.append("  • Revisar contratos bilaterales ante volatilidad de precios en bolsa.")
+                if 'embalse' in indicador or 'porcentaje' in indicador:
+                    recomendaciones.append("  • Intensificar monitoreo semanal de niveles de embalses.")
+                if 'generaci' in indicador:
+                    recomendaciones.append("  • Evaluar disponibilidad de plantas térmicas de respaldo.")
+        
+        if not recomendaciones:
+            recomendaciones.append("  • Monitorear indicadores con desvío > 15%.")
+        
+        recomendaciones.append("  • Verificar pronóstico hidrológico del IDEAM para planificación de despacho.")
+        recomendaciones.append("  • Revisar tendencia de precios si cambio > 20% vs promedio histórico.")
+        recomendaciones.append("  • Evaluar cumplimiento de metas de transición energética.")
+        
+        # Eliminar duplicados manteniendo orden
+        seen = set()
+        for r in recomendaciones:
+            if r not in seen:
+                seen.add(r)
+                lines.append(r)
         lines.append("")
         lines.append("_⚠️ Informe generado sin IA (servicio no disponible)._")
         

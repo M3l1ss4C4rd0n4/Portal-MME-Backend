@@ -16,6 +16,105 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
+# ── Mapa de emojis → texto para PDF (WeasyPrint no renderiza emojis) ──
+_EMOJI_MAP = {
+    '\U0001f4ca': '[Grafico]',
+    '\U0001f4c5': '[Fecha]',
+    '\u26a1': '[Energia]',
+    '\U0001f50c': '[Enchufe]',
+    '\U0001f4b0': '[Precio]',
+    '\U0001f4b2': '[Precio]',
+    '\U0001f4a7': '[Agua]',
+    '\U0001f321\ufe0f': '[Temp]',
+    '\U0001f525': '[Fuego]',
+    '\u2600\ufe0f': '[Sol]',
+    '\U0001f32c\ufe0f': '[Viento]',
+    '\U0001f534': '[CRITICO]',
+    '\U0001f7e0': '[ALERTA]',
+    '\U0001f7e2': '[OK]',
+    '\u26aa': '[--]',
+    '\u2705': '[OK]',
+    '\u26a0\ufe0f': '[!]',
+    '\u26a0': '[!]',
+    '\U0001f4c8': '[Subida]',
+    '\U0001f4c9': '[Bajada]',
+    '\u27a1\ufe0f': '[->]',
+    '\u27a1': '[->]',
+    '\U0001f4cb': '[Lista]',
+    '\U0001f527': '[Config]',
+    '\U0001f3ed': '[Planta]',
+    '\U0001f3e2': '[Edificio]',
+    '\U0001f30e': '[Mundo]',
+    '\U0001f4f0': '[Prensa]',
+    '\U0001f4a1': '[Idea]',
+    '\U0001f6e0\ufe0f': '[Herr]',
+    '\U0001f6e0': '[Herr]',
+    '\U0001f4dd': '[Nota]',
+    '\U0001f3af': '[Meta]',
+    '\U0001f4cc': '[Pin]',
+    '\U0001f91d': '[Acuerdo]',
+    '\U0001f4e2': '[Alerta]',
+    '\U0001f4d1': '[Doc]',
+    '\u2796': '[-]',
+    '\u2795': '[+]',
+    '\u27a4': '[>]',
+    '\u2192': '->',
+    '\U0001f1f2': '',
+    '\U0001f1ea': '',
+}
+
+# Regex para detectar emojis Unicode restantes
+_EMOJI_PATTERN = re.compile(
+    '['
+    '\U0001F600-\U0001F64F'  # emoticons
+    '\U0001F300-\U0001F5FF'  # misc symbols & pictographs
+    '\U0001F680-\U0001F6FF'  # transport & map symbols
+    '\U0001F1E0-\U0001F1FF'  # flags
+    '\U00002702-\U000027B0'  # dingbats
+    '\U000024C2-\U0001F251'  # enclosed characters
+    '\U0001F900-\U0001F9FF'  # supplemental symbols
+    '\U0001FA00-\U0001FA6F'  # chess symbols
+    '\U0001FA70-\U0001FAFF'  # symbols extended-A
+    ']+', flags=re.UNICODE
+)
+
+
+def _replace_emojis_for_pdf(text: str) -> str:
+    """Reemplaza emojis por equivalentes de texto para PDF."""
+    for emoji, replacement in _EMOJI_MAP.items():
+        text = text.replace(emoji, replacement)
+    # Eliminar cualquier emoji restante no mapeado
+    text = _EMOJI_PATTERN.sub('', text)
+    return text
+
+
+def _strip_redundant_header(md_text: str) -> str:
+    """
+    Elimina las líneas redundantes del encabezado del informe
+    que ya están en el template HTML del PDF (título, fecha, separadores).
+    """
+    lines = md_text.split('\n')
+    filtered = []
+    skip_patterns = [
+        re.compile(r'^\*?\s*INFORME EJECUTIVO', re.IGNORECASE),
+        re.compile(r'^\*?\s*Fecha:', re.IGNORECASE),
+        re.compile(r'^[━─\-]{5,}$'),  # separators
+    ]
+    for line in lines:
+        stripped = line.strip()
+        # Remove emoji-only or decoration-only lines
+        cleaned = _EMOJI_PATTERN.sub('', stripped).strip()
+        if cleaned in ('INFORME EJECUTIVO — SECTOR ELÉCTRICO',
+                       'INFORME EJECUTIVO  SECTOR ELÉCTRICO',
+                       'INFORME EJECUTIVO'):
+            continue
+        if any(p.match(stripped) for p in skip_patterns):
+            continue
+        if any(p.match(cleaned) for p in skip_patterns):
+            continue
+        filtered.append(line)
+    return '\n'.join(filtered)
+
 
 def _markdown_to_html(md_text: str) -> str:
     """
@@ -270,6 +369,12 @@ def _build_charts_html(chart_paths: List[str]) -> str:
         'precio_evol': 'Evolución del Precio de Bolsa Nacional (90 días)',
     }
 
+    urls = {
+        'gen_pie': 'https://portalenergetico.minenergia.gov.co/generacion/fuentes',
+        'embalses_map': 'https://portalenergetico.minenergia.gov.co/generacion/hidraulica/hidrologia',
+        'precio_evol': 'https://portalenergetico.minenergia.gov.co/comercializacion',
+    }
+
     img_blocks = []
     for path in chart_paths:
         if not path or not os.path.exists(path):
@@ -280,11 +385,17 @@ def _build_charts_html(chart_paths: List[str]) -> str:
 
             fname = os.path.basename(path).split('_202')[0]  # gen_pie, embalses_map, etc.
             caption = captions.get(fname, '')
+            url = urls.get(fname, '')
 
             block = f'<div class="chart-container">'
             block += f'<img src="data:image/png;base64,{b64}" alt="{caption}">'
             if caption:
-                block += f'<p class="chart-caption">{caption}</p>'
+                if url:
+                    block += (f'<p class="chart-caption">{caption} — '
+                             f'<a href="{url}" style="color:#1a5276;">'
+                             f'Ver en el Portal Energético</a></p>')
+                else:
+                    block += f'<p class="chart-caption">{caption}</p>'
             block += '</div>'
             img_blocks.append(block)
         except Exception as e:
@@ -321,6 +432,10 @@ def generar_pdf_informe(
     try:
         from weasyprint import HTML
 
+        # Limpiar encabezado redundante y emojis
+        informe_texto = _strip_redundant_header(informe_texto)
+        informe_texto = _replace_emojis_for_pdf(informe_texto)
+
         # Convertir Markdown → HTML
         body_html = _markdown_to_html(informe_texto)
 
@@ -349,22 +464,22 @@ def generar_pdf_informe(
 </head>
 <body>
     <div class="header">
-        <h1>📊 Informe Ejecutivo del Sector Eléctrico</h1>
-        <p class="subtitle">República de Colombia — Ministerio de Minas y Energía</p>
+        <h1>Informe Ejecutivo del Sector El&eacute;ctrico</h1>
+        <p class="subtitle">Rep&uacute;blica de Colombia &mdash; Ministerio de Minas y Energ&iacute;a</p>
     </div>
 
     <div class="metadata">
-        <span>📅 {hoy}</span>
-        <span>🔧 {metodo}</span>
-        <span>📋 Despacho del Viceministro</span>
+        <span>{hoy}</span>
+        <span>{metodo}</span>
+        <span>Despacho del Viceministro</span>
     </div>
 
     {body_html}
 
     <div class="footer-note">
-        Documento generado automáticamente por el Portal Energético MME.
+        Documento generado autom&aacute;ticamente por el Portal Energ&eacute;tico MME.
         Los datos provienen de XM, SIMEM y fuentes oficiales del sector.
-        Las predicciones utilizan modelos ENSEMBLE con validación holdout.
+        Las predicciones utilizan modelos ENSEMBLE con validaci&oacute;n holdout.
     </div>
 </body>
 </html>"""
