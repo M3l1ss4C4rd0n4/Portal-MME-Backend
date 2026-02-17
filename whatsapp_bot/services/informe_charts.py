@@ -272,6 +272,29 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
     try:
         db = _get_db()
 
+        # Buscar la fecha más reciente con datos COMPLETOS (n_vol/n_cap >= 80%)
+        df_fecha = db.query_df("""
+            SELECT fecha,
+                   COUNT(DISTINCT CASE WHEN metrica='VoluUtilDiarEner' THEN recurso END) as n_vol,
+                   COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END) as n_cap
+            FROM metrics
+            WHERE metrica IN ('VoluUtilDiarEner','CapaUtilDiarEner')
+              AND entidad = 'Embalse'
+              AND fecha >= CURRENT_DATE - INTERVAL '7 days'
+            GROUP BY fecha
+            HAVING COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END) > 0
+               AND COUNT(DISTINCT CASE WHEN metrica='VoluUtilDiarEner' THEN recurso END)::float
+                 / COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END) >= 0.80
+            ORDER BY fecha DESC
+            LIMIT 1
+        """)
+
+        if df_fecha.empty:
+            logger.warning("generate_embalses_map: no hay fecha con datos completos en últimos 7 días")
+            return None, "", ""
+
+        fecha_completa = df_fecha.iloc[0]['fecha']
+
         df = db.query_df("""
             SELECT
                 v.recurso,
@@ -289,24 +312,16 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
               AND c.entidad  = 'Embalse'
             WHERE v.metrica = 'VoluUtilDiarEner'
               AND v.entidad = 'Embalse'
-              AND v.fecha = (
-                  SELECT MAX(fecha) FROM metrics
-                  WHERE metrica = 'VoluUtilDiarEner'
-                    AND entidad = 'Embalse'
-              )
+              AND v.fecha = %s
             ORDER BY volumen DESC
-        """)
+        """, (fecha_completa,))
 
         if df.empty:
             logger.warning("generate_embalses_map: sin datos de embalses")
             return None, "", ""
 
         # Fecha
-        df_date = db.query_df(
-            "SELECT MAX(fecha) AS f FROM metrics "
-            "WHERE metrica = 'VoluUtilDiarEner' AND entidad = 'Embalse'"
-        )
-        fecha = df_date.iloc[0]['f']
+        fecha = fecha_completa
         fecha_str = (
             fecha.strftime('%d/%m/%Y')
             if hasattr(fecha, 'strftime')

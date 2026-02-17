@@ -59,6 +59,38 @@ def obtener_informe_real() -> dict:
     return {}
 
 
+def obtener_noticias_sector() -> list:
+    """Llama al orquestador para obtener las noticias del sector."""
+    API_BASE = "http://localhost:8000"
+    API_KEY = os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
+
+    try:
+        resp = requests.post(
+            f"{API_BASE}/v1/chatbot/orchestrator",
+            json={
+                "sessionId": f"news_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "intent": "noticias_sector",
+                "parameters": {},
+            },
+            headers={
+                "Content-Type": "application/json",
+                "X-API-Key": API_KEY,
+            },
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            data = resp.json().get('data', {})
+            noticias = data.get('noticias', [])
+            print(f"   ✅ Noticias obtenidas: {len(noticias)}")
+            return noticias
+        else:
+            print(f"   ⚠️  Noticias respondió {resp.status_code}")
+    except Exception as e:
+        print(f"   ⚠️  Error obteniendo noticias: {e}")
+
+    return []
+
+
 def generar_pdf_con_graficos(informe_texto: str, fecha_gen: str, con_ia: bool):
     """Genera PDF con gráficos incrustados (igual que el bot de Telegram)."""
     chart_paths = []
@@ -110,8 +142,12 @@ if __name__ == "__main__":
     print(f"   IA: {informe_data.get('generado_con_ia', False)}")
     print(f"   Fecha: {informe_data.get('fecha_generacion', 'N/D')}")
 
-    # ── 2. Generar PDF ──
-    print("\n2️⃣  Generando PDF con gráficos...")
+    # ── 2. Obtener noticias del sector ──
+    print("\n2️⃣  Obteniendo noticias del sector energético...")
+    noticias = obtener_noticias_sector()
+
+    # ── 3. Generar PDF ──
+    print("\n3️⃣  Generando PDF con gráficos...")
     pdf_path = generar_pdf_con_graficos(
         informe_texto,
         informe_data.get('fecha_generacion', ''),
@@ -123,17 +159,17 @@ if __name__ == "__main__":
     else:
         print("   ⚠️  PDF no generado (se enviará solo HTML)")
 
-    # ── 3. Construir HTML con plantilla premium ──
-    print("\n3️⃣  Construyendo plantilla HTML premium...")
-    email_html = build_daily_email_html(informe_texto)
+    # ── 4. Construir HTML con plantilla premium ──
+    print("\n4️⃣  Construyendo plantilla HTML premium...")
+    email_html = build_daily_email_html(informe_texto, noticias=noticias)
     print(f"   ✅ HTML generado: {len(email_html):,} caracteres")
 
-    # ── 4. Enviar email con PDF adjunto ──
+    # ── 5. Enviar email con PDF adjunto ──
     asunto = (
         f"[PRUEBA] Informe Ejecutivo del Sector Eléctrico — "
         f"{datetime.now().strftime('%Y-%m-%d')}"
     )
-    print(f"\n4️⃣  Enviando email...")
+    print(f"\n5️⃣  Enviando email...")
     resultado = send_email(
         to_list=[destinatario],
         subject=asunto,

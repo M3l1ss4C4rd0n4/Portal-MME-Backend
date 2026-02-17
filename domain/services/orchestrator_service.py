@@ -87,8 +87,8 @@ class ChatbotOrchestratorService:
     # Timeout por servicio (10 segundos como especifica el documento)
     SERVICE_TIMEOUT = 10
     
-    # Timeout total de la request (30 segundos)
-    TOTAL_TIMEOUT = 30
+    # Timeout total de la request (60 segundos para acomodar IA con más tokens)
+    TOTAL_TIMEOUT = 60
     
     def __init__(self):
         """Inicializa el orquestador"""
@@ -101,6 +101,9 @@ class ChatbotOrchestratorService:
         
         # Servicio de informes ejecutivos (completo con análisis estadístico)
         self.executive_report_service = ExecutiveReportService()
+        
+        # Cache diario del informe IA para no repetir llamadas costosas
+        self._informe_ia_cache: Dict[str, Any] = {}  # {fecha: {texto, timestamp}}
         
         # El predictions_service puede no estar siempre disponible
         try:
@@ -472,29 +475,46 @@ class ChatbotOrchestratorService:
             })
         
         # ─── FICHA 3: PORCENTAJE DE EMBALSES ───
+        # XM no publica embalses diariamente (cada ~1-3 días).
+        # Recorremos los últimos 7 días y escogemos el dato más reciente
+        # con datos completos (VoluUtilDiarEner + CapaUtilDiarEner).
         try:
-            nivel_pct, energia_gwh, fecha_embalses = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.hydrology_service.get_reservas_hidricas,
-                    ayer.isoformat()
-                ),
-                timeout=self.SERVICE_TIMEOUT
-            )
+            nivel_pct = None
+            energia_gwh = None
+            fecha_embalses = None
             
-            # Si ayer no hay datos, intentar con antes de ayer
-            if nivel_pct is None:
-                anteayer = hoy - timedelta(days=2)
-                nivel_pct, energia_gwh, fecha_embalses = await asyncio.wait_for(
+            for dias_atras in range(1, 8):  # ayer..hace 7 días
+                fecha_intento = (hoy - timedelta(days=dias_atras)).isoformat()
+                _pct, _gwh, _fecha = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.hydrology_service.get_reservas_hidricas,
-                        anteayer.isoformat()
+                        fecha_intento
                     ),
                     timeout=self.SERVICE_TIMEOUT
                 )
+                if _pct is not None:
+                    nivel_pct, energia_gwh, fecha_embalses = _pct, _gwh, _fecha
+                    if dias_atras > 1:
+                        logger.info(
+                            f"[EMBALSES] Dato encontrado {dias_atras}d atrás "
+                            f"({fecha_embalses}), XM no publicó datos más recientes."
+                        )
+                    break
             
             if nivel_pct is not None:
                 # Evaluar estado con percentiles históricos del mismo mes
-                estado_embalse, referencia_hist = self._evaluar_nivel_embalses_historico(nivel_pct)
+                estado_embalse, referencia_hist, prom_hist = self._evaluar_nivel_embalses_historico(nivel_pct)
+                variacion_hist = round((nivel_pct - prom_hist) / prom_hist * 100, 1) if prom_hist > 0 else 0
+                
+                # Obtener promedio 30d y media histórica 2020-2025
+                promedio_30d, dias_30d = await asyncio.to_thread(self._get_embalses_avg_30d)
+                media_hist_2020_2025 = await asyncio.to_thread(self._get_media_historica_embalses_2020_2025)
+                
+                desviacion_media_hist = None
+                if media_hist_2020_2025 is not None and media_hist_2020_2025 > 0:
+                    desviacion_media_hist = round(
+                        (nivel_pct - media_hist_2020_2025) / media_hist_2020_2025 * 100, 1
+                    )
                 
                 fichas.append({
                     "indicador": "Porcentaje de Embalses",
@@ -505,7 +525,21 @@ class ChatbotOrchestratorService:
                     "contexto": {
                         "energia_embalsada_gwh": round(energia_gwh, 2) if energia_gwh else None,
                         "estado": estado_embalse,
-                        "referencia_historica": referencia_hist
+                        "referencia_historica": referencia_hist,
+                        "promedio_historico_mes": prom_hist,
+                        "variacion_vs_historico_pct": variacion_hist,
+                        # variacion_vs_promedio_pct: usado por la ficha KPI del email/dashboard
+                        # para mostrar "▲ X% vs Media 2020-2025" igual que las otras fichas.
+                        "variacion_vs_promedio_pct": desviacion_media_hist,
+                        "etiqueta_variacion": "vs Media 2020-2025",
+                        "promedio_30d": round(promedio_30d, 2) if promedio_30d else None,
+                        "dias_con_datos_30d": dias_30d,
+                        "media_historica_2020_2025": round(media_hist_2020_2025, 2) if media_hist_2020_2025 else None,
+                        "desviacion_pct_media_historica_2020_2025": desviacion_media_hist,
+                        "nota_embalses": (
+                            f"Dato del {fecha_embalses}. XM publica embalses cada 1-3 días. "
+                            f"Se seleccionó el último dato completo en ventana de 7 días."
+                        ),
                     }
                 })
             else:
@@ -514,7 +548,7 @@ class ChatbotOrchestratorService:
                     "emoji": "💧",
                     "valor": None,
                     "unidad": "%",
-                    "error": "Sin datos disponibles"
+                    "error": "Sin datos disponibles en los últimos 7 días"
                 })
         except Exception as e:
             logger.warning(f"Error obteniendo embalses: {e}")
@@ -551,15 +585,15 @@ class ChatbotOrchestratorService:
     def _evaluar_nivel_embalses_historico(
         self,
         nivel_pct: float,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, str, float]:
         """
         Evalúa el nivel de embalses actual comparándolo con los
         percentiles 25/75 del histórico para el mismo mes del año
         (datos 2020-presente).
         
         Returns:
-            (estado_emoji_texto, referencia_historica_texto)
-            Ejemplo: ("🟢 Nivel alto", "Por encima del percentil 75 del histórico 2020-2025 para este mes")
+            (estado_emoji_texto, referencia_historica_texto, promedio_historico)
+            Ejemplo: ("🟢 Nivel alto", "Por encima del percentil 75 ...", 68.5)
         """
         try:
             from infrastructure.database.manager import db_manager
@@ -570,7 +604,9 @@ class ChatbotOrchestratorService:
                 WITH emb_diario AS (
                     SELECT fecha,
                            SUM(CASE WHEN metrica='VoluUtilDiarEner' THEN valor_gwh ELSE 0 END) as vol,
-                           SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) as cap
+                           SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) as cap,
+                           COUNT(DISTINCT CASE WHEN metrica='VoluUtilDiarEner' THEN recurso END) as n_vol,
+                           COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END) as n_cap
                     FROM metrics
                     WHERE metrica IN ('VoluUtilDiarEner','CapaUtilDiarEner')
                     AND entidad = 'Embalse'
@@ -581,6 +617,7 @@ class ChatbotOrchestratorService:
                 )
                 SELECT vol / cap * 100 as pct
                 FROM emb_diario
+                WHERE n_cap > 0 AND n_vol::float / n_cap >= 0.80
                 ORDER BY fecha ASC
             """
             df = db_manager.query_df(query, params=(mes_actual, hoy.isoformat()))
@@ -622,7 +659,7 @@ class ChatbotOrchestratorService:
                         f"Percentil 25 ≈ {p25:.0f}%, promedio ≈ {avg:.0f}%."
                     )
                 
-                return estado, ref
+                return estado, ref, round(avg, 1)
             else:
                 # Fallback: sin suficiente histórico, usar umbrales fijos
                 logger.info("[EMBALSES] Histórico insuficiente, usando umbrales fijos")
@@ -631,13 +668,13 @@ class ChatbotOrchestratorService:
         
         # Fallback simple (mismos umbrales originales)
         if nivel_pct >= 70:
-            return "🟢 Nivel alto", "Referencia: umbral fijo ≥70%"
+            return "🟢 Nivel alto", "Referencia: umbral fijo ≥70%", 60.0
         elif nivel_pct >= 50:
-            return "🟡 Nivel medio", "Referencia: umbral fijo 50-70%"
+            return "🟡 Nivel medio", "Referencia: umbral fijo 50-70%", 60.0
         elif nivel_pct >= 30:
-            return "🟠 Nivel bajo", "Referencia: umbral fijo 30-50%"
+            return "🟠 Nivel bajo", "Referencia: umbral fijo 30-50%", 60.0
         else:
-            return "🔴 Nivel crítico", "Referencia: umbral fijo <30%"
+            return "🔴 Nivel crítico", "Referencia: umbral fijo <30%", 60.0
     
     @handle_service_error
     async def _handle_anomalias_detectadas(
@@ -1025,6 +1062,10 @@ class ChatbotOrchestratorService:
         """
         Obtiene el último % de embalses y el promedio 30d.
         Calcula VoluUtilDiarEner/CapaUtilDiarEner × 100 por día.
+
+        IMPORTANTE: Filtra días con datos incompletos — si un día tiene
+        menos del 80% de los embalses con VoluUtil vs los que tienen
+        CapaUtil, ese día se descarta (dato parcial de XM).
         """
         try:
             hoy = date.today()
@@ -1032,10 +1073,12 @@ class ChatbotOrchestratorService:
             
             from infrastructure.database.manager import db_manager
             query = """
-                WITH emb_diario AS (
+                WITH emb_conteo AS (
                     SELECT fecha,
                            SUM(CASE WHEN metrica='VoluUtilDiarEner' THEN valor_gwh ELSE 0 END) as vol,
-                           SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) as cap
+                           SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) as cap,
+                           COUNT(DISTINCT CASE WHEN metrica='VoluUtilDiarEner' THEN recurso END) as n_vol,
+                           COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END) as n_cap
                     FROM metrics
                     WHERE metrica IN ('VoluUtilDiarEner','CapaUtilDiarEner')
                     AND entidad = 'Embalse'
@@ -1044,7 +1087,9 @@ class ChatbotOrchestratorService:
                     HAVING SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) > 0
                 )
                 SELECT fecha, vol / cap * 100 as pct
-                FROM emb_diario
+                FROM emb_conteo
+                WHERE n_cap > 0
+                  AND n_vol::float / n_cap >= 0.80
                 ORDER BY fecha ASC
             """
             df = db_manager.query_df(query, params=(hace_30.isoformat(), hoy.isoformat()))
@@ -1243,7 +1288,9 @@ class ChatbotOrchestratorService:
                 WITH emb_diario AS (
                     SELECT fecha,
                            SUM(CASE WHEN metrica='VoluUtilDiarEner' THEN valor_gwh ELSE 0 END) as vol,
-                           SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) as cap
+                           SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) as cap,
+                           COUNT(DISTINCT CASE WHEN metrica='VoluUtilDiarEner' THEN recurso END) as n_vol,
+                           COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END) as n_cap
                     FROM metrics
                     WHERE metrica IN ('VoluUtilDiarEner','CapaUtilDiarEner')
                     AND entidad = 'Embalse'
@@ -1251,7 +1298,8 @@ class ChatbotOrchestratorService:
                     GROUP BY fecha
                 )
                 SELECT COUNT(*) as dias, AVG(vol / NULLIF(cap, 0) * 100) as avg_pct
-                FROM emb_diario WHERE cap > 0
+                FROM emb_diario
+                WHERE cap > 0 AND n_cap > 0 AND n_vol::float / n_cap >= 0.80
             """
             df = db_manager.query_df(query, params=(hace_30.isoformat(), hoy.isoformat()))
             if not df.empty and df['avg_pct'].iloc[0] is not None:
@@ -1260,6 +1308,57 @@ class ChatbotOrchestratorService:
         except Exception as e:
             logger.warning(f"Error obteniendo histórico 30d de embalses: {e}")
             return None, 0
+    
+    def _get_media_historica_embalses_2020_2025(self) -> Optional[float]:
+        """
+        Calcula la media histórica de embalses (%) del periodo 2020–2025.
+        
+        Usa VoluUtilDiarEner / CapaUtilDiarEner × 100 agregando todos
+        los embalses por día, y luego promediando todos los días del
+        periodo 2020-01-01 a 2025-12-31.
+        
+        Este valor sirve como referencia de largo plazo para que el
+        informe ejecutivo contextualice si el nivel actual de embalses
+        está por encima o por debajo de lo normal en los últimos 5 años.
+        
+        Returns:
+            Media histórica en %, o None si no hay datos suficientes.
+        """
+        try:
+            from infrastructure.database.manager import db_manager
+            query = """
+                WITH emb_diario AS (
+                    SELECT fecha,
+                           SUM(CASE WHEN metrica='VoluUtilDiarEner' THEN valor_gwh ELSE 0 END) as vol,
+                           SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) as cap,
+                           COUNT(DISTINCT CASE WHEN metrica='VoluUtilDiarEner' THEN recurso END) as n_vol,
+                           COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END) as n_cap
+                    FROM metrics
+                    WHERE metrica IN ('VoluUtilDiarEner','CapaUtilDiarEner')
+                    AND entidad = 'Embalse'
+                    AND fecha >= '2020-01-01'
+                    AND fecha <= '2025-12-31'
+                    GROUP BY fecha
+                    HAVING SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) > 0
+                )
+                SELECT AVG(vol / cap * 100) as media_pct,
+                       COUNT(*) as dias_con_datos
+                FROM emb_diario
+                WHERE n_cap > 0 AND n_vol::float / n_cap >= 0.80
+            """
+            df = db_manager.query_df(query)
+            if df is not None and not df.empty and df['media_pct'].iloc[0] is not None:
+                dias = int(df['dias_con_datos'].iloc[0])
+                media = float(df['media_pct'].iloc[0])
+                logger.info(
+                    f"[EMBALSES] Media histórica 2020-2025: {media:.1f}% "
+                    f"({dias} días con datos)"
+                )
+                return media
+            return None
+        except Exception as e:
+            logger.warning(f"Error calculando media histórica 2020-2025 embalses: {e}")
+            return None
     
     @handle_service_error
     async def _handle_predicciones_sector(
@@ -2428,6 +2527,7 @@ class ChatbotOrchestratorService:
                             "titulares_del_dia": titulares[:8],
                             "resumen_prensa": resumen_prensa or "",
                             "total_fuentes": len(enriched.get("fuentes_usadas", [])),
+                            "noticias": top_noticias[:3],  # objetos completos para fallback/PDF
                         }
                         logger.info(
                             f"[INFORME_EJECUTIVO_IA] Noticias inyectadas: "
@@ -2526,6 +2626,61 @@ class ChatbotOrchestratorService:
                 },
             }
             
+            # ── 2b. Construir nodo "predicciones_mes" con las 3 métricas clave ──
+            # Esto permite que la IA presente primero un bloque claro con las
+            # proyecciones a 1 mes de Generación, Precio y Embalses antes de
+            # pasar al análisis cualitativo.
+            pred_1m_indicadores = data_pred_1m.get('predicciones', [])
+            predicciones_mes = {}
+            
+            # Mapeo: nombre indicador → clave en predicciones_mes
+            _PRED_MES_MAP = {
+                "Generación Total del Sistema": "generacion",
+                "Precio de Bolsa Nacional": "precio_bolsa",
+                "Porcentaje de Embalses": "embalses",
+            }
+            # Orden prioritario para la IA
+            _PRED_MES_ORDEN = ["generacion", "precio_bolsa", "embalses"]
+            
+            for ind in pred_1m_indicadores:
+                nombre = ind.get("indicador", "")
+                clave = _PRED_MES_MAP.get(nombre)
+                if clave:
+                    resumen = ind.get("resumen", {})
+                    predicciones_mes[clave] = {
+                        "indicador": nombre,
+                        "emoji": ind.get("emoji", ""),
+                        "unidad": ind.get("unidad", ""),
+                        "confiable": ind.get("confiable", False),
+                        "promedio_periodo": resumen.get("promedio_periodo"),
+                        "rango_min": resumen.get("minimo_periodo"),
+                        "rango_max": resumen.get("maximo_periodo"),
+                        "promedio_30d_historico": resumen.get("promedio_30d_historico"),
+                        "cambio_pct_vs_historico": resumen.get("cambio_pct"),
+                        "tendencia": ind.get("tendencia", ""),
+                        "rango_confianza": resumen.get("rango_confianza"),
+                        "confianza_modelo": ind.get("confianza_modelo"),
+                        "advertencia_confianza": ind.get("advertencia_confianza"),
+                    }
+            
+            # Asegurar que el nodo tenga las 3 métricas en el orden correcto
+            predicciones_mes_ordenadas = {}
+            for clave in _PRED_MES_ORDEN:
+                if clave in predicciones_mes:
+                    predicciones_mes_ordenadas[clave] = predicciones_mes[clave]
+            
+            contexto["predicciones_mes"] = {
+                "horizonte": data_pred_1m.get('horizonte_titulo', 'Próximo mes'),
+                "fecha_inicio": data_pred_1m.get('fecha_inicio'),
+                "fecha_fin": data_pred_1m.get('fecha_fin'),
+                "metricas_clave": predicciones_mes_ordenadas,
+                "nota": (
+                    "Estas son las predicciones a 1 mes de las 3 métricas "
+                    "prioritarias. Usar ANTES del análisis cualitativo en la "
+                    "sección 2 del informe."
+                ),
+            }
+            
             # Inyectar noticias si disponibles
             if noticias_ctx:
                 contexto["prensa_del_dia"] = noticias_ctx
@@ -2540,8 +2695,23 @@ class ChatbotOrchestratorService:
                 f"anomalías={contexto['anomalias']['total_anomalias']}"
             )
             
-            # ── 3. Llamar a la IA para redactar el informe ──
-            informe_texto = await self._generar_informe_con_ia(contexto)
+            # ── 3. Verificar cache diario antes de llamar a la IA ──
+            hoy = datetime.utcnow().strftime('%Y-%m-%d')
+            cached = self._informe_ia_cache.get(hoy)
+            if cached and cached.get('texto'):
+                logger.info(
+                    f"[INFORME_IA] Usando cache del día ({len(cached['texto'])} chars, "
+                    f"generado a las {cached.get('hora', '?')})"
+                )
+                informe_texto = cached['texto']
+            else:
+                informe_texto = await self._generar_informe_con_ia(contexto)
+                # Guardar en cache si fue exitoso
+                if informe_texto:
+                    self._informe_ia_cache = {hoy: {
+                        'texto': informe_texto,
+                        'hora': datetime.utcnow().strftime('%H:%M'),
+                    }}
             
             if informe_texto:
                 data['informe'] = informe_texto
@@ -2549,6 +2719,7 @@ class ChatbotOrchestratorService:
             else:
                 # Fallback sin IA
                 logger.warning("[INFORME_EJECUTIVO_IA] IA no disponible, generando fallback")
+                contexto['_generado_con_ia'] = False
                 data['informe'] = self._generar_informe_fallback(contexto)
                 data['generado_con_ia'] = False
                 data['nota_fallback'] = (
@@ -2596,74 +2767,216 @@ class ChatbotOrchestratorService:
                 return None
             
             import json as _json
-            contexto_json = _json.dumps(contexto, ensure_ascii=False, default=str)
+            
+            # ── Recortar el contexto para minimizar tokens ──
+            # Solo enviar lo que la IA necesita para su análisis
+            contexto_ia = {
+                "fecha_consulta": contexto.get("fecha_consulta"),
+                "estado_actual": contexto.get("estado_actual"),
+                "predicciones_mes": contexto.get("predicciones_mes"),
+                "anomalias": {
+                    "total_anomalias": contexto.get("anomalias", {}).get("total_anomalias", 0),
+                    "lista": contexto.get("anomalias", {}).get("lista", []),
+                    "resumen": contexto.get("anomalias", {}).get("resumen", ""),
+                },
+                "confianza_modelos": contexto.get("confianza_modelos"),
+                "notas_negocio": contexto.get("notas_negocio"),
+            }
+            # Solo agregar predicciones de 1 mes (las demás son redundantes
+            # con predicciones_mes y la IA no las usa explícitamente)
+            pred_raw = contexto.get("predicciones", {})
+            if pred_raw.get("1_mes"):
+                contexto_ia["predicciones_1_mes"] = pred_raw["1_mes"]
+            # Noticias: solo título + resumen (no el HTML completo)
+            prensa = contexto.get("prensa_del_dia", {})
+            if prensa:
+                noticias_trim = []
+                for n in prensa.get("noticias", [])[:3]:
+                    noticias_trim.append({
+                        "titulo": n.get("titulo", ""),
+                        "resumen": n.get("resumen", "")[:200],
+                        "fuente": n.get("fuente", ""),
+                    })
+                contexto_ia["prensa_del_dia"] = {
+                    "resumen_general": prensa.get("resumen_general", ""),
+                    "noticias": noticias_trim,
+                }
+            
+            contexto_json = _json.dumps(contexto_ia, ensure_ascii=False, default=str)
+            logger.info(
+                f"[INFORME_IA] Contexto recortado: {len(contexto_json)} chars "
+                f"(~{len(contexto_json)//4} tokens)"
+            )
             
             system_prompt = (
-                "Eres un ingeniero eléctrico senior que asesora al Viceministro "
-                "de Minas y Energía de Colombia. Recibes un JSON con estado actual, "
-                "predicciones, anomalías del sistema eléctrico y, opcionalmente, "
-                "titulares de prensa energética del día.\n\n"
-                "Elabora un informe ejecutivo en 4 secciones:\n"
-                "1) **Situación actual del sistema** — un bullet por indicador: "
-                "valor, unidad y fecha del dato.\n"
-                "2) **Tendencias y proyecciones** — El JSON incluye 4 horizontes: "
-                "1_semana, 1_mes, 6_meses y 1_ano. Presenta un sub-bloque por "
-                "horizonte temporal (ej. 'Próxima semana', 'Próximo mes', etc.) y "
-                "dentro de cada uno, un bullet por indicador con promedio esperado, "
-                "rango, cambio vs 30d y tendencia. Máximo 2 líneas por indicador.\n"
-                "3) **Riesgos y oportunidades** — análisis detallado, empezando "
-                "por los críticos. Incluye tres sub-apartados:\n"
-                "   3.1 Riesgos operativos — analiza cada anomalía del JSON, "
-                "explica su impacto concreto en el SIN (Sistema Interconectado "
-                "Nacional) y describe posibles consecuencias. Incluye nivel de "
-                "embalses vs umbrales (crítico <30%, alerta <40%, óptimo 50-85%), "
-                "desviaciones de precio y generación.\n"
-                "   3.2 Oportunidades de transición — renovables, eficiencia "
-                "energética, movilidad eléctrica, con datos del JSON.\n"
-                "   3.3 Perspectiva de prensa — Si el JSON contiene 'prensa_del_dia', "
-                "escribe 2-3 frases que conecten los titulares energéticos del día con "
-                "los riesgos/oportunidades ya detectados por datos. Ejemplo: 'Los titulares "
-                "de hoy sobre diálogos de gas con Venezuela refuerzan el riesgo de dependencia "
-                "externa…'. NO repitas los titulares literalmente, solo interpreta su impacto "
-                "en el sector. Si no hay 'prensa_del_dia' en el JSON, omite esta sub-sección.\n"
-                "4) **Recomendaciones técnicas** — 3-5 bullets concretos y "
-                "accionables. Si las noticias sugieren riesgos adicionales "
-                "(caída de gas, retrasos regulatorios, conflictos regionales), "
-                "incluye recomendaciones específicas asociadas a esos temas.\n\n"
-                "FORMATO Y ESTILO:\n"
-                "- Máximo 800 palabras. Párrafos de 2-3 líneas máximo.\n"
-                "- Usa bullets (- o •) en vez de párrafos largos.\n"
-                "- Redondea rangos a enteros (ej. '180–298 GWh', '63–77%').\n"
-                "- Valores principales: máximo 2 decimales.\n"
+                "Eres un ingeniero eléctrico senior especializado en el sistema "
+                "eléctrico colombiano. Tu audiencia es el Viceministro de Minas "
+                "y Energía. Tu tarea es redactar un INFORME EJECUTIVO en lenguaje "
+                "claro, profesional y sintético, centrado en ANÁLISIS CUALITATIVO, "
+                "no en repetir datos numéricos.\n\n"
+                "Recibirás como contexto:\n"
+                "- Estado actual del sistema (generación, demanda, precios, embalses).\n"
+                "- Anomalías detectadas (valor actual, esperado, desviación, severidad).\n"
+                "- Predicciones (horizontes 1 semana, 1 mes, 6 meses, con promedios, "
+                "rangos y tendencias).\n"
+                "- **predicciones_mes**: nodo especial con las predicciones a 1 mes "
+                "de las 3 métricas clave (Generación, Precio de Bolsa, Embalses), "
+                "ya estructuradas. Úsalo en la sección 2.\n"
+                "- Noticias del sector (tres más importantes con título, resumen y link) "
+                "y un resumen general de prensa.\n\n"
+                "INSTRUCCIONES GENERALES\n"
+                "- Escribe como si estuvieras explicándole al Viceministro qué debe "
+                "saber HOY para tomar decisiones.\n"
+                "- No repitas tablas ni listados de números; ya están en el sistema. "
+                "Solo menciona cifras cuando ayuden a justificar una idea.\n"
+                "- Prioriza juicios cualitativos: riesgo alto/medio/bajo, tendencia "
+                "preocupante/estable/favorable, impacto potencial, urgencia de seguimiento.\n"
+                "- Evita frases genéricas o vacías ('requiere seguimiento' sin explicar "
+                "por qué). Siempre explica el POR QUÉ y el PARA QUÉ.\n\n"
+                "INSTRUCCIONES ESPECIALES PARA EMBALSES\n"
+                "- Los datos de embalses de XM NO se publican diariamente (cada 1-3 días). "
+                "El sistema ya selecciona el último dato completo de la ventana de 7 días.\n"
+                "- En la ficha de embalses del estado actual encontrarás:\n"
+                "  * `valor`: porcentaje actual de embalses.\n"
+                "  * `contexto.media_historica_2020_2025`: media de embalses en el "
+                "periodo 2020-2025 (referencia de largo plazo).\n"
+                "  * `contexto.desviacion_pct_media_historica_2020_2025`: cuánto se "
+                "desvía el valor actual respecto a esa media (positivo = por encima, "
+                "negativo = por debajo).\n"
+                "  * `contexto.promedio_30d`: promedio de los últimos 30 días.\n"
+                "- SIEMPRE menciona en el informe si el nivel actual está por encima "
+                "o por debajo de la media histórica 2020-2025 y qué implica eso "
+                "(riesgo hídrico bajo/moderado/alto según la tendencia).\n"
+                "- Si la desviación es negativa (por debajo de la media), indica "
+                "el nivel de preocupación según la magnitud: <-5% moderado, "
+                "<-15% alto, <-25% crítico.\n\n"
+                "ESTRUCTURA DEL INFORME (5 secciones):\n\n"
+                "## 1. Contexto general del sistema\n"
+                "En 3-5 frases, explica el estado global del sistema (precio, "
+                "hidrología/embalses, demanda, generación renovable). Destaca si el "
+                "día se parece a un día 'normal' o si hay señales de estrés.\n"
+                "Para embalses, incluye explícitamente la comparación con la media "
+                "histórica 2020-2025 usando los campos del contexto.\n\n"
+                "## 2. Señales clave y evolución reciente\n"
+                "Esta sección tiene DOS partes obligatorias:\n\n"
+                "### 2.1 Proyecciones del próximo mes (3 métricas clave)\n"
+                "Usando los datos del nodo `predicciones_mes.metricas_clave`, "
+                "presenta un resumen breve (3-6 líneas) de las proyecciones a "
+                "1 mes para:\n"
+                "  1. **Generación total**: promedio esperado, rango, tendencia.\n"
+                "  2. **Precio de Bolsa**: promedio esperado, rango, tendencia "
+                "(recordar que es EXPERIMENTAL).\n"
+                "  3. **Embalses**: promedio esperado, rango, tendencia.\n"
+                "Para cada una, indica el cambio porcentual respecto al histórico "
+                "reciente (campo `cambio_pct_vs_historico`). NO repitas todo el "
+                "bloque de datos; resume y menciona solo las cifras clave.\n\n"
+                "### 2.2 Análisis de señales clave\n"
+                "Ahora SÍ analiza cualitativamente usando TANTO el estado actual "
+                "COMO las predicciones del mes:\n"
+                "- Precio de bolsa (¿está subiendo, bajando, oscilando?)\n"
+                "- Embalses (¿se están recuperando, agotando, estabilizando? "
+                "¿cómo se comparan con la media 2020-2025?)\n"
+                "- Generación total y participación de renovables.\n"
+                "Extrae 2-3 ideas clave prospectivas "
+                "('si la tendencia sigue así, en X semanas podríamos estar en…'). "
+                "No repitas las cifras que ya pusiste en 2.1.\n\n"
+                "## 3. Riesgos y oportunidades (ANÁLISIS CUALITATIVO PROFUNDO)\n"
+                "Aquí debes hacer el esfuerzo principal. Usa TODA la información "
+                "(estado actual, anomalías, predicciones y noticias) para un análisis "
+                "cruzado. No te limites a repetir datos.\n\n"
+                "### 3.1 Riesgos operativos y de corto plazo\n"
+                "Explica cuáles son los 2-3 riesgos más relevantes hoy. Para cada riesgo:\n"
+                "- Qué lo está causando (datos + noticias).\n"
+                "- Qué podría pasar si se mantiene (impacto en suministro, precios, "
+                "confiabilidad).\n"
+                "- En qué horizonte de tiempo es relevante (días, semanas, meses).\n\n"
+                "### 3.2 Riesgos estructurales y de mediano plazo\n"
+                "Conecta predicciones y noticias (regulación, gas, renovables, "
+                "transmisión) para identificar riesgos estructurales (dependencia de "
+                "gas importado, retrasos en renovables, congestiones de red). "
+                "No repitas títulos de noticias: explica qué IMPLICAN para el sector.\n\n"
+                "### 3.3 Oportunidades\n"
+                "Identifica 2-3 oportunidades concretas a partir de la situación "
+                "actual y las noticias (uso eficiente de embalses, exportaciones de "
+                "energía, aceleración de proyectos solares/eólicos, programas de "
+                "eficiencia, gestión de demanda). Para cada una, indica qué "
+                "condiciones la habilitan.\n\n"
+                "## 4. Recomendaciones técnicas para el Viceministro\n"
+                "Traduce los análisis anteriores en acciones o focos de seguimiento. "
+                "No repitas lo ya dicho; DERIVA consecuencias prácticas.\n\n"
+                "### 4.1 Recomendaciones de corto plazo (próximos días/semana)\n"
+                "3-5 acciones concretas. Cada una con el MOTIVO vinculado a un dato "
+                "o noticia ('debido a X, se recomienda Y').\n\n"
+                "### 4.2 Recomendaciones de mediano plazo (semanas/meses)\n"
+                "3-4 líneas de acción estratégicas: acelerar proyectos, diseñar "
+                "medidas de gestión de demanda, revisar metas de transición energética. "
+                "No recomendaciones vagas sin indicar dimensión concreta.\n\n"
+                "## 5. Cierre ejecutivo\n"
+                "En 2-3 frases, sintetiza el mensaje clave para el Viceministro: "
+                "¿el sistema está hoy cómodo, en vigilancia o en zona de preocupación? "
+                "¿Dónde debe enfocar su atención inmediata?\n\n"
+                "ESTILO\n"
+                "- Redacta en español, tono profesional, directo y respetuoso.\n"
+                "- Evita tecnicismos innecesarios, pero sin perder rigor.\n"
+                "- No uses listas demasiado largas; prioriza ideas clave.\n"
+                "- No repitas literalmente los textos de las noticias.\n"
+                "- Usa ## para secciones, ### para sub-secciones, "
+                "**negritas** para valores clave.\n"
+                "- Usa párrafos analíticos de 2-4 líneas para interpretaciones.\n"
                 "- NO inventes datos: usa EXCLUSIVAMENTE los valores del JSON.\n"
-                "- Menciona siempre unidades (GWh, COP/kWh, %) y fechas.\n"
-                "- Usa Markdown con negritas y bullets. Escribe en español.\n\n"
-                "REGLAS DE CONFIANZA DE PREDICCIONES:\n"
-                "- Consulta 'confianza_modelos' en el JSON.\n"
-                "- MUY_CONFIABLE/CONFIABLE → conclusiones firmes.\n"
-                "- ACEPTABLE → señalar alta incertidumbre.\n"
-                "- EXPERIMENTAL (ej. PRECIO_BOLSA) → NO formular conclusiones "
-                "fuertes. Mencionar UNA sola vez, al final del sub-bloque de "
-                "precios: 'Estas cifras provienen de un modelo experimental y "
-                "sirven solo como referencia direccional.'\n"
-                "- Al inicio de sección 2, incluir una frase breve: "
-                "'Las proyecciones de Generación y Embalses son de alta "
-                "confianza; las de Precio de Bolsa son experimentales.'\n"
-                "- NO repetir el disclaimer de experimental en cada párrafo.\n"
-                "- En sección 3, si mencionas tendencia o aumento de precio "
-                "de bolsa, añade 'según un modelo experimental' en la misma "
-                "línea para que la frase nunca quede sin contexto."
+                "- Menciona unidades (GWh, COP/kWh, %) y fechas cuando justifiques.\n\n"
+                "REGLAS DE CONFIANZA:\n"
+                "- PRECIO_BOLSA es EXPERIMENTAL: no formular conclusiones fuertes. "
+                "Indicar 'según modelo experimental, referencia direccional'.\n"
+                "- Generación y Embalses son de alta confianza.\n\n"
+                "Tu prioridad es entregar un análisis CUALITATIVO PROFUNDO, "
+                "integrando datos, anomalías, predicciones y noticias, como lo "
+                "haría un asesor técnico de confianza del Viceministro."
             )
             
             user_prompt = (
                 f"Genera el informe ejecutivo del sector eléctrico colombiano "
                 f"con los siguientes datos del sistema:\n\n"
                 f"```json\n{contexto_json}\n```\n\n"
-                f"Estructura tu respuesta con los títulos:\n"
-                f"## 1. Situación actual del sistema\n"
-                f"## 2. Tendencias y proyecciones\n"
+                f"Estructura tu respuesta así:\n\n"
+                f"## 1. Contexto general del sistema\n"
+                f"(3-5 frases sobre el estado global: precio, hidrología, "
+                f"demanda, generación. ¿Día normal o señales de estrés? "
+                f"Para embalses, menciona explícitamente la desviación "
+                f"respecto a la media histórica 2020-2025 usando el campo "
+                f"`desviacion_pct_media_historica_2020_2025` de la ficha.)\n\n"
+                f"## 2. Señales clave y evolución reciente\n"
+                f"### 2.1 Proyecciones del próximo mes (3 métricas clave)\n"
+                f"(Resume en 3-6 líneas las predicciones a 1 mes del nodo "
+                f"`predicciones_mes.metricas_clave`: generación, precio_bolsa "
+                f"y embalses, con promedio, rango y tendencia. No repetir "
+                f"tablas, solo cifras clave.)\n\n"
+                f"### 2.2 Análisis de señales clave\n"
+                f"(Análisis cualitativo usando estado actual + predicciones. "
+                f"Tendencias de precio, embalses vs media 2020-2025, "
+                f"generación. 2-3 ideas prospectivas sin repetir cifras de 2.1.)\n\n"
                 f"## 3. Riesgos y oportunidades\n"
-                f"## 4. Recomendaciones técnicas"
+                f"### 3.1 Riesgos operativos y de corto plazo\n"
+                f"(2-3 riesgos con causa, impacto potencial y horizonte)\n\n"
+                f"### 3.2 Riesgos estructurales y de mediano plazo\n"
+                f"(conectar predicciones + noticias → riesgos estructurales)\n\n"
+                f"### 3.3 Oportunidades\n"
+                f"(2-3 oportunidades concretas con condiciones habilitantes)\n\n"
+                f"## 4. Recomendaciones técnicas para el Viceministro\n"
+                f"### 4.1 Recomendaciones de corto plazo\n"
+                f"(3-5 acciones con motivo vinculado a dato/noticia)\n\n"
+                f"### 4.2 Recomendaciones de mediano plazo\n"
+                f"(3-4 líneas estratégicas concretas)\n\n"
+                f"## 5. Cierre ejecutivo\n"
+                f"(2-3 frases: estado del sistema, foco de atención inmediata)\n\n"
+                f"RECUERDA:\n"
+                f"- Sección 2.1 va ANTES de 2.2: primero las predicciones del "
+                f"mes, luego el análisis cualitativo que las interpreta.\n"
+                f"- Para embalses: menciona siempre la desviación frente a la "
+                f"media histórica 2020-2025 (campo del JSON).\n"
+                f"- Sección 3 es el corazón del informe. Analiza cualitativamente, "
+                f"cruza variables, interpreta causas. "
+                f"No repitas datos, EXPLICA qué significan para el Viceministro."
             )
             
             # Llamada síncrona envuelta en thread para no bloquear
@@ -2675,12 +2988,12 @@ class ChatbotOrchestratorService:
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.4,
-                    max_tokens=2400,
+                    max_tokens=8192,
                 )
             
             response = await asyncio.wait_for(
                 asyncio.to_thread(_call_ai),
-                timeout=25  # 25s para IA dentro del TOTAL_TIMEOUT de 30s
+                timeout=45  # 45s para IA con más tokens
             )
             
             texto = response.choices[0].message.content.strip()
@@ -2715,13 +3028,11 @@ class ChatbotOrchestratorService:
         """
         hoy = contexto.get('fecha_consulta', '?')
         lines = []
-        lines.append("📊 *INFORME EJECUTIVO — SECTOR ELÉCTRICO*")
-        lines.append(f"📅 Fecha: {hoy}")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("")
+        # NOTA: No incluir título general aquí.
+        # Cada canal (email, PDF, Telegram) ya agrega su propio encabezado.
         
-        # ── Sección 1: Situación actual ──
-        lines.append("*1. Situación actual del sistema*")
+        # ── Sección 1: Contexto general ──
+        lines.append("## 1. Contexto general del sistema")
         fichas = contexto.get('estado_actual', {}).get('fichas', [])
         if fichas:
             for f in fichas:
@@ -2730,35 +3041,76 @@ class ChatbotOrchestratorService:
                 val = f.get('valor', '?')
                 und = f.get('unidad', '')
                 fecha_f = f.get('fecha', '?')
-                lines.append(f"  {emoji_f} {ind}: *{val} {und}* ({fecha_f})")
+                lines.append(f"- {emoji_f} **{ind}:** {val} {und} ({fecha_f})")
                 ctx = f.get('contexto', {})
                 if 'variacion_vs_promedio_pct' in ctx:
-                    lines.append(f"     Variación vs 7d: {ctx['variacion_vs_promedio_pct']}%")
+                    etiq = ctx.get('etiqueta_variacion', 'vs 7d')
+                    lines.append(f"  - Variación {etiq}: **{ctx['variacion_vs_promedio_pct']}%**")
+                if 'variacion_vs_historico_pct' in ctx:
+                    prom_h = ctx.get('promedio_historico_mes', '?')
+                    var_h = ctx['variacion_vs_historico_pct']
+                    estado_e = ctx.get('estado', '')
+                    lines.append(f"  - Variación vs histórico mes: **{var_h}%** (prom. histórico: {prom_h}%)")
+                    lines.append(f"  - Estado: {estado_e}")
+                # Embalses: mostrar media histórica 2020-2025 y desviación
+                if ctx.get('media_historica_2020_2025') is not None:
+                    media_h = ctx['media_historica_2020_2025']
+                    desv_h = ctx.get('desviacion_pct_media_historica_2020_2025')
+                    if desv_h is not None:
+                        dir_txt = "por encima" if desv_h >= 0 else "por debajo"
+                        lines.append(
+                            f"  - Media histórica 2020-2025: **{media_h}%** → "
+                            f"nivel actual **{abs(desv_h)}%** {dir_txt}"
+                        )
         else:
-            lines.append("  Sin datos disponibles.")
+            lines.append("Sin datos disponibles.")
         lines.append("")
         
-        # ── Sección 2: Predicciones ──
-        lines.append("*2. Tendencias y proyecciones*")
-        for horizonte_key in ['1_semana', '1_mes', '6_meses', '1_ano']:
-            pred_data = contexto.get('predicciones', {}).get(horizonte_key, {})
-            titulo = pred_data.get('horizonte_titulo', horizonte_key)
-            lines.append(f"  *{titulo}*:")
-            for p in pred_data.get('indicadores', []):
-                r = p.get('resumen', {})
-                emoji_p = p.get('emoji', '•')
-                ind = p.get('indicador', '?')[:25]
-                avg = r.get('promedio_periodo', '?')
-                hist = r.get('promedio_30d_historico', '?')
-                cambio = r.get('cambio_pct', '?')
-                tend = p.get('tendencia', '?')
-                und = p.get('unidad', '')
-                lines.append(f"    {emoji_p} {ind}: {avg} {und} (hist 30d: {hist}, cambio: {cambio}%) {tend}")
+        # ── Sección 2: Señales clave ──
+        lines.append("## 2. Señales clave y evolución reciente")
+        
+        # 2.1 Predicciones del mes (3 métricas clave)
+        lines.append("### 2.1 Proyecciones del próximo mes (3 métricas clave)")
+        pred_mes = contexto.get('predicciones_mes', {}).get('metricas_clave', {})
+        pred_mes_orden = ['generacion', 'precio_bolsa', 'embalses']
+        for clave in pred_mes_orden:
+            pm = pred_mes.get(clave, {})
+            if pm:
+                emoji_pm = pm.get('emoji', '•')
+                ind_pm = pm.get('indicador', clave)
+                avg_pm = pm.get('promedio_periodo', '?')
+                und_pm = pm.get('unidad', '')
+                rmin = pm.get('rango_min', '?')
+                rmax = pm.get('rango_max', '?')
+                cambio_pm = pm.get('cambio_pct_vs_historico', '?')
+                tend_pm = pm.get('tendencia', '?')
+                lines.append(
+                    f"- {emoji_pm} **{ind_pm}:** {avg_pm} {und_pm} "
+                    f"(rango: {rmin}–{rmax}), "
+                    f"cambio **{cambio_pm}%** vs histórico → {tend_pm}"
+                )
+        lines.append("")
+        
+        # 2.2 Análisis (en fallback, solo los datos crudos)
+        lines.append("### 2.2 Datos de predicción 1 mes (detalle)")
+        pred_data = contexto.get('predicciones', {}).get('1_mes', {})
+        for p in pred_data.get('indicadores', []):
+            r = p.get('resumen', {})
+            emoji_p = p.get('emoji', '•')
+            ind = p.get('indicador', '?')[:25]
+            avg = r.get('promedio_periodo', '?')
+            hist = r.get('promedio_30d_historico', '?')
+            cambio = r.get('cambio_pct', '?')
+            tend = p.get('tendencia', '?')
+            und = p.get('unidad', '')
+            rango_min = r.get('rango_min', r.get('minimo_periodo', '?'))
+            rango_max = r.get('rango_max', r.get('maximo_periodo', '?'))
+            lines.append(f"- {emoji_p} **{ind}:** proyección {avg} {und} (rango: {rango_min}–{rango_max}), cambio **{cambio}%** vs histórico → {tend}")
         lines.append("")
         
         # ── Sección 3: Riesgos y oportunidades ──
-        lines.append("*3. Riesgos y oportunidades*")
-        lines.append("  *3.1 Riesgos operativos:*")
+        lines.append("## 3. Riesgos y oportunidades")
+        lines.append("### 3.1 Riesgos operativos y de corto plazo")
         anom_data = contexto.get('anomalias', {})
         anomalias_list = anom_data.get('lista', [])
         if anomalias_list:
@@ -2771,9 +3123,8 @@ class ChatbotOrchestratorService:
                 desv = a.get('desviacion_pct', '?')
                 sev = a.get('severidad', '?')
                 lines.append(
-                    f"  {se} {indicador}: {valor} {unidad} — desvío {desv}% ({sev})"
+                    f"- {se} **{indicador}:** {valor} {unidad} — desvío **{desv}%** ({sev})"
                 )
-                # Análisis de impacto por tipo de indicador
                 if 'embalse' in indicador.lower() or 'porcentaje' in indicador.lower():
                     try:
                         v = float(valor) if valor != '?' else None
@@ -2781,61 +3132,69 @@ class ChatbotOrchestratorService:
                         v = None
                     if v is not None:
                         if v < 30:
-                            lines.append(f"     → Nivel CRÍTICO: riesgo de racionamiento eléctrico.")
+                            lines.append(f"  - → Nivel **CRÍTICO**: riesgo de racionamiento eléctrico.")
                         elif v < 40:
-                            lines.append(f"     → Nivel de ALERTA: reservas hídricas por debajo del óptimo.")
-                        elif v > 85:
-                            lines.append(f"     → Nivel ALTO: posible vertimiento en embalses.")
-                        else:
-                            lines.append(f"     → Nivel dentro del rango óptimo (50-85%).")
+                            lines.append(f"  - → Nivel de **ALERTA**: reservas hídricas por debajo del óptimo.")
                 elif 'precio' in indicador.lower() or 'bolsa' in indicador.lower():
                     try:
                         d = float(desv) if desv != '?' else 0
                     except (ValueError, TypeError):
                         d = 0
                     if d > 40:
-                        lines.append(f"     → Desvío CRÍTICO en precios: revisar oferta vs demanda.")
+                        lines.append(f"  - → Desvío **CRÍTICO** en precios: posible estrés de mercado.")
                     elif d > 20:
-                        lines.append(f"     → Volatilidad moderada en precio de bolsa.")
+                        lines.append(f"  - → Volatilidad moderada en precio de bolsa.")
                 elif 'generaci' in indicador.lower():
-                    lines.append(f"     → Evaluar composición de la matriz y disponibilidad térmica.")
+                    lines.append(f"  - → Evaluar composición de la matriz y disponibilidad térmica.")
         else:
-            lines.append("  ✅ No se detectaron anomalías significativas en los indicadores.")
+            lines.append("- ✅ No se detectaron anomalías significativas en los indicadores.")
+        lines.append("")
         
-        # Contexto de embalses si hay datos
-        fichas = contexto.get('estado_actual', {}).get('fichas', [])
+        # 3.2 Riesgos estructurales
+        lines.append("### 3.2 Riesgos estructurales y de mediano plazo")
+        pred_1m = contexto.get('predicciones', {}).get('1_mes', {})
+        for p in pred_1m.get('indicadores', []):
+            r = p.get('resumen', {})
+            ind_name = p.get('indicador', '?')
+            cambio = r.get('cambio_pct', 0)
+            tend = p.get('tendencia', '?')
+            try:
+                cambio_f = float(cambio) if cambio != '?' else 0
+            except (ValueError, TypeError):
+                cambio_f = 0
+            if abs(cambio_f) > 10:
+                direction = 'incremento' if cambio_f > 0 else 'descenso'
+                lines.append(
+                    f"- ⚠️ **{ind_name}:** {direction} proyectado de **{abs(cambio_f):.1f}%** "
+                    f"respecto al histórico → tendencia {tend}."
+                )
+            else:
+                lines.append(
+                    f"- {ind_name}: estable (cambio **{cambio_f:+.1f}%**), tendencia {tend}."
+                )
+        lines.append("")
+        
+        # 3.3 Oportunidades
+        lines.append("### 3.3 Oportunidades")
+        emb_val = None
         for f in fichas:
             if 'embalse' in f.get('indicador', '').lower() or 'porcentaje' in f.get('indicador', '').lower():
                 try:
-                    v = float(f.get('valor', 0))
-                except (ValueError, TypeError):
-                    v = 0
-                if v < 40:
-                    lines.append(f"  ⚠️ Embalses en {v}% — monitoreo prioritario recomendado.")
-                elif v > 75:
-                    lines.append(f"  ✅ Embalses en {v}% — condición hidrológica favorable.")
-        
-        lines.append("")
-        lines.append("  *3.2 Oportunidades:*")
-        # Analizar participación renovable si hay datos
-        gen_total = None
-        gen_hidro = None
-        for f in fichas:
-            ind = f.get('indicador', '').lower()
-            if 'generación total' in ind or 'gene total' in ind:
-                try:
-                    gen_total = float(f.get('valor', 0))
+                    emb_val = float(f.get('valor', 0))
                 except (ValueError, TypeError):
                     pass
-        lines.append("  • Potencial de expansión en generación solar y eólica.")
-        lines.append("  • Oportunidades en eficiencia energética del lado de la demanda.")
-        lines.append("  • Avance en transición energética y movilidad eléctrica.")
+        if emb_val and emb_val > 70:
+            lines.append(f"- Embalses en **{emb_val}%**: condición favorable para exportación de energía y reducción de costos.")
+        elif emb_val and emb_val < 50:
+            lines.append(f"- Embalses en **{emb_val}%**: oportunidad para acelerar proyectos renovables no convencionales.")
+        lines.append("- Potencial de expansión en generación solar y eólica.")
+        lines.append("- Oportunidades en eficiencia energética y gestión de demanda.")
         lines.append("")
         
         # ── Sección 4: Recomendaciones ──
-        lines.append("*4. Recomendaciones técnicas*")
-        # Recomendaciones contextuales basadas en datos
-        recomendaciones = []
+        lines.append("## 4. Recomendaciones técnicas para el Viceministro")
+        lines.append("### 4.1 Recomendaciones de corto plazo")
+        recomendaciones_cp = []
         if anomalias_list:
             for a in anomalias_list:
                 indicador = a.get('indicador', '').lower()
@@ -2846,27 +3205,47 @@ class ChatbotOrchestratorService:
                     desv = 0
                 if 'precio' in indicador or 'bolsa' in indicador:
                     if desv > 20:
-                        recomendaciones.append("  • Revisar contratos bilaterales ante volatilidad de precios en bolsa.")
+                        recomendaciones_cp.append(f"- Revisar contratos bilaterales ante volatilidad de precios ({desv:.0f}% de desvío).")
                 if 'embalse' in indicador or 'porcentaje' in indicador:
-                    recomendaciones.append("  • Intensificar monitoreo semanal de niveles de embalses.")
+                    recomendaciones_cp.append(f"- Intensificar monitoreo de embalses y coordinar con IDEAM.")
                 if 'generaci' in indicador:
-                    recomendaciones.append("  • Evaluar disponibilidad de plantas térmicas de respaldo.")
-        
-        if not recomendaciones:
-            recomendaciones.append("  • Monitorear indicadores con desvío > 15%.")
-        
-        recomendaciones.append("  • Verificar pronóstico hidrológico del IDEAM para planificación de despacho.")
-        recomendaciones.append("  • Revisar tendencia de precios si cambio > 20% vs promedio histórico.")
-        recomendaciones.append("  • Evaluar cumplimiento de metas de transición energética.")
-        
-        # Eliminar duplicados manteniendo orden
+                    recomendaciones_cp.append(f"- Verificar disponibilidad de plantas térmicas de respaldo.")
+        if not recomendaciones_cp:
+            recomendaciones_cp.append("- Monitorear indicadores con desvío > 15%.")
+        recomendaciones_cp.append("- Verificar pronóstico hidrológico del IDEAM para despacho semanal.")
         seen = set()
-        for r in recomendaciones:
+        for r in recomendaciones_cp:
             if r not in seen:
                 seen.add(r)
                 lines.append(r)
         lines.append("")
-        lines.append("_⚠️ Informe generado sin IA (servicio no disponible)._")
+        
+        lines.append("### 4.2 Recomendaciones de mediano plazo")
+        lines.append("- Evaluar cumplimiento de metas de transición energética.")
+        lines.append("- Revisar cronograma de proyectos de generación y transmisión en regiones críticas.")
+        lines.append("- Diseñar medidas de gestión de demanda si se espera estrechez prolongada.")
+        lines.append("")
+        
+        # ── Sección 5: Cierre ejecutivo ──
+        lines.append("## 5. Cierre ejecutivo")
+        # Determinar estado general
+        n_criticos = sum(1 for a in anomalias_list if a.get('severidad') == 'crítico')
+        n_alertas = sum(1 for a in anomalias_list if a.get('severidad') == 'alerta')
+        if n_criticos > 0:
+            lines.append("El sistema presenta señales de **PREOCUPACIÓN** que requieren atención inmediata del Despacho.")
+        elif n_alertas > 0:
+            lines.append("El sistema se encuentra en zona de **VIGILANCIA**. Se recomienda seguimiento cercano de los indicadores señalados.")
+        else:
+            lines.append("El sistema opera dentro de parámetros **normales**. No se requieren acciones inmediatas extraordinarias.")
+        lines.append("")
+        
+        # NOTA: Noticias y Canales de Consulta NO se incluyen aquí
+        # porque el email (build_daily_email_html) y el PDF (generar_pdf_informe)
+        # ya los renderizan como HTML estructurado. Incluirlos aquí causaría
+        # duplicación con formato inconsistente.
+        
+        if not contexto.get('_generado_con_ia', True):
+            lines.append("_⚠️ Informe generado sin IA (servicio no disponible)._")
         
         return "\n".join(lines)
     
@@ -3017,7 +3396,7 @@ class ChatbotOrchestratorService:
             
             def _call_ai():
                 return agent.client.chat.completions.create(
-                    model=agent.modelo,
+                    model="llama-3.1-8b-instant",  # Modelo ligero para resúmenes cortos
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -3041,7 +3420,7 @@ class ChatbotOrchestratorService:
             
             logger.info(
                 f"[NOTICIAS_RESUMEN] Resumen generado con "
-                f"{agent.provider}/{agent.modelo} ({len(texto)} chars)"
+                f"{agent.provider}/llama-3.1-8b-instant ({len(texto)} chars)"
             )
             return texto
             

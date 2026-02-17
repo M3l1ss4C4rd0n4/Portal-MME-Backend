@@ -541,7 +541,7 @@ def _parse_informe_sections(informe: str) -> dict:
             flags=_re.MULTILINE,
         ))
         # Filtrar solo las que realmente parecen títulos de sección (1-4)
-        markers = [m for m in markers if 1 <= int(m.group(1)) <= 4]
+        markers = [m for m in markers if 1 <= int(m.group(1)) <= 5]
 
     for i, m in enumerate(markers):
         num = int(m.group(1))
@@ -580,10 +580,11 @@ def render_informe_ejecutivo(data: dict) -> tuple:
         text += f"\n⚠️ _{data['nota_fallback']}_\n"
 
     keyboard = [
-        [InlineKeyboardButton("1️⃣ Situación actual", callback_data="inf_sec:1"),
-         InlineKeyboardButton("2️⃣ Tendencias", callback_data="inf_sec:2")],
-        [InlineKeyboardButton("3️⃣ Riesgos", callback_data="inf_sec:3"),
-         InlineKeyboardButton("4️⃣ Recomendaciones", callback_data="inf_sec:4")],
+        [InlineKeyboardButton("1️⃣ Contexto", callback_data="inf_sec:1"),
+         InlineKeyboardButton("2️⃣ Señales", callback_data="inf_sec:2"),
+         InlineKeyboardButton("3️⃣ Riesgos", callback_data="inf_sec:3")],
+        [InlineKeyboardButton("4️⃣ Recomend.", callback_data="inf_sec:4"),
+         InlineKeyboardButton("5️⃣ Cierre", callback_data="inf_sec:5")],
         [InlineKeyboardButton("📄 Ver informe completo", callback_data="inf_sec:full"),
          InlineKeyboardButton("📥 Descargar PDF", callback_data="inf_pdf")],
         [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")]
@@ -610,12 +611,12 @@ def render_informe_seccion(sections: dict, num: int) -> tuple:
     nav_row = []
     if num > 1:
         nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"inf_sec:{num - 1}"))
-    if num < 4:
+    if num < 5:
         nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"inf_sec:{num + 1}"))
 
     # Selector de secciones
     sec_btns = []
-    for i in range(1, 5):
+    for i in range(1, 6):
         label = f"▸{i}" if i == num else str(i)
         sec_btns.append(InlineKeyboardButton(label, callback_data=f"inf_sec:{i}"))
 
@@ -675,24 +676,26 @@ def render_informe_cards(data: dict) -> list:
             header += "  •  Asistido por IA"
         header += "\n"
     header += "\n"
-    header += "📋 Informe completo en 4 secciones:\n"
-    header += "▸ 1️⃣ Situación actual\n"
-    header += "▸ 2️⃣ Tendencias y proyecciones\n"
+    header += "📋 Informe completo en 5 secciones:\n"
+    header += "▸ 1️⃣ Contexto general\n"
+    header += "▸ 2️⃣ Señales clave\n"
     header += "▸ 3️⃣ Riesgos y oportunidades\n"
     header += "▸ 4️⃣ Recomendaciones técnicas\n"
+    header += "▸ 5️⃣ Cierre ejecutivo\n"
     if data.get("nota_fallback"):
         header += f"\n⚠️ _{data['nota_fallback']}_\n"
     cards.append((header, None))
 
     # Emojis y decoración por sección
     sec_config = {
-        1: {"emoji": "📍", "title_fallback": "Situación actual del sistema"},
-        2: {"emoji": "📈", "title_fallback": "Tendencias y proyecciones"},
+        1: {"emoji": "📍", "title_fallback": "Contexto general del sistema"},
+        2: {"emoji": "📈", "title_fallback": "Señales clave y evolución reciente"},
         3: {"emoji": "⚠️", "title_fallback": "Riesgos y oportunidades"},
         4: {"emoji": "✅", "title_fallback": "Recomendaciones técnicas"},
+        5: {"emoji": "🎯", "title_fallback": "Cierre ejecutivo"},
     }
 
-    for num in range(1, 5):
+    for num in range(1, 6):
         cfg = sec_config.get(num, {"emoji": "📌", "title_fallback": f"Sección {num}"})
         sec = sections.get(num)
         if sec:
@@ -1406,12 +1409,51 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as ce:
                 logger.warning(f"[PDF] No se pudieron generar gráficos para PDF: {ce}")
 
+            # Extraer datos estructurados del contexto para PDF completo
+            ctx = informe_data.get("contexto_datos", {})
+            _fichas = ctx.get("estado_actual", {}).get("fichas", [])
+            _noticias = ctx.get("noticias", {}).get("noticias", []) if isinstance(ctx.get("noticias"), dict) else []
+            _anomalias_raw = ctx.get("anomalias", {})
+            _anomalias = _anomalias_raw.get("lista", []) if isinstance(_anomalias_raw, dict) else []
+
+            # Extraer predicciones multi-métrica del contexto
+            # El contexto tiene fichas (resumen), no el formato API (estadisticas/predicciones[])
+            # Transformar fichas → formato esperado por el PDF
+            _predicciones_list = []
+            pred_ctx = ctx.get("predicciones", {})
+            if isinstance(pred_ctx, dict):
+                mes_data = pred_ctx.get("1_mes", {})
+                if isinstance(mes_data, dict):
+                    for ind in mes_data.get("indicadores", []):
+                        if not isinstance(ind, dict) or not ind.get("confiable"):
+                            continue
+                        resumen = ind.get("resumen", {})
+                        if not resumen:
+                            continue
+                        _predicciones_list.append({
+                            "fuente": ind.get("indicador", "General"),
+                            "fuente_label": ind.get("indicador", "General"),
+                            "estadisticas": {
+                                "promedio_gwh": resumen.get("promedio_periodo", 0),
+                                "minimo_gwh": resumen.get("minimo_periodo", 0),
+                                "maximo_gwh": resumen.get("maximo_periodo", 0),
+                            },
+                            "total_predicciones": ind.get("total_dias_prediccion", 0),
+                            "modelo": "ENSEMBLE_v1.0",
+                            "predicciones": [],  # No day-by-day data available from fichas
+                        })
+            _predicciones = _predicciones_list if _predicciones_list else None
+
             from domain.services.report_service import generar_pdf_informe
             pdf_path = generar_pdf_informe(
                 informe_texto,
                 fecha_generacion=informe_data.get("fecha_generacion", ""),
                 generado_con_ia=informe_data.get("generado_con_ia", True),
                 chart_paths=chart_paths,
+                fichas=_fichas or None,
+                predicciones=_predicciones,
+                anomalias=_anomalias or None,
+                noticias=_noticias or None,
             )
             if pdf_path:
                 import os

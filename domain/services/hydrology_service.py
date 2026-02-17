@@ -167,12 +167,35 @@ class HydrologyService:
             if df_vol.empty or df_cap.empty:
                 return None
 
+            # ── Validar completitud: VoluUtil debe tener al menos 80%
+            #    de los embalses que CapaUtil reporta.
+            #    Cuando XM publica datos parciales (ej: 4 de 24 embalses),
+            #    el porcentaje resultante es erróneo (ej: 4% en vez de 74%).
+            n_embalses_vol = df_vol['Embalse'].nunique()
+            n_embalses_cap = df_cap['Embalse'].nunique()
+            if n_embalses_cap > 0 and n_embalses_vol / n_embalses_cap < 0.80:
+                logger.warning(
+                    f"[EMBALSES] Dato incompleto en {fecha_vol}: "
+                    f"VoluUtil tiene {n_embalses_vol} embalses vs "
+                    f"CapaUtil {n_embalses_cap} — descartando."
+                )
+                return None
+
+            # Calcular solo sobre embalses que aparecen en AMBOS conjuntos
+            embalses_vol_set = set(df_vol['Embalse'].str.strip().str.upper())
+            embalses_cap_set = set(df_cap['Embalse'].str.strip().str.upper())
+            embalses_comunes = embalses_vol_set & embalses_cap_set
+
+            if not embalses_comunes:
+                return None
+
+            df_vol_f = df_vol[df_vol['Embalse'].str.strip().str.upper().isin(embalses_comunes)]
+            df_cap_f = df_cap[df_cap['Embalse'].str.strip().str.upper().isin(embalses_comunes)]
+
             # Cálculo final
             # Los datos de VoluUtilDiarEner y CapaUtilDiarEner ya vienen en GWh
-            total_vol = df_vol['Value'].sum()
-            total_cap = df_cap['Value'].sum()
-            
-            embalses_incluidos = list(set(df_vol['Embalse'].tolist()) & set(df_cap['Embalse'].tolist()))
+            total_vol = df_vol_f['Value'].sum()
+            total_cap = df_cap_f['Value'].sum()
 
             pct = (total_vol / total_cap * 100) if total_cap > 0 else 0
             
@@ -181,7 +204,8 @@ class HydrologyService:
                 'volumen_gwh': total_vol,
                 'capacidad_gwh': total_cap,
                 'fecha_datos': fecha_vol.strftime('%Y-%m-%d'),
-                'embalses': embalses_incluidos
+                'embalses': list(embalses_comunes),
+                'n_embalses': len(embalses_comunes),
             }
 
         except Exception as e:

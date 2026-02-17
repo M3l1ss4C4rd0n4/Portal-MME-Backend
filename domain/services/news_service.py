@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from infrastructure.news.news_client import NewsClient
 from infrastructure.news.mediastack_client import MediastackClient
+from infrastructure.news.google_news_rss import fetch_google_news_rss
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +230,22 @@ def _normalize_mediastack(raw: dict) -> dict:
     }
 
 
+def _normalize_google_rss(raw: dict) -> dict:
+    """Normaliza un artículo crudo de Google News RSS al formato común."""
+    fecha_raw = raw.get("publishedAt", "")
+    fecha_fmt = fecha_raw[:10] if fecha_raw else ""
+    return {
+        "titulo": (raw.get("title") or "").strip(),
+        "resumen": (raw.get("description") or "").strip(),
+        "url": raw.get("url", ""),
+        "fuente": raw.get("source", ""),
+        "fecha": fecha_fmt,
+        "pais": raw.get("country", "co"),
+        "idioma": "es",
+        "origen_api": "google_rss",
+    }
+
+
 def _dedup_key(titulo: str) -> str:
     """Genera clave de dedup a partir del título."""
     return re.sub(r'\W+', '', titulo.lower())[:80]
@@ -298,6 +315,17 @@ class NewsService:
             except Exception as e:
                 logger.warning(f"[NEWS_SERVICE] Error Mediastack: {e}")
 
+        # ── Google News RSS (fuente terciaria, gratis, artículos frescos) ──
+        try:
+            grss_raw = await fetch_google_news_rss(max_per_query=10)
+            for art in grss_raw:
+                all_normalized.append(_normalize_google_rss(art))
+            logger.info(
+                f"[NEWS_SERVICE] Google RSS aportó {len(grss_raw)} artículos"
+            )
+        except Exception as e:
+            logger.warning(f"[NEWS_SERVICE] Error Google RSS: {e}")
+
         return all_normalized
 
     def _score_and_rank(
@@ -342,6 +370,25 @@ class NewsService:
                 art.get("resumen", ""),
                 art.get("pais"),
             )
+
+            # ── BONUS POR FRESCURA ──
+            # Artículos recientes tienen prioridad sobre los antiguos
+            fecha_str = art.get("fecha", "")
+            if fecha_str and len(fecha_str) >= 10:
+                try:
+                    fecha_art = datetime.strptime(fecha_str[:10], "%Y-%m-%d").date()
+                    dias_antiguedad = (datetime.now().date() - fecha_art).days
+                    if dias_antiguedad <= 0:
+                        score += 3   # Hoy
+                    elif dias_antiguedad == 1:
+                        score += 2   # Ayer
+                    elif dias_antiguedad <= 3:
+                        score += 1   # Últimos 3 días
+                    elif dias_antiguedad > 14:
+                        score -= 2   # Más de 2 semanas: penalizar
+                except (ValueError, TypeError):
+                    pass
+
             art["_score"] = score
             scored.append(art)
 

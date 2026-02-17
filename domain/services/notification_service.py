@@ -61,8 +61,10 @@ def _get_telegram_token() -> str:
     if token:
         return token
     # 2. Intentar leer del .env del bot
+    # __file__ = .../server/domain/services/notification_service.py
+    # Se necesitan 3 niveles de dirname para llegar a .../server/
     env_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         'whatsapp_bot', '.env'
     )
     try:
@@ -588,127 +590,373 @@ def _parse_informe_sections(informe_texto: str) -> dict:
     return result
 
 
-def build_daily_email_html(informe_texto: str) -> str:
+def _markdown_to_email_html(md_text: str) -> str:
+    """Convierte markdown simplificado del informe IA a HTML inline para email."""
+    import re as _re2
+
+    if not md_text:
+        return ''
+
+    lines = md_text.strip().split('\n')
+    html_parts = []
+    in_list = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if in_list:
+                html_parts.append('</ul>')
+                in_list = False
+            html_parts.append('<br>')
+            continue
+
+        # Headers
+        h3 = _re2.match(r'^###\s+(.+)', stripped)
+        h2 = _re2.match(r'^##\s+(.+)', stripped)
+        h1 = _re2.match(r'^#\s+(.+)', stripped)
+        if h1:
+            if in_list:
+                html_parts.append('</ul>')
+                in_list = False
+            html_parts.append(
+                '<div style="font-size:16px;font-weight:700;color:#0D1B4A;'
+                'margin:14px 0 6px;border-bottom:1px solid #e0e0e0;padding-bottom:4px;">'
+                + _inline_md(h1.group(1)) + '</div>'
+            )
+            continue
+        if h2:
+            if in_list:
+                html_parts.append('</ul>')
+                in_list = False
+            html_parts.append(
+                '<div style="font-size:14px;font-weight:700;color:#1A3A7A;'
+                'margin:12px 0 4px;">'
+                + _inline_md(h2.group(1)) + '</div>'
+            )
+            continue
+        if h3:
+            if in_list:
+                html_parts.append('</ul>')
+                in_list = False
+            html_parts.append(
+                '<div style="font-size:13px;font-weight:600;color:#333;'
+                'margin:10px 0 4px;">'
+                + _inline_md(h3.group(1)) + '</div>'
+            )
+            continue
+
+        # List items
+        li = _re2.match(r'^[\-\*•]\s+(.+)', stripped)
+        if li:
+            if not in_list:
+                html_parts.append(
+                    '<ul style="margin:4px 0;padding-left:20px;'
+                    'font-size:13px;color:#444;line-height:1.6;">'
+                )
+                in_list = True
+            html_parts.append('<li>' + _inline_md(li.group(1)) + '</li>')
+            continue
+
+        # Numbered lists
+        nli = _re2.match(r'^\d+[\.\)]\s+(.+)', stripped)
+        if nli:
+            if not in_list:
+                html_parts.append(
+                    '<ul style="margin:4px 0;padding-left:20px;'
+                    'font-size:13px;color:#444;line-height:1.6;">'
+                )
+                in_list = True
+            html_parts.append('<li>' + _inline_md(nli.group(1)) + '</li>')
+            continue
+
+        # Regular paragraph
+        if in_list:
+            html_parts.append('</ul>')
+            in_list = False
+        html_parts.append(
+            '<p style="margin:4px 0;font-size:13px;color:#444;line-height:1.6;">'
+            + _inline_md(stripped) + '</p>'
+        )
+
+    if in_list:
+        html_parts.append('</ul>')
+
+    return '\n'.join(html_parts)
+
+
+def _inline_md(text: str) -> str:
+    """Aplica formato inline markdown (bold, italic) a texto."""
+    import re as _re3
+    # Bold: **text** or __text__
+    text = _re3.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = _re3.sub(r'__(.+?)__', r'<b>\1</b>', text)
+    # Italic: *text* or _text_
+    text = _re3.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    # Inline code
+    text = _re3.sub(r'`(.+?)`', r'<code style="background:#f5f5f5;padding:1px 4px;border-radius:3px;font-size:12px;">\1</code>', text)
+    return text
+
+
+def build_daily_email_html(
+    informe_texto: str,
+    noticias: list | None = None,
+    fichas: list | None = None,
+    predicciones: dict | None = None,
+    anomalias: list | None = None,
+    generado_con_ia: bool = True,
+) -> str:
     """
-    Construye HTML premium del email diario.
-    Parsea el informe real del orquestador y lo renderiza en una
-    plantilla corporativa moderna con tarjetas KPI, semáforos de
-    riesgo y diseño responsivo.
+    Construye HTML premium del email diario combinando:
+      - Datos estructurados reales (KPIs, predicciones, anomalías)
+      - Texto narrativo de IA (análisis ejecutivo)
+      - Noticias del sector
+
+    Plantilla corporativa moderna con tarjetas KPI, tabla de predicciones,
+    semáforos de riesgo y diseño responsivo compatible con Outlook.
     """
     fecha = datetime.now().strftime('%Y-%m-%d')
     hora = datetime.now().strftime('%H:%M')
 
-    # ── Parsear datos reales del informe ──
-    data = _parse_informe_sections(informe_texto)
-
-    # ── Construir tarjetas KPI ──
+    # ── Construir tarjetas KPI desde datos estructurados ──
     kpi_cards = ''
-    colors = ['#1565C0', '#2E7D32', '#E65100']
-    bg_colors = ['#E3F2FD', '#E8F5E9', '#FFF3E0']
-    for i, kpi in enumerate(data['kpis'][:3]):
-        color = colors[i % len(colors)]
-        bg = bg_colors[i % len(bg_colors)]
-        var_html = ''
-        if 'variacion' in kpi:
-            var_val = kpi['variacion']
-            is_neg = var_val.startswith('-')
-            var_color = '#C62828' if is_neg else '#2E7D32'
-            var_arrow = '&#9660;' if is_neg else '&#9650;'
-            var_html = (
-                '<span style="font-size:12px;color:' + var_color + ';">'
-                + var_arrow + ' ' + var_val + ' vs 7d</span>'
-            )
-        kpi_cards += (
-            '<td style="width:33.33%;padding:6px;">'
-            '<table cellpadding="0" cellspacing="0" border="0" width="100%" '
-            'style="background:' + bg + ';border-radius:10px;border-left:4px solid ' + color + ';">'
-            '<tr><td style="padding:16px 14px;">'
-            '<div style="font-size:13px;color:#555;margin-bottom:4px;">'
-            + kpi['icon'] + ' ' + kpi['label'] + '</div>'
-            '<div style="font-size:24px;font-weight:700;color:' + color + ';margin-bottom:2px;">'
-            + kpi['value'] + '</div>'
-            + var_html
-            + '</td></tr></table></td>'
-        )
+    if fichas:
+        colors = ['#1565C0', '#2E7D32', '#E65100']
+        bg_colors = ['#E3F2FD', '#E8F5E9', '#FFF3E0']
+        icon_map = {'⚡': '&#9889;', '💰': '&#128176;', '💧': '&#128167;', '📊': '&#128202;'}
+        for i, ficha in enumerate(fichas[:3]):
+            color = colors[i % len(colors)]
+            bg = bg_colors[i % len(bg_colors)]
+            emoji = ficha.get('emoji', '⚡')
+            icon_html = icon_map.get(emoji, '&#9889;')
+            label = ficha.get('indicador', 'Indicador')
+            valor = ficha.get('valor', '')
+            unidad = ficha.get('unidad', '')
+            ctx = ficha.get('contexto', {})
+            var_pct = ctx.get('variacion_vs_promedio_pct', None)
+            fecha_dato = ficha.get('fecha', '')
 
-    # ── Construir predicciones ──
-    def _pred_row(pred):
-        tend = pred.get('tendencia', 'Estable')
-        if tend == 'Creciente':
-            arrow = '&#9650;'
-            t_color = '#2E7D32'
-            t_bg = '#E8F5E9'
-        elif tend == 'Decreciente':
-            arrow = '&#9660;'
-            t_color = '#C62828'
-            t_bg = '#FFEBEE'
-        else:
-            arrow = '&#9654;'
-            t_color = '#1565C0'
-            t_bg = '#E3F2FD'
+            # Valor formateado
+            if isinstance(valor, float):
+                value_str = f"{valor:,.2f} {unidad}"
+            else:
+                value_str = f"{valor} {unidad}"
+
+            # Variación
+            var_html = ''
+            if var_pct is not None:
+                is_neg = float(var_pct) < 0
+                var_color = '#C62828' if is_neg else '#2E7D32'
+                var_arrow = '&#9660;' if is_neg else '&#9650;'
+                # Usar etiqueta personalizada si está (ej: "vs Media 2020-2025")
+                etiqueta_var = ctx.get('etiqueta_variacion', 'vs 7d')
+                var_html = (
+                    '<div style="font-size:11px;color:' + var_color + ';margin-top:2px;">'
+                    + var_arrow + ' ' + f"{var_pct:+.1f}%" + ' ' + etiqueta_var + '</div>'
+                )
+
+            # Fecha del dato
+            date_html = ''
+            if fecha_dato:
+                date_html = (
+                    '<div style="font-size:10px;color:#999;margin-top:2px;">'
+                    'Dato: ' + str(fecha_dato) + '</div>'
+                )
+
+            kpi_cards += (
+                '<td style="width:33.33%;padding:6px;">'
+                '<table cellpadding="0" cellspacing="0" border="0" width="100%" '
+                'style="background:' + bg + ';border-radius:10px;border-left:4px solid ' + color + ';">'
+                '<tr><td style="padding:16px 14px;">'
+                '<div style="font-size:13px;color:#555;margin-bottom:4px;">'
+                + icon_html + ' ' + label + '</div>'
+                '<div style="font-size:22px;font-weight:700;color:' + color + ';margin-bottom:2px;">'
+                + value_str + '</div>'
+                + var_html + date_html
+                + '</td></tr></table></td>'
+            )
+
+    # ── Construir tabla de predicciones 1 mes ──
+    pred_1m_rows = ''
+    pred_section_title = 'Proyecciones a 1 Mes'  # default, se actualiza abajo
+    pred_modelo_label = ''
+
+    # Normalizar: aceptar un dict (legacy) o una lista de dicts (multi-métrica)
+    _pred_list = []
+    if isinstance(predicciones, list):
+        _pred_list = predicciones
+    elif isinstance(predicciones, dict) and predicciones.get('estadisticas'):
+        _pred_list = [predicciones]
+
+    def _make_pred_row(label, icon_ent, value, cambio, tendencia, t_color_r, t_bg_r, arrow_r):
         return (
             '<tr>'
             '<td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;font-size:13px;color:#555;">'
-            + pred['icon'] + ' ' + pred['label'] + '</td>'
+            + icon_ent + ' ' + label + '</td>'
             '<td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;font-size:14px;font-weight:600;color:#222;">'
-            + pred['value'] + '</td>'
-            '<td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;font-size:13px;color:' + t_color + ';">'
-            + pred['cambio'] + '</td>'
+            + value + '</td>'
+            '<td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;font-size:13px;color:' + t_color_r + ';">'
+            + cambio + '</td>'
             '<td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;">'
             '<span style="display:inline-block;padding:3px 10px;border-radius:20px;'
-            'font-size:11px;font-weight:600;color:' + t_color + ';background:' + t_bg + ';">'
-            + arrow + ' ' + tend + '</span></td></tr>'
+            'font-size:11px;font-weight:600;color:' + t_color_r + ';background:' + t_bg_r + ';">'
+            + arrow_r + ' ' + tendencia + '</span></td></tr>'
         )
 
-    pred_1m_rows = ''.join([_pred_row(p) for p in data['predicciones_1m']])
-    pred_6m_rows = ''.join([_pred_row(p) for p in data['predicciones_6m']])
+    # Iconos y unidades por tipo de métrica
+    _METRIC_ICONS = {
+        'GENE_TOTAL': '&#9889;',
+        'Generaci': '&#9889;',
+        'Hidr': '&#128167;',
+        'PRECIO': '&#128176;',
+        'Precio': '&#128176;',
+        'EMBALSES': '&#128167;',
+        'Porcentaje': '&#128167;',
+    }
 
-    # ── Riesgos ──
-    risk_items = ''
-    for r in data['riesgos']:
-        if r['severity'] == 'critical':
-            r_color = '#C62828'
-            r_bg = '#FFEBEE'
-            r_icon = '&#128308;'
-            r_label = 'CRITICO'
-        elif r['severity'] == 'alert':
-            r_color = '#E65100'
-            r_bg = '#FFF3E0'
-            r_icon = '&#128992;'
-            r_label = 'ALERTA'
+    for pred_item in _pred_list:
+        if not pred_item or not pred_item.get('estadisticas'):
+            continue
+
+        stats = pred_item['estadisticas']
+        preds_data_list = pred_item.get('predicciones', [])
+        fuente = pred_item.get('fuente', 'General')
+        modelo = pred_item.get('modelo', '')
+        if modelo and not pred_modelo_label:
+            pred_modelo_label = modelo
+
+        # Calcular tendencia comparando primera semana vs última semana
+        if len(preds_data_list) >= 14:
+            avg_first = sum(p['valor_gwh'] for p in preds_data_list[:7]) / 7
+            avg_last = sum(p['valor_gwh'] for p in preds_data_list[-7:]) / 7
+            cambio_pct = ((avg_last - avg_first) / avg_first * 100) if avg_first else 0
+        elif len(preds_data_list) >= 2:
+            avg_first = preds_data_list[0]['valor_gwh']
+            avg_last = preds_data_list[-1]['valor_gwh']
+            cambio_pct = ((avg_last - avg_first) / avg_first * 100) if avg_first else 0
         else:
-            r_color = '#F9A825'
-            r_bg = '#FFFDE7'
-            r_icon = '&#128993;'
-            r_label = 'AVISO'
-        risk_items += (
-            '<tr><td style="padding:12px 14px;border-bottom:1px solid #f5f5f5;">'
-            '<table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
-            '<td style="width:70px;vertical-align:top;">'
-            '<span style="display:inline-block;padding:3px 10px;border-radius:20px;'
-            'font-size:10px;font-weight:700;color:#fff;background:' + r_color + ';">'
-            + r_label + '</span></td>'
-            '<td style="padding-left:8px;">'
-            '<div style="font-size:14px;font-weight:600;color:#333;">' + r['label'] + '</div>'
-            '<div style="font-size:12px;color:#666;margin-top:2px;">' + r['desc'] + '</div>'
-            '</td></tr></table></td></tr>'
+            cambio_pct = 0
+
+        if cambio_pct > 1:
+            tend = 'Creciente'
+            t_color = '#2E7D32'
+            t_bg = '#E8F5E9'
+            arrow = '&#9650;'
+        elif cambio_pct < -1:
+            tend = 'Decreciente'
+            t_color = '#C62828'
+            t_bg = '#FFEBEE'
+            arrow = '&#9660;'
+        else:
+            tend = 'Estable'
+            t_color = '#1565C0'
+            t_bg = '#E3F2FD'
+            arrow = '&#9654;'
+
+        # Determinar label y unidad según tipo de fuente
+        fuente_label = pred_item.get('fuente_label', fuente)
+        fuente_lower = fuente.lower() if fuente else ''
+        if fuente_lower in ('hidráulica', 'hidraulica', 'térmica', 'termica',
+                            'solar', 'eólica', 'eolica'):
+            fuente_label = f'Generaci' + chr(243) + 'n {fuente}'
+
+        # Determinar unidad según métrica
+        if 'precio' in fuente_lower or 'bolsa' in fuente_lower or 'PRECIO' in fuente:
+            unidad = 'COP/kWh'
+            valor_fmt = f"{stats.get('promedio_gwh', 0):,.1f} {unidad}"
+            max_fmt = f"{stats.get('maximo_gwh', 0):,.1f} {unidad}"
+            min_fmt = f"{stats.get('minimo_gwh', 0):,.1f} {unidad}"
+        elif 'embalse' in fuente_lower or 'EMBALSES' in fuente:
+            unidad = '%'
+            valor_fmt = f"{stats.get('promedio_gwh', 0):.1f}{unidad}"
+            max_fmt = f"{stats.get('maximo_gwh', 0):.1f}{unidad}"
+            min_fmt = f"{stats.get('minimo_gwh', 0):.1f}{unidad}"
+        else:
+            unidad = 'GWh/d' + chr(237) + 'a'
+            valor_fmt = f"{stats.get('promedio_gwh', 0):.1f} {unidad}"
+            max_fmt = f"{stats.get('maximo_gwh', 0):.1f} {unidad}"
+            min_fmt = f"{stats.get('minimo_gwh', 0):.1f} {unidad}"
+
+        # Icono
+        icon = '&#9889;'
+        for prefix, ico in _METRIC_ICONS.items():
+            if fuente.startswith(prefix) or fuente_label.startswith(prefix):
+                icon = ico
+                break
+
+        # Fila principal: promedio del mes
+        pred_1m_rows += _make_pred_row(
+            f'{fuente_label} (prom.)',
+            icon,
+            valor_fmt,
+            f"{cambio_pct:+.1f}%",
+            tend, t_color, t_bg, arrow,
         )
+
+    # Título de sección
+    if len(_pred_list) >= 3:
+        pred_section_title = 'Proyecciones a 1 Mes — 3 M' + chr(233) + 'tricas Clave'
+    elif len(_pred_list) == 1 and _pred_list[0]:
+        fuente = _pred_list[0].get('fuente', '')
+        fl = _pred_list[0].get('fuente_label', fuente)
+        pred_section_title = f'Proyecciones a 1 Mes — {fl}'
+
+    # ── Si no hay datos estructurados, intentar parsear del texto ──
+    if not kpi_cards or not pred_1m_rows:
+        parsed = _parse_informe_sections(informe_texto)
+        if not kpi_cards and parsed['kpis']:
+            # Fallback desde texto parseado
+            colors = ['#1565C0', '#2E7D32', '#E65100']
+            bg_colors = ['#E3F2FD', '#E8F5E9', '#FFF3E0']
+            for i, kpi in enumerate(parsed['kpis'][:3]):
+                color = colors[i % len(colors)]
+                bg = bg_colors[i % len(bg_colors)]
+                kpi_cards += (
+                    '<td style="width:33.33%;padding:6px;">'
+                    '<table cellpadding="0" cellspacing="0" border="0" width="100%" '
+                    'style="background:' + bg + ';border-radius:10px;border-left:4px solid ' + color + ';">'
+                    '<tr><td style="padding:16px 14px;">'
+                    '<div style="font-size:13px;color:#555;margin-bottom:4px;">'
+                    + kpi['icon'] + ' ' + kpi['label'] + '</div>'
+                    '<div style="font-size:24px;font-weight:700;color:' + color + ';margin-bottom:2px;">'
+                    + kpi['value'] + '</div>'
+                    '</td></tr></table></td>'
+                )
+
+    # ── Anomalías / Riesgos ──
+    risk_items = ''
+    if anomalias:
+        for anom in anomalias[:5]:
+            sev = anom.get('severidad', 'ALERTA')
+            desc = anom.get('descripcion', '')
+            metrica = anom.get('metrica', '')
+            if sev in ('CRITICA', 'CRITICO', 'CRITICAL'):
+                r_color = '#C62828'
+                r_bg = '#FFEBEE'
+                r_label = 'CR' + chr(205) + 'TICO'
+            elif sev == 'ALERTA':
+                r_color = '#E65100'
+                r_bg = '#FFF3E0'
+                r_label = 'ALERTA'
+            else:
+                r_color = '#F9A825'
+                r_bg = '#FFFDE7'
+                r_label = 'AVISO'
+            risk_items += (
+                '<tr><td style="padding:12px 14px;border-bottom:1px solid #f5f5f5;">'
+                '<table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+                '<td style="width:70px;vertical-align:top;">'
+                '<span style="display:inline-block;padding:3px 10px;border-radius:20px;'
+                'font-size:10px;font-weight:700;color:#fff;background:' + r_color + ';">'
+                + r_label + '</span></td>'
+                '<td style="padding-left:8px;">'
+                '<div style="font-size:14px;font-weight:600;color:#333;">' + metrica + '</div>'
+                '<div style="font-size:12px;color:#666;margin-top:2px;">' + desc + '</div>'
+                '</td></tr></table></td></tr>'
+            )
     if not risk_items:
         risk_items = (
             '<tr><td style="padding:16px;text-align:center;color:#2E7D32;font-size:14px;">'
             '&#9989; No se detectaron riesgos significativos hoy</td></tr>'
-        )
-
-    # ── Recomendaciones ──
-    rec_items = ''
-    for i, rec in enumerate(data['recomendaciones']):
-        rec_items += (
-            '<tr><td style="padding:8px 14px;border-bottom:1px solid #f5f5f5;font-size:13px;'
-            'color:#333;line-height:1.5;">'
-            '<span style="display:inline-block;width:22px;height:22px;border-radius:50%;'
-            'background:#1565C0;color:#fff;text-align:center;line-height:22px;font-size:11px;'
-            'font-weight:700;margin-right:8px;">' + str(i + 1) + '</span>'
-            + rec + '</td></tr>'
         )
 
     # ── Construir HTML completo ──
@@ -727,33 +975,32 @@ def build_daily_email_html(informe_texto: str) -> str:
              'style="max-width:680px;background:#ffffff;border-radius:12px;'
              'overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">')
 
-    # ════════ Header con gradiente ════════
-    p.append('<tr><td style="background:linear-gradient(135deg,#0D1B4A 0%,#1A3A7A 50%,#2856A3 100%);'
-             'padding:0;">')
+    # ════════ Header con color sólido (Outlook-safe) ════════
+    p.append('<tr><td style="background-color:#0D1B4A;padding:0;">')
     p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%">')
     p.append('<tr><td style="padding:28px 32px 12px;">')
     p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>')
     p.append('<td style="vertical-align:middle;">')
-    p.append('<div style="font-size:10px;letter-spacing:3px;color:rgba(255,255,255,0.6);'
+    p.append('<div style="font-size:10px;letter-spacing:3px;color:#8FAAD4;'
              'text-transform:uppercase;margin-bottom:6px;">Rep' + chr(250) + 'blica de Colombia</div>')
-    p.append('<div style="font-size:22px;font-weight:700;color:#ffffff;line-height:1.3;">'
+    p.append('<div style="font-size:22px;font-weight:700;color:#FFFFFF;line-height:1.3;">'
              'Informe Ejecutivo del<br>Sector Energ' + chr(233) + 'tico</div>')
     p.append('</td>')
     p.append('<td style="text-align:right;vertical-align:middle;">')
     p.append('<div style="width:52px;height:52px;border-radius:50%;'
-             'background:rgba(255,255,255,0.15);text-align:center;line-height:52px;'
+             'background-color:#1A3A7A;text-align:center;line-height:52px;'
              'font-size:26px;display:inline-block;">&#9889;</div>')
     p.append('</td></tr></table></td></tr>')
     # Sub-header bar
     p.append('<tr><td style="padding:0 32px 20px;">')
     p.append('<table cellpadding="0" cellspacing="0" border="0" '
-             'style="background:rgba(255,255,255,0.12);border-radius:8px;width:100%;">')
+             'style="background-color:#1A3A7A;border-radius:8px;width:100%;">')
     p.append('<tr>')
-    p.append('<td style="padding:10px 16px;color:rgba(255,255,255,0.9);font-size:13px;">'
+    p.append('<td style="padding:10px 16px;color:#B8D0F0;font-size:13px;">'
              '&#128197; ' + fecha + '</td>')
-    p.append('<td style="padding:10px 16px;color:rgba(255,255,255,0.9);font-size:13px;">'
+    p.append('<td style="padding:10px 16px;color:#B8D0F0;font-size:13px;">'
              '&#128337; ' + hora + '</td>')
-    p.append('<td style="padding:10px 16px;color:rgba(255,255,255,0.9);font-size:13px;'
+    p.append('<td style="padding:10px 16px;color:#B8D0F0;font-size:13px;'
              'text-align:right;">Despacho del Viceministro</td>')
     p.append('</tr></table></td></tr>')
     p.append('</table></td></tr>')
@@ -768,14 +1015,34 @@ def build_daily_email_html(informe_texto: str) -> str:
         p.append('<tr>' + kpi_cards + '</tr>')
         p.append('</table></td></tr>')
 
+    # ════════ Análisis Ejecutivo (texto narrativo IA) ════════
+    # Convertir markdown a HTML simplificado para email
+    narrative_html = _markdown_to_email_html(informe_texto)
+    if narrative_html:
+        analisis_titulo = ('An' + chr(225) + 'lisis Ejecutivo — Generado con IA'
+                           if generado_con_ia
+                           else 'Resumen Ejecutivo del Sector')
+        p.append('<tr><td style="padding:20px 26px 8px;">')
+        p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
+                 'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
+        p.append('<tr><td style="background:#F5F7FA;padding:14px 16px;'
+                 'font-size:14px;font-weight:700;color:#333;">'
+                 '&#128214; ' + analisis_titulo + '</td></tr>')
+        p.append('<tr><td style="padding:16px 18px;font-size:13px;color:#333;line-height:1.7;">')
+        p.append(narrative_html)
+        p.append('</td></tr></table></td></tr>')
+
     # ════════ Predicciones 1M ════════
     if pred_1m_rows:
+        modelo_label = pred_modelo_label
         p.append('<tr><td style="padding:20px 26px 8px;">')
         p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
                  'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
         p.append('<tr><td colspan="4" style="background:#F5F7FA;padding:14px 16px;'
                  'font-size:14px;font-weight:700;color:#333;">'
-                 '&#128200; Proyecciones a 1 Mes</td></tr>')
+                 '&#128200; ' + pred_section_title
+                 + (' <span style="font-size:11px;color:#888;font-weight:400;">(' + modelo_label + ')</span>' if modelo_label else '')
+                 + '</td></tr>')
         p.append('<tr style="background:#FAFAFA;">')
         p.append('<td style="padding:8px 14px;font-size:11px;color:#888;font-weight:600;">INDICADOR</td>')
         p.append('<td style="padding:8px 14px;font-size:11px;color:#888;font-weight:600;">VALOR</td>')
@@ -785,42 +1052,59 @@ def build_daily_email_html(informe_texto: str) -> str:
         p.append(pred_1m_rows)
         p.append('</table></td></tr>')
 
-    # ════════ Predicciones 6M ════════
-    if pred_6m_rows:
-        p.append('<tr><td style="padding:12px 26px 8px;">')
-        p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
-                 'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
-        p.append('<tr><td colspan="4" style="background:#F5F7FA;padding:14px 16px;'
-                 'font-size:14px;font-weight:700;color:#333;">'
-                 '&#128202; Proyecciones a 6 Meses</td></tr>')
-        p.append('<tr style="background:#FAFAFA;">')
-        p.append('<td style="padding:8px 14px;font-size:11px;color:#888;font-weight:600;">INDICADOR</td>')
-        p.append('<td style="padding:8px 14px;font-size:11px;color:#888;font-weight:600;">VALOR</td>')
-        p.append('<td style="padding:8px 14px;font-size:11px;color:#888;font-weight:600;">CAMBIO</td>')
-        p.append('<td style="padding:8px 14px;font-size:11px;color:#888;font-weight:600;">TENDENCIA</td>')
-        p.append('</tr>')
-        p.append(pred_6m_rows)
-        p.append('</table></td></tr>')
-
-    # ════════ Riesgos ════════
+    # ════════ Riesgos y Anomalías ════════
     p.append('<tr><td style="padding:20px 26px 8px;">')
     p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
              'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
     p.append('<tr><td style="background:#FFF8E1;padding:14px 16px;'
              'font-size:14px;font-weight:700;color:#E65100;">'
-             '&#9888;&#65039; Riesgos y Alertas</td></tr>')
+             '&#9888;&#65039; Riesgos y Anomal' + chr(237) + 'as</td></tr>')
     p.append(risk_items)
     p.append('</table></td></tr>')
 
-    # ════════ Recomendaciones ════════
-    if rec_items:
-        p.append('<tr><td style="padding:16px 26px 8px;">')
+    # ════════ Noticias del sector ════════
+    if noticias:
+        p.append('<tr><td style="padding:20px 26px 8px;">')
         p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
                  'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
-        p.append('<tr><td style="background:#E8F5E9;padding:14px 16px;'
-                 'font-size:14px;font-weight:700;color:#2E7D32;">'
-                 '&#9989; Recomendaciones T' + chr(233) + 'cnicas</td></tr>')
-        p.append(rec_items)
+        p.append('<tr><td style="background-color:#E3F2FD;padding:14px 16px;'
+                 'font-size:14px;font-weight:700;color:#1565C0;">'
+                 '&#128240; Noticias del Sector Energ' + chr(233) + 'tico</td></tr>')
+        for n in noticias[:3]:
+            titulo = n.get('titulo', 'Sin t' + chr(237) + 'tulo')
+            resumen = n.get('resumen', n.get('resumen_corto', ''))
+            fuente = n.get('fuente', '')
+            fecha_n = n.get('fecha', n.get('fecha_publicacion', ''))
+            url = n.get('url', '')
+            if len(resumen) > 140:
+                resumen = resumen[:137] + '...'
+            link_html = ''
+            if url:
+                link_html = (
+                    ' <a href="' + url + '" '
+                    'style="color:#1565C0;font-size:12px;text-decoration:none;'
+                    'font-weight:600;">Leer m' + chr(225) + 's &rarr;</a>'
+                )
+            meta = ''
+            if fuente or fecha_n:
+                parts = []
+                if fuente:
+                    parts.append(fuente)
+                if fecha_n:
+                    parts.append(str(fecha_n))
+                meta = (
+                    '<div style="font-size:11px;color:#888;margin-top:4px;">'
+                    + ' &middot; '.join(parts) + '</div>'
+                )
+            p.append(
+                '<tr><td style="padding:14px 16px;border-bottom:1px solid #f0f0f0;">'
+                '<div style="font-size:14px;font-weight:600;color:#222;margin-bottom:4px;">'
+                + titulo + '</div>'
+                '<div style="font-size:12px;color:#555;line-height:1.5;">'
+                + resumen + link_html + '</div>'
+                + meta
+                + '</td></tr>'
+            )
         p.append('</table></td></tr>')
 
     # ════════ Canales de consulta ════════
@@ -882,5 +1166,7 @@ def build_daily_email_html(informe_texto: str) -> str:
     p.append('</td></tr></table></td></tr>')
 
     p.append('</table></td></tr></table></body></html>')
+
+    return '\n'.join(p)
 
     return '\n'.join(p)

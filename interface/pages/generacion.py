@@ -147,10 +147,17 @@ def obtener_metricas_hidricas():
                 vol_total_gwh = df_vol['valor_gwh'].sum()
                 cap_total_gwh = df_cap['valor_gwh'].sum()
                 
-                # VALIDACIÓN: Rechazar datos con volumen < 10,000 GWh (incompletos)
-                if vol_total_gwh < 10000:
-                    print(f"Datos incompletos {fecha_busqueda}: {vol_total_gwh:.2f} GWh (muy bajo)")
-                    continue
+                # VALIDACIÓN COMPLETITUD: contar embalses con volumen vs capacidad
+                # Rechazar si menos del 80% de embalses reportaron volumen
+                col_recurso_v = next((c for c in ['recurso', 'Embalse', 'Values_code'] if c in df_vol.columns), None)
+                col_recurso_c = next((c for c in ['recurso', 'Embalse', 'Values_code'] if c in df_cap.columns), None)
+                
+                if col_recurso_v and col_recurso_c:
+                    n_vol = df_vol[col_recurso_v].nunique()
+                    n_cap = df_cap[col_recurso_c].nunique()
+                    if n_cap > 0 and n_vol / n_cap < 0.80:
+                        print(f"Datos incompletos {fecha_busqueda}: n_vol={n_vol}, n_cap={n_cap}, ratio={n_vol/n_cap:.2f}")
+                        continue
                 
                 if cap_total_gwh > 0:
                     reserva_pct = round((vol_total_gwh / cap_total_gwh) * 100, 2)

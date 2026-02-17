@@ -16,75 +16,31 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Mapa de emojis → texto para PDF (WeasyPrint no renderiza emojis) ──
-_EMOJI_MAP = {
-    '\U0001f4ca': '[Grafico]',
-    '\U0001f4c5': '[Fecha]',
-    '\u26a1': '[Energia]',
-    '\U0001f50c': '[Enchufe]',
-    '\U0001f4b0': '[Precio]',
-    '\U0001f4b2': '[Precio]',
-    '\U0001f4a7': '[Agua]',
-    '\U0001f321\ufe0f': '[Temp]',
-    '\U0001f525': '[Fuego]',
-    '\u2600\ufe0f': '[Sol]',
-    '\U0001f32c\ufe0f': '[Viento]',
-    '\U0001f534': '[CRITICO]',
-    '\U0001f7e0': '[ALERTA]',
-    '\U0001f7e2': '[OK]',
-    '\u26aa': '[--]',
-    '\u2705': '[OK]',
-    '\u26a0\ufe0f': '[!]',
-    '\u26a0': '[!]',
-    '\U0001f4c8': '[Subida]',
-    '\U0001f4c9': '[Bajada]',
-    '\u27a1\ufe0f': '[->]',
-    '\u27a1': '[->]',
-    '\U0001f4cb': '[Lista]',
-    '\U0001f527': '[Config]',
-    '\U0001f3ed': '[Planta]',
-    '\U0001f3e2': '[Edificio]',
-    '\U0001f30e': '[Mundo]',
-    '\U0001f4f0': '[Prensa]',
-    '\U0001f4a1': '[Idea]',
-    '\U0001f6e0\ufe0f': '[Herr]',
-    '\U0001f6e0': '[Herr]',
-    '\U0001f4dd': '[Nota]',
-    '\U0001f3af': '[Meta]',
-    '\U0001f4cc': '[Pin]',
-    '\U0001f91d': '[Acuerdo]',
-    '\U0001f4e2': '[Alerta]',
-    '\U0001f4d1': '[Doc]',
-    '\u2796': '[-]',
-    '\u2795': '[+]',
-    '\u27a4': '[>]',
-    '\u2192': '->',
-    '\U0001f1f2': '',
-    '\U0001f1ea': '',
-}
-
-# Regex para detectar emojis Unicode restantes
+# Regex para detectar emojis Unicode (WeasyPrint no los renderiza)
 _EMOJI_PATTERN = re.compile(
     '['
-    '\U0001F600-\U0001F64F'  # emoticons
-    '\U0001F300-\U0001F5FF'  # misc symbols & pictographs
-    '\U0001F680-\U0001F6FF'  # transport & map symbols
-    '\U0001F1E0-\U0001F1FF'  # flags
-    '\U00002702-\U000027B0'  # dingbats
-    '\U000024C2-\U0001F251'  # enclosed characters
-    '\U0001F900-\U0001F9FF'  # supplemental symbols
-    '\U0001FA00-\U0001FA6F'  # chess symbols
-    '\U0001FA70-\U0001FAFF'  # symbols extended-A
+    '\U0001F600-\U0001F64F'
+    '\U0001F300-\U0001F5FF'
+    '\U0001F680-\U0001F6FF'
+    '\U0001F1E0-\U0001F1FF'
+    '\U00002702-\U000027B0'
+    '\U000024C2-\U0001F251'
+    '\U0001F900-\U0001F9FF'
+    '\U0001FA00-\U0001FA6F'
+    '\U0001FA70-\U0001FAFF'
+    '\u2600-\u26FF'
+    '\u2700-\u27BF'
+    '\uFE00-\uFE0F'
+    '\u200D'
     ']+', flags=re.UNICODE
 )
 
 
-def _replace_emojis_for_pdf(text: str) -> str:
-    """Reemplaza emojis por equivalentes de texto para PDF."""
-    for emoji, replacement in _EMOJI_MAP.items():
-        text = text.replace(emoji, replacement)
-    # Eliminar cualquier emoji restante no mapeado
+def _strip_emojis(text: str) -> str:
+    """Elimina todos los emojis del texto para renderizado limpio en PDF."""
     text = _EMOJI_PATTERN.sub('', text)
+    # Limpiar espacios dobles resultantes
+    text = re.sub(r'  +', ' ', text)
     return text
 
 
@@ -98,16 +54,18 @@ def _strip_redundant_header(md_text: str) -> str:
     skip_patterns = [
         re.compile(r'^\*?\s*INFORME EJECUTIVO', re.IGNORECASE),
         re.compile(r'^\*?\s*Fecha:', re.IGNORECASE),
-        re.compile(r'^[━─\-]{5,}$'),  # separators
+        re.compile(r'^[━─\-]{5,}$'),
     ]
     for line in lines:
         stripped = line.strip()
-        # Remove emoji-only or decoration-only lines
-        cleaned = _EMOJI_PATTERN.sub('', stripped).strip()
+        cleaned = _strip_emojis(stripped).strip()
         if cleaned in ('INFORME EJECUTIVO — SECTOR ELÉCTRICO',
                        'INFORME EJECUTIVO  SECTOR ELÉCTRICO',
-                       'INFORME EJECUTIVO'):
-            continue
+                       'INFORME EJECUTIVO',
+                       ''):
+            # Only skip if original had content (don't remove blank lines)
+            if stripped:
+                continue
         if any(p.match(stripped) for p in skip_patterns):
             continue
         if any(p.match(cleaned) for p in skip_patterns):
@@ -208,126 +166,176 @@ def _inline_format(text: str) -> str:
     return text
 
 
-# ── CSS corporativo MME ──────────────────────────────────
+# ── CSS profesional institucional MME ───────────────────────────
+
+_LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'assets', 'images', 'logo-minenergia.png'
+)
 
 _CSS = """
 @page {
     size: letter;
-    margin: 2cm 2.5cm;
-    @top-center {
-        content: "Ministerio de Minas y Energía — Informe Ejecutivo";
-        font-size: 8pt;
-        color: #666;
-        font-family: 'Segoe UI', Arial, sans-serif;
-    }
+    margin: 2cm 2cm 2.5cm 2cm;
     @bottom-center {
-        content: "Página " counter(page) " de " counter(pages);
-        font-size: 8pt;
-        color: #666;
-        font-family: 'Segoe UI', Arial, sans-serif;
+        content: "Portal Energetico MME  |  Pagina " counter(page) " de " counter(pages);
+        font-size: 7.5pt;
+        color: #888;
+        font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
     }
 }
 
 body {
-    font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+    font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
     font-size: 11pt;
-    line-height: 1.5;
+    line-height: 1.55;
     color: #222;
     max-width: 100%;
+    text-rendering: optimizeLegibility;
 }
 
+/* ── Encabezado institucional ── */
 .header {
-    text-align: center;
-    border-bottom: 3px solid #1a5276;
-    padding-bottom: 12px;
-    margin-bottom: 20px;
-}
-
-.header h1 {
-    font-size: 18pt;
-    color: #1a5276;
-    margin: 0 0 4px 0;
-}
-
-.header .subtitle {
-    font-size: 10pt;
-    color: #555;
-    margin: 0;
-}
-
-.metadata {
     display: flex;
-    justify-content: space-between;
-    font-size: 9pt;
-    color: #555;
-    margin-bottom: 16px;
-    padding: 6px 10px;
-    background: #f0f4f8;
-    border-radius: 4px;
-}
-
-h2 {
-    font-size: 14pt;
-    color: #1a5276;
-    border-bottom: 1px solid #d4e6f1;
-    padding-bottom: 4px;
-    margin-top: 20px;
-    margin-bottom: 8px;
-}
-
-h3 {
-    font-size: 12pt;
-    color: #2c3e50;
-    margin-top: 14px;
-    margin-bottom: 6px;
-}
-
-p {
-    margin: 4px 0;
-    text-align: justify;
-}
-
-ul {
-    margin: 4px 0 4px 20px;
-    padding: 0;
-}
-
-li {
+    align-items: center;
+    border-bottom: 2.5pt solid #1a3c5e;
+    padding-bottom: 10px;
     margin-bottom: 4px;
 }
 
+.header-logo {
+    flex: 0 0 auto;
+    margin-right: 16px;
+}
+
+.header-logo img {
+    width: 52px;
+    height: auto;
+}
+
+.header-text {
+    flex: 1;
+}
+
+.header-text h1 {
+    font-size: 17pt;
+    font-weight: 700;
+    color: #1a3c5e;
+    margin: 0 0 2px 0;
+    letter-spacing: 0.3pt;
+}
+
+.header-text .subtitle {
+    font-size: 9.5pt;
+    color: #555;
+    margin: 0;
+    font-weight: 400;
+}
+
+/* ── Barra de metadatos ── */
+.metadata {
+    font-size: 8.5pt;
+    color: #555;
+    margin-bottom: 16px;
+    padding: 6px 12px;
+    background: #f5f7fa;
+    border-bottom: 1px solid #ddd;
+}
+
+.metadata table {
+    width: 100%;
+    border: none;
+    border-collapse: collapse;
+}
+
+.metadata td {
+    padding: 1px 0;
+    border: none;
+}
+
+.metadata td:last-child {
+    text-align: right;
+}
+
+/* ── Titulos de seccion (h2) ── */
+h2 {
+    font-size: 13.5pt;
+    font-weight: 700;
+    color: #1a3c5e;
+    margin-top: 20px;
+    margin-bottom: 8px;
+    padding-bottom: 3px;
+    padding-left: 8px;
+    border-left: 3pt solid #1a3c5e;
+    border-bottom: 0.5pt solid #ccc;
+    page-break-after: avoid;
+}
+
+/* ── Subtitulos (h3) ── */
+h3 {
+    font-size: 11.5pt;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-top: 14px;
+    margin-bottom: 5px;
+    padding-left: 8px;
+    border-left: 2pt solid #6c9ec2;
+    page-break-after: avoid;
+}
+
+/* ── Parrafos ── */
+p {
+    margin: 5px 0;
+    text-align: justify;
+    orphans: 3;
+    widows: 3;
+}
+
+/* ── Listas ── */
+ul {
+    margin: 5px 0 5px 24px;
+    padding: 0;
+    list-style-type: disc;
+}
+
+li {
+    margin-bottom: 3px;
+    text-align: justify;
+}
+
+/* ── Separadores ── */
 hr {
     border: none;
-    border-top: 1px solid #d4e6f1;
+    border-top: 0.5pt solid #ccc;
     margin: 12px 0;
 }
 
+/* ── Estilos de texto ── */
 strong {
-    color: #1a5276;
+    font-weight: 700;
+    color: inherit;
 }
 
 em {
-    color: #555;
+    font-style: italic;
+    color: inherit;
 }
 
+/* ── Nota al pie del documento ── */
 .footer-note {
     margin-top: 24px;
     padding-top: 8px;
-    border-top: 1px solid #ccc;
-    font-size: 8pt;
+    border-top: 1pt solid #1a3c5e;
+    font-size: 7.5pt;
     color: #888;
     text-align: center;
+    line-height: 1.4;
 }
 
+/* ── Graficos ── */
 .charts-section {
     margin: 12px 0;
-}
-
-.charts-section h3 {
-    text-align: center;
-    color: #1a5276;
-    font-size: 12pt;
-    margin-bottom: 8px;
+    page-break-inside: avoid;
 }
 
 .chart-container {
@@ -337,20 +345,24 @@ em {
 }
 
 .chart-container img {
-    width: 85%;
-    max-width: 480px;
+    width: 82%;
+    max-width: 440px;
     height: auto;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px;
+    border: 0.5pt solid #ddd;
 }
 
 .chart-caption {
     font-size: 8pt;
-    color: #64748b;
+    color: #666;
     text-align: center;
     margin-top: 2px;
     margin-bottom: 6px;
     font-style: italic;
+}
+
+.chart-caption a {
+    color: #1a3c5e;
+    text-decoration: underline;
 }
 """
 
@@ -415,16 +427,23 @@ def generar_pdf_informe(
     fecha_generacion: str = "",
     generado_con_ia: bool = True,
     chart_paths: Optional[List[str]] = None,
+    fichas: Optional[List[dict]] = None,
+    predicciones = None,
+    anomalias: Optional[list] = None,
+    noticias: Optional[list] = None,
 ) -> Optional[str]:
     """
-    Genera un PDF del informe ejecutivo.
+    Genera un PDF del informe ejecutivo con datos estructurados + narrativa IA.
 
     Args:
         informe_texto: Texto Markdown del informe.
         fecha_generacion: Fecha/hora de generación.
         generado_con_ia: Si fue generado con IA.
-        chart_paths: Lista de paths a imágenes PNG de gráficos para incrustar
-                     después de la sección 1 (Situación actual).
+        chart_paths: Lista de paths a imágenes PNG de gráficos.
+        fichas: Lista de KPIs estructurados [{indicador, valor, unidad, ...}].
+        predicciones: Dict o lista de dicts con estadisticas, predicciones[], modelo.
+        anomalias: Lista de anomalías [{severidad, metrica, descripcion}].
+        noticias: Lista de noticias [{titulo, resumen, fuente, url}].
 
     Returns:
         Ruta absoluta al archivo PDF temporal, o None si falla.
@@ -434,28 +453,260 @@ def generar_pdf_informe(
 
         # Limpiar encabezado redundante y emojis
         informe_texto = _strip_redundant_header(informe_texto)
-        informe_texto = _replace_emojis_for_pdf(informe_texto)
-
-        # Convertir Markdown → HTML
-        body_html = _markdown_to_html(informe_texto)
-
-        # Incrustar gráficos después de la sección 1 ("Situación actual")
-        charts_html = _build_charts_html(chart_paths or [])
-        if charts_html:
-            # Insertar después del primer </h2> + su contenido (sección 1)
-            # Buscamos el cierre de la primera sección (inicio de la segunda <h2>)
-            h2_positions = [m.start() for m in re.finditer(r'<h2>', body_html)]
-            if len(h2_positions) >= 2:
-                insert_pos = h2_positions[1]
-                body_html = body_html[:insert_pos] + charts_html + body_html[insert_pos:]
-            else:
-                # Si no hay 2 secciones, agregar al final del body
-                body_html += charts_html
+        informe_texto = _strip_emojis(informe_texto)
 
         hoy = fecha_generacion or datetime.now().strftime('%Y-%m-%d %H:%M')
         metodo = "Asistido por IA" if generado_con_ia else "Datos consolidados"
         fecha_label = datetime.now().strftime('%Y-%m-%d')
 
+        # ── KPI Cards HTML ──
+        kpi_html = ''
+        if fichas:
+            cards = []
+            colors = ['#1565C0', '#2E7D32', '#E65100']
+            for i, f in enumerate(fichas[:3]):
+                color = colors[i % len(colors)]
+                valor = f.get('valor', '')
+                unidad = f.get('unidad', '')
+                indicador = _strip_emojis(f.get('indicador', ''))
+                ctx = f.get('contexto', {})
+                var_pct = ctx.get('variacion_vs_promedio_pct', None)
+
+                if isinstance(valor, float):
+                    val_str = f"{valor:,.2f} {unidad}"
+                else:
+                    val_str = f"{valor} {unidad}"
+
+                var_line = ''
+                if var_pct is not None:
+                    sign = '+' if float(var_pct) >= 0 else ''
+                    etiqueta_var = ctx.get('etiqueta_variacion', 'vs promedio 7d')
+                    var_line = f'<div style="font-size:10px;color:#666;margin-top:2px;">{sign}{var_pct:.1f}% {etiqueta_var}</div>'
+
+                cards.append(
+                    f'<div style="flex:1;background:#f8f9fa;border-left:4px solid {color};'
+                    f'border-radius:6px;padding:12px 14px;margin:0 6px;">'
+                    f'<div style="font-size:11px;color:#666;margin-bottom:4px;">{indicador}</div>'
+                    f'<div style="font-size:20px;font-weight:700;color:{color};">{val_str}</div>'
+                    f'{var_line}'
+                    f'</div>'
+                )
+            kpi_html = (
+                '<div style="margin:16px 0;">'
+                '<h2 style="color:#1a3c5e;border-bottom:2px solid #1a3c5e;padding-bottom:6px;">'
+                'Indicadores Clave del Dia</h2>'
+                '<div style="display:flex;gap:10px;margin-top:10px;">'
+                + ''.join(cards)
+                + '</div></div>'
+            )
+
+        # ── Predicciones HTML ──
+        pred_html = ''
+        # Normalizar: aceptar dict (legacy) o lista (multi-métrica)
+        _pred_items = []
+        if isinstance(predicciones, list):
+            _pred_items = [p for p in predicciones if p and p.get('estadisticas')]
+        elif isinstance(predicciones, dict) and predicciones.get('estadisticas'):
+            _pred_items = [predicciones]
+
+        if _pred_items:
+            # Determinar título de sección
+            if len(_pred_items) >= 3:
+                sec_title = 'Proyecciones a 1 Mes — 3 M' + chr(233) + 'tricas Clave'
+            elif len(_pred_items) == 1:
+                fl = _pred_items[0].get('fuente_label', _pred_items[0].get('fuente', 'General'))
+                sec_title = f'Proyecciones a 1 Mes — {fl}'
+            else:
+                sec_title = 'Proyecciones a 1 Mes'
+
+            first_modelo = ''
+            for pi in _pred_items:
+                m = pi.get('modelo', '')
+                if m:
+                    first_modelo = m
+                    break
+
+            pred_html = (
+                '<div style="margin:16px 0;">'
+                '<h2 style="color:#1a3c5e;border-bottom:2px solid #1a3c5e;padding-bottom:6px;">'
+                f'{sec_title}'
+                + (f' <span style="font-size:12px;color:#888;">({first_modelo})</span>' if first_modelo else '')
+                + '</h2>'
+            )
+
+            for pred_item in _pred_items:
+                stats = pred_item['estadisticas']
+                preds_list = pred_item.get('predicciones', [])
+                fuente = pred_item.get('fuente', 'General')
+                fuente_label = pred_item.get('fuente_label', fuente)
+                fuente_lower = fuente.lower() if fuente else ''
+                if fuente_lower in ('hidráulica', 'hidraulica', 'térmica', 'termica',
+                                    'solar', 'eólica', 'eolica'):
+                    fuente_label = f'Generaci' + chr(243) + 'n {fuente}'
+
+                # Unidad según métrica
+                if 'precio' in fuente_lower or 'bolsa' in fuente_lower or 'PRECIO' in fuente:
+                    unidad = 'COP/kWh'
+                elif 'embalse' in fuente_lower or 'EMBALSES' in fuente:
+                    unidad = '%'
+                else:
+                    unidad = 'GWh/dia'
+
+                pred_html += (
+                    f'<h3 style="color:#333;margin:14px 0 6px;font-size:14px;">{fuente_label}</h3>'
+                    '<table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:12px;">'
+                    '<tr style="background:#1a3c5e;color:#fff;">'
+                    '<th style="padding:8px 12px;text-align:left;">Estadistica</th>'
+                    '<th style="padding:8px 12px;text-align:right;">Valor</th></tr>'
+                    f'<tr style="background:#f8f9fa;"><td style="padding:8px 12px;">Promedio diario</td>'
+                    f'<td style="padding:8px 12px;text-align:right;font-weight:600;">'
+                    f'{stats.get("promedio_gwh", 0):,.1f} {unidad}</td></tr>'
+                    f'<tr><td style="padding:8px 12px;">Maximo esperado</td>'
+                    f'<td style="padding:8px 12px;text-align:right;">'
+                    f'{stats.get("maximo_gwh", 0):,.1f} {unidad}</td></tr>'
+                    f'<tr style="background:#f8f9fa;"><td style="padding:8px 12px;">Minimo esperado</td>'
+                    f'<td style="padding:8px 12px;text-align:right;">'
+                    f'{stats.get("minimo_gwh", 0):,.1f} {unidad}</td></tr>'
+                    f'<tr><td style="padding:8px 12px;">Total predicciones</td>'
+                    f'<td style="padding:8px 12px;text-align:right;">'
+                    f'{pred_item.get("total_predicciones", len(preds_list))} dias</td></tr>'
+                    '</table>'
+                )
+
+                # Tabla detallada de primeros 10 + últimos 5 días
+                if preds_list:
+                    pred_html += (
+                        '<table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:11px;">'
+                        '<tr style="background:#eee;"><th style="padding:6px 10px;text-align:left;">Fecha</th>'
+                        f'<th style="padding:6px 10px;text-align:right;">Valor ({unidad})</th>'
+                        '<th style="padding:6px 10px;text-align:right;">Intervalo Inferior</th>'
+                        '<th style="padding:6px 10px;text-align:right;">Intervalo Superior</th></tr>'
+                    )
+                    show = preds_list[:10]
+                    if len(preds_list) > 15:
+                        show += [None]  # separator
+                        show += preds_list[-5:]
+                    elif len(preds_list) > 10:
+                        show = preds_list
+
+                    for j, p in enumerate(show):
+                        if p is None:
+                            pred_html += (
+                                '<tr><td colspan="4" style="padding:4px 10px;text-align:center;'
+                                'color:#999;font-style:italic;">...</td></tr>'
+                            )
+                            continue
+                        bg = 'background:#f8f9fa;' if j % 2 == 0 else ''
+                        pred_html += (
+                            f'<tr style="{bg}">'
+                            f'<td style="padding:5px 10px;">{p.get("fecha", "")}</td>'
+                            f'<td style="padding:5px 10px;text-align:right;font-weight:600;">'
+                            f'{p.get("valor_gwh", 0):.1f}</td>'
+                            f'<td style="padding:5px 10px;text-align:right;">'
+                            f'{p.get("intervalo_inferior", 0):.1f}</td>'
+                            f'<td style="padding:5px 10px;text-align:right;">'
+                            f'{p.get("intervalo_superior", 0):.1f}</td></tr>'
+                        )
+                    pred_html += '</table>'
+
+            pred_html += '</div>'
+
+        # ── Anomalías HTML ──
+        anom_html = ''
+        if anomalias:
+            rows = []
+            for a in anomalias[:10]:
+                sev = a.get('severidad', 'ALERTA')
+                if sev in ('CRITICA', 'CRITICO', 'CRITICAL'):
+                    s_color = '#C62828'
+                    s_bg = '#FFEBEE'
+                elif sev == 'ALERTA':
+                    s_color = '#E65100'
+                    s_bg = '#FFF3E0'
+                else:
+                    s_color = '#F9A825'
+                    s_bg = '#FFFDE7'
+                rows.append(
+                    f'<tr>'
+                    f'<td style="padding:6px 10px;border-bottom:1px solid #eee;">'
+                    f'<span style="display:inline-block;padding:2px 8px;border-radius:10px;'
+                    f'font-size:10px;font-weight:700;color:#fff;background:{s_color};">'
+                    f'{sev}</span></td>'
+                    f'<td style="padding:6px 10px;border-bottom:1px solid #eee;font-weight:600;">'
+                    f'{_strip_emojis(a.get("metrica", ""))}</td>'
+                    f'<td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:11px;">'
+                    f'{_strip_emojis(a.get("descripcion", ""))}</td></tr>'
+                )
+            anom_html = (
+                '<div style="margin:16px 0;">'
+                '<h2 style="color:#E65100;border-bottom:2px solid #E65100;padding-bottom:6px;">'
+                'Riesgos y Anomalias</h2>'
+                '<table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:12px;">'
+                '<tr style="background:#FFF8E1;">'
+                '<th style="padding:6px 10px;text-align:left;width:80px;">Severidad</th>'
+                '<th style="padding:6px 10px;text-align:left;">Metrica</th>'
+                '<th style="padding:6px 10px;text-align:left;">Descripcion</th></tr>'
+                + ''.join(rows)
+                + '</table></div>'
+            )
+
+        # ── Noticias HTML ──
+        news_html = ''
+        if noticias:
+            items = []
+            for n in noticias[:5]:
+                titulo = _strip_emojis(n.get('titulo', ''))
+                resumen = _strip_emojis(n.get('resumen', n.get('resumen_corto', '')))
+                fuente = n.get('fuente', '')
+                fecha_n = n.get('fecha', n.get('fecha_publicacion', ''))
+                url = n.get('url', '')
+                link = f' <a href="{url}" style="color:#1565C0;">Leer mas</a>' if url else ''
+                meta = ''
+                if fuente or fecha_n:
+                    parts = [p for p in [fuente, str(fecha_n)] if p]
+                    meta = f'<div style="font-size:10px;color:#888;margin-top:2px;">{" | ".join(parts)}</div>'
+                items.append(
+                    f'<div style="padding:8px 0;border-bottom:1px solid #eee;">'
+                    f'<div style="font-size:12px;font-weight:600;color:#222;">{titulo}</div>'
+                    f'<div style="font-size:11px;color:#555;margin-top:2px;line-height:1.5;">'
+                    f'{resumen}{link}</div>{meta}</div>'
+                )
+            news_html = (
+                '<div style="margin:16px 0;">'
+                '<h2 style="color:#1565C0;border-bottom:2px solid #1565C0;padding-bottom:6px;">'
+                'Noticias del Sector Energetico</h2>'
+                + ''.join(items) + '</div>'
+            )
+
+        # ── Convertir narrativa Markdown a HTML ──
+        body_html = _markdown_to_html(informe_texto)
+
+        # ── Incrustar gráficos después de la sección 1 ──
+        charts_html = _build_charts_html(chart_paths or [])
+        if charts_html:
+            h2_positions = [m.start() for m in re.finditer(r'<h2>', body_html)]
+            if len(h2_positions) >= 2:
+                insert_pos = h2_positions[1]
+                body_html = body_html[:insert_pos] + charts_html + body_html[insert_pos:]
+            else:
+                body_html += charts_html
+
+        # Logo embebido en base64
+        logo_html = ''
+        if os.path.exists(_LOGO_PATH):
+            try:
+                with open(_LOGO_PATH, 'rb') as lf:
+                    logo_b64 = base64.b64encode(lf.read()).decode('utf-8')
+                logo_html = (
+                    '<div class="header-logo">'
+                    f'<img src="data:image/png;base64,{logo_b64}" alt="MME">'
+                    '</div>'
+                )
+            except Exception:
+                pass
+
+        # ── Ensamblar HTML completo ──
+        # Orden: KPIs → Gráficos+Narrativa → Predicciones → Anomalías → Noticias
         full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -464,22 +715,71 @@ def generar_pdf_informe(
 </head>
 <body>
     <div class="header">
-        <h1>Informe Ejecutivo del Sector El&eacute;ctrico</h1>
-        <p class="subtitle">Rep&uacute;blica de Colombia &mdash; Ministerio de Minas y Energ&iacute;a</p>
+        {logo_html}
+        <div class="header-text">
+            <h1>Informe Ejecutivo del Sector El&eacute;ctrico &mdash; {fecha_label}</h1>
+            <p class="subtitle">Portal Energ&eacute;tico MME &bull; Rep&uacute;blica de Colombia</p>
+        </div>
     </div>
 
     <div class="metadata">
-        <span>{hoy}</span>
-        <span>{metodo}</span>
-        <span>Despacho del Viceministro</span>
+        <table><tr>
+            <td>Generado: {hoy}</td>
+            <td>M&eacute;todo: {metodo}</td>
+            <td>Destinatario: Despacho del Viceministro</td>
+        </tr></table>
     </div>
+
+    {kpi_html}
 
     {body_html}
 
+    {pred_html}
+
+    {anom_html}
+
+    {news_html}
+
+    <div style="margin:20px 0;padding:16px;background:#F5F7FA;border-radius:10px;">
+        <div style="font-size:14px;font-weight:700;color:#333;margin-bottom:12px;">
+            &#128204; Canales de Consulta
+        </div>
+        <table cellpadding="0" cellspacing="0" border="0">
+            <tr>
+                <td style="padding:6px 0;">
+                    <span style="background:#0088cc;border-radius:6px;padding:8px 16px;display:inline-block;">
+                        <a href="https://t.me/MinEnergiaColombia_bot"
+                           style="color:#ffffff;text-decoration:none;font-size:12px;font-weight:600;">
+                            &#128172; Chatbot Telegram
+                        </a>
+                    </span>
+                    <span style="padding-left:10px;">
+                        <a href="https://t.me/MinEnergiaColombia_bot"
+                           style="color:#0088cc;font-size:11px;">t.me/MinEnergiaColombia_bot</a>
+                    </span>
+                </td>
+            </tr>
+            <tr>
+                <td style="padding:6px 0;">
+                    <span style="background:#1565C0;border-radius:6px;padding:8px 16px;display:inline-block;">
+                        <a href="https://portalenergetico.minenergia.gov.co/"
+                           style="color:#ffffff;text-decoration:none;font-size:12px;font-weight:600;">
+                            &#127760; Portal Energ&eacute;tico
+                        </a>
+                    </span>
+                    <span style="padding-left:10px;">
+                        <a href="https://portalenergetico.minenergia.gov.co/"
+                           style="color:#1565C0;font-size:11px;">portalenergetico.minenergia.gov.co</a>
+                    </span>
+                </td>
+            </tr>
+        </table>
+    </div>
+
     <div class="footer-note">
-        Documento generado autom&aacute;ticamente por el Portal Energ&eacute;tico MME.
-        Los datos provienen de XM, SIMEM y fuentes oficiales del sector.
-        Las predicciones utilizan modelos ENSEMBLE con validaci&oacute;n holdout.
+        Documento generado autom&aacute;ticamente por el Portal Energ&eacute;tico MME &bull;
+        Datos: XM, SIMEM y fuentes oficiales &bull;
+        Predicciones: modelos ENSEMBLE con validaci&oacute;n holdout
     </div>
 </body>
 </html>"""

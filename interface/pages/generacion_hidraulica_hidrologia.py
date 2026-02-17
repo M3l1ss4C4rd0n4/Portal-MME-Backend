@@ -568,7 +568,8 @@ def calcular_semaforo_embalse(participacion, volumen_pct):
 
 def obtener_datos_embalses_por_region():
     """
-    Obtiene los datos de embalses agrupados por región hidrológica
+    Obtiene los datos de embalses agrupados por región hidrológica.
+    Valida completitud: n_vol/n_cap >= 80% para evitar datos parciales.
     
     Returns:
         dict: {region: {embalses: [...], riesgo_max: str, color: str, lat: float, lon: float}}
@@ -577,19 +578,55 @@ def obtener_datos_embalses_por_region():
         # Obtener fecha actual y buscar últimos datos disponibles
         fecha_hoy = date.today()
         
-        # Usar helper para buscar datos en los últimos 7 días
-        df_vol, fecha_vol = obtener_datos_desde_bd('VoluUtilDiarEner', 'Embalse', fecha_hoy)
-        df_cap, fecha_cap = obtener_datos_desde_bd('CapaUtilDiarEner', 'Embalse', fecha_hoy)
+        # Buscar la fecha más reciente con datos COMPLETOS en últimos 7 días
+        fecha_valida = None
+        df_vol = None
+        df_cap = None
+        df_listado = None
+        
+        for dias_atras in range(7):
+            fecha_busqueda = fecha_hoy - timedelta(days=dias_atras)
+            
+            df_vol_tmp, fecha_vol = obtener_datos_desde_bd('VoluUtilDiarEner', 'Embalse', fecha_busqueda, dias_busqueda=1)
+            df_cap_tmp, fecha_cap = obtener_datos_desde_bd('CapaUtilDiarEner', 'Embalse', fecha_busqueda, dias_busqueda=1)
+            
+            if df_vol_tmp is None or df_vol_tmp.empty or df_cap_tmp is None or df_cap_tmp.empty:
+                continue
+            if fecha_vol != fecha_cap:
+                continue
+            
+            # Validar completitud: n_vol / n_cap >= 0.80
+            # Contar embalses distintos en cada métrica
+            col_embalse_vol = next((c for c in ['Embalse', 'recurso', 'Values_code', 'Values_Code'] if c in df_vol_tmp.columns), None)
+            col_embalse_cap = next((c for c in ['Embalse', 'recurso', 'Values_code', 'Values_Code'] if c in df_cap_tmp.columns), None)
+            
+            if col_embalse_vol and col_embalse_cap:
+                n_vol = df_vol_tmp[col_embalse_vol].nunique()
+                n_cap = df_cap_tmp[col_embalse_cap].nunique()
+                
+                if n_cap > 0 and n_vol / n_cap < 0.80:
+                    logger.warning(f"Embalses incompletos {fecha_busqueda}: n_vol={n_vol}, n_cap={n_cap}, ratio={n_vol/n_cap:.2f}")
+                    continue
+            
+            # Datos completos encontrados
+            df_vol = df_vol_tmp
+            df_cap = df_cap_tmp
+            fecha_valida = fecha_vol
+            break
+        
+        if fecha_valida is None or df_vol is None or df_cap is None:
+            logger.error("No se encontraron datos completos de embalses en últimos 7 días")
+            return None
+        
+        # Obtener listado de embalses
         df_listado, fecha_listado = obtener_datos_desde_bd('ListadoEmbalses', 'Sistema', fecha_hoy)
         
-        # Verificar que todos tienen datos de la misma fecha
-        if (df_vol is not None and df_cap is not None and df_listado is not None and 
-            fecha_vol == fecha_cap == fecha_listado):
-            fecha_str = fecha_vol.strftime('%Y-%m-%d')
-            logger.info(f"Datos de embalses obtenidos para {fecha_str}")
-        else:
-            logger.error("No se pudieron obtener datos de embalses")
+        if df_listado is None:
+            logger.error("No se pudo obtener ListadoEmbalses")
             return None
+        
+        fecha_str = fecha_valida.strftime('%Y-%m-%d')
+        logger.info(f"Datos completos de embalses obtenidos para {fecha_str}")
         
         # Detectar nombre de columnas (mismo código que en las tablas)
         col_value_vol = None
@@ -4241,12 +4278,41 @@ def get_tabla_regiones_embalses(start_date=None, end_date=None):
         embalse_region_map = dict(zip(embalses_info['Values_Name'], embalses_info['Values_HydroRegion']))
         logger.debug(f"Mapeo embalse-región creado: {len(embalse_region_map)} embalses")
 
-        # Obtener fecha con datos disponibles
+        # Obtener fecha con datos COMPLETOS (n_vol/n_cap >= 80%)
         fecha_solicitada = end_date if end_date else start_date
         today = datetime.now().strftime('%Y-%m-%d')
         fecha_obj = datetime.strptime(fecha_solicitada if fecha_solicitada else today, '%Y-%m-%d').date()
-        df_vol_test, fecha_encontrada = obtener_datos_desde_bd('VoluUtilDiarEner', 'Embalse', fecha_obj)
-        df_cap_test, _ = obtener_datos_desde_bd('CapaUtilDiarEner', 'Embalse', fecha_obj)
+        
+        # Buscar fecha con datos completos en últimos 7 días
+        fecha_encontrada = None
+        df_vol_test = None
+        df_cap_test = None
+        
+        for dias_atras in range(7):
+            fecha_busq = fecha_obj - timedelta(days=dias_atras)
+            df_vol_tmp, f_vol = obtener_datos_desde_bd('VoluUtilDiarEner', 'Embalse', fecha_busq, dias_busqueda=1)
+            df_cap_tmp, f_cap = obtener_datos_desde_bd('CapaUtilDiarEner', 'Embalse', fecha_busq, dias_busqueda=1)
+            
+            if df_vol_tmp is None or df_vol_tmp.empty or df_cap_tmp is None or df_cap_tmp.empty:
+                continue
+            if f_vol != f_cap:
+                continue
+            
+            # Validar completitud
+            col_emb_v = next((c for c in ['Embalse', 'recurso', 'Values_code'] if c in df_vol_tmp.columns), None)
+            col_emb_c = next((c for c in ['Embalse', 'recurso', 'Values_code'] if c in df_cap_tmp.columns), None)
+            
+            if col_emb_v and col_emb_c:
+                n_v = df_vol_tmp[col_emb_v].nunique()
+                n_c = df_cap_tmp[col_emb_c].nunique()
+                if n_c > 0 and n_v / n_c < 0.80:
+                    logger.warning(f"get_tabla_regiones: datos incompletos {fecha_busq}: n_vol={n_v}, n_cap={n_c}")
+                    continue
+            
+            fecha_encontrada = f_vol
+            df_vol_test = df_vol_tmp
+            df_cap_test = df_cap_tmp
+            break
         
         if fecha_encontrada is None or df_vol_test is None or df_cap_test is None:
             logger.warning("No se encontraron datos en ninguna fecha reciente")

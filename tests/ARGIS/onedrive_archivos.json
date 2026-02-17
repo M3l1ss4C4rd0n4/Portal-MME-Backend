@@ -1,0 +1,46 @@
+{
+    "_comentario": "Configuración de archivos de OneDrive para publicar en ArcGIS Enterprise del Ministerio. Cada entrada define un archivo Excel compartido y cómo publicarlo como capa hospedada.",
+    "_instrucciones": [
+        "1. Reemplaza 'onedrive_link' con el link real que te compartieron",
+        "2. Ajusta 'titulo_arcgis' con el nombre que quieres para la capa en el portal",
+        "3. Si el Excel tiene varias hojas, especifica cuál en 'hoja_excel'",
+        "4. Si tiene columnas de coordenadas, mapéalas en 'columnas_coordenadas'",
+        "5. Después de la primera publicación, copia el item_id al campo 'item_id_existente'",
+        "6. Pon 'activo: false' para desactivar un archivo sin borrarlo"
+    ],
+    "archivos": [
+        {
+            "nombre": "Archivo_1",
+            "descripcion": "Descripción del primer archivo compartido por OneDrive",
+            "onedrive_link": "PEGAR_LINK_ONEDRIVE_AQUI",
+            "titulo_arcgis": "Nombre_Capa_ArcGIS_1",
+            "tags": "energia, onedrive, MME",
+            "hoja_excel": null,
+            "columnas_coordenadas": null,
+            "item_id_existente": null,
+            "activo": true
+        },
+        {
+            "nombre": "Archivo_2",
+            "descripcion": "Descripción del segundo archivo compartido por OneDrive",
+            "onedrive_link": "PEGAR_LINK_ONEDRIVE_AQUI",
+            "titulo_arcgis": "Nombre_Capa_ArcGIS_2",
+            "tags": "energia, onedrive, MME",
+            "hoja_excel": null,
+            "columnas_coordenadas": null,
+            "item_id_existente": null,
+            "activo": true
+        },
+        {
+            "nombre": "Archivo_3",
+            "descripcion": "Descripción del tercer archivo compartido por OneDrive",
+            "onedrive_link": "PEGAR_LINK_ONEDRIVE_AQUI",
+            "titulo_arcgis": "Nombre_Capa_ArcGIS_3",
+            "tags": "energia, onedrive, MME",
+            "hoja_excel": null,
+            "columnas_coordenadas": null,
+            "item_id_existente": null,
+            "activo": true
+        }
+    ]
+}

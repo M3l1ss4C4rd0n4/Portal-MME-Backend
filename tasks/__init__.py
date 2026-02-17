@@ -12,6 +12,18 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+# Cargar variables de entorno desde .env para que SMTP_*, TELEGRAM_BOT_TOKEN, etc.
+# estén disponibles en los workers y el beat scheduler.
+# override=True porque systemd EnvironmentFile puede fallar con caracteres especiales
+# como @, *, espacios, dejando variables vacías que load_dotenv no sobreescribiría.
+try:
+    from dotenv import load_dotenv
+    _env_file = os.path.join(_PROJECT_ROOT, '.env')
+    if os.path.isfile(_env_file):
+        load_dotenv(_env_file, override=True)
+except ImportError:
+    pass  # python-dotenv no instalado; se depende de EnvironmentFile en systemd
+
 # Configuración de Celery
 app = Celery(
     'portal_mme',
@@ -48,10 +60,10 @@ app.conf.beat_schedule = {
         'task': 'tasks.anomaly_tasks.check_anomalies',
         'schedule': crontab(minute='*/30'),  # Cada 30 minutos
     },
-    # Resumen diario a las 7:00 AM
-    'send-daily-summary-7am': {
+    # Resumen diario a las 8:00 AM (hora Colombia)
+    'send-daily-summary-8am': {
         'task': 'tasks.anomaly_tasks.send_daily_summary',
-        'schedule': crontab(hour=7, minute=0),  # Diario a las 7 AM
+        'schedule': crontab(hour=8, minute=0),  # Diario a las 8 AM
     },
 }
 
