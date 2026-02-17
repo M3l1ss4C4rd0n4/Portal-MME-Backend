@@ -38,13 +38,23 @@ def _markdown_to_html(md_text: str) -> str:
             html_lines.append('<br>')
             continue
 
-        # Headers
+        # Headers — standard markdown
         if stripped.startswith('## '):
             if in_list:
                 html_lines.append('</ul>')
                 in_list = False
             title = stripped[3:].strip()
             title = _inline_format(title)
+            html_lines.append(f'<h2>{title}</h2>')
+            continue
+
+        # Headers — fallback format: *1. Título* or *N. Título*
+        m_fallback = re.match(r'^\*(\d+\.\s+.+?)\*$', stripped)
+        if m_fallback:
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            title = _inline_format(m_fallback.group(1).strip())
             html_lines.append(f'<h2>{title}</h2>')
             continue
 
@@ -211,36 +221,36 @@ em {
 }
 
 .charts-section {
-    margin: 20px 0;
-    page-break-inside: avoid;
+    margin: 12px 0;
 }
 
 .charts-section h3 {
     text-align: center;
     color: #1a5276;
-    font-size: 13pt;
-    margin-bottom: 12px;
+    font-size: 12pt;
+    margin-bottom: 8px;
 }
 
 .chart-container {
     text-align: center;
-    margin: 16px 0;
+    margin: 8px 0;
     page-break-inside: avoid;
 }
 
 .chart-container img {
-    max-width: 100%;
+    width: 85%;
+    max-width: 480px;
     height: auto;
     border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    border-radius: 4px;
 }
 
 .chart-caption {
     font-size: 8pt;
     color: #64748b;
     text-align: center;
-    margin-top: 4px;
+    margin-top: 2px;
+    margin-bottom: 6px;
     font-style: italic;
 }
 """
@@ -284,7 +294,6 @@ def _build_charts_html(chart_paths: List[str]) -> str:
         return ""
 
     html = '<div class="charts-section">'
-    html += '<h3>📊 Gráficos del Sector</h3>'
     html += '\n'.join(img_blocks)
     html += '</div>'
     return html

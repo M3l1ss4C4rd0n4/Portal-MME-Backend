@@ -521,13 +521,31 @@ def render_anomalia_detalle(det: dict) -> tuple:
 # ── FASE C: Helpers para informe ejecutivo interactivo ────
 
 def _parse_informe_sections(informe: str) -> dict:
-    """Parse IA informe text into numbered sections"""
+    """Parse IA informe text into numbered sections.
+    
+    Soporta dos formatos:
+      - IA:       ## 1. Título de sección
+      - Fallback: *1. Título de sección*
+    """
     import re as _re
     sections = {}
+
+    # Intentar formato IA primero (## headers)
     markers = list(_re.finditer(r'^##\s*(\d+)\.\s*(.+)$', informe, flags=_re.MULTILINE))
+
+    # Si no hay ## headers, intentar formato fallback (*N. Titulo*)
+    if not markers:
+        markers = list(_re.finditer(
+            r'^\*?(\d+)\.\s*(.+?)\*?$',
+            informe,
+            flags=_re.MULTILINE,
+        ))
+        # Filtrar solo las que realmente parecen títulos de sección (1-4)
+        markers = [m for m in markers if 1 <= int(m.group(1)) <= 4]
+
     for i, m in enumerate(markers):
         num = int(m.group(1))
-        title = m.group(2).strip()
+        title = m.group(2).strip().rstrip('*')
         start = m.end()
         end = markers[i + 1].start() if i + 1 < len(markers) else len(informe)
         content = informe[start:end].strip()

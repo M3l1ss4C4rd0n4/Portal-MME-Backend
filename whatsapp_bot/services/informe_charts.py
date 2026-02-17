@@ -26,6 +26,9 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 PORTAL_URL = "https://portalenergetico.minenergia.gov.co"
+URL_GENERACION = f"{PORTAL_URL}/generacion/fuentes"
+URL_EMBALSES = f"{PORTAL_URL}/generacion/hidraulica/hidrologia"
+URL_PRECIOS = f"{PORTAL_URL}/comercializacion"
 CHARTS_DIR = Path(SERVER_DIR) / "data" / "charts"
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -174,7 +177,7 @@ def generate_generation_pie() -> Tuple[Optional[str], str, str]:
                     font_color='#334155',
                 ),
                 dict(
-                    text=f'📊 Portal Energético MME  •  {PORTAL_URL}',
+                    text=f'📊 Portal Energético MME  •  {URL_GENERACION}',
                     xref='paper', yref='paper',
                     x=0.5, y=-0.12,
                     showarrow=False,
@@ -202,7 +205,7 @@ def generate_generation_pie() -> Tuple[Optional[str], str, str]:
         caption = (
             f"⚡ Participación por fuente — {fecha_str}\n"
             f"Total: {total:.1f} GWh\n\n"
-            f"🔗 Más detalle en {PORTAL_URL}"
+            f"🔗 Más detalle en {URL_GENERACION}"
         )
         return filepath, caption, fecha_str
 
@@ -412,7 +415,7 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
                     text=(
                         '🔴 Alto  |  🟡 Medio  |  🟢 Bajo'
                         '  (participación × volumen)   •   '
-                        f'{PORTAL_URL}'
+                        f'{URL_EMBALSES}'
                     ),
                     xref='paper', yref='paper',
                     x=0.5, y=-0.02,
@@ -445,7 +448,7 @@ def generate_embalses_map() -> Tuple[Optional[str], str, str]:
         caption = (
             f"🗺️ Nivel de embalses por región — {fecha_str}\n"
             f"Promedio nacional: {global_pct:.1f}%\n\n"
-            f"🔗 Más detalle en {PORTAL_URL}"
+            f"🔗 Más detalle en {URL_EMBALSES}"
         )
         return filepath, caption, fecha_str
 
@@ -518,7 +521,7 @@ def generate_price_chart() -> Tuple[Optional[str], str, str]:
             yaxis_title='$/kWh',
             annotations=[
                 dict(
-                    text=f'📊 Portal Energético MME  •  {PORTAL_URL}',
+                    text=f'📊 Portal Energético MME  •  {URL_PRECIOS}',
                     xref='paper', yref='paper',
                     x=0.5, y=-0.18,
                     showarrow=False,
@@ -544,7 +547,7 @@ def generate_price_chart() -> Tuple[Optional[str], str, str]:
             f"💰 Precio de Bolsa Nacional — {fecha_str}\n"
             f"Último: ${ultimo_precio:,.1f} $/kWh  |  "
             f"Promedio 90d: ${promedio:,.1f}\n\n"
-            f"🔗 Más detalle en {PORTAL_URL}"
+            f"🔗 Más detalle en {URL_PRECIOS}"
         )
         return filepath, caption, fecha_str
 
