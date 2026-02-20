@@ -3208,215 +3208,165 @@ class ChatbotOrchestratorService:
             
             import json as _json
             
-            # ── Recortar el contexto para minimizar tokens ──
-            # Solo enviar lo que la IA necesita para su análisis
+            # ── Recortar y enriquecer contexto para la IA ──
+            # Enviar solo lo necesario, sin duplicados, con datos
+            # enriquecidos de Fase 1 que antes no se pasaban.
             contexto_ia = {
-                "fecha_consulta": contexto.get("fecha_consulta"),
+                "fecha": contexto.get("fecha_consulta"),
                 "estado_actual": contexto.get("estado_actual"),
                 "predicciones_mes": contexto.get("predicciones_mes"),
                 "anomalias": {
-                    "total_anomalias": contexto.get("anomalias", {}).get("total_anomalias", 0),
+                    "total": contexto.get("anomalias", {}).get("total_anomalias", 0),
                     "lista": contexto.get("anomalias", {}).get("lista", []),
                     "resumen": contexto.get("anomalias", {}).get("resumen", ""),
                 },
-                "confianza_modelos": contexto.get("confianza_modelos"),
-                "notas_negocio": contexto.get("notas_negocio"),
             }
-            # Solo agregar predicciones de 1 mes (las demás son redundantes
-            # con predicciones_mes y la IA no las usa explícitamente)
-            pred_raw = contexto.get("predicciones", {})
-            if pred_raw.get("1_mes"):
-                contexto_ia["predicciones_1_mes"] = pred_raw["1_mes"]
-            # Noticias: solo título + resumen (no el HTML completo)
+            # Datos enriquecidos (Fase 1) — antes NO se enviaban a la IA
+            gen_fuente = contexto.get("generacion_por_fuente", {})
+            if gen_fuente:
+                contexto_ia["generacion_por_fuente"] = gen_fuente
+            emb_det = contexto.get("embalses_detalle", {})
+            if emb_det and "error" not in emb_det:
+                contexto_ia["embalses_detalle"] = emb_det
+            tabla_kpi = contexto.get("tabla_indicadores_clave", [])
+            if tabla_kpi:
+                contexto_ia["semaforo_kpi"] = tabla_kpi
+            # Notas de confianza compactas (sin repetir por_indicador completo)
+            conf = contexto.get("confianza_modelos", {})
+            if conf:
+                contexto_ia["confianza"] = {
+                    "experimentales": conf.get("fuentes_experimentales", []),
+                    "resumen": conf.get("resumen", ""),
+                }
+            # Notas de negocio compactas
+            notas = contexto.get("notas_negocio", {})
+            if notas:
+                contexto_ia["umbrales"] = {
+                    "embalses": notas.get("umbrales_embalses", {}),
+                    "anomalias": notas.get("umbrales_anomalias", {}),
+                }
+            # NO incluir predicciones_1_mes (duplica predicciones_mes)
+            # Noticias: título + resumen + fuente (compacto)
             prensa = contexto.get("prensa_del_dia", {})
             if prensa:
                 noticias_trim = []
-                for n in prensa.get("noticias", [])[:3]:
-                    noticias_trim.append({
-                        "titulo": n.get("titulo", ""),
-                        "resumen": n.get("resumen", "")[:200],
-                        "fuente": n.get("fuente", ""),
-                    })
-                contexto_ia["prensa_del_dia"] = {
-                    "resumen_general": prensa.get("resumen_general", ""),
-                    "noticias": noticias_trim,
+                for n in prensa.get("noticias", [])[:5]:
+                    entry = {"titulo": n.get("titulo", ""), "fuente": n.get("fuente", "")}
+                    resumen = n.get("resumen", "")
+                    if resumen:
+                        entry["resumen"] = resumen[:250]
+                    noticias_trim.append(entry)
+                contexto_ia["noticias"] = {
+                    "resumen_dia": prensa.get("resumen_general", ""),
+                    "titulares": noticias_trim,
                 }
             
             contexto_json = _json.dumps(contexto_ia, ensure_ascii=False, default=str)
             logger.info(
-                f"[INFORME_IA] Contexto recortado: {len(contexto_json)} chars "
+                f"[INFORME_IA] Contexto optimizado: {len(contexto_json)} chars "
                 f"(~{len(contexto_json)//4} tokens)"
             )
             
             system_prompt = (
-                "Eres un ingeniero eléctrico senior especializado en el sistema "
-                "eléctrico colombiano. Tu audiencia es el Viceministro de Minas "
-                "y Energía. Tu tarea es redactar un INFORME EJECUTIVO en lenguaje "
-                "claro, profesional y sintético, centrado en ANÁLISIS CUALITATIVO, "
-                "no en repetir datos numéricos.\n\n"
-                "Recibirás como contexto:\n"
-                "- Estado actual del sistema (generación, demanda, precios, embalses).\n"
-                "- Anomalías detectadas (valor actual, esperado, desviación, severidad).\n"
-                "- Predicciones (horizontes 1 semana, 1 mes, 6 meses, con promedios, "
-                "rangos y tendencias).\n"
-                "- **predicciones_mes**: nodo especial con las predicciones a 1 mes "
-                "de las 3 métricas clave (Generación, Precio de Bolsa, Embalses), "
-                "ya estructuradas. Úsalo en la sección 2.\n"
-                "- Noticias del sector (tres más importantes con título, resumen y link) "
-                "y un resumen general de prensa.\n\n"
-                "INSTRUCCIONES GENERALES\n"
-                "- Escribe como si estuvieras explicándole al Viceministro qué debe "
-                "saber HOY para tomar decisiones.\n"
-                "- No repitas tablas ni listados de números; ya están en el sistema. "
-                "Solo menciona cifras cuando ayuden a justificar una idea.\n"
-                "- Prioriza juicios cualitativos: riesgo alto/medio/bajo, tendencia "
-                "preocupante/estable/favorable, impacto potencial, urgencia de seguimiento.\n"
-                "- Evita frases genéricas o vacías ('requiere seguimiento' sin explicar "
-                "por qué). Siempre explica el POR QUÉ y el PARA QUÉ.\n\n"
-                "INSTRUCCIONES ESPECIALES PARA EMBALSES\n"
-                "- Los datos de embalses de XM NO se publican diariamente (cada 1-3 días). "
-                "El sistema ya selecciona el último dato completo de la ventana de 7 días.\n"
-                "- En la ficha de embalses del estado actual encontrarás:\n"
-                "  * `valor`: porcentaje actual de embalses.\n"
-                "  * `contexto.media_historica_2020_2025`: media de embalses en el "
-                "periodo 2020-2025 (referencia de largo plazo).\n"
-                "  * `contexto.desviacion_pct_media_historica_2020_2025`: cuánto se "
-                "desvía el valor actual respecto a esa media (positivo = por encima, "
-                "negativo = por debajo).\n"
-                "  * `contexto.promedio_30d`: promedio de los últimos 30 días.\n"
-                "- SIEMPRE menciona en el informe si el nivel actual está por encima "
-                "o por debajo de la media histórica 2020-2025 y qué implica eso "
-                "(riesgo hídrico bajo/moderado/alto según la tendencia).\n"
-                "- Si la desviación es negativa (por debajo de la media), indica "
-                "el nivel de preocupación según la magnitud: <-5% moderado, "
-                "<-15% alto, <-25% crítico.\n\n"
-                "ESTRUCTURA DEL INFORME (5 secciones):\n\n"
+                "Eres un ingeniero eléctrico senior y asesor estratégico del "
+                "Viceministro de Minas y Energía de Colombia. Redactas un INFORME "
+                "EJECUTIVO DIARIO centrado en ANÁLISIS CUALITATIVO PROFUNDO, no "
+                "en repetir datos numéricos.\n\n"
+                "DATOS QUE RECIBES (JSON):\n"
+                "• estado_actual.fichas: 3 KPIs (Generación, Precio Bolsa, Embalses) "
+                "con valor actual, promedio 7d, tendencia y contexto histórico.\n"
+                "• generacion_por_fuente: participación por tipo (hidráulica, térmica, "
+                "solar, eólica, etc.) con GWh y porcentaje.\n"
+                "• embalses_detalle: nivel actual vs media histórica 2020–2025 y "
+                "tendencia 30d.\n"
+                "• predicciones_mes: proyecciones a 1 mes para las 3 métricas clave "
+                "(promedio, rango, tendencia, cambio % vs histórico, confianza del modelo).\n"
+                "• anomalias: alertas detectadas con severidad, desvío % y comentarios.\n"
+                "• semaforo_kpi: estado semáforo (🟢/🟡/🔴) de cada indicador.\n"
+                "• noticias.titulares: hasta 5 noticias del sector energético del día.\n"
+                "• confianza: qué modelos son experimentales (PRECIO_BOLSA).\n\n"
+                "REGLAS ABSOLUTAS (violación = informe inválido):\n"
+                "1. NUNCA menciones nombres de campos JSON (ej: 'desviacion_pct_media_"
+                "historica_2020_2025', 'cambio_pct_vs_historico'). Usa lenguaje natural.\n"
+                "2. NUNCA inventes datos. Usa EXCLUSIVAMENTE los valores del JSON.\n"
+                "3. NUNCA uses frases vacías como 'requiere seguimiento' o 'podría "
+                "reflejar mayor competencia' sin explicar QUÉ dato lo justifica, "
+                "POR QUÉ es relevante y QUÉ acción implica.\n"
+                "4. SIEMPRE integra las NOTICIAS en secciones 3 y 4. Para cada titular, "
+                "explica qué IMPLICA para el sector (no repitas el título textual).\n"
+                "5. SIEMPRE menciona las ANOMALÍAS detectadas (sección 3.1), con el "
+                "indicador, magnitud del desvío y posible causa.\n"
+                "6. PRECIO_BOLSA es EXPERIMENTAL: calificarlo siempre como 'referencia "
+                "direccional del modelo experimental'. No formular conclusiones firmes.\n"
+                "7. Generación y Embalses son de ALTA CONFIANZA: sí admiten conclusiones.\n\n"
+                "INSTRUCCIONES PARA EMBALSES:\n"
+                "• Compara siempre el valor actual con la media histórica 2020–2025 "
+                "(dato en contexto de la ficha). Di 'X puntos por encima/debajo'.\n"
+                "• Desviación negativa: <-5% moderado, <-15% alto, <-25% crítico.\n"
+                "• Menciona la tendencia a 30 días y lo que implica para las "
+                "próximas semanas (agotamiento gradual vs reposición).\n\n"
+                "INSTRUCCIONES PARA GENERACIÓN POR FUENTE:\n"
+                "• Usa los datos de generacion_por_fuente para comentar la "
+                "participación de renovables vs fósiles. Indica si hay cambios "
+                "relevantes respecto a la composición habitual (hidráulica ~70%, "
+                "térmica ~25%, solar+eólica ~5% como referencia).\n\n"
+                "ESTRUCTURA OBLIGATORIA (5 secciones, máximo 1200 palabras total):\n\n"
                 "## 1. Contexto general del sistema\n"
-                "En 3-5 frases, explica el estado global del sistema (precio, "
-                "hidrología/embalses, demanda, generación renovable). Destaca si el "
-                "día se parece a un día 'normal' o si hay señales de estrés.\n"
-                "Para embalses, incluye explícitamente la comparación con la media "
-                "histórica 2020-2025 usando los campos del contexto.\n\n"
-                "## 2. Señales clave y evolución reciente\n"
-                "Esta sección tiene DOS partes obligatorias:\n\n"
-                "### 2.1 Proyecciones del próximo mes (3 métricas clave)\n"
-                "Usando los datos del nodo `predicciones_mes.metricas_clave`, "
-                "presenta un resumen breve (3-6 líneas) de las proyecciones a "
-                "1 mes para:\n"
-                "  1. **Generación total**: promedio esperado, rango, tendencia.\n"
-                "  2. **Precio de Bolsa**: promedio esperado, rango, tendencia "
-                "(recordar que es EXPERIMENTAL).\n"
-                "  3. **Embalses**: promedio esperado, rango, tendencia.\n"
-                "Para cada una, indica el cambio porcentual respecto al histórico "
-                "reciente (campo `cambio_pct_vs_historico`). NO repitas todo el "
-                "bloque de datos; resume y menciona solo las cifras clave.\n\n"
-                "### 2.2 Análisis de señales clave\n"
-                "Ahora SÍ analiza cualitativamente usando TANTO el estado actual "
-                "COMO las predicciones del mes:\n"
-                "- Precio de bolsa (¿está subiendo, bajando, oscilando?)\n"
-                "- Embalses (¿se están recuperando, agotando, estabilizando? "
-                "¿cómo se comparan con la media 2020-2025?)\n"
-                "- Generación total y participación de renovables.\n"
-                "Extrae 2-3 ideas clave prospectivas "
-                "('si la tendencia sigue así, en X semanas podríamos estar en…'). "
-                "No repitas las cifras que ya pusiste en 2.1.\n\n"
-                "## 3. Riesgos y oportunidades (ANÁLISIS CUALITATIVO PROFUNDO)\n"
-                "Aquí debes hacer el esfuerzo principal. Usa TODA la información "
-                "(estado actual, anomalías, predicciones y noticias) para un análisis "
-                "cruzado. No te limites a repetir datos.\n\n"
-                "### 3.1 Riesgos operativos y de corto plazo\n"
-                "Explica cuáles son los 2-3 riesgos más relevantes hoy. Para cada riesgo:\n"
-                "- Qué lo está causando (datos + noticias).\n"
-                "- Qué podría pasar si se mantiene (impacto en suministro, precios, "
-                "confiabilidad).\n"
-                "- En qué horizonte de tiempo es relevante (días, semanas, meses).\n\n"
-                "### 3.2 Riesgos estructurales y de mediano plazo\n"
-                "Conecta predicciones y noticias (regulación, gas, renovables, "
-                "transmisión) para identificar riesgos estructurales (dependencia de "
-                "gas importado, retrasos en renovables, congestiones de red). "
-                "No repitas títulos de noticias: explica qué IMPLICAN para el sector.\n\n"
+                "3-5 frases. Estado global: generación (fuentes), precio, embalses "
+                "vs media histórica, ¿día normal o señales de estrés? Incluir "
+                "participación renovable si hay datos.\n\n"
+                "## 2. Señales clave y evolución\n"
+                "### 2.1 Proyecciones del próximo mes\n"
+                "3-6 líneas. Para cada métrica clave (Generación, Precio Bolsa, "
+                "Embalses): promedio esperado, cambio % vs últimos 30d, tendencia. "
+                "No repetir tablas; solo cifras que justifiquen una idea.\n\n"
+                "### 2.2 Análisis cualitativo\n"
+                "Interpretar las señales cruzando estado actual + predicciones. "
+                "Extraer 2-3 ideas prospectivas concretas "
+                "('si la tendencia de X sigue así, en Y semanas…'). "
+                "No repetir cifras de 2.1.\n\n"
+                "## 3. Riesgos y oportunidades\n"
+                "### 3.1 Riesgos operativos (corto plazo)\n"
+                "2-3 riesgos. OBLIGATORIO incluir cada anomalía detectada aquí, "
+                "con el desvío numérico. Para cada riesgo: causa (dato+noticia), "
+                "impacto potencial y horizonte temporal.\n\n"
+                "### 3.2 Riesgos estructurales (mediano plazo)\n"
+                "Conectar predicciones + noticias del día → riesgos sistémicos "
+                "(dependencia de fuentes, retrasos renovables, regulación). "
+                "OBLIGATORIO referenciar al menos 2 titulares de noticias, "
+                "explicando sus implicaciones (no repetir título textual).\n\n"
                 "### 3.3 Oportunidades\n"
-                "Identifica 2-3 oportunidades concretas a partir de la situación "
-                "actual y las noticias (uso eficiente de embalses, exportaciones de "
-                "energía, aceleración de proyectos solares/eólicos, programas de "
-                "eficiencia, gestión de demanda). Para cada una, indica qué "
-                "condiciones la habilitan.\n\n"
-                "## 4. Recomendaciones técnicas para el Viceministro\n"
-                "Traduce los análisis anteriores en acciones o focos de seguimiento. "
-                "No repitas lo ya dicho; DERIVA consecuencias prácticas.\n\n"
-                "### 4.1 Recomendaciones de corto plazo (próximos días/semana)\n"
-                "3-5 acciones concretas. Cada una con el MOTIVO vinculado a un dato "
-                "o noticia ('debido a X, se recomienda Y').\n\n"
-                "### 4.2 Recomendaciones de mediano plazo (semanas/meses)\n"
-                "3-4 líneas de acción estratégicas: acelerar proyectos, diseñar "
-                "medidas de gestión de demanda, revisar metas de transición energética. "
-                "No recomendaciones vagas sin indicar dimensión concreta.\n\n"
+                "2-3 oportunidades con condición habilitante concreta.\n\n"
+                "## 4. Recomendaciones para el Viceministro\n"
+                "### 4.1 Corto plazo (días/semana)\n"
+                "3-5 acciones. Cada una vinculada a un dato o noticia específica "
+                "('dado que X, se recomienda Y').\n\n"
+                "### 4.2 Mediano plazo (semanas/meses)\n"
+                "3-4 líneas estratégicas con dimensión concreta (plazos, metas).\n\n"
                 "## 5. Cierre ejecutivo\n"
-                "En 2-3 frases, sintetiza el mensaje clave para el Viceministro: "
-                "¿el sistema está hoy cómodo, en vigilancia o en zona de preocupación? "
-                "¿Dónde debe enfocar su atención inmediata?\n\n"
-                "ESTILO\n"
-                "- Redacta en español, tono profesional, directo y respetuoso.\n"
-                "- Evita tecnicismos innecesarios, pero sin perder rigor.\n"
-                "- No uses listas demasiado largas; prioriza ideas clave.\n"
-                "- No repitas literalmente los textos de las noticias.\n"
-                "- Usa ## para secciones, ### para sub-secciones, "
-                "**negritas** para valores clave.\n"
-                "- Usa párrafos analíticos de 2-4 líneas para interpretaciones.\n"
-                "- NO inventes datos: usa EXCLUSIVAMENTE los valores del JSON.\n"
-                "- Menciona unidades (GWh, COP/kWh, %) y fechas cuando justifiques.\n\n"
-                "REGLAS DE CONFIANZA:\n"
-                "- PRECIO_BOLSA es EXPERIMENTAL: no formular conclusiones fuertes. "
-                "Indicar 'según modelo experimental, referencia direccional'.\n"
-                "- Generación y Embalses son de alta confianza.\n\n"
-                "Tu prioridad es entregar un análisis CUALITATIVO PROFUNDO, "
-                "integrando datos, anomalías, predicciones y noticias, como lo "
-                "haría un asesor técnico de confianza del Viceministro."
+                "2-3 frases. ¿Cómodo, en vigilancia o preocupación? Foco inmediato.\n\n"
+                "ESTILO:\n"
+                "• Español profesional, directo, respetuoso. Sin tecnicismos innecesarios.\n"
+                "• Párrafos analíticos de 2-4 líneas. Listas breves (máx 5 ítems).\n"
+                "• ## para secciones, ### para sub-secciones, **negritas** para cifras clave.\n"
+                "• Unidades siempre: GWh, COP/kWh, %. Fechas cuando justifiques.\n"
+                "• NO empieces secciones con 'El sistema eléctrico colombiano presenta…' "
+                "ni variaciones genéricas. Ve directo al dato relevante."
             )
             
             user_prompt = (
-                f"Genera el informe ejecutivo del sector eléctrico colombiano "
-                f"con los siguientes datos del sistema:\n\n"
+                f"Datos del sistema eléctrico colombiano para hoy:\n\n"
                 f"```json\n{contexto_json}\n```\n\n"
-                f"Estructura tu respuesta así:\n\n"
-                f"## 1. Contexto general del sistema\n"
-                f"(3-5 frases sobre el estado global: precio, hidrología, "
-                f"demanda, generación. ¿Día normal o señales de estrés? "
-                f"Para embalses, menciona explícitamente la desviación "
-                f"respecto a la media histórica 2020-2025 usando el campo "
-                f"`desviacion_pct_media_historica_2020_2025` de la ficha.)\n\n"
-                f"## 2. Señales clave y evolución reciente\n"
-                f"### 2.1 Proyecciones del próximo mes (3 métricas clave)\n"
-                f"(Resume en 3-6 líneas las predicciones a 1 mes del nodo "
-                f"`predicciones_mes.metricas_clave`: generación, precio_bolsa "
-                f"y embalses, con promedio, rango y tendencia. No repetir "
-                f"tablas, solo cifras clave.)\n\n"
-                f"### 2.2 Análisis de señales clave\n"
-                f"(Análisis cualitativo usando estado actual + predicciones. "
-                f"Tendencias de precio, embalses vs media 2020-2025, "
-                f"generación. 2-3 ideas prospectivas sin repetir cifras de 2.1.)\n\n"
-                f"## 3. Riesgos y oportunidades\n"
-                f"### 3.1 Riesgos operativos y de corto plazo\n"
-                f"(2-3 riesgos con causa, impacto potencial y horizonte)\n\n"
-                f"### 3.2 Riesgos estructurales y de mediano plazo\n"
-                f"(conectar predicciones + noticias → riesgos estructurales)\n\n"
-                f"### 3.3 Oportunidades\n"
-                f"(2-3 oportunidades concretas con condiciones habilitantes)\n\n"
-                f"## 4. Recomendaciones técnicas para el Viceministro\n"
-                f"### 4.1 Recomendaciones de corto plazo\n"
-                f"(3-5 acciones con motivo vinculado a dato/noticia)\n\n"
-                f"### 4.2 Recomendaciones de mediano plazo\n"
-                f"(3-4 líneas estratégicas concretas)\n\n"
-                f"## 5. Cierre ejecutivo\n"
-                f"(2-3 frases: estado del sistema, foco de atención inmediata)\n\n"
-                f"RECUERDA:\n"
-                f"- Sección 2.1 va ANTES de 2.2: primero las predicciones del "
-                f"mes, luego el análisis cualitativo que las interpreta.\n"
-                f"- Para embalses: menciona siempre la desviación frente a la "
-                f"media histórica 2020-2025 (campo del JSON).\n"
-                f"- Sección 3 es el corazón del informe. Analiza cualitativamente, "
-                f"cruza variables, interpreta causas. "
-                f"No repitas datos, EXPLICA qué significan para el Viceministro."
+                f"Redacta el informe ejecutivo siguiendo EXACTAMENTE la estructura "
+                f"de 5 secciones indicada. Recuerda:\n"
+                f"- Sección 1: embalses vs media histórica 2020-2025 (en puntos, no %).\n"
+                f"- Sección 2.1 ANTES de 2.2.\n"
+                f"- Sección 3 es el CORAZÓN del informe: cruza datos + anomalías + "
+                f"noticias. No repitas datos, INTERPRETA causas e implicaciones.\n"
+                f"- Cada anomalía detectada DEBE aparecer en 3.1 con su magnitud.\n"
+                f"- Cada noticia relevante DEBE aparecer en 3.2 o 4 con su implicación.\n"
+                f"- NUNCA nombres campos JSON; usa lenguaje natural.\n"
+                f"- Máximo 1200 palabras."
             )
             
             # Llamada síncrona envuelta en thread para no bloquear
@@ -3427,13 +3377,13 @@ class ChatbotOrchestratorService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.4,
-                    max_tokens=8192,
+                    temperature=0.3,
+                    max_tokens=6000,
                 )
             
             response = await asyncio.wait_for(
                 asyncio.to_thread(_call_ai),
-                timeout=45  # 45s para IA con más tokens
+                timeout=60  # 60s para dar margen a modelos más lentos
             )
             
             texto = response.choices[0].message.content.strip()
