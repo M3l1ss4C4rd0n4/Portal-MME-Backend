@@ -17,6 +17,8 @@ import time
 
 # Imports locales para componentes uniformes
 from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.chart_card import crear_chart_card_custom, crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
 from domain.services.losses_service import LossesService
 
@@ -37,90 +39,62 @@ LAST_UPDATE = time.strftime('%Y-%m-%d %H:%M:%S')
 
 def layout():
     """Layout de la página de Pérdidas del Sistema"""
-    # Fechas por defecto
     hoy = date.today()
-    hace_30_dias = hoy - timedelta(days=180)
-    
-    # Filtro Manual similar a Transmision, Restricciones
-    filtro_card = dbc.Card([
-        dbc.CardBody([
-            dbc.Row([
-                # Columna 1: Rango Predefinido
-                dbc.Col([
-                    html.Label("PERIODO DE ANÁLISIS:", className="fw-bold small text-muted mb-1"),
-                    dcc.Dropdown(
-                        id='dropdown-rango-perdidas',
-                        options=[
-                            {'label': 'Últimos 30 días', 'value': '30d'},
-                            {'label': 'Último Trimestre', 'value': '90d'},
-                            {'label': 'Últimos 6 Meses', 'value': '180d'},
-                            {'label': 'Último Año', 'value': '365d'},
-                            {'label': 'Últimos 2 Años', 'value': '730d'},
-                            {'label': 'Últimos 5 Años', 'value': '1825d'},
-                            {'label': 'Personalizado', 'value': 'custom'}
-                        ],
-                        value='180d',
-                        clearable=False,
-                        className="mb-0",
-                        style={'fontSize': '0.85rem'}
-                    )
-                ], lg=3, md=6, className="mb-2"),
-
-                # Columna 2: DatePicker
-                dbc.Col([
-                    html.Label("RANGO DE FECHAS:", className="fw-bold small text-muted mb-1"),
-                    dcc.DatePickerRange(
-                        id='fecha-filtro-perdidas',
-                        min_date_allowed=date(2020, 1, 1),
-                        max_date_allowed=hoy,
-                        initial_visible_month=hoy,
-                        start_date=hace_30_dias,
-                        end_date=hoy,
-                        display_format='YYYY-MM-DD',
-                        className="w-100"
-                    )
-                ], lg=5, md=6, className="mb-2"),
-
-                # Columna 3: Botón
-                dbc.Col([
-                    html.Label("ACCIÓN:", className="fw-bold small text-muted mb-1"),
-                    dbc.Button([
-                        html.I(className="fas fa-search me-2"),
-                        "Actualizar"
-                    ], id='btn-actualizar-perdidas', color="primary", className="w-100")
-                ], lg=3, md=12, className="d-flex align-items-end mb-2")
-            ])
-        ])
-    ], className="mb-4 shadow-sm border-0")
+    hace_180_dias = hoy - timedelta(days=180)
 
     return html.Div([
-        # Navbar horizontal
-        # crear_navbar_horizontal(),
-        
-        html.Div(style={'maxWidth': '100%', 'padding': '5px'}, children=[
-        # Contenido principal
-        dbc.Container([
-            # Filtro manual
-            filtro_card,
-            
-            # Contenedor principal de datos
-            dcc.Loading(
-                id="loading-perdidas",
-                type="circle",
-                children=html.Div(id='perdidas-container')
-            ),
-            
-            # Última actualización
-            dbc.Row([
-                dbc.Col([
-                    html.P(f"Última actualización: {LAST_UPDATE}", 
-                          className="text-center text-muted small mt-3"),
-                ], width=12)
-            ])
-            
-        ], fluid=True, className="py-4"),
-        ])
-    ])
+        crear_page_header(
+            titulo="Pérdidas del Sistema",
+            icono="fas fa-plug-circle-exclamation",
+            breadcrumb="Inicio / Pérdidas",
+            fecha=LAST_UPDATE,
+        ),
+
+        crear_filter_bar(
+            html.Div([
+                html.Label("Periodo", className="t-filter-label"),
+                dcc.Dropdown(
+                    id='dropdown-rango-perdidas',
+                    options=[
+                        {'label': 'Últimos 30 días', 'value': '30d'},
+                        {'label': 'Último Trimestre', 'value': '90d'},
+                        {'label': 'Últimos 6 Meses', 'value': '180d'},
+                        {'label': 'Último Año', 'value': '365d'},
+                        {'label': 'Últimos 2 Años', 'value': '730d'},
+                        {'label': 'Últimos 5 Años', 'value': '1825d'},
+                        {'label': 'Personalizado', 'value': 'custom'},
+                    ],
+                    value='180d',
+                    clearable=False,
+                    style={'width': '180px', 'fontSize': '0.85rem'},
+                ),
+            ], style={'display': 'flex', 'alignItems': 'center', 'gap': '8px'}),
+
+            html.Div([
+                html.Label("Fechas", className="t-filter-label"),
+                dcc.DatePickerRange(
+                    id='fecha-filtro-perdidas',
+                    min_date_allowed=date(2020, 1, 1),
+                    max_date_allowed=hoy,
+                    initial_visible_month=hoy,
+                    start_date=hace_180_dias,
+                    end_date=hoy,
+                    display_format='YYYY-MM-DD',
+                ),
+            ], style={'display': 'flex', 'alignItems': 'center', 'gap': '8px'}),
+
+            dbc.Button([
+                html.I(className="fas fa-search me-1"), "Actualizar"
+            ], id='btn-actualizar-perdidas', color="primary", size="sm"),
+        ),
+
+        dcc.Loading(
+            id="loading-perdidas",
+            type="dot",
+            color="#3b82f6",
+            children=html.Div(id='perdidas-container'),
+        ),
+    ], className="t-page")
 
 
 # ==================== CALLBACKS ====================
@@ -218,44 +192,12 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
         pct_no_reg = (perdidas_no_reg_gwh / perdidas_total_gwh * 100) if perdidas_total_gwh > 0 else 0
         
         # KPIs
-        kpis = dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-exclamation-circle", style={'color': '#dc3545', 'fontSize': '1.2rem', 'marginRight': '10px'}),
-                            html.Span("Pérdidas Totales", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.85rem', 'marginRight': '12px'}),
-                            html.Span(f"{perdidas_total_gwh:,.1f}", style={'fontWeight': 'bold', 'fontSize': '1.6rem', 'color': '#dc3545', 'marginRight': '6px'}),
-                            html.Span("GWh", style={'color': '#666', 'fontSize': '0.85rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-                    ], style={'padding': '0.4rem 0.8rem'})
-                ], className="shadow-sm")
-            ], md=3),
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-home", style={'color': '#0d6efd', 'fontSize': '1.2rem', 'marginRight': '10px'}),
-                            html.Span("Pérdidas Reguladas", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.85rem', 'marginRight': '12px'}),
-                            html.Span(f"{perdidas_reg_gwh:,.1f}", style={'fontWeight': 'bold', 'fontSize': '1.6rem', 'color': '#0d6efd', 'marginRight': '6px'}),
-                            html.Span(f"GWh ({pct_reg:.1f}%)", style={'color': '#666', 'fontSize': '0.85rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-                    ], style={'padding': '0.4rem 0.8rem'})
-                ], className="shadow-sm")
-            ], md=3),
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-industry", style={'color': '#ffc107', 'fontSize': '1.2rem', 'marginRight': '10px'}),
-                            html.Span("Pérdidas No Reguladas", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.85rem', 'marginRight': '12px'}),
-                            html.Span(f"{perdidas_no_reg_gwh:,.1f}", style={'fontWeight': 'bold', 'fontSize': '1.6rem', 'color': '#ffc107', 'marginRight': '6px'}),
-                            html.Span(f"GWh ({pct_no_reg:.1f}%)", style={'color': '#666', 'fontSize': '0.85rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-                    ], style={'padding': '0.4rem 0.8rem'})
-                ], className="shadow-sm")
-            ], md=3)
-        ], className="mb-4")
+        kpis = crear_kpi_row([
+            {"titulo": "Pérdidas Totales", "valor": f"{perdidas_total_gwh:,.1f}", "unidad": "GWh", "icono": "fas fa-exclamation-circle", "color": "red"},
+            {"titulo": "Pérdidas Reguladas", "valor": f"{perdidas_reg_gwh:,.1f}", "unidad": "GWh", "icono": "fas fa-home", "color": "blue", "subtexto": f"{pct_reg:.1f}% del total"},
+            {"titulo": "Pérdidas No Reguladas", "valor": f"{perdidas_no_reg_gwh:,.1f}", "unidad": "GWh", "icono": "fas fa-industry", "color": "orange", "subtexto": f"{pct_no_reg:.1f}% del total"},
+            {"titulo": "% sobre Generación", "valor": f"{pct_perdidas:.1f}", "unidad": "%", "icono": "fas fa-percentage", "color": "purple"},
+        ], columnas=4)
         
         # Gráfico 1: Serie temporal de pérdidas
         fig_serie = go.Figure()
@@ -285,11 +227,14 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
             ))
         
         fig_serie.update_layout(
-            title="Evolución Temporal de Pérdidas de Energía",
             xaxis_title="Fecha",
             yaxis_title="Pérdidas (GWh)",
             hovermode='x unified',
             template='plotly_white',
+            font=dict(family='Inter, sans-serif'),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=50, r=20, t=30, b=40),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
@@ -306,9 +251,12 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
         ])
         fig_distribucion.update_layout(
             template='plotly_white',
+            font=dict(family='Inter, sans-serif'),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
             showlegend=False,
-            margin=dict(l=0, r=0, t=0, b=0),
-            height=300
+            margin=dict(l=0, r=0, t=10, b=0),
+            height=280
         )
         
         # Gráfico 3: % Pérdidas sobre generación
@@ -333,14 +281,14 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
                 fillcolor='rgba(155, 89, 182, 0.1)'
             ))
             fig_porcentaje.update_layout(
-                title=dict(
-                    text="Porcentaje de Pérdidas sobre Generación<br>de Energía Eléctrica Total (GWh)",
-                    font=dict(size=12)
-                ),
                 xaxis_title="Fecha",
                 yaxis_title="% Pérdidas",
                 hovermode='x unified',
-                template='plotly_white'
+                template='plotly_white',
+                font=dict(family='Inter, sans-serif'),
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                margin=dict(l=50, r=20, t=30, b=40),
             )
         else:
             fig_porcentaje = go.Figure()
@@ -348,30 +296,28 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
         # Layout final
         contenido = html.Div([
             kpis,
-            
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            dcc.Graph(figure=fig_serie)
-                        ])
-                    ], className="shadow-sm")
-                ], md=6),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            dcc.Graph(figure=fig_distribucion)
-                        ])
-                    ], className="shadow-sm")
-                ], md=2),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            dcc.Graph(figure=fig_porcentaje)
-                        ])
-                    ], className="shadow-sm")
-                ], md=4)
-            ])
+
+            html.Div([
+                crear_chart_card_custom(
+                    "Evolución Temporal de Pérdidas",
+                    dcc.Graph(figure=fig_serie, config={'displayModeBar': True, 'displaylogo': False}),
+                ),
+            ], style={'marginBottom': '16px'}),
+
+            html.Div([
+                html.Div([
+                    crear_chart_card_custom(
+                        "Distribución Reguladas vs No Reguladas",
+                        dcc.Graph(figure=fig_distribucion, config={'displayModeBar': False}),
+                    ),
+                ], style={'flex': '1'}),
+                html.Div([
+                    crear_chart_card_custom(
+                        "% Pérdidas sobre Generación",
+                        dcc.Graph(figure=fig_porcentaje, config={'displayModeBar': True, 'displaylogo': False}),
+                    ),
+                ], style={'flex': '2'}),
+            ], className="t-grid t-grid-2"),
         ])
         
         # Preparar datos para chatbot

@@ -13,6 +13,8 @@ import logging
 
 from core.constants import UIColors as COLORS
 from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.chart_card import crear_chart_card, crear_chart_card_custom, crear_page_header, crear_filter_bar
 from domain.services.commercial_service import CommercialService
 
 def get_plotly_modules():
@@ -114,20 +116,21 @@ def crear_grafica_precios(df_bolsa, df_escasez, df_escasez_act, df_escasez_sup=N
     fig.update_traces(mode='lines+markers', marker=dict(size=8), line=dict(width=2))
     
     fig.update_layout(
-        height=500,
+        height=480,
         hovermode='x unified',
         plot_bgcolor='white',
         paper_bgcolor='white',
-        font=dict(family='Arial', size=12),
+        font=dict(family='Inter, sans-serif', size=12),
+        margin=dict(l=60, r=20, t=30, b=40),
         xaxis=dict(
             showgrid=True,
-            gridcolor='lightgray',
-            title_font=dict(size=14, color='black')
+            gridcolor='#f0f0f0',
+            title_font=dict(size=13, color='#475569')
         ),
         yaxis=dict(
             showgrid=True,
-            gridcolor='lightgray',
-            title_font=dict(size=14, color='black')
+            gridcolor='#f0f0f0',
+            title_font=dict(size=13, color='#475569')
         ),
         legend=dict(
             orientation="h",
@@ -328,208 +331,107 @@ def layout(**kwargs):
         )
     
     return html.Div([
-        # crear_navbar_horizontal(),
-        # crear_boton_regresar() - Eliminado por solicitud de usuario
-        
-        html.Div(style={'transformOrigin': 'top center'}, children=[
-        dbc.Container([
-            
-            # Filtro de fechas compacto
-            # crear_filtro_fechas_compacto('comercializacion'),
-            dbc.Card([
-                dbc.CardBody([
-                    dbc.Row([
-                        # Columna 1: Rango Predefinido
-                        dbc.Col([
-                            html.Label("PERIODO DE ANÁLISIS:", className="fw-bold small text-muted mb-1"),
-                            dcc.Dropdown(
-                                id='dropdown-rango-comercializacion',
-                                options=[
-                                    {'label': 'Últimos 30 días', 'value': '30d'},
-                                    {'label': 'Último Trimestre', 'value': '90d'},
-                                    {'label': 'Últimos 6 Meses', 'value': '180d'},
-                                    {'label': 'Último Año', 'value': '365d'},
-                                    {'label': 'Últimos 2 Años', 'value': '730d'},
-                                    {'label': 'Últimos 5 Años', 'value': '1825d'},
-                                    {'label': 'Personalizado', 'value': 'custom'}
-                                ],
-                                value='180d',
-                                clearable=False,
-                                className="mb-0",
-                                style={'fontSize': '0.85rem'}
-                            )
-                        ], lg=3, md=6, className="mb-2"),
+        crear_page_header(
+            titulo="Comercialización",
+            icono="fas fa-store",
+            breadcrumb="Inicio / Comercialización",
+            fecha=f"Hasta: {fecha_max_disponible.strftime('%d/%m/%Y')}",
+        ),
 
-                        # Columna 2: DatePicker
-                        dbc.Col([
-                            html.Label("RANGO DE FECHAS:", className="fw-bold small text-muted mb-1"),
-                            dcc.DatePickerRange(
-                                id='fecha-filtro-comercializacion',
-                                min_date_allowed=date(2000, 1, 1),
-                                max_date_allowed=date.today(),
-                                initial_visible_month=date.today(),
-                                start_date=fecha_inicio,
-                                end_date=fecha_fin,
-                                display_format='YYYY-MM-DD',
-                                className="w-100"
-                            )
-                        ], lg=5, md=6, className="mb-2"),
+        crear_filter_bar(
+            html.Div([
+                html.Label("Periodo", className="t-filter-label"),
+                dcc.Dropdown(
+                    id='dropdown-rango-comercializacion',
+                    options=[
+                        {'label': 'Últimos 30 días', 'value': '30d'},
+                        {'label': 'Último Trimestre', 'value': '90d'},
+                        {'label': 'Últimos 6 Meses', 'value': '180d'},
+                        {'label': 'Último Año', 'value': '365d'},
+                        {'label': 'Últimos 2 Años', 'value': '730d'},
+                        {'label': 'Últimos 5 Años', 'value': '1825d'},
+                        {'label': 'Personalizado', 'value': 'custom'},
+                    ],
+                    value='180d',
+                    clearable=False,
+                    style={'width': '180px', 'fontSize': '0.85rem'},
+                ),
+            ], style={'display': 'flex', 'alignItems': 'center', 'gap': '8px'}),
 
-                        # Columna 3: Botón
-                        dbc.Col([
-                            html.Label("ACCIÓN:", className="fw-bold small text-muted mb-1"),
-                            dbc.Button([
-                                html.I(className="fas fa-search me-2"),
-                                "Actualizar"
-                            ], id='btn-actualizar-comercializacion', color="primary", className="w-100")
-                        ], lg=3, md=12, className="d-flex align-items-end mb-2")
-                    ])
-                ])
-            ], className="mb-4 shadow-sm border-0"),
+            html.Div([
+                html.Label("Fechas", className="t-filter-label"),
+                dcc.DatePickerRange(
+                    id='fecha-filtro-comercializacion',
+                    min_date_allowed=date(2000, 1, 1),
+                    max_date_allowed=date.today(),
+                    initial_visible_month=date.today(),
+                    start_date=fecha_inicio,
+                    end_date=fecha_fin,
+                    display_format='YYYY-MM-DD',
+                ),
+            ], style={'display': 'flex', 'alignItems': 'center', 'gap': '8px'}),
 
-            html.Small(f"📅 Hasta: {fecha_max_disponible.strftime('%d/%m/%Y')}", className="text-muted d-block", style={'fontSize': '0.75rem', 'marginTop': '-8px', 'marginBottom': '8px'}),
-            
-            # Fichas KPI en diseño horizontal (estilo sobrio profesional)
-            dbc.Row([
-                # Ficha 1: Precio Promedio Bolsa
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-dollar-sign", style={'color': '#111827', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                                html.Span("Precio Promedio Bolsa", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                                html.Span(f"${precio_promedio_bolsa:.2f}", id='ficha-precio-promedio', style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#111827', 'marginRight': '4px'}),
-                                html.Span("$/kWh", style={'color': '#666', 'fontSize': '0.65rem'})
-                            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '4px'})
-                        ], style={'padding': '0.4rem 0.8rem', 'background': '#ffffff', 'borderRadius': '6px'})
-                    ], className="shadow-sm")
-                ], lg=3, md=6, style={'marginBottom': '0'}),
-                
-                # Ficha 2: Precio Máximo Bolsa
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-chart-line", style={'color': '#000000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                                html.Span("Precio Máximo Bolsa", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                                html.Span(f"${precio_max_bolsa:.2f}", id='ficha-precio-max', style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000000', 'marginRight': '4px'}),
-                                html.Span("$/kWh", style={'color': '#666', 'fontSize': '0.65rem'})
-                            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '4px'})
-                        ], style={'padding': '0.4rem 0.8rem', 'background': 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)', 'borderRadius': '6px'})
-                    ], className="shadow-sm")
-                ], lg=3, md=6, style={'marginBottom': '0'}),
-                
-                # Ficha 3: Precio Escasez Superior
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-exclamation-triangle", style={'color': '#000000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                                html.Span("Escasez Superior", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                                html.Span(f"${precio_escasez_actual:.2f}", id='ficha-precio-escasez', style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000000', 'marginRight': '4px'}),
-                                html.Span("$/kWh", style={'color': '#666', 'fontSize': '0.65rem'})
-                            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '4px'})
-                        ], style={'padding': '0.4rem 0.8rem', 'background': 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)', 'borderRadius': '6px'})
-                    ], className="shadow-sm")
-                ], lg=3, md=6, style={'marginBottom': '0'}),
-                
-                # Ficha 4: Spread de Escasez (NUEVA - información relevante)
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-exchange-alt", style={'color': '#000000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                                html.Span("Spread Escasez", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                                html.Span(f"${spread_escasez:.2f}", id='ficha-spread-escasez', style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000000', 'marginRight': '4px'}),
-                                html.Span("$/kWh", style={'color': '#666', 'fontSize': '0.65rem', 'marginRight': '6px'}),
-                                html.Button(
-                                    "ℹ",
-                                    id="btn-info-spread",
-                                    style={
-                                        'background': '#F2C330',
-                                        'border': '2px solid #2C3E50',
-                                        'borderRadius': '50%',
-                                        'width': '22px',
-                                        'height': '22px',
-                                        'fontSize': '12px',
-                                        'fontWeight': 'bold',
-                                        'color': '#2C3E50',
-                                        'cursor': 'pointer',
-                                        'animation': 'pulse 2s ease-in-out infinite',
-                                        'padding': '0',
-                                        'display': 'inline-flex',
-                                        'alignItems': 'center',
-                                        'justifyContent': 'center'
-                                    },
-                                    n_clicks=0
-                                )
-                            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '4px'})
-                        ], style={'padding': '0.4rem 0.8rem', 'background': 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)', 'borderRadius': '6px'})
-                    ], className="shadow-sm")
-                ], lg=3, md=6, style={'marginBottom': '0'})
-            ], className="mb-2"),
-            
-            # Gráfica principal
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader(html.H5("📊 Evolución de Precios", className="mb-0")),
-                        dbc.CardBody([
-                            dcc.Loading(
-                                dcc.Graph(
-                                    id='grafica-precios-comercializacion',
-                                    figure=fig_precios,
-                                    config={'displayModeBar': True, 'displaylogo': False}
-                                )
-                            )
-                        ])
-                    ], className="shadow-sm mb-4")
-                ])
-            ]),
-            
-            # Store para datos
-            dcc.Store(id='store-comercializacion', data=None),
-            
-            # Modal para detalle horario
-            dbc.Modal([
-                dbc.ModalHeader(dbc.ModalTitle(id='modal-titulo-comercializacion')),
-                dbc.ModalBody(id='modal-contenido-comercializacion'),
-                dbc.ModalFooter(
-                    dbc.Button("Cerrar", id='modal-cerrar-comercializacion', className="ms-auto")
-                )
-            ], id='modal-detalle-comercializacion', size='xl', is_open=False),
-            
-            # Modal de información Spread
-            dbc.Modal([
-                dbc.ModalHeader(dbc.ModalTitle("Spread de Escasez")),
-                dbc.ModalBody([
-                    html.P("El Spread de Escasez representa la diferencia entre el Precio de Escasez Superior y el Precio de Escasez Inferior. Se calcula mediante la resta de ambos valores:", 
-                           style={'marginBottom': '10px', 'color': '#2c3e50'}),
-                    html.P([html.Strong("Spread = Precio Escasez Superior - Precio Escasez Inferior")], 
-                           style={'marginBottom': '20px', 'marginLeft': '20px', 'color': '#1f2937'}),
-                    
-                    html.H6("Interpretación de valores:", style={'fontWeight': 'bold', 'color': '#2c3e50'}),
-                    html.Ul([
-                        html.Li([html.Strong("Alto (> $500/kWh): "), "Gran diferencia entre bandas. Indica mayor riesgo de escasez severa y alta volatilidad en el mercado eléctrico."]),
-                        html.Li([html.Strong("Medio ($300-$500/kWh): "), "Rango normal de operación del sistema. El mercado opera dentro de parámetros esperados."]),
-                        html.Li([html.Strong("Bajo (< $300/kWh): "), "Poca diferencia entre bandas. Menor probabilidad de escasez y mayor estabilidad del sistema."])
-                    ], style={'marginBottom': '15px'}),
-                    
-                    html.H6("Importancia:", style={'fontWeight': 'bold', 'color': '#2c3e50'}),
-                    html.Ul([
-                        html.Li("Mide el rango de incertidumbre en los precios de escasez del mercado eléctrico."),
-                        html.Li("Un spread amplio sugiere condiciones críticas que requieren mayor atención operativa."),
-                        html.Li("Ayuda a anticipar necesidades de generación de respaldo y costos asociados.")
-                    ])
-                ], style={'fontSize': '0.95rem', 'lineHeight': '1.6'}),
-                dbc.ModalFooter(
-                    dbc.Button("Cerrar", id='modal-cerrar-spread', className="ms-auto")
-                )
-            ], id='modal-info-spread', size='lg', is_open=False)
-            
-        ], fluid=True, className="p-4")
-        ])
-    ])
+            dbc.Button([
+                html.I(className="fas fa-search me-1"), "Actualizar"
+            ], id='btn-actualizar-comercializacion', color="primary", size="sm"),
+        ),
+
+        # KPIs container (updated by callback)
+        html.Div(
+            id='kpis-comercializacion',
+            children=crear_kpi_row([
+                {"titulo": "Precio Promedio Bolsa", "valor": f"${precio_promedio_bolsa:.2f}", "unidad": "$/kWh", "icono": "fas fa-dollar-sign", "color": "blue"},
+                {"titulo": "Precio Máximo Bolsa", "valor": f"${precio_max_bolsa:.2f}", "unidad": "$/kWh", "icono": "fas fa-chart-line", "color": "orange"},
+                {"titulo": "Escasez Superior", "valor": f"${precio_escasez_actual:.2f}", "unidad": "$/kWh", "icono": "fas fa-exclamation-triangle", "color": "red"},
+                {"titulo": "Spread Escasez", "valor": f"${spread_escasez:.2f}", "unidad": "$/kWh", "icono": "fas fa-exchange-alt", "color": "cyan"},
+            ], columnas=4),
+        ),
+
+        # Info button for Spread modal
+        html.Div(
+            html.Button("ℹ Qué es el Spread de Escasez?", id="btn-info-spread", n_clicks=0,
+                        className="btn btn-sm btn-outline-secondary",
+                        style={'fontSize': '0.75rem', 'marginTop': '-8px', 'marginBottom': '12px'}),
+            style={'textAlign': 'right'},
+        ),
+
+        # Gráfica principal
+        crear_chart_card(
+            titulo="Evolución de Precios del Mercado Eléctrico",
+            graph_id='grafica-precios-comercializacion',
+            height=480,
+        ),
+
+        # Stores y modales
+        dcc.Store(id='store-comercializacion', data=None),
+
+        dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle(id='modal-titulo-comercializacion')),
+            dbc.ModalBody(id='modal-contenido-comercializacion'),
+            dbc.ModalFooter(
+                dbc.Button("Cerrar", id='modal-cerrar-comercializacion', className="ms-auto")
+            )
+        ], id='modal-detalle-comercializacion', size='xl', is_open=False),
+
+        dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle("Spread de Escasez")),
+            dbc.ModalBody([
+                html.P("El Spread de Escasez representa la diferencia entre el Precio de Escasez Superior y el Precio de Escasez Inferior.",
+                       style={'marginBottom': '10px', 'color': '#2c3e50'}),
+                html.P([html.Strong("Spread = Precio Escasez Superior - Precio Escasez Inferior")],
+                       style={'marginBottom': '20px', 'marginLeft': '20px', 'color': '#1f2937'}),
+                html.H6("Interpretación:", style={'fontWeight': 'bold', 'color': '#2c3e50'}),
+                html.Ul([
+                    html.Li([html.Strong("> $500/kWh: "), "Alta volatilidad, riesgo de escasez severa."]),
+                    html.Li([html.Strong("$300-$500/kWh: "), "Rango normal de operación."]),
+                    html.Li([html.Strong("< $300/kWh: "), "Baja probabilidad de escasez."]),
+                ]),
+            ], style={'fontSize': '0.95rem', 'lineHeight': '1.6'}),
+            dbc.ModalFooter(
+                dbc.Button("Cerrar", id='modal-cerrar-spread', className="ms-auto")
+            )
+        ], id='modal-info-spread', size='lg', is_open=False),
+    ], className="t-page")
 
 # ==================== CALLBACKS ====================
 
@@ -556,10 +458,7 @@ def actualizar_fechas_rango_comercializacion(rango):
 @callback(
     [Output('grafica-precios-comercializacion', 'figure'),
      Output('store-comercializacion', 'data'),
-     Output('ficha-precio-promedio', 'children'),
-     Output('ficha-precio-max', 'children'),
-     Output('ficha-precio-escasez', 'children'),
-     Output('ficha-spread-escasez', 'children')],  # NUEVA ficha spread
+     Output('kpis-comercializacion', 'children')],
     [Input('btn-actualizar-comercializacion', 'n_clicks'),
      Input('fecha-filtro-comercializacion', 'start_date'),
      Input('fecha-filtro-comercializacion', 'end_date')],
@@ -582,7 +481,13 @@ def actualizar_datos_comercializacion(n_clicks, fecha_inicio_str, fecha_fin_str)
                 xref="paper", yref="paper", x=0.5, y=0.5,
                 showarrow=False, font=dict(size=16, color="red")
             )
-            return fig_error, None, "$0.00", "$0.00", "$0.00", "$0.00"
+            kpis_vacio = crear_kpi_row([
+                {"titulo": "Precio Promedio Bolsa", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-dollar-sign", "color": "blue"},
+                {"titulo": "Precio Máximo Bolsa", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-chart-line", "color": "orange"},
+                {"titulo": "Escasez Superior", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-exclamation-triangle", "color": "red"},
+                {"titulo": "Spread Escasez", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-exchange-alt", "color": "cyan"},
+            ], columnas=4)
+            return fig_error, None, kpis_vacio
         
         # Obtener datos de TODAS las métricas (incluyendo nuevas desde marzo 2025)
         df_bolsa = obtener_precio_bolsa(fecha_inicio, fecha_fin)
@@ -669,10 +574,12 @@ def actualizar_datos_comercializacion(n_clicks, fecha_inicio_str, fecha_fin_str)
         return (
             fig, 
             store_data,
-            f"${precio_promedio:.2f}",
-            f"${precio_max:.2f}",
-            f"${precio_escasez:.2f}",
-            f"${spread_escasez:.2f}"  # NUEVO: valor spread
+            crear_kpi_row([
+                {"titulo": "Precio Promedio Bolsa", "valor": f"${precio_promedio:.2f}", "unidad": "$/kWh", "icono": "fas fa-dollar-sign", "color": "blue"},
+                {"titulo": "Precio Máximo Bolsa", "valor": f"${precio_max:.2f}", "unidad": "$/kWh", "icono": "fas fa-chart-line", "color": "orange"},
+                {"titulo": "Escasez Superior", "valor": f"${precio_escasez:.2f}", "unidad": "$/kWh", "icono": "fas fa-exclamation-triangle", "color": "red"},
+                {"titulo": "Spread Escasez", "valor": f"${spread_escasez:.2f}", "unidad": "$/kWh", "icono": "fas fa-exchange-alt", "color": "cyan"},
+            ], columnas=4),
         )
         
     except Exception as e:
@@ -684,8 +591,14 @@ def actualizar_datos_comercializacion(n_clicks, fecha_inicio_str, fecha_fin_str)
             xref="paper", yref="paper", x=0.5, y=0.5,
             showarrow=False, font=dict(size=14, color="red")
         )
+        kpis_error = crear_kpi_row([
+            {"titulo": "Precio Promedio Bolsa", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-dollar-sign", "color": "blue"},
+            {"titulo": "Precio Máximo Bolsa", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-chart-line", "color": "orange"},
+            {"titulo": "Escasez Superior", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-exclamation-triangle", "color": "red"},
+            {"titulo": "Spread Escasez", "valor": "$0.00", "unidad": "$/kWh", "icono": "fas fa-exchange-alt", "color": "cyan"},
+        ], columnas=4)
         
-        return fig_error, None, "$0.00", "$0.00", "$0.00", "$0.00"
+        return fig_error, None, kpis_error
 
 @callback(
     [Output('modal-detalle-comercializacion', 'is_open'),

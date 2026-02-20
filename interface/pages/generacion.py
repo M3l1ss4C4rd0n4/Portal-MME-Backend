@@ -6,6 +6,8 @@ import plotly.express as px
 
 # Imports locales para componentes uniformes
 from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar
+from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.chart_card import crear_chart_card_custom, crear_page_header
 from core.constants import UIColors as COLORS
 from domain.services.metrics_service import MetricsService
 
@@ -238,106 +240,32 @@ def crear_fichas_hidricas_con_datos(reserva_pct, reserva_gwh, fecha_reserva,
     else:
         gen_gwh_texto = f"{gen_gwh:.2f}"
     
-    return dbc.Row([
-        # Ficha 1: Reservas Hídricas
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-water fa-2x mb-3", 
-                              style={'color': '#86D293'}),
-                        html.H6("Reservas Hídricas [%]", 
-                               className="text-muted mb-2",
-                               style={'fontSize': '0.85rem'}),
-                        html.H3(reserva_pct_texto, 
-                               className="mb-1",
-                               style={
-                                   'color': '#86D293',
-                                   'fontWeight': 'bold',
-                                   'fontSize': '2rem'
-                               }),
-                        html.P(reserva_gwh_texto, 
-                              className="text-muted mb-2",
-                              style={'fontSize': '0.8rem'}),
-                        html.P(fecha_texto_reserva, 
-                              className="text-muted mb-0",
-                              style={'fontSize': '0.75rem'})
-                    ], style={'textAlign': 'center'})
-                ], style={
-                    'background': 'linear-gradient(135deg, #86D293 0%, #6BC47D 100%)',
-                    'borderRadius': '12px',
-                    'color': 'white',
-                    'padding': '1.5rem'
-                })
-            ], className="xm-card h-100")
-        ], lg=4, md=6, className="mb-4"),
-        
-        # Ficha 2: Aportes Hídricos
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-tint fa-2x mb-3", 
-                              style={'color': '#4DA6FF'}),
-                        html.H6("Aportes Hídricos [%]", 
-                               className="text-muted mb-2",
-                               style={'fontSize': '0.85rem'}),
-                        html.H3(aporte_pct_texto, 
-                               className="mb-1",
-                               style={
-                                   'color': '#4DA6FF',
-                                   'fontWeight': 'bold',
-                                   'fontSize': '2rem'
-                               }),
-                        html.P(aporte_gwh_texto, 
-                              className="text-muted mb-2",
-                              style={'fontSize': '0.8rem'}),
-                        html.P(fecha_texto_aporte, 
-                              className="text-muted mb-0",
-                              style={'fontSize': '0.75rem'})
-                    ], style={'textAlign': 'center'})
-                ], style={
-                    'background': 'linear-gradient(135deg, #4DA6FF 0%, #3D8FE8 100%)',
-                    'borderRadius': '12px',
-                    'color': 'white',
-                    'padding': '1.5rem'
-                })
-            ], className="xm-card h-100")
-        ], lg=4, md=6, className="mb-4"),
-        
-        # Ficha 3: Generación SIN
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-bolt fa-2x mb-3", 
-                              style={'color': '#FFB84D'}),
-                        html.H6("Generación SIN", 
-                               className="text-muted mb-2",
-                               style={'fontSize': '0.85rem'}),
-                        html.H3(gen_gwh_texto, 
-                               className="mb-1",
-                               style={
-                                   'color': '#FFB84D',
-                                   'fontWeight': 'bold',
-                                   'fontSize': '2rem'
-                               }),
-                        html.P("GWh/día", 
-                              className="text-muted mb-2",
-                              style={'fontSize': '0.8rem'}),
-                        html.P(fecha_texto_gen, 
-                              className="text-muted mb-0",
-                              style={'fontSize': '0.75rem'})
-                    ], style={'textAlign': 'center'})
-                ], style={
-                    'background': 'linear-gradient(135deg, #FFB84D 0%, #FFA726 100%)',
-                    'borderRadius': '12px',
-                    'color': 'white',
-                    'padding': '1.5rem'
-                })
-            ], className="xm-card h-100")
-        ], lg=4, md=6, className="mb-4")
-    ])
+    return crear_kpi_row([
+        {
+            "titulo": "Reservas Hídricas",
+            "valor": reserva_pct_texto,
+            "unidad": "%",
+            "icono": "fas fa-water",
+            "color": "green",
+            "subtexto": f"{reserva_gwh_texto} — {fecha_texto_reserva}",
+        },
+        {
+            "titulo": "Aportes Hídricos",
+            "valor": aporte_pct_texto,
+            "unidad": "%",
+            "icono": "fas fa-tint",
+            "color": "blue",
+            "subtexto": f"{aporte_gwh_texto} — {fecha_texto_aporte}",
+        },
+        {
+            "titulo": "Generación SIN",
+            "valor": gen_gwh_texto,
+            "unidad": "GWh/día",
+            "icono": "fas fa-bolt",
+            "color": "orange",
+            "subtexto": fecha_texto_gen,
+        },
+    ], columnas=3)
 
 def crear_fichas_hidricas_fallback():
     """Crear fichas de Reservas, Aportes y Generación Total con datos de fallback"""
@@ -440,76 +368,32 @@ def crear_fichas_generacion_xm(porcentaje_renovable, porcentaje_no_renovable, ge
     """Crear las 3 fichas de generación XM con datos reales"""
     fecha_texto = formatear_fecha_espanol(fecha)
     
-    return dbc.Row([
-        # Ficha Generación Renovable %
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-leaf fa-2x mb-2", style={"color": "#86D293"}),
-                        html.H6("Generación Renovable [%]", className="card-title text-center mb-2", 
-                               style={"fontWeight": "700", "color": "#2C3E50", "fontSize": "0.85rem"}),
-                        html.H3(f"{porcentaje_renovable:.2f}", className="text-center mb-1",
-                               style={"fontWeight": "800", "color": "#86D293", "fontSize": "2.5rem", "letterSpacing": "-1px"}),
-                        html.Small(f"{fecha_texto}", 
-                                  className="text-muted d-block text-center",
-                                  style={"fontSize": "0.7rem", "opacity": "0.7"})
-                    ], className="text-center")
-                ], className="py-2")
-            ], className="h-100 xm-card", style={
-                "border": "none",
-                "borderRadius": "16px",
-                "background": "linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%)",
-                "--card-color": "#86D293"
-            })
-        ], width=12, lg=4, md=4, className="mb-3"),
-        
-        # Ficha Generación No Renovable %
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-industry fa-2x mb-2", style={"color": "#FF6B6B"}),
-                        html.H6("Generación No Renovable [%]", className="card-title text-center mb-2",
-                               style={"fontWeight": "700", "color": "#2C3E50", "fontSize": "0.85rem"}),
-                        html.H3(f"{porcentaje_no_renovable:.2f}", className="text-center mb-1",
-                               style={"fontWeight": "800", "color": "#FF6B6B", "fontSize": "2.5rem", "letterSpacing": "-1px"}),
-                        html.Small(f"{fecha_texto}", 
-                                  className="text-muted d-block text-center",
-                                  style={"fontSize": "0.7rem", "opacity": "0.7"})
-                    ], className="text-center")
-                ], className="py-2")
-            ], className="h-100 xm-card", style={
-                "border": "none",
-                "borderRadius": "16px",
-                "background": "linear-gradient(135deg, #ffffff 0%, #fff1f0 100%)",
-                "--card-color": "#FF6B6B"
-            })
-        ], width=12, lg=4, md=4, className="mb-3"),
-        
-        # Ficha Generación Total GWh
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-bolt fa-2x mb-2", style={"color": "#4285F4"}),
-                        html.H6("Generación Total [GWh]", className="card-title text-center mb-2",
-                               style={"fontWeight": "700", "color": "#2C3E50", "fontSize": "0.85rem"}),
-                        html.H3(f"{generacion_total_gwh:,.2f}", className="text-center mb-1",
-                               style={"fontWeight": "800", "color": "#4285F4", "fontSize": "2.5rem", "letterSpacing": "-1px"}),
-                        html.Small(f"{fecha_texto}", 
-                                  className="text-muted d-block text-center",
-                                  style={"fontSize": "0.7rem", "opacity": "0.7"})
-                    ], className="text-center")
-                ], className="py-2")
-            ], className="h-100 xm-card", style={
-                "border": "none",
-                "borderRadius": "16px",
-                "background": "linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)",
-                "--card-color": "#4285F4"
-            })
-        ], width=12, lg=4, md=4, className="mb-3")
-    ], className="mb-4")
+    return crear_kpi_row([
+        {
+            "titulo": "Generación Renovable",
+            "valor": f"{porcentaje_renovable:.2f}",
+            "unidad": "%",
+            "icono": "fas fa-leaf",
+            "color": "green",
+            "subtexto": fecha_texto,
+        },
+        {
+            "titulo": "Generación No Renovable",
+            "valor": f"{porcentaje_no_renovable:.2f}",
+            "unidad": "%",
+            "icono": "fas fa-industry",
+            "color": "red",
+            "subtexto": fecha_texto,
+        },
+        {
+            "titulo": "Generación Total",
+            "valor": f"{generacion_total_gwh:,.2f}",
+            "unidad": "GWh",
+            "icono": "fas fa-bolt",
+            "color": "blue",
+            "subtexto": fecha_texto,
+        },
+    ], columnas=3)
 
 def crear_fichas_generacion_xm_fallback():
     # Eliminada función de fallback. Si no hay datos, mostrar mensaje de error.
@@ -517,98 +401,60 @@ def crear_fichas_generacion_xm_fallback():
 
 def create_technology_card(tech):
     """Crear tarjeta para cada tecnología de generación"""
-    return dbc.Col([
-        html.A([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(
-                            className=tech["icon"],
-                            style={
-                                "fontSize": "5rem",
-                                "color": tech["color"],
-                                "marginBottom": "1.5rem"
-                            }
-                        ),
-                        html.H4(tech["name"], 
-                               className="mb-2",
-                               style={"color": COLORS['text_primary'], "fontWeight": "600"}),
-                        html.P(tech["description"],
-                              className="text-muted small mb-0",
-                              style={"fontSize": "0.9rem"})
-                    ], className="text-center"),
-                ], className="py-4")
-            ], 
-            className="h-100 shadow-sm tech-card",
-            style={
-                "cursor": "pointer",
-                "transition": "all 0.3s ease",
-                "border": f"2px solid {tech['color']}30"
-            }
-            )
-        ], href=tech["path"], style={"textDecoration": "none"})
-    ], lg=6, md=6, sm=12, className="mb-4")  # Cambiado de lg=4 a lg=6 para 2 columnas
+    return html.A([
+        html.Div([
+            html.Div([
+                html.I(
+                    className=tech["icon"],
+                    style={"fontSize": "2rem", "color": tech["color"]}
+                ),
+            ], className="t-kpi-icon", style={"background": f"{tech['color']}18", "width": "56px", "height": "56px", "borderRadius": "12px", "display": "flex", "alignItems": "center", "justifyContent": "center"}),
+            html.Div([
+                html.H4(tech["name"], style={"margin": "0", "fontSize": "1rem", "fontWeight": "600", "color": "#1e293b"}),
+                html.P(tech["description"], style={"margin": "4px 0 0", "fontSize": "0.8rem", "color": "#64748b", "lineHeight": "1.3"}),
+            ]),
+        ], className="t-kpi t-fade-in", style={"cursor": "pointer"}),
+    ], href=tech["path"], style={"textDecoration": "none"})
 
 layout = html.Div([
-    # Navbar horizontal
-    # crear_navbar_horizontal(),
-    
-    # Container principal
-    dbc.Container([
-        # Botón de regreso eliminado
-        
-        # Sección con imagen y fichas lado a lado
-        dbc.Row([
-            # Columna izquierda: Imagen
-            dbc.Col([
-                html.Div([
-                    html.Img(
-                        src="/assets/images/Recurso 1.png",
-                        alt="Generación Eléctrica",
-                        style={
-                            "width": "100%",
-                            "height": "100%",
-                            "objectFit": "contain",
-                            "minHeight": "600px"
-                        },
-                        className="mb-3"
-                    )
-                ], style={
-                    "display": "flex",
-                    "alignItems": "center",
-                    "justifyContent": "center",
-                    "height": "100%"
-                })
-            ], lg=4, md=12, className="mb-4 d-flex align-items-start"),
-            
-            # Columna derecha: Fichas y botones
-            dbc.Col([
-                # Subtítulo para KPIs
-                html.H5("Indicadores Clave del Sistema", 
-                       className="text-center mb-3",
-                       style={"color": COLORS['text_primary'], "fontWeight": "600"}),
-                
-                # Fichas de Reservas, Aportes y Generación - Se cargan dinámicamente
-                dcc.Loading(
-                    id="loading-fichas-hidricas",
-                    type="default",
-                    children=html.Div(id="fichas-hidricas-container", className="mb-3")
-                ),
-                
-                # Subtítulo para tecnologías
-                html.H5("Explorar por Tecnología", 
-                       className="text-center mt-3 mb-3",
-                       style={"color": COLORS['text_primary'], "fontWeight": "600"}),
-                
-                # Tarjetas de tecnologías
-                dbc.Row([
-                    create_technology_card(tech) for tech in GENERACION_TECHNOLOGIES
-                ]),
-            ], lg=8, md=12)
-        ], className="mb-4"),
-        
-    ], fluid=True, className="py-4")
-])
+    crear_page_header(
+        titulo="Generación Eléctrica",
+        icono="fas fa-bolt",
+        breadcrumb="Inicio / Generación",
+    ),
+
+    # Grid: imagen + contenido
+    html.Div([
+        # Imagen
+        html.Div([
+            html.Img(
+                src="/assets/images/Recurso 1.png",
+                alt="Generación Eléctrica",
+                style={"width": "100%", "maxHeight": "500px", "objectFit": "contain"},
+            )
+        ], style={"flex": "1", "minWidth": "280px"}),
+
+        # KPIs + tecnologías
+        html.Div([
+            html.H3("Indicadores Clave del Sistema",
+                    style={"fontSize": "1rem", "fontWeight": "600", "color": "#1e293b", "marginBottom": "12px"}),
+
+            dcc.Loading(
+                id="loading-fichas-hidricas",
+                type="dot",
+                color="#3b82f6",
+                children=html.Div(id="fichas-hidricas-container"),
+            ),
+
+            html.H3("Explorar por Tecnología",
+                    style={"fontSize": "1rem", "fontWeight": "600", "color": "#1e293b", "margin": "20px 0 12px"}),
+
+            html.Div([
+                create_technology_card(tech) for tech in GENERACION_TECHNOLOGIES
+            ], className="t-grid t-grid-2"),
+        ], style={"flex": "2", "minWidth": "400px"}),
+    ], style={"display": "flex", "gap": "24px", "flexWrap": "wrap", "alignItems": "flex-start"}),
+], className="t-page")
 
 # Callback para cargar las fichas hídricas de forma asíncrona
 @callback(
