@@ -26,6 +26,8 @@ import numpy as np
 
 # Importar navbar y componentes de filtro
 from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.chart_card import crear_chart_card, crear_table_card, crear_page_header, crear_filter_bar
 from domain.services.transmission_service import TransmissionService
 
 # Registrar página
@@ -82,9 +84,9 @@ def cargar_datos_lineas():
 # ================================================================================
 
 def crear_kpis_transmision(df_lineas):
-    """Crear KPIs principales incluyendo distribución de criticidad"""
+    """Crear KPIs principales usando componente Tabler-MME"""
     if df_lineas.empty:
-        return html.Div("No hay datos disponibles", className="alert alert-warning")
+        return html.Div("No hay datos disponibles", className="t-alert warning")
     
     df_reciente = df_lineas[df_lineas['Fecha'] == df_lineas['Fecha'].max()].copy()
     
@@ -101,93 +103,14 @@ def crear_kpis_transmision(df_lineas):
     df_reciente['Antiguedad'] = (pd.Timestamp.now() - df_reciente['FPO']).dt.days / 365.25
     antiguedad_promedio = df_reciente['Antiguedad'].mean()
     
-    kpis = dbc.Row([
-        # Total de líneas
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-project-diagram", style={'color': '#000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                        html.Span("Total Líneas", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                        html.Span(f"{total_lineas:,}", style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000', 'marginRight': '5px'}),
-                        html.Span("activas", style={'color': '#666', 'fontSize': '0.65rem'})
-                    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '2px'})
-                ], style={'padding': '0.4rem 0.8rem'})
-            ], className="shadow-sm")
-        ], lg=2, md=6, style={'marginBottom': '0'}),
-        
-        # Longitud total
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-ruler-horizontal", style={'color': '#000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                        html.Span("Longitud Total", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                        html.Span(f"{longitud_total:,.0f}", style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000', 'marginRight': '5px'}),
-                        html.Span("km", style={'color': '#666', 'fontSize': '0.65rem'})
-                    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '2px'})
-                ], style={'padding': '0.4rem 0.8rem'})
-            ], className="shadow-sm")
-        ], lg=2, md=6, style={'marginBottom': '0'}),
-        
-        # Críticas
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-exclamation-circle", style={'color': '#dc2626', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                        html.Span("Críticas", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                        html.Span(f"{criticas}", style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#dc2626', 'marginRight': '5px'}),
-                        html.Span(">0.8%", style={'color': '#666', 'fontSize': '0.65rem'})
-                    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '2px'})
-                ], style={'padding': '0.4rem 0.8rem'})
-            ], className="shadow-sm")
-        ], lg=2, md=4, style={'marginBottom': '0'}),
-        
-        # Importantes
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-exclamation-triangle", style={'color': '#f59e0b', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                        html.Span("Importantes", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                        html.Span(f"{importantes}", style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#f59e0b', 'marginRight': '5px'}),
-                        html.Span("0.5-0.8%", style={'color': '#666', 'fontSize': '0.65rem'})
-                    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '2px'})
-                ], style={'padding': '0.4rem 0.8rem'})
-            ], className="shadow-sm")
-        ], lg=2, md=4, style={'marginBottom': '0'}),
-        
-        # Normales
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-check-circle", style={'color': '#10b981', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                        html.Span("Normales", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                        html.Span(f"{normales}", style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#10b981', 'marginRight': '5px'}),
-                        html.Span("<0.5%", style={'color': '#666', 'fontSize': '0.65rem'})
-                    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '2px'})
-                ], style={'padding': '0.4rem 0.8rem'})
-            ], className="shadow-sm")
-        ], lg=2, md=4, style={'marginBottom': '0'}),
-        
-        # Antigüedad promedio
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-clock", style={'color': '#000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                        html.Span("Antigüedad", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                        html.Span(f"{antiguedad_promedio:.0f}", style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000', 'marginRight': '5px'}),
-                        html.Span("años", style={'color': '#666', 'fontSize': '0.65rem'})
-                    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '2px'})
-                ], style={'padding': '0.4rem 0.8rem'})
-            ], className="shadow-sm")
-        ], lg=2, md=12, style={'marginBottom': '0'}),
-    ])
-    
-    return kpis
+    return crear_kpi_row([
+        {"titulo": "Total Líneas",   "valor": f"{total_lineas:,}",        "unidad": "activas",  "icono": "fas fa-project-diagram",     "color": "blue"},
+        {"titulo": "Longitud Total", "valor": f"{longitud_total:,.0f}",   "unidad": "km",       "icono": "fas fa-ruler-horizontal",    "color": "cyan"},
+        {"titulo": "Críticas",       "valor": f"{criticas}",             "unidad": ">0.8%",    "icono": "fas fa-exclamation-circle",  "color": "red"},
+        {"titulo": "Importantes",    "valor": f"{importantes}",          "unidad": "0.5-0.8%", "icono": "fas fa-exclamation-triangle", "color": "orange"},
+        {"titulo": "Normales",       "valor": f"{normales}",             "unidad": "<0.5%",    "icono": "fas fa-check-circle",        "color": "green"},
+        {"titulo": "Antigüedad",     "valor": f"{antiguedad_promedio:.0f}", "unidad": "años",  "icono": "fas fa-clock",               "color": "purple"},
+    ], columnas=6)
 
 def crear_tabla_lineas_criticas(df_lineas):
     """Tabla con TODAS las líneas del sistema ordenadas por criticidad - Compacta"""
@@ -235,54 +158,61 @@ def crear_tabla_lineas_criticas(df_lineas):
     }
     tabla_data = pd.concat([tabla_data, pd.DataFrame([total_row])], ignore_index=True)
     
-    # Crear tabla compacta con estilos forzados
+    # Crear tabla compacta con estilos Tabler-MME
     tabla = dash_table.DataTable(
         data=tabla_data.to_dict('records'),
         columns=[{"name": i, "id": i} for i in tabla_data.columns],
-        style_table={'overflowX': 'auto', 'overflowY': 'auto', 'maxHeight': '320px'},
+        style_table={'overflowX': 'auto', 'overflowY': 'auto', 'maxHeight': '340px'},
         style_cell={
             'textAlign': 'left', 
-            'fontFamily': 'Arial, sans-serif', 
+            'fontFamily': 'Inter, Arial, sans-serif', 
             'whiteSpace': 'normal',
-            'fontSize': '9px',
-            'padding': '3px 4px',
-            'lineHeight': '1.3',
-            'maxWidth': '120px',
-            'minWidth': '40px'
+            'fontSize': '12px',
+            'padding': '6px 8px',
+            'lineHeight': '1.4',
+            'maxWidth': '140px',
+            'minWidth': '45px',
+            'color': '#1e293b',
         },
         style_header={
-            'backgroundColor': '#f8f9fa', 
+            'backgroundColor': '#f1f5f9', 
             'position': 'sticky', 
             'top': 0, 
             'zIndex': 1,
-            'fontSize': '7px',
-            'padding': '2px 3px',
+            'fontSize': '11px',
+            'padding': '8px 8px',
             'fontWeight': '600',
-            'lineHeight': '1.3'
+            'lineHeight': '1.3',
+            'color': '#1e293b',
+            'textTransform': 'uppercase',
+            'letterSpacing': '0.4px',
+            'borderBottom': '2px solid #e2e8f0',
         },
         style_data={
-            'fontSize': '9px',
-            'padding': '3px 4px',
-            'lineHeight': '1.3'
+            'fontSize': '12px',
+            'padding': '6px 8px',
+            'lineHeight': '1.4',
+            'borderBottom': '1px solid #f1f5f9',
         },
         style_data_conditional=[
             {'if': {'filter_query': '{Criticidad} contains "🔴"'}, 
-             'backgroundColor': '#fee2e215', 'borderLeft': '3px solid #dc2626'},
+             'backgroundColor': '#fef2f2', 'borderLeft': '3px solid #dc2626'},
             {'if': {'filter_query': '{Criticidad} contains "🟡"'}, 
-             'backgroundColor': '#fef3c715', 'borderLeft': '3px solid #f59e0b'},
+             'backgroundColor': '#fffbeb', 'borderLeft': '3px solid #f59e0b'},
             {'if': {'filter_query': '{Criticidad} contains "TOTAL"'}, 
-             'backgroundColor': '#dbeafe', 'fontWeight': 'bold', 'borderTop': '2px solid #2563eb'},
-            {'if': {'row_index': 'odd'}, 'backgroundColor': '#fafafa'}
+             'backgroundColor': '#eff6ff', 'fontWeight': 'bold', 'borderTop': '2px solid #2563eb'},
+            {'if': {'row_index': 'odd'}, 'backgroundColor': '#fafbfc'}
         ],
         page_size=15,
         sort_action='native',
         style_as_list_view=True
     )
     
-    return html.Div([
-        html.H6(f"Todas las Líneas ({len(tabla_data)})", style={'marginBottom': '6px'}),
-        tabla
-    ])
+    return crear_table_card(
+        titulo=f"Todas las Líneas ({len(tabla_data)})",
+        table_component=tabla,
+        subtitulo="Ordenadas por criticidad"
+    )
 
 def crear_grafica_criticidad_vs_antiguedad(df_lineas):
     """Scatter plot con hover - SIN zoom CSS para mapeo correcto"""
@@ -351,14 +281,15 @@ def crear_grafica_criticidad_vs_antiguedad(df_lineas):
     
     # Layout compacto
     fig.update_layout(
-        height=320,
+        height=340,
         xaxis_title='Antigüedad (años)',
         yaxis_title='% del Sistema Total',
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font=dict(size=9)),
-        margin=dict(l=50, r=15, t=15, b=50),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5, font=dict(size=10, family='Inter')),
+        margin=dict(l=50, r=15, t=10, b=50),
         hovermode='closest',
         plot_bgcolor='white',
-        paper_bgcolor='white'
+        paper_bgcolor='white',
+        font=dict(family='Inter, Arial, sans-serif', size=11)
     )
     
     return fig
@@ -398,14 +329,15 @@ def crear_grafica_participacion_voltaje(df_lineas):
     ])
     
     fig.update_layout(
-        title='Participación Promedio por Nivel de Tensión',
         xaxis_title='Nivel de Tensión',
         yaxis_title='% Promedio del Sistema',
         height=280,
         showlegend=False,
         xaxis_tickangle=-45,
-        margin=dict(l=50, r=20, t=40, b=60),
-        font=dict(size=10)
+        margin=dict(l=50, r=20, t=10, b=60),
+        font=dict(family='Inter, Arial, sans-serif', size=11),
+        plot_bgcolor='white',
+        paper_bgcolor='white'
     )
     
     return fig
@@ -453,13 +385,16 @@ def crear_grafica_antiguedad_decadas(df_lineas):
     ))
     
     fig.update_layout(
-        title='Evolución de Construcción de Líneas por Década',
         xaxis=dict(title='Década'),
         yaxis=dict(title='Cantidad de Líneas', side='left'),
         yaxis2=dict(title='Longitud Total (km)', overlaying='y', side='right'),
         height=280,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode='x unified'
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10, family='Inter')),
+        hovermode='x unified',
+        margin=dict(l=50, r=50, t=10, b=40),
+        font=dict(family='Inter, Arial, sans-serif', size=11),
+        plot_bgcolor='white',
+        paper_bgcolor='white'
     )
     
     return fig
@@ -487,113 +422,110 @@ def layout():
     ]
 
     return html.Div([
-        # Navbar horizontal
-        # crear_navbar_horizontal(),
-        
         # Store para trigger automático de carga inicial
         dcc.Store(id='transmision-data-trigger', data={'initialized': False}),
         
-        # Contenedor principal
-        dbc.Container([
+        # Contenedor principal con clase Tabler
+        html.Div([
+            # Page Header
+            crear_page_header(
+                titulo="Transmisión",
+                icono="fas fa-bolt",
+                breadcrumb="Inicio / Transmisión",
+            ),
             
-            # --- PANEL DE FILTROS AVANZADO ---
-            dbc.Card([
-                dbc.CardBody([
-                    dbc.Row([
-                        # Columna 1: Rango Predefinido (Estilo Hidrología)
-                        dbc.Col([
-                            html.Label("PERIODO DE CONSTRUCCIÓN:", className="fw-bold small text-muted mb-1"),
-                            dcc.Dropdown(
-                                id='dropdown-rango-transmision',
-                                options=[
-                                    {'label': 'Inventario Completo (Todo)', 'value': 'todo'},
-                                    {'label': 'Último Año (Nuevas)', 'value': '1y'},
-                                    {'label': 'Últimos 5 años (Expansión)', 'value': '5y'},
-                                    {'label': 'Últimos 10 años', 'value': '10y'},
-                                    {'label': 'Líneas Antiguas (>20 años)', 'value': 'old'},
-                                    {'label': 'Personalizado', 'value': 'custom'}
-                                ],
-                                value='todo',
-                                clearable=False,
-                                className="mb-0",
-                                style={'fontSize': '0.85rem'}
-                            )
-                        ], lg=3, md=6, className="mb-2"),
-                        
-                        # Columna 2: Selector de Fechas (DatePicker)
-                        dbc.Col([
-                            html.Label("RANGO DE FECHAS (FPO):", className="fw-bold small text-muted mb-1"),
-                            html.Div([
-                                dcc.DatePickerRange(
-                                    id='fecha-filtro-transmision',
-                                    display_format='YYYY-MM-DD',
-                                    style={'fontSize': '0.8rem', 'width': '100%'}
-                                )
-                            ])
-                        ], lg=3, md=6, className="mb-2"),
-                        
-                        # Columna 3: Filtro Técnico (Tensión)
-                        dbc.Col([
-                            html.Label("NIVEL DE TENSIÓN:", className="fw-bold small text-muted mb-1"),
-                            dcc.Dropdown(
-                                id='dropdown-tension-transmision',
-                                options=opciones_tension,
-                                value='TODAS',
-                                clearable=False,
-                                className="mb-0",
-                                style={'fontSize': '0.85rem'}
-                            )
-                        ], lg=3, md=6, className="mb-2"),
-                        
-                        # Columna 4: Botón Consultar
-                        dbc.Col([
-                            html.Label("ACCIÓN:", className="fw-bold small text-muted mb-1"),
-                            dbc.Button([
-                                html.I(className="fas fa-search me-2"), 
-                                "Consultar Datos"
-                            ], 
-                            id="btn-actualizar-transmision", 
-                            color="primary", 
-                            className="w-100 shadow-sm")
-                        ], lg=3, md=6, className="d-flex align-items-end mb-2")
-                    ])
-                ], style={'padding': '0.8rem'})
-            ], className="mb-4 shadow-sm border-0", style={'backgroundColor': '#ffffff'}),
-        
+            # --- FILTER BAR COMPACTA ---
+            crear_filter_bar(
+                # Periodo
+                html.Div([
+                    html.Label("Periodo"),
+                    dcc.Dropdown(
+                        id='dropdown-rango-transmision',
+                        options=[
+                            {'label': 'Todo', 'value': 'todo'},
+                            {'label': 'Último Año', 'value': '1y'},
+                            {'label': '5 años', 'value': '5y'},
+                            {'label': '10 años', 'value': '10y'},
+                            {'label': '>20 años', 'value': 'old'},
+                            {'label': 'Custom', 'value': 'custom'}
+                        ],
+                        value='todo',
+                        clearable=False,
+                        style={'width': '140px', 'fontSize': '12px'}
+                    )
+                ]),
+                # Fechas
+                html.Div([
+                    html.Label("Fechas FPO"),
+                    dcc.DatePickerRange(
+                        id='fecha-filtro-transmision',
+                        display_format='YYYY-MM-DD',
+                    )
+                ]),
+                # Tensión
+                html.Div([
+                    html.Label("Tensión"),
+                    dcc.Dropdown(
+                        id='dropdown-tension-transmision',
+                        options=opciones_tension,
+                        value='TODAS',
+                        clearable=False,
+                        style={'width': '160px', 'fontSize': '12px'}
+                    )
+                ]),
+                # Botón
+                dbc.Button([
+                    html.I(className="fas fa-search me-1"), 
+                    "Consultar"
+                ], 
+                id="btn-actualizar-transmision", 
+                color="primary",
+                size="sm",
+                className="ms-auto")
+            ),
+            
             # KPIs
-            html.Div(id="kpis-transmision", style={'marginBottom': '0'}),
-        
-            # Sección principal: Gráfica + Tabla lado a lado
+            html.Div(id="kpis-transmision", className="t-mb-4"),
+            
+            # Sección principal: 3 columnas
             html.Div([
-        html.H6([
-            html.I(className="fas fa-chart-scatter me-2", style={'fontSize': '0.85rem'}),
-            "Análisis de Criticidad por Antigüedad"
-        ], className="mt-2 mb-2", style={'fontSize': '0.9rem'}),
-        
-        dbc.Row([
-            # Columna 1: Gráfica criticidad vs antigüedad (izquierda ~40%)
-            dbc.Col([
-                dcc.Graph(id="grafica-criticidad-antiguedad")
-            ], lg=5, md=12),
+                dbc.Row([
+                    # Columna 1: Scatter criticidad vs antigüedad (~40%)
+                    dbc.Col([
+                        crear_chart_card(
+                            titulo="Criticidad vs Antigüedad",
+                            graph_id="grafica-criticidad-antiguedad",
+                            height=340,
+                            subtitulo="Todas las líneas del sistema"
+                        )
+                    ], lg=5, md=12, className="mb-3"),
+                    
+                    # Columna 2: Tabla de líneas (~30%)
+                    dbc.Col([
+                        html.Div(id="tabla-lineas-criticas")
+                    ], lg=3, md=12, className="mb-3"),
+                    
+                    # Columna 3: 2 charts apilados (~30%)
+                    dbc.Col([
+                        crear_chart_card(
+                            titulo="Participación por Voltaje",
+                            graph_id="grafica-participacion-voltaje",
+                            height=280,
+                            subtitulo="Promedio por nivel de tensión"
+                        ),
+                        html.Div(className="t-mb-3"),
+                        crear_chart_card(
+                            titulo="Líneas por Década",
+                            graph_id="grafica-antiguedad-decadas",
+                            height=280,
+                            subtitulo="Evolución de construcción"
+                        )
+                    ], lg=4, md=12, className="mb-3")
+                ])
+            ])
             
-            # Columna 2: Tabla de líneas (centro ~30%)
-            dbc.Col([
-                html.Div(id="tabla-lineas-criticas")
-            ], lg=3, md=12),
-            
-            # Columna 3: Gráficas apiladas verticalmente (derecha ~30%)
-            dbc.Col([
-                # Participación por voltaje (arriba)
-                dcc.Graph(id="grafica-participacion-voltaje", style={'marginBottom': '10px'}),
-                
-                # Líneas por década (abajo)
-                dcc.Graph(id="grafica-antiguedad-decadas")
-            ], lg=4, md=12)
-        ], className="mb-2")
-            ], style={'marginTop': '0'})
-        
-        ], fluid=True, style={'maxWidth': '100%', 'padding': '5px'})
-    ], style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh'})
+        ], className="t-page-body")
+    ], className="t-page")
 
 # ================================================================================
 # CALLBACKS
