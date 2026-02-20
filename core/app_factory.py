@@ -147,23 +147,25 @@ def _register_callbacks(app):
             pathname = '/'
 
         active_style = {
-            'backgroundColor': '#FFC107',
+            'backgroundColor': 'rgba(245,158,11,0.9)',
             'color': '#000',
-            'padding': '10px 20px',
-            'borderRadius': '4px',
+            'padding': '6px 14px',
+            'borderRadius': '6px',
             'textDecoration': 'none',
-            'fontWeight': '500',
-            'transition': 'all 0.3s ease'
+            'fontWeight': '600',
+            'fontSize': '13px',
+            'transition': 'all 0.2s ease'
         }
 
         inactive_style = {
             'backgroundColor': 'transparent',
-            'color': 'white',  # RESTAURADO: Color blanco para contrastar con header azul corporativo
-            'padding': '10px 20px',
-            'borderRadius': '4px',
+            'color': 'rgba(255,255,255,0.85)',
+            'padding': '6px 14px',
+            'borderRadius': '6px',
             'textDecoration': 'none',
-            'fontWeight': '400',
-            'transition': 'all 0.3s ease'
+            'fontWeight': '500',
+            'fontSize': '13px',
+            'transition': 'all 0.2s ease'
         }
 
         route_mapping = {

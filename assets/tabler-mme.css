@@ -61,6 +61,7 @@
   min-height: 100vh;
   font-family: var(--t-font);
   color: var(--t-text);
+  padding: var(--t-space-4) var(--t-space-5);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -305,6 +306,15 @@
   gap: var(--t-space-3);
   flex-wrap: wrap;
   margin-bottom: var(--t-space-4);
+}
+
+.t-filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
 }
 
 .t-filter-bar label {
@@ -616,4 +626,203 @@
 @keyframes t-fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── FILTER BUTTON ─── */
+.t-btn-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--t-font);
+  color: #fff;
+  background: var(--t-primary);
+  border: none;
+  border-radius: var(--t-radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
+}
+
+.t-btn-filter:hover {
+  background: var(--t-primary-light);
+  box-shadow: 0 2px 8px rgba(30, 58, 138, 0.25);
+}
+
+.t-btn-filter:active {
+  transform: scale(0.97);
+}
+
+.t-btn-filter i {
+  font-size: 12px;
+}
+
+/* ─── TABS — Estilo Tabler ─── */
+.t-page .nav-tabs {
+  border-bottom: 2px solid var(--t-border);
+}
+
+.t-page .nav-tabs .nav-link {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--t-text-secondary);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
+  margin-bottom: -2px;
+  transition: color 0.2s ease, border-color 0.2s ease;
+  background: transparent;
+}
+
+.t-page .nav-tabs .nav-link:hover {
+  color: var(--t-primary);
+  border-bottom-color: var(--t-primary-light);
+}
+
+.t-page .nav-tabs .nav-link.active {
+  color: var(--t-primary);
+  font-weight: 600;
+  border-bottom-color: var(--t-primary);
+  background: transparent;
+}
+
+/* ─── Dash Dropdown en filter bar ─── */
+.t-filter-bar .Select-control,
+.t-filter-bar .Select--single > .Select-control,
+.t-filter-bar .dash-dropdown .Select-control {
+  min-height: 32px !important;
+  border-radius: var(--t-radius-sm) !important;
+  border-color: var(--t-border) !important;
+}
+
+.t-filter-bar .Select-value-label,
+.t-filter-bar .Select-placeholder {
+  font-size: 12px !important;
+  line-height: 30px !important;
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 768px) {
+  .t-page {
+    padding: var(--t-space-3) var(--t-space-3);
+  }
+
+  .t-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--t-space-2);
+  }
+
+  .t-page-header h1 {
+    font-size: 16px;
+  }
+
+  .t-filter-bar {
+    padding: var(--t-space-2) var(--t-space-3);
+    gap: var(--t-space-2);
+  }
+
+  .t-chart-card {
+    margin-bottom: var(--t-space-3);
+  }
+}
+
+/* ─── SMOOTH TRANSITIONS ─── */
+.t-chart-card,
+.t-table-card,
+.t-kpi,
+.t-filter-bar {
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+/* ─── DARK MODE ─── */
+[data-theme="dark"] {
+  --t-bg: #0f172a;
+  --t-bg-card: #1e293b;
+  --t-border: #334155;
+  --t-border-light: #1e293b;
+  --t-text: #e2e8f0;
+  --t-text-secondary: #94a3b8;
+  --t-text-muted: #64748b;
+
+  --t-primary-bg: rgba(59, 130, 246, 0.15);
+  --t-success-bg: rgba(16, 185, 129, 0.15);
+  --t-warning-bg: rgba(245, 158, 11, 0.15);
+  --t-danger-bg: rgba(239, 68, 68, 0.15);
+  --t-info-bg: rgba(99, 102, 241, 0.15);
+
+  --t-shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+  --t-shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --t-shadow-md: 0 4px 6px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.2);
+}
+
+[data-theme="dark"] .t-kpi-value {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .t-chart-body .js-plotly-plot .plotly .modebar-btn {
+  color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .t-badge-date {
+  background: #334155;
+  border-color: #475569;
+}
+
+/* ─── SCROLL BAR STYLING ─── */
+.t-page ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.t-page ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.t-page ::-webkit-scrollbar-thumb {
+  background: var(--t-border);
+  border-radius: 3px;
+}
+
+.t-page ::-webkit-scrollbar-thumb:hover {
+  background: var(--t-text-muted);
+}
+
+/* ─── GLOBAL NAVBAR ─── */
+.t-global-navbar {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+}
+
+.t-global-navbar .nav-link {
+  font-family: var(--t-font) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.2px !important;
+  transition: all 0.2s ease !important;
+}
+
+.t-global-navbar .nav-link:hover {
+  background: rgba(255,255,255,0.1) !important;
+}
+
+.t-global-navbar .navbar-toggler {
+  border-color: rgba(255,255,255,0.2);
+  padding: 4px 8px;
+}
+
+.t-global-navbar .navbar-toggler-icon {
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 991px) {
+  .t-global-navbar .navbar-collapse {
+    padding: 8px 0;
+  }
+  .t-global-navbar .nav-link {
+    padding: 6px 12px !important;
+  }
 }
