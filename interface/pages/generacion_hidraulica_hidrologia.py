@@ -31,6 +31,8 @@ except ImportError:
 
 # Imports locales para componentes uniformes
 from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.chart_card import crear_chart_card, crear_chart_card_custom, crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
 from domain.services.geo_service import REGIONES_COORDENADAS, obtener_coordenadas_region
 from infrastructure.logging.logger import setup_logger
@@ -1249,55 +1251,10 @@ def crear_fichas_sin_seguras(region=None, rio=None):
 
 def crear_fichas_temporales():
     """Crear fichas temporales con datos de prueba basados en valores reales de XM"""
-    return dbc.Row([
-        # Ficha Reservas Hídricas
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-water fa-2x mb-2", style={"color": COLORS['success']}),
-                        html.H5("Reservas Hídricas", className="card-title text-center", 
-                               style={"fontWeight": "600", "color": COLORS['text_primary']}),
-                        html.H3("82.48%", className="text-center mb-1",
-                               style={"fontWeight": "bold", "color": COLORS['success'], "fontSize": "2.5rem"}),
-                        html.P("14.139.8265 GWh", className="text-center text-muted mb-1",
-                              style={"fontSize": "1.1rem", "fontWeight": "500"}),
-                        html.Small("SIN Completo • Datos de prueba", 
-                                  className="text-muted d-block text-center",
-                                  style={"fontSize": "0.8rem"})
-                    ], className="text-center")
-                ])
-            ], className="h-100", style={
-                "border": f"1px solid {COLORS['border']}",
-                "boxShadow": f"0 2px 4px {COLORS['shadow_sm']}",
-                "borderRadius": "8px"
-            })
-        ], width=12, md=6, className="mb-3"),
-        
-        # Ficha Aportes Hídricos  
-        dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.Div([
-                        html.I(className="fas fa-tint fa-2x mb-2", style={"color": COLORS['success']}),
-                        html.H5("Aportes Hídricos", className="card-title text-center",
-                               style={"fontWeight": "600", "color": COLORS['text_primary']}),
-                        html.H3("101.2%", className="text-center mb-1",
-                               style={"fontWeight": "bold", "color": COLORS['success'], "fontSize": "2.5rem"}),
-                        html.P("208.28 GWh", className="text-center text-muted mb-1",
-                              style={"fontSize": "1.1rem", "fontWeight": "500"}),
-                        html.Small("SIN Completo • Datos de prueba", 
-                                  className="text-muted d-block text-center",
-                                  style={"fontSize": "0.8rem"})
-                    ], className="text-center")
-                ])
-            ], className="h-100", style={
-                "border": f"1px solid {COLORS['border']}",
-                "boxShadow": f"0 2px 4px {COLORS['shadow_sm']}",
-                "borderRadius": "8px"
-            })
-        ], width=12, md=6, className="mb-3")
-    ])
+    return crear_kpi_row([
+        {"titulo": "Reservas Hídricas", "valor": "82.48", "unidad": "%", "icono": "fas fa-water", "color": "green", "subtexto": "SIN Completo • Datos de prueba"},
+        {"titulo": "Aportes Hídricos", "valor": "101.2", "unidad": "%", "icono": "fas fa-tint", "color": "blue", "subtexto": "SIN Completo • Datos de prueba"},
+    ], columnas=2)
 
 # Función original con fallback mejorado (comentada temporalmente)
 # Esta función será restaurada una vez que se resuelvan los problemas de API
@@ -1403,32 +1360,21 @@ def crear_fichas_sin(fecha=None, region=None, rio=None):
     ], className="mb-4")
 
 layout = html.Div([
-    # Navbar horizontal
-    # crear_navbar_horizontal(),
-
-    html.Div(style={'maxWidth': '100%', 'padding': '5px'}, children=[
-    # Barra de navegación eliminada
-    
-    # Container principal
-    dbc.Container([
-        # Botón de regreso eliminado
-        
-        dbc.Row([
-            # Contenido principal (ahora ocupa todo el ancho)
-            dbc.Col([
-                # Panel de controles en tabs
-                dbc.Tabs([
-                    dbc.Tab(label="⚡ Aportes de Energía", tab_id="tab-consulta"),
-                    dbc.Tab(label="📅 Comparación Anual", tab_id="tab-comparacion-anual"),
-                ], id="hidro-tabs", active_tab="tab-consulta", className="mb-4"),
-                
-                # Contenido dinámico
-                html.Div(id="hidrologia-tab-content")
-            ], width=12)  # Ahora ocupa todo el ancho
-        ])
-    ], fluid=True)
+    html.Div(className="t-page", children=[
+        crear_page_header(
+            "Hidrología",
+            "fas fa-water",
+            "Inicio / Generación / Hidrología"
+        ),
+        # Panel de controles en tabs
+        dbc.Tabs([
+            dbc.Tab(label="⚡ Aportes de Energía", tab_id="tab-consulta"),
+            dbc.Tab(label="📅 Comparación Anual", tab_id="tab-comparacion-anual"),
+        ], id="hidro-tabs", active_tab="tab-consulta", className="mb-4"),
+        # Contenido dinámico
+        html.Div(id="hidrologia-tab-content")
     ])
-], style={'backgroundColor': COLORS['bg_main'], 'minHeight': '100vh'})
+])
 
 # Modal global para tablas de datos
 modal_rio_table = dbc.Modal([
@@ -1493,89 +1439,68 @@ layout = layout_with_modal
 
 # Layout del panel de controles (lo que antes estaba en el layout principal)
 def crear_panel_controles():
-    return dbc.Card([
-        dbc.CardBody([
-            # TODOS LOS FILTROS EN UNA SOLA FILA HORIZONTAL
-            dbc.Row([
-                # Región
-                dbc.Col([
-                    html.Label("REGIÓN:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
-                    dcc.Dropdown(
-                        id="region-dropdown",
-                        options=[{"label": "Todas las regiones", "value": "__ALL_REGIONS__"}],
-                        placeholder="Región...",
-                        className="form-control-modern mb-0",
-                        style={"fontSize": "0.75rem", "minHeight": "28px"}
-                    )
-                ], lg=2, md=6, sm=12),
-                
-                # Río
-                dbc.Col([
-                    html.Label("RÍO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
-                    dcc.Dropdown(
-                        id="rio-dropdown",
-                        options=[],
-                        placeholder="Río...",
-                        className="form-control-modern mb-0",
-                        style={"fontSize": "0.75rem", "minHeight": "28px"}
-                    )
-                ], lg=2, md=6, sm=12),
-                
-                # Rango
-                dbc.Col([
-                    html.Label("RANGO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
-                    dcc.Dropdown(
-                        id='rango-fechas-hidrologia',
-                        options=[
-                            {'label': 'Último mes', 'value': '1m'},
-                            {'label': 'Últimos 6 meses', 'value': '6m'},
-                            {'label': 'Último año', 'value': '1y'},
-                            {'label': 'Últimos 2 años', 'value': '2y'},
-                            {'label': 'Últimos 5 años', 'value': '5y'},
-                            {'label': 'Personalizado', 'value': 'custom'}
-                        ],
-                        value='1y',
-                        clearable=False,
-                        style={'fontSize': '0.75rem', 'minHeight': '28px'}
-                    )
-                ], lg=2, md=6, sm=12),
-                
-                # Fecha inicio (oculta)
-                dbc.Col([
-                    html.Label("INICIO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
-                    dcc.DatePickerSingle(
-                        id='fecha-inicio-hidrologia',
-                        date=(date.today() - timedelta(days=365)).strftime('%Y-%m-%d'),
-                        display_format='DD/MM/YYYY',
-                        style={'fontSize': '0.75rem'}
-                    )
-                ], id='container-fecha-inicio-hidrologia', lg=2, md=6, sm=12, style={'display': 'none'}),
-                
-                # Fecha fin (oculta)
-                dbc.Col([
-                    html.Label("FIN:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '1px', 'color': '#2c3e50'}),
-                    dcc.DatePickerSingle(
-                        id='fecha-fin-hidrologia',
-                        date=date.today().strftime('%Y-%m-%d'),
-                        display_format='DD/MM/YYYY',
-                        style={'fontSize': '0.75rem'}
-                    )
-                ], id='container-fecha-fin-hidrologia', lg=2, md=6, sm=12, style={'display': 'none'}),
-                
-                # Botón
-                dbc.Col([
-                    html.Label("\u00A0", style={'fontSize': '0.65rem', 'marginBottom': '1px', 'display': 'block'}),
-                    dbc.Button(
-                        [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
-                        id="btn-actualizar-hidrologia",
-                        color="primary",
-                        className="w-100",
-                        style={'fontSize': '0.75rem', 'height': '28px'}
-                    )
-                ], lg=2, md=12, sm=12)
-            ], className="g-2 align-items-end")
-        ], className="p-1")
-    ], className="shadow-sm")
+    return crear_filter_bar(
+        html.Span("REGIÓN:", className="t-filter-label"),
+        html.Div(
+            dcc.Dropdown(
+                id="region-dropdown",
+                options=[{"label": "Todas las regiones", "value": "__ALL_REGIONS__"}],
+                placeholder="Región...",
+                style={"width": "160px", "fontSize": "0.8rem"}
+            )
+        ),
+        html.Span("RÍO:", className="t-filter-label"),
+        html.Div(
+            dcc.Dropdown(
+                id="rio-dropdown",
+                options=[],
+                placeholder="Río...",
+                style={"width": "160px", "fontSize": "0.8rem"}
+            )
+        ),
+        html.Span("RANGO:", className="t-filter-label"),
+        html.Div(
+            dcc.Dropdown(
+                id='rango-fechas-hidrologia',
+                options=[
+                    {'label': 'Último mes', 'value': '1m'},
+                    {'label': 'Últimos 6 meses', 'value': '6m'},
+                    {'label': 'Último año', 'value': '1y'},
+                    {'label': 'Últimos 2 años', 'value': '2y'},
+                    {'label': 'Últimos 5 años', 'value': '5y'},
+                    {'label': 'Personalizado', 'value': 'custom'}
+                ],
+                value='1y',
+                clearable=False,
+                style={"width": "150px", "fontSize": "0.8rem"}
+            )
+        ),
+        html.Div(
+            dcc.DatePickerSingle(
+                id='fecha-inicio-hidrologia',
+                date=(date.today() - timedelta(days=365)).strftime('%Y-%m-%d'),
+                display_format='DD/MM/YYYY',
+                style={'fontSize': '0.75rem'}
+            ),
+            id='container-fecha-inicio-hidrologia',
+            style={'display': 'none'}
+        ),
+        html.Div(
+            dcc.DatePickerSingle(
+                id='fecha-fin-hidrologia',
+                date=date.today().strftime('%Y-%m-%d'),
+                display_format='DD/MM/YYYY',
+                style={'fontSize': '0.75rem'}
+            ),
+            id='container-fecha-fin-hidrologia',
+            style={'display': 'none'}
+        ),
+        html.Button(
+            [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
+            id="btn-actualizar-hidrologia",
+            className="t-btn-filter"
+        ),
+    )
 
 # Función para generar la ficha KPI
 def crear_ficha_kpi_inicial():
@@ -2017,36 +1942,26 @@ def render_hidro_tab_content(active_tab):
         # Nueva sección de Comparación Anual - ESTRUCTURA IDÉNTICA A GENERACIÓN
         return html.Div([
             
-            # FILTRO MULTISELECTOR DE AÑOS (optimizado horizontalmente)
-            dbc.Card([
-                dbc.CardBody([
-                    dbc.Row([
-                        dbc.Col([
-                            html.Small("Selecciona los años a comparar:", className="mb-1", 
-                                   style={'fontWeight': '600', 'color': '#2c3e50', 'fontSize': '0.7rem'}),
-                            dcc.Dropdown(
-                                id='years-multiselector-hidro',
-                                options=[{'label': str(y), 'value': y} for y in range(2021, 2026)],
-                                value=[2024, 2025],
-                                multi=True,
-                                placeholder="Selecciona uno o más años...",
-                                clearable=False
-                            ),
-                            html.Small("Nota: Datos disponibles desde 2021 (año completo)", 
-                                      className="text-muted", style={'fontSize': '0.7rem'})
-                        ], md=9),
-                        dbc.Col([
-                            dbc.Button(
-                                "Actualizar Comparación",
-                                id='btn-actualizar-comparacion-hidro',
-                                color="primary",
-                                className="w-100",
-                                style={'height': '38px'}
-                            )
-                        ], md=3, className="d-flex align-items-center")
-                    ])
-                ], className="p-2")
-            ], className="mb-3"),
+            # FILTRO MULTISELECTOR DE AÑOS
+            crear_filter_bar(
+                html.Span("AÑOS:", className="t-filter-label"),
+                html.Div(
+                    dcc.Dropdown(
+                        id='years-multiselector-hidro',
+                        options=[{'label': str(y), 'value': y} for y in range(2021, 2026)],
+                        value=[2024, 2025],
+                        multi=True,
+                        placeholder="Selecciona años...",
+                        clearable=False,
+                        style={"width": "300px", "fontSize": "0.8rem"}
+                    )
+                ),
+                html.Button(
+                    "Actualizar Comparación",
+                    id='btn-actualizar-comparacion-hidro',
+                    className="t-btn-filter"
+                ),
+            ),
             
             # LAYOUT HORIZONTAL: Gráfica de líneas (70%) + Fichas por año (30%)
             dbc.Row([

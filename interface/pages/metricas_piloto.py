@@ -10,6 +10,8 @@ from datetime import datetime
 from domain.services.metrics_service import MetricsService
 from domain.services.predictions_service import PredictionsService
 from infrastructure.logging.logger import get_logger
+from interface.components.kpi_card import crear_kpi_row
+from interface.components.chart_card import crear_page_header, crear_filter_bar
 
 register_page(
     __name__,
@@ -48,56 +50,22 @@ def _get_summary():
             "latest_prediction_date": "Error",
         }
 
-layout = dbc.Container(
-    [
-        dbc.Row(
-            [
-                dbc.Col(
-                    html.H3("📊 Métricas - Piloto (Nueva Arquitectura)", className="mb-2"),
-                    width=12,
-                ),
-                dbc.Col(
-                    html.P(
-                        "Esta página usa domain/services + infrastructure/repos.",
-                        className="text-muted",
-                    ),
-                    width=12,
-                ),
-            ],
-            className="mt-3",
-        ),
-        dbc.Row(
-            [
-                dbc.Col(
-                    dbc.Button("Actualizar", id="btn-refresh-metricas-piloto", color="primary"),
-                    width="auto",
-                ),
-                dbc.Col(
-                    html.Span(id="last-refresh-metricas-piloto", className="text-muted"),
-                    width="auto",
-                ),
-            ],
-            className="mb-3",
-        ),
-        dbc.Row(
-            [
-                dbc.Col(dbc.Card([dbc.CardHeader("Total registros"), dbc.CardBody(html.H4(id="total-metrics"))])),
-                dbc.Col(dbc.Card([dbc.CardHeader("Última fecha métricas"), dbc.CardBody(html.H4(id="latest-metrics-date"))])),
-                dbc.Col(dbc.Card([dbc.CardHeader("Total predicciones"), dbc.CardBody(html.H4(id="total-predictions"))])),
-                dbc.Col(dbc.Card([dbc.CardHeader("Última fecha predicción"), dbc.CardBody(html.H4(id="latest-prediction-date"))])),
-            ],
-            className="g-3",
-        ),
-        dcc.Interval(id="interval-metricas-piloto", interval=300000, n_intervals=0),
-    ],
-    fluid=True,
-)
+layout = html.Div(className="t-page", children=[
+    crear_page_header(
+        "Métricas (Piloto)",
+        "fas fa-flask",
+        "Inicio / Métricas Piloto"
+    ),
+    crear_filter_bar(
+        dbc.Button("Actualizar", id="btn-refresh-metricas-piloto", color="primary", size="sm"),
+        html.Span(id="last-refresh-metricas-piloto", className="text-muted", style={"fontSize": "0.8rem"}),
+    ),
+    html.Div(id="kpis-metricas-piloto", className="mt-3"),
+    dcc.Interval(id="interval-metricas-piloto", interval=300000, n_intervals=0),
+])
 
 @callback(
-    Output("total-metrics", "children"),
-    Output("latest-metrics-date", "children"),
-    Output("total-predictions", "children"),
-    Output("latest-prediction-date", "children"),
+    Output("kpis-metricas-piloto", "children"),
     Output("last-refresh-metricas-piloto", "children"),
     Input("btn-refresh-metricas-piloto", "n_clicks"),
     Input("interval-metricas-piloto", "n_intervals"),
@@ -106,13 +74,19 @@ def update_summary(n_clicks, n_intervals):
     try:
         summary = _get_summary()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return (
-            f"{summary['total_metrics']}",
-            str(summary["latest_metrics_date"] or "N/D"),
-            f"{summary['predictions_count']}",
-            str(summary["latest_prediction_date"] or "N/D"),
-            f"Última actualización: {timestamp}",
-        )
+        kpis = crear_kpi_row([
+            {"titulo": "Total registros", "valor": str(summary['total_metrics']), "icono": "fas fa-database", "color": "blue"},
+            {"titulo": "Última fecha métricas", "valor": str(summary['latest_metrics_date'] or 'N/D'), "icono": "fas fa-calendar", "color": "green"},
+            {"titulo": "Total predicciones", "valor": str(summary['predictions_count']), "icono": "fas fa-brain", "color": "purple"},
+            {"titulo": "Última fecha predicción", "valor": str(summary['latest_prediction_date'] or 'N/D'), "icono": "fas fa-clock", "color": "orange"},
+        ])
+        return kpis, f"Última actualización: {timestamp}"
     except Exception as e:
         logger.error(f"Error in callback: {e}")
-        return "0", "N/D", "0", "N/D", "Error"
+        error_kpis = crear_kpi_row([
+            {"titulo": "Total registros", "valor": "0", "icono": "fas fa-database", "color": "blue"},
+            {"titulo": "Última fecha métricas", "valor": "N/D", "icono": "fas fa-calendar", "color": "green"},
+            {"titulo": "Total predicciones", "valor": "0", "icono": "fas fa-brain", "color": "purple"},
+            {"titulo": "Última fecha predicción", "valor": "N/D", "icono": "fas fa-clock", "color": "orange"},
+        ])
+        return error_kpis, "Error"
