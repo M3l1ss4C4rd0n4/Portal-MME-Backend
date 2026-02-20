@@ -25,6 +25,8 @@ except ImportError:
 
 # Imports locales
 from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.chart_card import crear_chart_card, crear_chart_card_custom, crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
 from infrastructure.external.xm_service import fetch_gene_recurso_chunked
 from infrastructure.external.xm_service import get_objetoAPI, fetch_metric_data, obtener_datos_desde_bd, obtener_datos_inteligente
@@ -95,6 +97,20 @@ TIPOS_FUENTE = {
     'TERMICA': {'label': 'Térmica', 'icon': 'fa-fire', 'color': COLORS.get('danger', '#dc3545')},
     'BIOMASA': {'label': 'Biomasa', 'icon': 'fa-leaf', 'color': COLORS.get('info', '#17a2b8')}
 }
+
+
+def _crear_fichas_kpi_generacion(gen_total, gen_renovable, gen_no_renovable, tipo_fuente='TODAS'):
+    """Helper compartido: crea fichas KPI de generación usando el design system."""
+    pct_ren = (gen_renovable / gen_total * 100) if gen_total > 0 else 0
+    pct_no  = (gen_no_renovable / gen_total * 100) if gen_total > 0 else 0
+    titulo = "Generación Total SIN" if tipo_fuente == 'TODAS' else f"Generación {TIPOS_FUENTE.get(tipo_fuente, {}).get('label', tipo_fuente)}"
+    return crear_kpi_row([
+        {"titulo": titulo, "valor": f"{gen_total:.1f}", "unidad": "GWh", "icono": "fas fa-bolt", "color": "blue"},
+        {"titulo": "Renovable", "valor": f"{gen_renovable:.1f}", "unidad": "GWh", "icono": "fas fa-leaf", "color": "green",
+         "subtexto": f"{pct_ren:.1f}% del total"},
+        {"titulo": "No Renovable", "valor": f"{gen_no_renovable:.1f}", "unidad": "GWh", "icono": "fas fa-industry", "color": "red",
+         "subtexto": f"{pct_no:.1f}% del total"},
+    ], columnas=3)
 
 def obtener_listado_recursos(tipo_fuente='EOLICA'):
     """
@@ -1576,118 +1592,97 @@ def layout():
     return html.Div([
     # Estilos forzados para asegurar visibilidad de números KPI
     html.Link(rel='stylesheet', href='/assets/kpi-override.css'),
-    # Interval que se ejecuta UNA VEZ al cargar para disparar callbacks
-    # DESACTIVADO: API XM puede estar lenta - carga manual con botón
-    # dcc.Interval(id='interval-carga-inicial', interval=500, n_intervals=0, max_intervals=1),
-    
     # Store oculto para tracking
     dcc.Store(id='store-pagina-cargada', data={'loaded': True}),
     
-    # ℹ️ Store 'store-datos-chatbot-generacion' ahora es GLOBAL (definido en app.py)
-    # Todas las páginas pueden actualizarlo para dar contexto al chatbot
-    
-    # crear_navbar_horizontal(),
-    
-    # Contenido principal con padding reducido (sin zoom para evitar problemas de cursor)
-    html.Div(id='generacion-fuentes-compact-wrapper', style={'maxWidth': '100%', 'padding': '5px'}, children=[
-    dbc.Container([
-        html.Div([
-            dbc.Tabs(
-                id="tabs-generacion-fuentes",
-                active_tab="tab-analisis-general",
-                children=[
-                    dbc.Tab(label="Análisis General", tab_id="tab-analisis-general", tab_style={'padding': '0.3rem 0.8rem'}),
-                    dbc.Tab(label="Comparación Anual", tab_id="tab-comparacion-anual", tab_style={'padding': '0.3rem 0.8rem'}),
-                    dbc.Tab(label="Predicciones", tab_id="tab-predicciones", tab_style={'padding': '0.3rem 0.8rem'}),
-                ],
-                style={'fontSize': '0.8rem'}
-            )
-        ], style={'backgroundColor': 'white', 'padding': '3px 8px', 'borderRadius': '6px', 
-                  'marginBottom': '8px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.08)'}),
-        
-        # ==================================================================
-        # CONTENIDO TAB: ANÁLISIS GENERAL (contenido original completo)
-        # ==================================================================
-        html.Div(id='contenido-analisis-general', children=[
-        
-        # FILTROS UNIFICADOS EN UNA SOLA FILA HORIZONTAL
-        dbc.Card([
-            dbc.CardBody([
-                dbc.Row([
-                    # Selector de fuentes
-                    dbc.Col([
-                        html.Label("FUENTES:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                        dcc.Dropdown(
-                            id='tipo-fuente-dropdown',
-                            options=[
-                                {'label': '💧 Hidráulica', 'value': 'HIDRAULICA'},
-                                {'label': '🔥 Térmica', 'value': 'TERMICA'},
-                                {'label': '💨 Eólica', 'value': 'EOLICA'},
-                                {'label': '☀️ Solar', 'value': 'SOLAR'},
-                                {'label': '🌿 Biomasa', 'value': 'BIOMASA'},
-                            ],
-                            value=['HIDRAULICA', 'TERMICA', 'EOLICA', 'SOLAR', 'BIOMASA'],
-                            multi=True,
-                            placeholder="Seleccione fuentes...",
-                            style={'fontSize': '0.75rem', 'minHeight': '32px'}
-                        )
-                    ], md=3),
-                    
-                    # Filtro de rango
-                    dbc.Col([
-                        html.Label("RANGO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                        dcc.Dropdown(
-                            id='rango-fechas-fuentes',
-                            options=[
-                                {'label': 'Último mes', 'value': '1m'},
-                                {'label': 'Últimos 6 meses', 'value': '6m'},
-                                {'label': 'Último año', 'value': '1y'},
-                                {'label': 'Últimos 2 años', 'value': '2y'},
-                                {'label': 'Últimos 5 años', 'value': '5y'},
-                                {'label': 'Personalizado', 'value': 'custom'}
-                            ],
-                            value='1y',
-                            clearable=False,
-                            style={'fontSize': '0.75rem', 'minHeight': '32px'}
-                        )
-                    ], md=2),
-                    
-                    # Fecha inicio (oculta por defecto)
-                    dbc.Col([
-                        html.Label("FECHA INICIO:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                        dcc.DatePickerSingle(
-                            id='fecha-inicio-fuentes',
-                            date=(obtener_ultima_fecha_disponible() - timedelta(days=365)).strftime('%Y-%m-%d'),
-                            display_format='DD/MM/YYYY',
-                            style={'fontSize': '0.75rem'}
-                        )
-                    ], id='container-fecha-inicio-fuentes', md=2, style={'display': 'none'}),
-                    
-                    # Fecha fin (oculta por defecto)
-                    dbc.Col([
-                        html.Label("FECHA FIN:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                        dcc.DatePickerSingle(
-                            id='fecha-fin-fuentes',
-                            date=obtener_ultima_fecha_disponible().strftime('%Y-%m-%d'),
-                            display_format='DD/MM/YYYY',
-                            style={'fontSize': '0.75rem'}
-                        )
-                    ], id='container-fecha-fin-fuentes', md=2, style={'display': 'none'}),
-                    
-                    # Botón actualizar
-                    dbc.Col([
-                        html.Label("\u00A0", style={'fontSize': '0.65rem', 'marginBottom': '2px', 'display': 'block'}),
-                        dbc.Button(
-                            [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
-                            id="btn-actualizar-fuentes",
-                            color="primary",
-                            className="w-100",
-                            style={'fontSize': '0.75rem', 'height': '32px'}
-                        )
-                    ], md=2)
-                ], className="g-2 align-items-end")
-            ], style={'padding': '8px 12px'})
-        ], className="mb-2", style={'border': '1px solid #e0e0e0'}),
+    html.Div(className="t-page", children=[
+
+    crear_page_header(
+        titulo="Generación por Fuente",
+        icono="fas fa-solar-panel",
+        breadcrumb="Inicio / Generación / Fuentes",
+    ),
+
+    # Tabs
+    html.Div([
+        dbc.Tabs(
+            id="tabs-generacion-fuentes",
+            active_tab="tab-analisis-general",
+            children=[
+                dbc.Tab(label="Análisis General", tab_id="tab-analisis-general", tab_style={'padding': '0.3rem 0.8rem'}),
+                dbc.Tab(label="Comparación Anual", tab_id="tab-comparacion-anual", tab_style={'padding': '0.3rem 0.8rem'}),
+                dbc.Tab(label="Predicciones", tab_id="tab-predicciones", tab_style={'padding': '0.3rem 0.8rem'}),
+            ],
+            style={'fontSize': '0.8rem'}
+        )
+    ], style={'backgroundColor': 'white', 'padding': '3px 8px', 'borderRadius': '6px', 
+              'marginBottom': '8px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.08)'}),
+
+    # ==================================================================
+    # CONTENIDO TAB: ANÁLISIS GENERAL
+    # ==================================================================
+    html.Div(id='contenido-analisis-general', children=[
+
+        # FILTROS
+        crear_filter_bar(
+            html.Div([
+                html.Label("FUENTES:", className="t-filter-label"),
+                dcc.Dropdown(
+                    id='tipo-fuente-dropdown',
+                    options=[
+                        {'label': '💧 Hidráulica', 'value': 'HIDRAULICA'},
+                        {'label': '🔥 Térmica', 'value': 'TERMICA'},
+                        {'label': '💨 Eólica', 'value': 'EOLICA'},
+                        {'label': '☀️ Solar', 'value': 'SOLAR'},
+                        {'label': '🌿 Biomasa', 'value': 'BIOMASA'},
+                    ],
+                    value=['HIDRAULICA', 'TERMICA', 'EOLICA', 'SOLAR', 'BIOMASA'],
+                    multi=True,
+                    placeholder="Seleccione fuentes...",
+                    style={'width': '260px', 'fontSize': '0.75rem'}
+                )
+            ]),
+            html.Div([
+                html.Label("RANGO:", className="t-filter-label"),
+                dcc.Dropdown(
+                    id='rango-fechas-fuentes',
+                    options=[
+                        {'label': 'Último mes', 'value': '1m'},
+                        {'label': 'Últimos 6 meses', 'value': '6m'},
+                        {'label': 'Último año', 'value': '1y'},
+                        {'label': 'Últimos 2 años', 'value': '2y'},
+                        {'label': 'Últimos 5 años', 'value': '5y'},
+                        {'label': 'Personalizado', 'value': 'custom'}
+                    ],
+                    value='1y',
+                    clearable=False,
+                    style={'width': '160px', 'fontSize': '0.75rem'}
+                )
+            ]),
+            html.Div([
+                html.Label("INICIO:", className="t-filter-label"),
+                dcc.DatePickerSingle(
+                    id='fecha-inicio-fuentes',
+                    date=(obtener_ultima_fecha_disponible() - timedelta(days=365)).strftime('%Y-%m-%d'),
+                    display_format='DD/MM/YYYY',
+                    style={'fontSize': '0.75rem'}
+                )
+            ], id='container-fecha-inicio-fuentes', style={'display': 'none'}),
+            html.Div([
+                html.Label("FIN:", className="t-filter-label"),
+                dcc.DatePickerSingle(
+                    id='fecha-fin-fuentes',
+                    date=obtener_ultima_fecha_disponible().strftime('%Y-%m-%d'),
+                    display_format='DD/MM/YYYY',
+                    style={'fontSize': '0.75rem'}
+                )
+            ], id='container-fecha-fin-fuentes', style={'display': 'none'}),
+            html.Button(
+                [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
+                id="btn-actualizar-fuentes",
+                className="t-btn-filter",
+            ),
+        ),
         
         # DEBUG: Div para verificar clics en botón
         html.Div(id='debug-clicks', style={'display': 'none'}),
@@ -1720,36 +1715,26 @@ def layout():
         # ==================================================================
         html.Div(id='contenido-comparacion-anual', style={'display': 'none'}, children=[
             
-            # FILTRO MULTISELECTOR DE AÑOS (optimizado horizontalmente)
-            dbc.Card([
-                dbc.CardBody([
-                    dbc.Row([
-                        dbc.Col([
-                            html.Small("Selecciona los años a comparar:", className="mb-1", 
-                                   style={'fontWeight': '600', 'color': '#2c3e50', 'fontSize': '0.7rem'}),
-                            dcc.Dropdown(
-                                id='years-multiselector',
-                                options=[{'label': str(y), 'value': y} for y in range(2021, 2026)],  # 2021-2025 (2020 datos incompletos)
-                                value=[2024, 2025],  # Por defecto 2 años seleccionados
-                                multi=True,  # Permite múltiples selecciones
-                                placeholder="Selecciona uno o más años...",
-                                clearable=False
-                            ),
-                            html.Small("Nota: Datos disponibles desde 2021 (año completo)", 
-                                      className="text-muted", style={'fontSize': '0.7rem'})
-                        ], md=9),
-                        dbc.Col([
-                            dbc.Button(
-                                "Actualizar Comparación",
-                                id='btn-actualizar-comparacion',
-                                color="primary",
-                                className="w-100",
-                                style={'height': '38px'}
-                            )
-                        ], md=3, className="d-flex align-items-center")
-                    ])
-                ], className="p-2")
-            ], className="mb-3"),
+            # FILTRO MULTISELECTOR DE AÑOS
+            crear_filter_bar(
+                html.Div([
+                    html.Label("AÑOS:", className="t-filter-label"),
+                    dcc.Dropdown(
+                        id='years-multiselector',
+                        options=[{'label': str(y), 'value': y} for y in range(2021, 2026)],
+                        value=[2024, 2025],
+                        multi=True,
+                        placeholder="Selecciona uno o más años...",
+                        clearable=False,
+                        style={'width': '260px', 'fontSize': '0.75rem'}
+                    ),
+                ]),
+                html.Button(
+                    [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
+                    id='btn-actualizar-comparacion',
+                    className="t-btn-filter",
+                ),
+            ),
             
             # LAYOUT HORIZONTAL: Gráfica de líneas (70%) + Fichas por año (30%)
             dbc.Row([
@@ -1863,60 +1848,44 @@ def layout():
             ], id="modal-validacion-prediccion", is_open=False, size="xl"),
             
             # FILTROS DE PREDICCIÓN
-            dbc.Card([
-                dbc.CardBody([
-                    dbc.Row([
-                        # Selector de horizonte
-                        dbc.Col([
-                            html.Label("HORIZONTE DE PREDICCIÓN:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                            dcc.Dropdown(
-                                id='horizonte-prediccion',
-                                options=[
-                                    {'label': '📅 3 meses (Corto plazo)', 'value': 3},
-                                    {'label': '📅 6 meses (Mediano plazo)', 'value': 6, 'disabled': True},
-                                    {'label': '📅 12 meses (Largo plazo)', 'value': 12, 'disabled': True},
-                                    {'label': '📅 24 meses (Muy largo plazo)', 'value': 24, 'disabled': True}
-                                ],
-                                value=3,
-                                clearable=False,
-                                style={'fontSize': '0.75rem', 'minHeight': '32px'}
-                            ),
-                            html.Small("Horizontes 6, 12 y 24 meses: En desarrollo", 
-                                      className="text-muted", style={'fontSize': '0.65rem'})
-                        ], md=4),
-                        
-                        # Selector de fuentes para predicción
-                        dbc.Col([
-                            html.Label("FUENTES A PREDECIR:", style={'fontSize': '0.65rem', 'fontWeight': '600', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                            dcc.Dropdown(
-                                id='fuentes-prediccion',
-                                options=[
-                                    {'label': '💧 Hidráulica', 'value': 'Hidráulica'},
-                                    {'label': '🔥 Térmica', 'value': 'Térmica'},
-                                    {'label': '💨 Eólica', 'value': 'Eólica'},
-                                    {'label': '☀️ Solar', 'value': 'Solar'},
-                                    {'label': '🌿 Biomasa', 'value': 'Biomasa'},
-                                ],
-                                value=['Hidráulica', 'Térmica', 'Eólica', 'Solar', 'Biomasa'],
-                                multi=True,
-                                style={'fontSize': '0.75rem', 'minHeight': '32px'}
-                            )
-                        ], md=5),
-                        
-                        # Botón cargar predicciones
-                        dbc.Col([
-                            html.Label("\u00A0", style={'fontSize': '0.65rem', 'marginBottom': '2px', 'display': 'block'}),
-                            dbc.Button(
-                                [html.I(className="fas fa-magic me-1"), "Generar Predicciones"],
-                                id="btn-cargar-predicciones",
-                                color="success",
-                                className="w-100",
-                                style={'fontSize': '0.75rem', 'height': '32px'}
-                            )
-                        ], md=3)
-                    ], className="g-2 align-items-end")
-                ], style={'padding': '8px 12px'})
-            ], className="mb-3", style={'border': '1px solid #e0e0e0'}),
+            crear_filter_bar(
+                html.Div([
+                    html.Label("HORIZONTE:", className="t-filter-label"),
+                    dcc.Dropdown(
+                        id='horizonte-prediccion',
+                        options=[
+                            {'label': '📅 3 meses', 'value': 3},
+                            {'label': '📅 6 meses', 'value': 6, 'disabled': True},
+                            {'label': '📅 12 meses', 'value': 12, 'disabled': True},
+                            {'label': '📅 24 meses', 'value': 24, 'disabled': True}
+                        ],
+                        value=3,
+                        clearable=False,
+                        style={'width': '160px', 'fontSize': '0.75rem'}
+                    ),
+                ]),
+                html.Div([
+                    html.Label("FUENTES:", className="t-filter-label"),
+                    dcc.Dropdown(
+                        id='fuentes-prediccion',
+                        options=[
+                            {'label': '💧 Hidráulica', 'value': 'Hidráulica'},
+                            {'label': '🔥 Térmica', 'value': 'Térmica'},
+                            {'label': '💨 Eólica', 'value': 'Eólica'},
+                            {'label': '☀️ Solar', 'value': 'Solar'},
+                            {'label': '🌿 Biomasa', 'value': 'Biomasa'},
+                        ],
+                        value=['Hidráulica', 'Térmica', 'Eólica', 'Solar', 'Biomasa'],
+                        multi=True,
+                        style={'width': '300px', 'fontSize': '0.75rem'}
+                    )
+                ]),
+                html.Button(
+                    [html.I(className="fas fa-magic me-1"), "Generar Predicciones"],
+                    id="btn-cargar-predicciones",
+                    className="t-btn-filter",
+                ),
+            ),
             
             # FICHAS DE PREDICCIÓN
             dcc.Loading(
@@ -1939,10 +1908,8 @@ def layout():
             
         ]),  # FIN contenido-predicciones
         
-    ], fluid=True, style={'paddingTop': '0.5rem', 'paddingBottom': '0.5rem'})
-    ])  # FIN wrapper compacto zoom
-    
-    ], style={'backgroundColor': COLORS['bg_main'], 'minHeight': '100vh'})
+    ])  # end t-page
+    ])
     
 # Fin de la función layout() - Las fichas se generan directamente
 
@@ -2458,53 +2425,7 @@ def crear_fichas_desde_dataframe(df_generacion, fecha_inicio, fecha_fin, tipo_fu
         
         logger.info(f"✅ Fichas creadas desde DataFrame: {gen_total:.1f} GWh ({len(df_generacion)} registros)")
         
-        # Crear fichas HTML COMPACTAS HORIZONTALES
-        return dbc.Row([
-            # Ficha Generación Total
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-bolt", style={'color': '#111827', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                            html.Span(titulo_generacion, style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                            html.Span(valor_total, style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#111827', 'marginRight': '4px'}),
-                            html.Span("GWh", style={'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                            html.Small(periodo_texto, style={'color': '#999', 'fontSize': '0.6rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '4px'})
-                    ], style={'padding': '0.4rem 0.8rem', 'background': '#ffffff', 'borderRadius': '6px'})
-                ], className="shadow-sm")
-            ], lg=4, md=6, style={'marginBottom': '0'}),
-            
-            # Ficha Renovable
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-leaf", style={'color': '#000000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                            html.Span("Renovable", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                            html.Span(valor_renovable, style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000000', 'marginRight': '4px'}),
-                            html.Span("GWh", style={'color': '#666', 'fontSize': '0.65rem', 'marginRight': '6px'}),
-                            html.Span(f"{porcentaje_renovable}% del total", className="badge bg-success", style={'fontSize': '0.6rem', 'padding': '0.15rem 0.4rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '4px'})
-                    ], style={'padding': '0.4rem 0.8rem', 'background': 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', 'borderRadius': '6px'})
-                ], className="shadow-sm")
-            ], lg=4, md=6, style={'marginBottom': '0'}),
-            
-            # Ficha No Renovable
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-industry", style={'color': '#000000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                            html.Span("No Renovable", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.7rem', 'marginRight': '8px'}),
-                            html.Span(valor_no_renovable, style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000000', 'marginRight': '4px'}),
-                            html.Span("GWh", style={'color': '#666', 'fontSize': '0.65rem', 'marginRight': '6px'}),
-                            html.Span(f"{porcentaje_no_renovable}% del total", className="badge bg-danger", style={'fontSize': '0.6rem', 'padding': '0.15rem 0.4rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start', 'gap': '4px'})
-                    ], style={'padding': '0.4rem 0.8rem', 'background': 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)', 'borderRadius': '6px'})
-                ], className="shadow-sm")
-            ], lg=4, md=6, style={'marginBottom': '0'})
-        ])
+        return _crear_fichas_kpi_generacion(gen_total, gen_renovable, gen_no_renovable, tipo_fuente)
         
     except Exception as e:
         logger.error(f"Error creando fichas desde DataFrame: {e}")
@@ -2662,53 +2583,8 @@ def crear_fichas_generacion_xm_con_fechas(fecha_inicio, fecha_fin, tipo_fuente='
             titulo_generacion = f"Generación {tipo_info.get('label', tipo_fuente)}"
         
         
-        # Crear las fichas HTML COMPACTAS con layout HORIZONTAL
-        fichas_html = dbc.Row([
-            # Ficha Generación Total
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-bolt", style={'color': '#0f172a', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                            html.Span(titulo_generacion, style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                            html.Span(valor_total, style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#111827', 'marginRight': '4px'}),
-                            html.Span("GWh", style={'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                            html.Small(periodo_texto, style={'color': '#999', 'fontSize': '0.6rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-                    ], style={'padding': '0.4rem 0.8rem', 'background': '#ffffff', 'borderRadius': '6px'})
-                ], className="shadow-sm")
-            ], lg=4, md=6, className="mb-2"),
-
-            # Ficha Renovable
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-leaf", style={'color': '#000000', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                            html.Span("Renovable", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                            html.Span(valor_renovable, style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000000', 'marginRight': '4px'}),
-                            html.Span("GWh", style={'color': '#666', 'fontSize': '0.65rem', 'marginRight': '4px'}),
-                            html.Span(f"{porcentaje_renovable}% del total", className="badge bg-success", style={'fontSize': '0.6rem', 'padding': '0.15rem 0.4rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-                    ], style={'padding': '0.4rem 0.8rem', 'background': 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', 'borderRadius': '6px'})
-                ], className="shadow-sm")
-            ], lg=4, md=6, className="mb-2"),
-            
-            # Ficha No Renovable
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.I(className="fas fa-industry", style={'color': '#000000', 'fontSize': '0.9rem', 'marginRight': '6px'}),
-                            html.Span("No Renovable", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                            html.Span(valor_no_renovable, style={'fontWeight': 'bold', 'fontSize': '1.3rem', 'color': '#000000', 'marginRight': '4px'}),
-                            html.Span("GWh", style={'color': '#666', 'fontSize': '0.65rem', 'marginRight': '4px'}),
-                            html.Span(f"{porcentaje_no_renovable}% del total", className="badge bg-danger", style={'fontSize': '0.6rem', 'padding': '0.15rem 0.4rem'})
-                        ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-                    ], style={'padding': '0.4rem 0.8rem', 'background': 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)', 'borderRadius': '6px'})
-                ], className="shadow-sm")
-            ], lg=4, md=6, className="mb-2")
-    ])
+        # Crear las fichas usando design system
+        fichas_html = _crear_fichas_kpi_generacion(gen_total, gen_renovable, gen_no_renovable, tipo_fuente)
 
         
         # Guardar en caché antes de retornar

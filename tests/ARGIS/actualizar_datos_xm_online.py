@@ -29,11 +29,19 @@ from arcgis.gis import GIS
 from arcgis.geometry import Point
 from arcgis.features import FeatureLayer, GeoAccessor, GeoSeriesAccessor
 
-# Intentar cargar variables de entorno desde .env
+# Determinar archivo .env (soporta --env-file para múltiples cuentas)
+_env_file = Path(__file__).parent / '.env'
+for _i, _arg in enumerate(sys.argv):
+    if _arg == '--env-file' and _i + 1 < len(sys.argv):
+        _env_file = Path(sys.argv[_i + 1])
+        if not _env_file.is_absolute():
+            _env_file = Path(__file__).parent / _env_file
+        break
+
 try:
     from dotenv import load_dotenv
-    env_path = Path(__file__).parent / '.env'
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(dotenv_path=_env_file, override=True)
+    print(f"📄 Usando env: {_env_file.name}")
 except ImportError:
     pass
 
@@ -623,6 +631,12 @@ def main():
         '--dry-run',
         action='store_true',
         help='Ejecuta sin publicar cambios (solo prueba)'
+    )
+    parser.add_argument(
+        '--env-file',
+        type=str,
+        default=None,
+        help='Archivo .env alternativo (ej: .env.adminportal)'
     )
     args = parser.parse_args()
     

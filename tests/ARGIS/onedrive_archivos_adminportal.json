@@ -1,10 +1,9 @@
 {
-    "_comentario": "Configuración de archivos de SharePoint/OneDrive del Ministerio para publicar en ArcGIS Enterprise.",
+    "_comentario": "Configuración de archivos SharePoint/OneDrive para cuenta ADMINPORTAL en ArcGIS Enterprise.",
     "_instrucciones": [
-        "Cada entrada define un archivo Excel y qué hoja publicar como capa hospedada",
-        "Un mismo link puede tener varias entradas (una por hoja/pestaña)",
-        "Luego de la primera publicación, actualiza 'item_id_existente' con el ID generado",
-        "Pon 'activo': false para deshabilitar una entrada sin borrarla"
+        "Copia de onedrive_archivos.json pero para la cuenta Adminportal",
+        "Los item_id_existente se llenarán automáticamente en la primera publicación",
+        "Mismos links de SharePoint, mismos Excel — distinta cuenta ArcGIS"
     ],
     "archivos": [
         {
@@ -80,7 +79,7 @@
             "titulo_arcgis": "Comunidades Energéticas - Avance Proyectos",
             "descripcion": "Seguimiento de avance de proyectos de Comunidades Energéticas (OneDrive público, Ministerio)",
             "tags": "comunidades energéticas, avance, proyectos, onedrive, MME",
-            "item_id_existente": "68e49bc23bb0493fa1de7778503d5b9d",
+            "item_id_existente": "cdc9130c08fc4f2381450b12f95fcd80",
             "columnas_coordenadas": null,
             "activo": true
         }

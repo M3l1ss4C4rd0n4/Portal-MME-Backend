@@ -26,6 +26,8 @@ except ImportError:
 
 # Imports locales
 from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas, crear_boton_regresar
+from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.chart_card import crear_chart_card, crear_chart_card_custom, crear_table_card, crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
 from domain.services.distribution_service import DistributionService
 from infrastructure.database.manager import DatabaseManager
@@ -249,7 +251,6 @@ def crear_grafica_lineas_demanda(df_demanda_come, df_demanda_real, agente_nombre
         titulo = f"Evolución Temporal - {agente_nombre}"
     
     fig.update_layout(
-        title=titulo,
         xaxis_title="Fecha",
         yaxis=dict(
             title="Demanda (GWh)",
@@ -263,7 +264,11 @@ def crear_grafica_lineas_demanda(df_demanda_come, df_demanda_real, agente_nombre
         ),
         hovermode='x unified',
         template='plotly_white',
-        height=290,
+        height=280,
+        font=dict(family='Inter, sans-serif'),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=50, r=50, t=30, b=40),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -380,7 +385,7 @@ def crear_grafica_barras_dna_por_area(df_dna_prog, df_dna_no_prog):
             title='Demanda No Atendida (GWh)',
             tickfont=dict(size=11)
         ),
-        barmode='stack',  # Barras apiladas
+        barmode='stack',
         bargap=0.2,
         hovermode='x unified',
         legend=dict(
@@ -391,8 +396,11 @@ def crear_grafica_barras_dna_por_area(df_dna_prog, df_dna_no_prog):
             x=0.5
         ),
         template='plotly_white',
-        height=400,
-        margin=dict(l=60, r=30, t=50, b=100)
+        height=280,
+        font=dict(family='Inter, sans-serif'),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=50, r=30, t=30, b=80)
     )
     
     return fig
@@ -438,15 +446,12 @@ def crear_grafica_torta_dna_por_region(df_dna_prog, df_dna_no_prog):
     )])
     
     fig.update_layout(
-        title={
-            'text': 'DNA<br>por Región',
-            'x': 0.5,
-            'xanchor': 'center',
-            'font': {'size': 11, 'color': '#2c3e50'}
-        },
         showlegend=False,
-        height=400,
-        margin=dict(l=10, r=10, t=60, b=10)
+        height=280,
+        font=dict(family='Inter, sans-serif'),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=10, r=10, t=10, b=10)
     )
     
     return fig
@@ -600,216 +605,120 @@ def layout(**kwargs):
     porcentaje_regulado = (demanda_regulada / demanda_real_total * 100) if demanda_real_total > 0 else 0.0
     porcentaje_no_regulado = (demanda_no_regulada / demanda_real_total * 100) if demanda_real_total > 0 else 0.0
 
-    ficha_dna_nacional = dbc.Card([
-        dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-bolt", style={'color': '#8B5CF6', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                html.Span("DNA Nacional", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                html.Span(f"{total_dna_nacional:.2f}", id='valor-dna-nacional', style={'fontWeight': 'bold', 'fontSize': '1.2rem', 'color': '#8B5CF6', 'marginRight': '4px'}),
-                html.Span("GWh", style={'color': '#666', 'fontSize': '0.65rem'})
-            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-        ], style={'padding': '0.3rem 0.6rem'})
-    ], className="shadow-sm")
-
-    ficha_regulado = dbc.Card([
-        dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-check-circle", style={'color': '#10B981', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                html.Span("Mercado Regulado", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                html.Span(f"{porcentaje_regulado:.2f}", id='valor-regulado', style={'fontWeight': 'bold', 'fontSize': '1.2rem', 'color': '#10B981', 'marginRight': '4px'}),
-                html.Span("%", style={'color': '#666', 'fontSize': '0.65rem'})
-            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-        ], style={'padding': '0.3rem 0.6rem'})
-    ], className="shadow-sm")
-
-    ficha_no_regulado = dbc.Card([
-        dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-industry", style={'color': '#3B82F6', 'fontSize': '0.8rem', 'marginRight': '6px'}),
-                html.Span("Mercado No Regulado", style={'fontWeight': '500', 'color': '#666', 'fontSize': '0.65rem', 'marginRight': '8px'}),
-                html.Span(f"{porcentaje_no_regulado:.2f}", id='valor-no-regulado', style={'fontWeight': 'bold', 'fontSize': '1.2rem', 'color': '#3B82F6', 'marginRight': '4px'}),
-                html.Span("%", style={'color': '#666', 'fontSize': '0.65rem'})
-            ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-start'})
-        ], style={'padding': '0.3rem 0.6rem'})
-    ], className="shadow-sm")
+    # FICHAS: KPIs via design system
+    kpis_iniciales = crear_kpi_row([
+        {"titulo": "DNA Nacional", "valor": f"{total_dna_nacional:.2f}", "unidad": "GWh", "icono": "fas fa-bolt", "color": "purple"},
+        {"titulo": "Mercado Regulado", "valor": f"{porcentaje_regulado:.2f}", "unidad": "%", "icono": "fas fa-check-circle", "color": "green"},
+        {"titulo": "Mercado No Regulado", "valor": f"{porcentaje_no_regulado:.2f}", "unidad": "%", "icono": "fas fa-industry", "color": "blue"},
+    ], columnas=3)
 
     return html.Div([
-        # Navbar eliminado
-        html.Div(style={'maxWidth': '100%', 'padding': '5px'}, children=[
-        dbc.Container([
-            # Botón de regreso eliminado
-            
-            # FILTROS UNIFICADOS EN UNA SOLA FILA HORIZONTAL
-            dbc.Card([
-                dbc.CardBody([
-                    dbc.Row([
-                        # Rango de fechas
-                        dbc.Col([
-                            html.Label("RANGO:", style={'fontWeight': '600', 'fontSize': '0.65rem', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                            dcc.Dropdown(
-                                id='rango-fechas-distribucion',
-                                options=[
-                                    {'label': 'Último mes', 'value': '1m'},
-                                    {'label': 'Últimos 6 meses', 'value': '6m'},
-                                    {'label': 'Último año', 'value': '1y'},
-                                    {'label': 'Últimos 2 años', 'value': '2y'},
-                                    {'label': 'Últimos 5 años', 'value': '5y'},
-                                    {'label': 'Personalizado', 'value': 'custom'}
-                                ],
-                                value='6m',
-                                clearable=False,
-                                style={'fontSize': '0.75rem', 'minHeight': '32px'}
-                            )
-                        ], md=3),
-                        
-                        # Fecha inicio (oculta)
-                        dbc.Col([
-                            html.Label("INICIO:", style={'fontWeight': '600', 'fontSize': '0.65rem', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                            dcc.DatePickerSingle(
-                                id='fecha-inicio-distribucion',
-                                date=(date.today() - timedelta(days=180)).strftime('%Y-%m-%d'),
-                                display_format='DD/MM/YYYY',
-                                style={'fontSize': '0.75rem'}
-                            )
-                        ], id='container-fecha-inicio-distribucion', md=2, style={'display': 'none'}),
-                        
-                        # Fecha fin (oculta)
-                        dbc.Col([
-                            html.Label("FIN:", style={'fontWeight': '600', 'fontSize': '0.65rem', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                            dcc.DatePickerSingle(
-                                id='fecha-fin-distribucion',
-                                date=date.today().strftime('%Y-%m-%d'),
-                                display_format='DD/MM/YYYY',
-                                style={'fontSize': '0.75rem'}
-                            )
-                        ], id='container-fecha-fin-distribucion', md=2, style={'display': 'none'}),
-                        
-                        # Selector de agente
-                        dbc.Col([
-                            html.Label("AGENTE:", style={'fontWeight': '600', 'fontSize': '0.65rem', 'marginBottom': '2px', 'color': '#2c3e50'}),
-                            dcc.Dropdown(
-                                id='selector-agente-distribucion',
-                                options=opciones_agentes,
-                                value='TODOS',
-                                placeholder="Agente...",
-                                clearable=False,
-                                style={'fontSize': '0.75rem', 'minHeight': '32px'}
-                            )
-                        ], md=4),
-                        
-                        # Botón actualizar
-                        dbc.Col([
-                            html.Label("\u00A0", style={'fontSize': '0.65rem', 'marginBottom': '2px', 'display': 'block'}),
-                            dbc.Button(
-                                [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
-                                id='btn-actualizar-distribucion',
-                                color="primary",
-                                className="w-100",
-                                style={'height': '32px', 'fontSize': '0.75rem'}
-                            )
-                        ], md=1)
-                    ], className="g-2 align-items-end")
-                ], style={'padding': '8px 12px'})
-            ], style={'marginBottom': '8px', 'border': '1px solid #e0e0e0'}),
-            
-            # Fichas en la misma fila (después de los filtros)
-            dbc.Row([
-                dbc.Col([ficha_dna_nacional], md=4),
-                dbc.Col([ficha_regulado], md=4),
-                dbc.Col([ficha_no_regulado], md=4),
-            ], style={'marginBottom': '4px'}),
-            # Gráfica de líneas (izquierda) + Barras DNA (centro) + Torta DNA por Región (derecha)
-            dbc.Row([
-                # Gráfica de evolución temporal (izquierda 60%)
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader([
-                            html.Div([
-                                html.I(className="fas fa-chart-line", style={'fontSize': '0.6rem', 'marginRight': '4px', 'color': '#666'}),
-                                html.Span("Evolución Temporal - Demanda Comercial vs Demanda Real", style={'fontSize': '0.65rem', 'color': '#2c3e50'})
-                            ], style={'display': 'flex', 'alignItems': 'center'})
-                        ], style={'padding': '3px 6px', 'backgroundColor': '#f8f9fa'}),
-                        dbc.CardBody([
-                            dcc.Loading(
-                                id="loading-grafica-distribucion",
-                                type="default",
-                                children=[
-                                    dcc.Graph(
-                                        id='grafica-lineas-demanda',
-                                        figure=fig_lineas,
-                                        config={'displayModeBar': True}
-                                    )
-                                ]
-                            )
-                        ], className="p-2")
-                    ], className="shadow-sm")
-                ], md=7),
-                
-                # Gráfica de barras de Demanda No Atendida (centro 25%)
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader([
-                            html.Div([
-                                html.I(className="fas fa-chart-bar", style={'fontSize': '0.6rem', 'marginRight': '4px', 'color': '#666'}),
-                                html.Span("Demanda No Atendida por Área", style={'fontSize': '0.65rem', 'color': '#2c3e50'})
-                            ], style={'display': 'flex', 'alignItems': 'center'})
-                        ], style={'padding': '3px 6px', 'backgroundColor': '#f8f9fa'}),
-                        dbc.CardBody([
-                            dcc.Loading(
-                                id="loading-grafica-dna",
-                                type="default",
-                                children=[
-                                    dcc.Graph(
-                                        id='grafica-barras-dna',
-                                        figure=fig_barras,
-                                        config={'displayModeBar': False}
-                                    )
-                                ]
-                            )
-                        ], className="p-2")
-                    ], className="shadow-sm")
-                ], md=3),
-                
-                # Gráfica de torta DNA por Región (derecha 15%)
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader([
-                            html.Div([
-                                html.I(className="fas fa-chart-pie", style={'fontSize': '0.6rem', 'marginRight': '4px', 'color': '#666'}),
-                                html.Span("DNA por Región", style={'fontSize': '0.65rem', 'color': '#2c3e50'})
-                            ], style={'display': 'flex', 'alignItems': 'center'})
-                        ], style={'padding': '3px 6px', 'backgroundColor': '#f8f9fa'}),
-                        dbc.CardBody([
-                            dcc.Loading(
-                                id="loading-grafica-dna-torta",
-                                type="default",
-                                children=[
-                                    dcc.Graph(
-                                        id='grafica-torta-dna-region',
-                                        figure=fig_torta,
-                                        config={'displayModeBar': False}
-                                    )
-                                ]
-                            )
-                        ], className="p-2")
-                    ], className="shadow-sm")
-                ], md=2)
-            ], className="mb-3"),
-            # ...existing code...
-            dcc.Store(id='store-datos-distribucion'),
-            dcc.Store(id='store-agentes-distribucion', data=agentes_df.to_json(date_format='iso', orient='split') if not agentes_df.empty else None),
-            dbc.Modal([
-                dbc.ModalHeader(dbc.ModalTitle(id="modal-title-demanda")),
-                dbc.ModalBody([
-                    html.P(id="modal-description-demanda", className="mb-3"),
-                    html.Div(id="modal-table-content-demanda")
-                ]),
-                dbc.ModalFooter(
-                    dbc.Button("Cerrar", id="close-modal-demanda", className="ms-auto", n_clicks=0)
+        html.Div(className="t-page", children=[
+
+        crear_page_header(
+            titulo="Distribución Eléctrica",
+            icono="fas fa-network-wired",
+            breadcrumb="Inicio / Distribución",
+        ),
+
+        # FILTROS
+        crear_filter_bar(
+            html.Div([
+                html.Label("RANGO:", className="t-filter-label"),
+                dcc.Dropdown(
+                    id='rango-fechas-distribucion',
+                    options=[
+                        {'label': 'Último mes', 'value': '1m'},
+                        {'label': 'Últimos 6 meses', 'value': '6m'},
+                        {'label': 'Último año', 'value': '1y'},
+                        {'label': 'Últimos 2 años', 'value': '2y'},
+                        {'label': 'Últimos 5 años', 'value': '5y'},
+                        {'label': 'Personalizado', 'value': 'custom'}
+                    ],
+                    value='6m',
+                    clearable=False,
+                    style={'width': '160px', 'fontSize': '0.75rem'}
                 )
-            ], id="modal-detalle-demanda", is_open=False, size="xl")
-        ], fluid=True, className="py-4")
-        ])
+            ]),
+            html.Div([
+                html.Label("INICIO:", className="t-filter-label"),
+                dcc.DatePickerSingle(
+                    id='fecha-inicio-distribucion',
+                    date=(date.today() - timedelta(days=180)).strftime('%Y-%m-%d'),
+                    display_format='DD/MM/YYYY',
+                    style={'fontSize': '0.75rem'}
+                )
+            ], id='container-fecha-inicio-distribucion', style={'display': 'none'}),
+            html.Div([
+                html.Label("FIN:", className="t-filter-label"),
+                dcc.DatePickerSingle(
+                    id='fecha-fin-distribucion',
+                    date=date.today().strftime('%Y-%m-%d'),
+                    display_format='DD/MM/YYYY',
+                    style={'fontSize': '0.75rem'}
+                )
+            ], id='container-fecha-fin-distribucion', style={'display': 'none'}),
+            html.Div([
+                html.Label("AGENTE:", className="t-filter-label"),
+                dcc.Dropdown(
+                    id='selector-agente-distribucion',
+                    options=opciones_agentes,
+                    value='TODOS',
+                    placeholder="Agente...",
+                    clearable=False,
+                    style={'width': '280px', 'fontSize': '0.75rem'}
+                )
+            ]),
+            html.Button(
+                [html.I(className="fas fa-sync-alt me-1"), "Actualizar"],
+                id='btn-actualizar-distribucion',
+                className="t-btn-filter",
+            ),
+        ),
+
+        # KPIs
+        html.Div(kpis_iniciales, id='kpis-distribucion', style={'marginBottom': '12px'}),
+
+        # Charts row: líneas (7) + barras (3) + torta (2)
+        html.Div([
+            html.Div([
+                crear_chart_card(
+                    titulo="Evolución Temporal – Demanda Comercial vs Real",
+                    graph_id='grafica-lineas-demanda',
+                    height=280,
+                ),
+            ], style={'flex': '7'}),
+            html.Div([
+                crear_chart_card(
+                    titulo="DNA por Área",
+                    graph_id='grafica-barras-dna',
+                    height=280,
+                ),
+            ], style={'flex': '3'}),
+            html.Div([
+                crear_chart_card(
+                    titulo="DNA por Región",
+                    graph_id='grafica-torta-dna-region',
+                    height=280,
+                ),
+            ], style={'flex': '2'}),
+        ], style={'display': 'flex', 'gap': '12px', 'marginBottom': '12px'}),
+
+        # Stores & Modal
+        dcc.Store(id='store-datos-distribucion'),
+        dcc.Store(id='store-agentes-distribucion', data=agentes_df.to_json(date_format='iso', orient='split') if not agentes_df.empty else None),
+        dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle(id="modal-title-demanda")),
+            dbc.ModalBody([
+                html.P(id="modal-description-demanda", className="mb-3"),
+                html.Div(id="modal-table-content-demanda")
+            ]),
+            dbc.ModalFooter(
+                dbc.Button("Cerrar", id="close-modal-demanda", className="ms-auto", n_clicks=0)
+            )
+        ], id="modal-detalle-demanda", is_open=False, size="xl"),
+
+        ])  # end t-page
     ])
 
 # ==================== CALLBACKS ====================
@@ -862,12 +771,7 @@ def actualizar_fechas_por_rango(rango, fecha_inicio_actual, fecha_fin_actual):
      Output('grafica-barras-dna', 'figure'),
      Output('grafica-torta-dna-region', 'figure'),
      Output('store-datos-distribucion', 'data'),
-     Output('valor-dna-nacional', 'children'),
-     Output('fecha-dna-nacional', 'children'),
-     Output('valor-regulado', 'children'),
-     Output('fecha-regulado', 'children'),
-     Output('valor-no-regulado', 'children'),
-     Output('fecha-no-regulado', 'children')],
+     Output('kpis-distribucion', 'children')],
     [Input('btn-actualizar-distribucion', 'n_clicks')],
     [State('selector-agente-distribucion', 'value'),
      State('fecha-inicio-distribucion', 'date'),
@@ -973,20 +877,19 @@ def actualizar_datos_distribucion(n_clicks, codigo_agente, fecha_inicio_str, fec
         porcentaje_regulado = (demanda_regulada / demanda_real_total * 100) if demanda_real_total > 0 else 0.0
         porcentaje_no_regulado = (demanda_no_regulada / demanda_real_total * 100) if demanda_real_total > 0 else 0.0
         
-        # Textos de fechas
-        texto_fecha = f"Rango de fechas: {fecha_inicio.strftime('%Y-%m-%d')} a {fecha_fin.strftime('%Y-%m-%d')}"
+        # Build KPIs via design system
+        kpis = crear_kpi_row([
+            {"titulo": "DNA Nacional", "valor": f"{total_dna_nacional:.2f}", "unidad": "GWh", "icono": "fas fa-bolt", "color": "purple"},
+            {"titulo": "Mercado Regulado", "valor": f"{porcentaje_regulado:.2f}", "unidad": "%", "icono": "fas fa-check-circle", "color": "green"},
+            {"titulo": "Mercado No Regulado", "valor": f"{porcentaje_no_regulado:.2f}", "unidad": "%", "icono": "fas fa-industry", "color": "blue"},
+        ], columnas=3)
         
         return (
             fig_lineas, 
             fig_barras,
             fig_torta,
             store_data,
-            f"{total_dna_nacional:.2f} GWh",
-            texto_fecha,
-            f"{porcentaje_regulado:.2f}%",
-            texto_fecha,
-            f"{porcentaje_no_regulado:.2f}%",
-            texto_fecha
+            kpis
         )
         
     except Exception as e:
@@ -1004,12 +907,11 @@ def actualizar_datos_distribucion(n_clicks, codigo_agente, fecha_inicio_str, fec
             fig_error,
             fig_error,
             None,
-            "Error",
-            "Error en fechas",
-            "Error",
-            "Error en fechas",
-            "Error",
-            "Error en fechas"
+            crear_kpi_row([
+                {"titulo": "DNA Nacional", "valor": "—", "unidad": "", "icono": "fas fa-bolt", "color": "purple"},
+                {"titulo": "Mercado Regulado", "valor": "—", "unidad": "", "icono": "fas fa-check-circle", "color": "green"},
+                {"titulo": "Mercado No Regulado", "valor": "—", "unidad": "", "icono": "fas fa-industry", "color": "blue"},
+            ], columnas=3)
         )
 
 @callback(

@@ -36,6 +36,7 @@ from domain.services.metrics_service import MetricsService
 
 # Imports locales para componentes uniformes
 from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar
+from interface.components.chart_card import crear_page_header
 from core.constants import UIColors as COLORS
 from infrastructure.logging.logger import setup_logger
 from core.validators import validate_date_range, validate_string
@@ -438,30 +439,27 @@ def crear_selector_fuente_datos():
     ], className="shadow-sm mb-3")
 
 layout = html.Div([
-    # Navbar horizontal
-    # crear_navbar_horizontal(),
-    
-    # Container principal
-    dbc.Container([
-        
-        dbc.Row([
-            # Contenido principal (ahora ocupa todo el ancho)
-            dbc.Col([
-                # Panel de controles en tabs
-                dbc.Tabs([
-                    dbc.Tab(label="📊 Consulta de Métricas", tab_id="tab-consulta"),
-                    dbc.Tab(label="🗂️ Análisis por Sección", tab_id="tab-secciones"),
-                    dbc.Tab(label="📈 Análisis Energético", tab_id="tab-analisis"),
-                    dbc.Tab(label="🔍 Exploración Avanzada", tab_id="tab-exploracion"),
-                    dbc.Tab(label="📚 Guía para Ingenieros", tab_id="tab-guia"),
-                ], id="metricas-tabs", active_tab="tab-consulta", className="mb-4"),
-                
-                # Contenido dinámico
-                html.Div(id="metricas-tab-content")
-            ], width=12)  # Ahora ocupa todo el ancho
-        ])
-    ], fluid=True)
-], style={'backgroundColor': COLORS['bg_main'], 'minHeight': '100vh'})
+    html.Div(className="t-page", children=[
+
+        crear_page_header(
+            titulo="Consulta de Métricas",
+            icono="fas fa-database",
+            breadcrumb="Inicio / Métricas",
+        ),
+
+        # Panel de controles en tabs
+        dbc.Tabs([
+            dbc.Tab(label="📊 Consulta de Métricas", tab_id="tab-consulta"),
+            dbc.Tab(label="🗂️ Análisis por Sección", tab_id="tab-secciones"),
+            dbc.Tab(label="📈 Análisis Energético", tab_id="tab-analisis"),
+            dbc.Tab(label="🔍 Exploración Avanzada", tab_id="tab-exploracion"),
+            dbc.Tab(label="📚 Guía para Ingenieros", tab_id="tab-guia"),
+        ], id="metricas-tabs", active_tab="tab-consulta", className="mb-4"),
+
+        # Contenido dinámico
+        html.Div(id="metricas-tab-content"),
+    ])
+])
 
 # Layout del panel de controles energéticos
 def crear_panel_controles_metricas():
