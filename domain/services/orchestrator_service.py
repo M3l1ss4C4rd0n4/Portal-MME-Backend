@@ -1359,7 +1359,389 @@ class ChatbotOrchestratorService:
         except Exception as e:
             logger.warning(f"Error calculando media histórica 2020-2025 embalses: {e}")
             return None
-    
+
+    # ═══════════════════════════════════════════════════════════
+    # HELPERS INFORME EJECUTIVO — Contexto enriquecido (Fase 1)
+    # ═══════════════════════════════════════════════════════════
+
+    async def _build_generacion_por_fuente(self) -> Dict[str, Any]:
+        """
+        Construye desglose de generación por tipo de fuente para el último
+        día disponible (ventana 7 días hacia atrás).
+
+        Usa GenerationService.get_generation_mix(target_date) que retorna
+        un DataFrame con columnas: tipo, generacion_gwh, porcentaje.
+
+        Razón de ventana 7 días: XM puede publicar con 1-3 días de retraso;
+        se busca el dato real más reciente dentro de una ventana razonable.
+
+        Returns:
+            Dict con fecha_dato, total_gwh, y lista fuentes con GWh + %.
+            Retorna dict con error si no hay datos.
+        """
+        hoy = date.today()
+
+        # Mapeo de nombres internos DB → nombre legible para informe
+        _NOMBRES_FUENTE = {
+            'HIDRAULICA': 'Hidráulica',
+            'TERMICA': 'Térmica',
+            'EOLICA': 'Eólica',
+            'SOLAR': 'Solar',
+            'COGENERADOR': 'Biomasa/Cogeneración',
+        }
+
+        for dias_atras in range(1, 8):
+            fecha_intento = hoy - timedelta(days=dias_atras)
+            try:
+                df_mix = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.generation_service.get_generation_mix,
+                        fecha_intento,
+                    ),
+                    timeout=self.SERVICE_TIMEOUT,
+                )
+                if df_mix is not None and not df_mix.empty:
+                    total_gwh = float(df_mix['generacion_gwh'].sum())
+                    fuentes = []
+                    for _, row in df_mix.iterrows():
+                        tipo_raw = str(row['tipo']).upper().strip()
+                        fuentes.append({
+                            "fuente": _NOMBRES_FUENTE.get(tipo_raw, tipo_raw.capitalize()),
+                            "gwh": round(float(row['generacion_gwh']), 2),
+                            "porcentaje": round(float(row['porcentaje']), 1),
+                        })
+                    # Ordenar de mayor a menor participación
+                    fuentes.sort(key=lambda f: f['porcentaje'], reverse=True)
+                    logger.info(
+                        f"[INFORME] generacion_por_fuente OK: "
+                        f"{len(fuentes)} fuentes, total={total_gwh:.1f} GWh, "
+                        f"fecha={fecha_intento}"
+                    )
+                    return {
+                        "fecha_dato": fecha_intento.isoformat(),
+                        "total_gwh": round(total_gwh, 2),
+                        "fuentes": fuentes,
+                        "nota": (
+                            f"Mix energético del {fecha_intento.isoformat()}. "
+                            f"XM puede publicar con 1-3 días de retraso."
+                        ),
+                    }
+            except Exception as e:
+                logger.debug(f"[INFORME] Mix fecha {fecha_intento} no disponible: {e}")
+                continue
+
+        logger.warning("[INFORME] generacion_por_fuente: sin datos en ventana 7d")
+        return {"error": "Sin datos de mix energético en los últimos 7 días"}
+
+    def _build_embalses_detalle(
+        self,
+        fichas: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Consolida datos de embalses en un bloque detallado para el informe.
+
+        Extrae de la ficha de embalses (ya calculada en _handle_estado_actual):
+        - valor_actual_pct: último dato completo en ventana 7 días
+        - promedio_30d: promedio rolling 30 días
+        - media_historica_2020_2025: referencia de largo plazo
+        - desviacion_pct_media_historica: positivo = por encima, negativo = por debajo
+        - energia_embalsada_gwh: energía total embalsada
+        - estado: evaluación cualitativa (🟢/🟡/🟠/🔴)
+
+        Returns:
+            Dict con bloque consolidado de embalses.
+        """
+        # Buscar la ficha de Embalses
+        ficha_emb = None
+        for f in fichas:
+            if f.get('indicador') == 'Porcentaje de Embalses':
+                ficha_emb = f
+                break
+
+        if ficha_emb is None or ficha_emb.get('valor') is None:
+            return {"error": "Sin datos de embalses disponibles"}
+
+        ctx = ficha_emb.get('contexto', {})
+        valor_actual = ficha_emb['valor']
+        prom_30d = ctx.get('promedio_30d')
+        media_hist = ctx.get('media_historica_2020_2025')
+        desviacion = ctx.get('desviacion_pct_media_historica_2020_2025')
+
+        return {
+            "fecha_dato": ficha_emb.get('fecha'),
+            "valor_actual_pct": valor_actual,
+            "promedio_30d_pct": prom_30d,
+            "media_historica_2020_2025_pct": round(media_hist, 2) if media_hist else None,
+            "desviacion_pct_media_historica": desviacion,
+            "energia_embalsada_gwh": ctx.get('energia_embalsada_gwh'),
+            "estado": ctx.get('estado', 'Sin evaluación'),
+            "referencia_historica": ctx.get('referencia_historica', ''),
+            "nota": (
+                "Valor actual: último dato con completitud >= 80% "
+                "en ventana de 7 días. Media histórica calculada sobre "
+                "2020-01-01 a 2025-12-31 con misma fórmula VoluUtil/CapaUtil."
+            ),
+        }
+
+    def _build_predicciones_mes_resumen(
+        self,
+        fichas: List[Dict[str, Any]],
+        predicciones_mes: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Construye bloque compacto de predicciones a 1 mes para las
+        3 métricas clave: Generación, Precio, Embalses.
+
+        Para cada métrica incluye:
+        - valor_actual: del último dato real (fichas)
+        - promedio_proyectado_1m: promedio de la predicción
+        - rango_min, rango_max: rango de la predicción
+        - cambio_pct_vs_prom30d: variación vs promedio real 30d
+        - tendencia: "Creciente" / "Decreciente" / "Estable"
+
+        La tendencia reutiliza la lógica de _build_prediction_ficha:
+        cambio_pct > 5% → Creciente, < -5% → Decreciente, else Estable.
+
+        Returns:
+            Dict con metricas (lista de 3 fichas compactas).
+        """
+        metricas_clave = predicciones_mes.get('metricas_clave', {})
+
+        # Mapeo de clave interna → nombre de indicador en fichas
+        _MAP_INDICADOR = {
+            'generacion': 'Generación Total del Sistema',
+            'precio_bolsa': 'Precio de Bolsa Nacional',
+            'embalses': 'Porcentaje de Embalses',
+        }
+        _MAP_UNIDAD = {
+            'generacion': 'GWh',
+            'precio_bolsa': 'COP/kWh',
+            'embalses': '%',
+        }
+
+        # Obtener valor actual de cada indicador desde las fichas
+        valores_actuales = {}
+        for f in fichas:
+            for clave, nombre_ind in _MAP_INDICADOR.items():
+                if f.get('indicador') == nombre_ind and f.get('valor') is not None:
+                    valores_actuales[clave] = f['valor']
+
+        resultado = []
+        for clave in ['generacion', 'precio_bolsa', 'embalses']:
+            pred = metricas_clave.get(clave, {})
+            if not pred:
+                continue
+
+            prom_proyectado = pred.get('promedio_periodo')
+            prom_30d = pred.get('promedio_30d_historico')
+            cambio_pct = pred.get('cambio_pct_vs_historico')
+
+            # Tendencia cualitativa: mismos umbrales que _build_prediction_ficha
+            # > 5% → Creciente, < -5% → Decreciente, else → Estable
+            if cambio_pct is not None:
+                if cambio_pct > 5:
+                    tendencia = "Creciente"
+                elif cambio_pct < -5:
+                    tendencia = "Decreciente"
+                else:
+                    tendencia = "Estable"
+            else:
+                tendencia_raw = pred.get('tendencia', '')
+                if 'Creciente' in tendencia_raw:
+                    tendencia = "Creciente"
+                elif 'Decreciente' in tendencia_raw:
+                    tendencia = "Decreciente"
+                else:
+                    tendencia = "Estable"
+
+            resultado.append({
+                "indicador": _MAP_INDICADOR[clave],
+                "unidad": _MAP_UNIDAD[clave],
+                "valor_actual": valores_actuales.get(clave),
+                "promedio_proyectado_1m": prom_proyectado,
+                "rango_min": pred.get('rango_min'),
+                "rango_max": pred.get('rango_max'),
+                "cambio_pct_vs_prom30d": cambio_pct,
+                "tendencia": tendencia,
+                "confianza_modelo": pred.get('confianza_modelo'),
+            })
+
+        return {
+            "horizonte": predicciones_mes.get('horizonte', 'Próximo mes'),
+            "fecha_inicio": predicciones_mes.get('fecha_inicio'),
+            "fecha_fin": predicciones_mes.get('fecha_fin'),
+            "metricas": resultado,
+            "nota": (
+                "Resumen compacto de predicciones 1 mes. "
+                "Tendencia: Creciente (>+5%), Estable (±5%), Decreciente (<-5%) "
+                "respecto al promedio real de los últimos 30 días."
+            ),
+        }
+
+    def _build_tabla_indicadores_clave(
+        self,
+        fichas: List[Dict[str, Any]],
+        anomalias_lista: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Construye tabla de indicadores clave con semáforo para el informe.
+
+        Para cada KPI (Generación, Precio, Embalses):
+        - nombre: nombre legible del indicador
+        - valor_actual: valor numérico + unidad
+        - tendencia: flecha textual (Alza / Baja / Estable), SIN emojis
+        - estado: Normal / Alerta / Crítico
+
+        ── Reglas de semáforo ──
+
+        GENERACIÓN:
+          - |desviación vs prom 7d| > 15%  → Crítico
+          - |desviación vs prom 7d| > 8%   → Alerta
+          - else                            → Normal
+          Razón: ±15% respecto a la media semanal indica evento anómalo
+          (mantenimiento masivo, fenómeno climático).
+
+        PRECIO:
+          - |desviación vs prom 7d| > 25%  → Crítico
+          - |desviación vs prom 7d| > 12%  → Alerta
+          - else                            → Normal
+          Razón: el precio de bolsa es naturalmente más volátil que la
+          generación; umbrales más amplios para no generar falsas alarmas.
+          25% refleja una desviación severa (restricción de red, escasez).
+
+        EMBALSES:
+          - nivel < 30%                     → Crítico
+          - nivel < 40%                     → Alerta
+          - nivel > 85%                     → Alerta (riesgo de vertimiento)
+          - else                            → Normal
+          Razón: umbrales alineados con notas_negocio.umbrales_embalses,
+          reflejando regulación del sector (CREG). <30% activa planes de
+          contingencia; >85% riesgo de desborde/vertimiento.
+
+        Adicionalmente: si existe una anomalía con severidad "crítico"
+        para el indicador, se eleva a Crítico independientemente de los
+        umbrales porcentuales.
+
+        Returns:
+            Lista de 3 dicts (uno por indicador).
+        """
+        # Indexar anomalías por indicador para lookup rápido
+        # Las anomalías usan nombres cortos: "Generación Total", "Precio de Bolsa", "Embalses"
+        anomalias_por_ind = {}
+        for a in anomalias_lista:
+            nombre = a.get('indicador', '')
+            sev = a.get('severidad', 'normal')
+            if sev in ('alerta', 'crítico'):
+                anomalias_por_ind[nombre] = max(
+                    anomalias_por_ind.get(nombre, ''),
+                    sev,
+                    key=lambda x: {'': 0, 'normal': 0, 'alerta': 1, 'crítico': 2}.get(x, 0)
+                )
+
+        tabla = []
+
+        for ficha in fichas:
+            ind_nombre = ficha.get('indicador', '')
+            valor = ficha.get('valor')
+            unidad = ficha.get('unidad', '')
+            ctx = ficha.get('contexto', {})
+            variacion = ctx.get('variacion_vs_promedio_pct', 0) or 0
+
+            # ── Determinar tendencia textual (sin emojis) ──
+            if variacion > 2:
+                tendencia = "Alza"
+            elif variacion < -2:
+                tendencia = "Baja"
+            else:
+                tendencia = "Estable"
+
+            # ── Determinar estado semáforo ──
+            estado = "Normal"
+
+            if 'Generación' in ind_nombre:
+                if abs(variacion) > 15:
+                    estado = "Crítico"
+                elif abs(variacion) > 8:
+                    estado = "Alerta"
+                # Mapear nombre a clave de anomalías
+                _anom_key = 'Generación Total'
+
+            elif 'Precio' in ind_nombre:
+                if abs(variacion) > 25:
+                    estado = "Crítico"
+                elif abs(variacion) > 12:
+                    estado = "Alerta"
+                _anom_key = 'Precio de Bolsa'
+
+            elif 'Embalses' in ind_nombre:
+                if valor is not None:
+                    if valor < 30:
+                        estado = "Crítico"
+                    elif valor < 40 or valor > 85:
+                        estado = "Alerta"
+                _anom_key = 'Embalses'
+            else:
+                _anom_key = ind_nombre
+
+            # Elevar estado si hay anomalía detectada más severa
+            anom_sev = anomalias_por_ind.get(_anom_key, '')
+            if anom_sev == 'crítico' and estado != 'Crítico':
+                estado = "Crítico"
+            elif anom_sev == 'alerta' and estado == 'Normal':
+                estado = "Alerta"
+
+            tabla.append({
+                "indicador": ind_nombre,
+                "valor_actual": valor,
+                "unidad": unidad,
+                "fecha": ficha.get('fecha'),
+                "tendencia": tendencia,
+                "variacion_pct": round(variacion, 1),
+                "estado": estado,
+            })
+
+        return tabla
+
+    @staticmethod
+    def _deduplicar_anomalias(
+        anomalias: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Elimina anomalías duplicadas manteniendo la más severa.
+
+        Dos anomalías son duplicadas si comparten (indicador, descripcion).
+        Cuando hay duplicados, se conserva la de mayor severidad.
+
+        Razón: el pipeline de detección puede generar la misma alerta
+        por múltiples rutas (hist vs pred) o por datos congelados
+        que producen idéntico resultado en días consecutivos.
+        """
+        if not anomalias:
+            return anomalias
+
+        _SEV_RANK = {'normal': 0, 'alerta': 1, 'crítico': 2}
+        vistos: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+        for a in anomalias:
+            clave = (
+                a.get('indicador', ''),
+                a.get('descripcion', a.get('detalle', '')),
+            )
+            if clave in vistos:
+                # Mantener la más severa
+                existente = vistos[clave]
+                if _SEV_RANK.get(a.get('severidad', 'normal'), 0) > _SEV_RANK.get(existente.get('severidad', 'normal'), 0):
+                    vistos[clave] = a
+            else:
+                vistos[clave] = a
+
+        deduplicadas = list(vistos.values())
+        if len(deduplicadas) < len(anomalias):
+            logger.info(
+                f"[INFORME] Anomalías deduplicadas: {len(anomalias)} → {len(deduplicadas)}"
+            )
+        return deduplicadas
+
     @handle_service_error
     async def _handle_predicciones_sector(
         self, 
@@ -2577,8 +2959,12 @@ class ChatbotOrchestratorService:
                 "anomalias": {
                     "total_evaluadas": data_anomalias.get('total_evaluadas', 0),
                     "total_anomalias": data_anomalias.get('total_anomalias', 0),
-                    "lista": data_anomalias.get('anomalias', []),
-                    "detalle_completo": data_anomalias.get('detalle_completo', []),
+                    "lista": self._deduplicar_anomalias(
+                        data_anomalias.get('anomalias', [])
+                    ),
+                    "detalle_completo": self._deduplicar_anomalias(
+                        data_anomalias.get('detalle_completo', [])
+                    ),
                     "resumen": data_anomalias.get('resumen', ''),
                 },
                 "confianza_modelos": {
@@ -2686,7 +3072,7 @@ class ChatbotOrchestratorService:
                 contexto["prensa_del_dia"] = noticias_ctx
             
             logger.info(
-                f"[INFORME_EJECUTIVO_IA] Contexto armado: "
+                f"[INFORME_EJECUTIVO_IA] Contexto base armado: "
                 f"fichas={len(contexto['estado_actual']['fichas'])}, "
                 f"pred_1s={len(contexto['predicciones']['1_semana']['indicadores'])}, "
                 f"pred_1m={len(contexto['predicciones']['1_mes']['indicadores'])}, "
@@ -2694,7 +3080,61 @@ class ChatbotOrchestratorService:
                 f"pred_1a={len(contexto['predicciones']['1_ano']['indicadores'])}, "
                 f"anomalías={contexto['anomalias']['total_anomalias']}"
             )
-            
+
+            # ── 2c. Enriquecer contexto con campos adicionales ──
+            # Estos campos NO rompen el contrato existente: se agregan
+            # como nodos nuevos al dict contexto.
+            _fichas = contexto['estado_actual']['fichas']
+            _anomalias_lista = contexto['anomalias'].get('lista', [])
+
+            # (a) Generación por fuente — mix energético del último día
+            try:
+                contexto['generacion_por_fuente'] = await self._build_generacion_por_fuente()
+            except Exception as e:
+                logger.warning(f"[INFORME] generacion_por_fuente falló (no crítico): {e}")
+                contexto['generacion_por_fuente'] = {"error": str(e)}
+
+            # (b) Embalses detalle — consolidación de datos ya calculados
+            try:
+                contexto['embalses_detalle'] = self._build_embalses_detalle(_fichas)
+            except Exception as e:
+                logger.warning(f"[INFORME] embalses_detalle falló (no crítico): {e}")
+                contexto['embalses_detalle'] = {"error": str(e)}
+
+            # (c) Predicciones mes resumen — bloque compacto 3 métricas
+            try:
+                contexto['predicciones_mes_resumen'] = self._build_predicciones_mes_resumen(
+                    _fichas,
+                    contexto.get('predicciones_mes', {}),
+                )
+            except Exception as e:
+                logger.warning(f"[INFORME] predicciones_mes_resumen falló (no crítico): {e}")
+                contexto['predicciones_mes_resumen'] = {"error": str(e)}
+
+            # (d) Tabla indicadores clave — KPIs con semáforo
+            try:
+                contexto['tabla_indicadores_clave'] = self._build_tabla_indicadores_clave(
+                    _fichas,
+                    _anomalias_lista,
+                )
+            except Exception as e:
+                logger.warning(f"[INFORME] tabla_indicadores_clave falló (no crítico): {e}")
+                contexto['tabla_indicadores_clave'] = []
+
+            # Actualizar conteo de anomalías post-deduplicación
+            contexto['anomalias']['total_anomalias'] = len(
+                contexto['anomalias'].get('lista', [])
+            )
+
+            logger.info(
+                f"[INFORME_EJECUTIVO_IA] Contexto enriquecido: "
+                f"gen_fuentes={'ok' if 'fuentes' in contexto.get('generacion_por_fuente', {}) else 'no'}, "
+                f"embalses_det={'ok' if 'valor_actual_pct' in contexto.get('embalses_detalle', {}) else 'no'}, "
+                f"pred_resumen={len(contexto.get('predicciones_mes_resumen', {}).get('metricas', []))}, "
+                f"tabla_kpi={len(contexto.get('tabla_indicadores_clave', []))}, "
+                f"anomalías_dedup={contexto['anomalias']['total_anomalias']}"
+            )
+
             # ── 3. Verificar cache diario antes de llamar a la IA ──
             hoy = datetime.utcnow().strftime('%Y-%m-%d')
             cached = self._informe_ia_cache.get(hoy)

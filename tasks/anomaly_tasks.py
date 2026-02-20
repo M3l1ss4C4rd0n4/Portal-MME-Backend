@@ -492,20 +492,53 @@ def send_daily_summary():
             noticias = d_news.get('noticias', [])
             logger.info(f"[RESUMEN DIARIO] Noticias obtenidas: {len(noticias)}")
 
-        # 2d. Anomalías recientes (últimas 24h desde BD)
+        # 2d. Anomalías recientes (últimas 24h desde BD) — con dedup
         anomalias = []
         try:
             from infrastructure.database.manager import db_manager
             df_anom = db_manager.query_df("""
-                SELECT metrica, severidad, descripcion, valor_promedio
+                SELECT metrica, severidad, descripcion, valor_promedio,
+                       fecha_evaluacion
                 FROM alertas_historial
                 WHERE fecha_evaluacion >= CURRENT_DATE - INTERVAL '1 day'
-                ORDER BY severidad DESC, fecha_evaluacion DESC
-                LIMIT 5
+                ORDER BY fecha_evaluacion DESC
             """)
             if not df_anom.empty:
-                anomalias = df_anom.to_dict('records')
-                logger.info(f"[RESUMEN DIARIO] Anomalías recientes: {len(anomalias)}")
+                # Deduplicar por (metrica, descripcion), conservar mayor severidad
+                _sev_order = {'CRITICA': 3, 'CRITICO': 3, 'CRITICAL': 3,
+                              'ALERTA': 2, 'WARNING': 2,
+                              'NORMAL': 1, 'INFO': 0}
+                seen: dict = {}  # clave -> registro
+                for rec in df_anom.to_dict('records'):
+                    key = (
+                        str(rec.get('metrica', '')).strip().upper(),
+                        str(rec.get('descripcion', '')).strip().upper(),
+                    )
+                    prev = seen.get(key)
+                    if prev is None:
+                        seen[key] = rec
+                    else:
+                        prev_rank = _sev_order.get(
+                            str(prev.get('severidad', '')).upper(), 1)
+                        cur_rank = _sev_order.get(
+                            str(rec.get('severidad', '')).upper(), 1)
+                        if cur_rank > prev_rank:
+                            seen[key] = rec
+                # Ordenar por severidad desc y tomar top 5
+                deduped = sorted(
+                    seen.values(),
+                    key=lambda r: _sev_order.get(
+                        str(r.get('severidad', '')).upper(), 1),
+                    reverse=True,
+                )[:5]
+                # Quitar columna auxiliar antes de pasar a downstream
+                for r in deduped:
+                    r.pop('fecha_evaluacion', None)
+                anomalias = deduped
+                logger.info(
+                    f"[RESUMEN DIARIO] Anomalías recientes: "
+                    f"{len(df_anom)} raw → {len(anomalias)} dedup"
+                )
         except Exception as e:
             logger.warning(f"[RESUMEN DIARIO] Error leyendo anomalías: {e}")
 
@@ -527,6 +560,9 @@ def send_daily_summary():
         # ══════════════════════════════════════════════
         # 4. Generar PDF (narrativa + gráficos)
         # ══════════════════════════════════════════════
+        # Extraer contexto_datos del informe (incluye semáforo, gen por fuente, etc.)
+        _contexto_datos = d_informe.get('contexto_datos') if d_informe else None
+
         pdf_path = None
         try:
             pdf_path = generar_pdf_informe(
@@ -536,6 +572,7 @@ def send_daily_summary():
                 predicciones=predicciones_lista or predicciones_data,
                 anomalias=anomalias,
                 noticias=noticias,
+                contexto_datos=_contexto_datos,
             )
             if pdf_path:
                 size_kb = os.path.getsize(pdf_path) / 1024

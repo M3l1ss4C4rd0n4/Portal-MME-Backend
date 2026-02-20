@@ -1454,6 +1454,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 predicciones=_predicciones,
                 anomalias=_anomalias or None,
                 noticias=_noticias or None,
+                contexto_datos=ctx or None,
             )
             if pdf_path:
                 import os

@@ -175,6 +175,7 @@ def main():
             predicciones=predicciones_lista or predicciones_data,
             anomalias=[],
             noticias=noticias,
+            contexto_datos=contexto,
         )
         if pdf_path:
             size_kb = os.path.getsize(pdf_path) / 1024
