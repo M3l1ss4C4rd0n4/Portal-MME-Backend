@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 from infrastructure.logging.logger import setup_logger
 from infrastructure.external.xm_service import obtener_datos_inteligente
 
-from interface.components.layout import crear_filtro_fechas_compacto
+from interface.components.layout import crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
 from interface.components.kpi_card import crear_kpi, crear_kpi_row
 from interface.components.chart_card import crear_filter_bar
 from core.constants import UIColors as COLORS

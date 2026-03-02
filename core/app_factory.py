@@ -93,26 +93,6 @@ def _preload_xm_api(logger):
         return None
 
 
-def _register_pages():
-    """Registra páginas manualmente"""
-    # Importar para forzar el registro de páginas en Dash
-    # NOTA: Comentado para evitar duplicidad de callbacks con Dash Pages (auto-discovery)
-    # import interface.pages.home # Página de inicio/portada
-    # import interface.pages.generacion
-    # import interface.pages.generacion_fuentes_unificado
-    # import interface.pages.generacion_hidraulica_hidrologia
-    # import interface.pages.transmision
-    # import interface.pages.distribucion
-    # import interface.pages.distribucion_demanda_unificado
-    # import interface.pages.demanda  # Módulo no existe - deshabilitado temporalmente
-    # import interface.pages.perdidas
-    # import interface.pages.restricciones
-    # import interface.pages.comercializacion
-    # import interface.pages.metricas
-    # import interface.pages.metricas_piloto
-    pass
-
-
 def _register_layout(app):
     """Registra el layout principal"""
     app.layout = html.Div([
@@ -247,7 +227,7 @@ def create_app() -> Dash:
         logger.info("📊 Endpoint /metrics solicitado")
         return Response(generate_latest(METRICS_REGISTRY), mimetype=CONTENT_TYPE_LATEST)
     
-    # _register_pages()
+    # _register_pages() — ELIMINADO: Dash Pages usa auto-discovery
     _register_layout(app)
     _register_callbacks(app)
 

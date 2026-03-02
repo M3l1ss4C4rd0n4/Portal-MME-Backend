@@ -51,6 +51,27 @@ def get_plotly_modules():
     import plotly.graph_objects as go
     return px, go
 
+
+def categorizar_fuente_xm(tipo):
+    """Clasifica tipo de recurso XM en categoría de fuente energética.
+    
+    Versión unificada — reemplaza las múltiples definiciones locales idénticas.
+    """
+    tipo_str = str(tipo).upper()
+    if any(x in tipo_str for x in ['HIDRAULICA', 'HIDRO', 'PCH', 'PEQUEÑA CENTRAL']):
+        return 'Hidráulica'
+    elif any(x in tipo_str for x in ['EOLICA', 'EOLIC', 'WIND', 'VIENTO']):
+        return 'Eólica'
+    elif any(x in tipo_str for x in ['SOLAR', 'FOTOVOLTAICA', 'PHOTOVOLTAIC', 'FV']):
+        return 'Solar'
+    elif any(x in tipo_str for x in ['TERMICA', 'TERMO', 'GAS', 'CARBON', 'CICLO COMBINADO', 'VAPOR']):
+        return 'Térmica'
+    elif any(x in tipo_str for x in ['BIOMASA', 'COGENER', 'BAGAZO', 'BIOGAS', 'BIO']):
+        return 'Biomasa'
+    else:
+        return 'Otras'
+
+
 register_page(
     __name__,
     path="/generacion/fuentes",
@@ -888,22 +909,6 @@ def crear_grafica_barras_apiladas():
         
         # El mapeo de 'Tipo' ya se hizo en la sección anterior, no necesitamos hacer nada más aquí
         
-        # Categorizar fuentes según clasificación oficial XM
-        def categorizar_fuente_xm(tipo):
-            tipo_str = str(tipo).upper()
-            if any(x in tipo_str for x in ['HIDRAULICA', 'HIDRO', 'PCH', 'PEQUEÑA CENTRAL']):
-                return 'Hidráulica'
-            elif any(x in tipo_str for x in ['EOLICA', 'EOLIC', 'WIND', 'VIENTO']):
-                return 'Eólica'
-            elif any(x in tipo_str for x in ['SOLAR', 'FOTOVOLTAICA', 'PHOTOVOLTAIC', 'FV']):
-                return 'Solar'
-            elif any(x in tipo_str for x in ['TERMICA', 'TERMO', 'GAS', 'CARBON', 'CICLO COMBINADO', 'VAPOR']):
-                return 'Térmica'
-            elif any(x in tipo_str for x in ['BIOMASA', 'COGENER', 'BAGAZO', 'BIOGAS', 'BIO']):
-                return 'Biomasa'
-            else:
-                return 'Otras'
-        
         # Obtener ListadoRecursos para mapear tipos
         objetoAPI = get_objetoAPI()
         if objetoAPI:
@@ -1083,21 +1088,6 @@ def crear_grafica_area():
             # Fallback a datos diarios si no hay horarios
             df_gene['Generacion_GWh'] = df_gene[horas_cols].fillna(0).sum(axis=1) / 1_000_000 if horas_cols else df_gene.get('Values_gwh', 0)  # ✅ FIX: kWh → GWh
             
-            def categorizar_fuente_xm(tipo):
-                tipo_str = str(tipo).upper()
-                if any(x in tipo_str for x in ['HIDRAULICA', 'HIDRO', 'PCH']):
-                    return 'Hidráulica'
-                elif any(x in tipo_str for x in ['EOLICA', 'EOLIC', 'WIND']):
-                    return 'Eólica'
-                elif any(x in tipo_str for x in ['SOLAR', 'FOTOVOLTAICA', 'FV']):
-                    return 'Solar'
-                elif any(x in tipo_str for x in ['TERMICA', 'TERMO', 'GAS', 'CARBON']):
-                    return 'Térmica'
-                elif any(x in tipo_str for x in ['BIOMASA', 'COGENER', 'BAGAZO']):
-                    return 'Biomasa'
-                else:
-                    return 'Otras'
-            
             df_gene['Fuente'] = df_gene['Tipo'].apply(categorizar_fuente_xm)
             df_agrupado = df_gene.groupby(['Date', 'Fuente'], as_index=False)['Generacion_GWh'].sum()
             
@@ -1133,22 +1123,6 @@ def crear_grafica_area():
         else:
             # Procesar datos horarios expandidos
             df_expandido = pd.DataFrame(datos_expandidos)
-            
-            # Categorizar fuentes según clasificación oficial XM
-            def categorizar_fuente_xm(tipo):
-                tipo_str = str(tipo).upper()
-                if any(x in tipo_str for x in ['HIDRAULICA', 'HIDRO', 'PCH']):
-                    return 'Hidráulica'
-                elif any(x in tipo_str for x in ['EOLICA', 'EOLIC', 'WIND']):
-                    return 'Eólica'
-                elif any(x in tipo_str for x in ['SOLAR', 'FOTOVOLTAICA', 'FV']):
-                    return 'Solar'
-                elif any(x in tipo_str for x in ['TERMICA', 'TERMO', 'GAS', 'CARBON']):
-                    return 'Térmica'
-                elif any(x in tipo_str for x in ['BIOMASA', 'COGENER', 'BAGAZO']):
-                    return 'Biomasa'
-                else:
-                    return 'Otras'
             
             df_expandido['Fuente'] = df_expandido['Tipo'].apply(categorizar_fuente_xm)
             df_agrupado = df_expandido.groupby(['Fecha', 'Fuente'], as_index=False)['Generacion_MW'].sum()
@@ -1477,22 +1451,6 @@ def crear_tabla_resumen_todas_plantas():
         # Calcular participación
         total_gwh = df_plantas['Generacion_GWh'].sum()
         df_plantas['Participacion_%'] = (df_plantas['Generacion_GWh'] / total_gwh * 100).round(2)
-        
-        # Categorizar fuente usando clasificación oficial XM
-        def categorizar_fuente_xm(tipo):
-            tipo_str = str(tipo).upper()
-            if any(x in tipo_str for x in ['HIDRAULICA', 'HIDRO', 'PCH']):
-                return 'Hidráulica'
-            elif any(x in tipo_str for x in ['EOLICA', 'EOLIC', 'WIND']):
-                return 'Eólica'
-            elif any(x in tipo_str for x in ['SOLAR', 'FOTOVOLTAICA', 'FV']):
-                return 'Solar'
-            elif any(x in tipo_str for x in ['TERMICA', 'TERMO', 'GAS', 'CARBON']):
-                return 'Térmica'
-            elif any(x in tipo_str for x in ['BIOMASA', 'COGENER', 'BAGAZO']):
-                return 'Biomasa'
-            else:
-                return 'Otras'
         
         df_plantas['Fuente'] = df_plantas['Tipo'].apply(categorizar_fuente_xm)
         
@@ -2013,14 +1971,6 @@ def cargar_tabla_resumen(_):
     prevent_initial_call=False  # ✅ Permite carga automática al inicio
 )
 def actualizar_tablero_fuentes(n_clicks, tipos_fuente, fecha_inicio, fecha_fin):
-    debug_file = "/home/admonctrlxm/server/logs/debug_callback.log"
-    with open(debug_file, "a") as f:
-        f.write(f"\n{'='*80}\n")
-        f.write(f"CALLBACK TABLERO EJECUTADO\n")
-        f.write(f"n_clicks={n_clicks}, tipos={tipos_fuente}\n")
-        f.write(f"fechas={fecha_inicio} → {fecha_fin}\n")
-        f.write(f"{'='*80}\n")
-    
     logger.info("="*80)
     logger.info("CALLBACK TABLERO EJECUTADO") 
     logger.info(f"n_clicks={n_clicks}, tipos={tipos_fuente}, fechas={fecha_inicio}-{fecha_fin}")
