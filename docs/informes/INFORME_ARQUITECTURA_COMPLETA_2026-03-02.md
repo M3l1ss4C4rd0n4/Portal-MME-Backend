@@ -2,7 +2,7 @@
 
 **Fecha:** 2 de marzo de 2026  
 **Versión:** 3.0  
-**Autor:** Auditoría automatizada — Ingeniero de Sistemas Senior  
+**Autor:** Melissa Cardona 
 **Servidor:** `172.17.0.46` — `portalenergetico.minenergia.gov.co`
 
 ---
