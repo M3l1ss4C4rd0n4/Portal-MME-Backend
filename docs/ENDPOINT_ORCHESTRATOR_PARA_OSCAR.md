@@ -2,9 +2,10 @@
 
 ## Información para Oscar (Servidor Java)
 
-**Fecha:** 9 de febrero de 2026  
+**Fecha:** 9 de febrero de 2026 (actualizado 20 de febrero de 2026)  
 **Destinatario:** Oscar (Equipo Chatbot Java)  
-**Propósito:** Consumir orquestador de alertas desde servidor externo
+**Propósito:** Consumir orquestador de alertas desde servidor externo  
+**Versión:** 1.1
 
 ---
 
@@ -17,7 +18,7 @@ https://portalenergetico.minenergia.gov.co/api/v1/chatbot/orchestrator
 
 **Método:** `POST`  
 **Disponibilidad:** 24/7 (Servicio systemd con auto-restart)  
-**Timeout:** 30 segundos máximo por request  
+**Timeout:** 60 segundos máximo por request (SERVICE_TIMEOUT=10s por servicio interno)  
 **Rate Limit:** 100 requests/minuto
 
 ---
@@ -57,6 +58,12 @@ X-API-Key: MME2026_SECURE_KEY
 | `predicciones` | Predicciones ML (7 días) | `tipo_prediccion`, `recurso` |
 | `informe_ejecutivo` | Informe completo del sistema | N/A |
 | `metricas_generales` | Métricas generales del sector | N/A |
+| `estado_actual` | Estado actual del sistema eléctrico en tiempo real | `seccion` |
+| `anomalias_sector` | Anomalías y alertas detectadas en el sistema | `tipo_anomalia` |
+| `predicciones_sector` | Predicciones por indicador del sector | `indicador` |
+| `noticias_sector` | Noticias relevantes del sector energético | `categoria` |
+| `pregunta_libre` | Consulta en lenguaje natural (IA) | `texto` (requerido) |
+| `menu` / `ayuda` | Menú principal / ayuda de navegación | N/A |
 
 ### Response Body
 ```json
@@ -124,9 +131,9 @@ public class OrchestratorClient {
             .uri(URI.create(BASE_URL + "/api/v1/chatbot/orchestrator"))
             .header("Content-Type", "application/json")
             .header("X-API-Key", API_KEY)
-            .timeout(Duration.ofSeconds(30))
-            .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(requestBody)))
-            .build();
+.timeout(Duration.ofSeconds(60))
+        .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(requestBody)))
+        .build();
         
         // Enviar request
         HttpResponse<String> response = client.send(request, 
@@ -154,7 +161,7 @@ public class OrchestratorClient {
             .uri(URI.create(BASE_URL + "/api/v1/chatbot/orchestrator"))
             .header("Content-Type", "application/json")
             .header("X-API-Key", API_KEY)
-            .timeout(Duration.ofSeconds(30))
+            .timeout(Duration.ofSeconds(60))
             .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(requestBody)))
             .build();
         
@@ -185,7 +192,7 @@ public class OrchestratorClient {
             .uri(URI.create(BASE_URL + "/api/v1/chatbot/orchestrator"))
             .header("Content-Type", "application/json")
             .header("X-API-Key", API_KEY)
-            .timeout(Duration.ofSeconds(30))
+            .timeout(Duration.ofSeconds(60))
             .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(requestBody)))
             .build();
         
@@ -468,8 +475,8 @@ curl -X POST "https://portalenergetico.minenergia.gov.co/api/v1/chatbot/orchestr
 ✅ No exposición de errores internos  
 
 ### Timeouts
-- **Por servicio interno:** 10 segundos
-- **Total request:** 30 segundos máximo
+- **Por servicio interno:** 10 segundos (SERVICE_TIMEOUT)
+- **Total request:** 60 segundos máximo (TOTAL_TIMEOUT)
 - **Connection timeout:** 10 segundos
 
 ### Disponibilidad 24/7
@@ -674,7 +681,7 @@ Antes de integrar en producción, verificar:
 - [ ] Header `Content-Type: application/json`
 - [ ] Validación de intents permitidos
 - [ ] Manejo de errores HTTP (401, 422, 500, 503)
-- [ ] Timeouts configurados (30s recomendado)
+- [ ] Timeouts configurados (60s recomendado)
 - [ ] Estrategia de reintentos implementada
 - [ ] Logs de requests/responses habilitados
 - [ ] Health check endpoint probado
@@ -692,7 +699,7 @@ Antes de integrar en producción, verificar:
 3. **Seguridad:** API Key validation activada
 4. **Documentación:** Swagger UI disponible
 5. **Ejemplos Java:** Incluidos en este documento (HttpClient + Spring)
-6. **7 Intents soportados:** Todos operacionales
+6. **13 Intents soportados:** Todos operacionales (+ aliases)
 7. **Contrato estable:** Request/Response definidos con Pydantic
 8. **Error handling robusto:** Estados SUCCESS/PARTIAL/ERROR
 9. **Rate limiting:** 100 req/min
@@ -703,5 +710,6 @@ Antes de integrar en producción, verificar:
 ---
 
 **Documento generado:** 9 de febrero de 2026  
-**Versión:** 1.0  
+**Última actualización:** 20 de febrero de 2026  
+**Versión:** 1.1  
 **Estado:** ✅ PRODUCCION - LISTO PARA USO EXTERNO

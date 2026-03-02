@@ -1,87 +1,87 @@
 {
-    "_comentario": "Configuración de archivos SharePoint/OneDrive para cuenta ADMINPORTAL en ArcGIS Enterprise.",
-    "_instrucciones": [
-        "Copia de onedrive_archivos.json pero para la cuenta Adminportal",
-        "Los item_id_existente se llenarán automáticamente en la primera publicación",
-        "Mismos links de SharePoint, mismos Excel — distinta cuenta ArcGIS"
-    ],
-    "archivos": [
-        {
-            "nombre": "Matriz_Subsidios_DEE",
-            "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/DireccindeEnergaElctrica-DEE_Supervision/IQBYSwSMTWDaRZPZAV-5u2BHAccGnbwJQhONS1qjMMsOYKU?e=C5IhAD",
-            "hoja_excel": null,
-            "titulo_arcgis": "Matriz Subsidios DEE Supervisión",
-            "descripcion": "Matriz de subsidios de la Dirección de Energía Eléctrica – DEE Supervisión (SharePoint Ministerio)",
-            "tags": "subsidios, DEE, supervisión, onedrive, MME",
-            "item_id_existente": null,
-            "columnas_coordenadas": null,
-            "activo": true
-        },
-        {
-            "nombre": "Matriz_Implementacion_Base",
-            "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCLxc5fknfETpQmI8l32zfgASEAGD_mtf4Q_4oVwZ6PqLc?e=rPV0Dp",
-            "hoja_excel": "base",
-            "titulo_arcgis": "Matriz Implementación - Base",
-            "descripcion": "Hoja 'base' de la Matriz de Implementación (SharePoint Ministerio)",
-            "tags": "implementación, base, onedrive, MME",
-            "item_id_existente": null,
-            "columnas_coordenadas": null,
-            "activo": true
-        },
-        {
-            "nombre": "Matriz_Subsidios_KPIs",
-            "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCyIRV1_hUAQ6FABQZ9FC-2AbK6HZb4M2CL0K8ni4EqJpo?e=LTG7UB",
-            "hoja_excel": "kpis",
-            "titulo_arcgis": "Matriz Subsidios - KPIs",
-            "descripcion": "Hoja 'kpis' de la Matriz de Subsidios (SharePoint Ministerio)",
-            "tags": "subsidios, kpis, indicadores, onedrive, MME",
-            "item_id_existente": null,
-            "columnas_coordenadas": null,
-            "activo": true
-        },
-        {
-            "nombre": "Matriz_Subsidios_Validacion",
-            "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCyIRV1_hUAQ6FABQZ9FC-2AbK6HZb4M2CL0K8ni4EqJpo?e=LTG7UB",
-            "hoja_excel": "validación",
-            "titulo_arcgis": "Matriz Subsidios - Validación",
-            "descripcion": "Hoja 'validación' de la Matriz de Subsidios (SharePoint Ministerio)",
-            "tags": "subsidios, validación, onedrive, MME",
-            "item_id_existente": null,
-            "columnas_coordenadas": null,
-            "activo": true
-        },
-        {
-            "nombre": "Matriz_Subsidios_Pagos",
-            "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCyIRV1_hUAQ6FABQZ9FC-2AbK6HZb4M2CL0K8ni4EqJpo?e=LTG7UB",
-            "hoja_excel": "pagos",
-            "titulo_arcgis": "Matriz Subsidios - Pagos",
-            "descripcion": "Hoja 'pagos' de la Matriz de Subsidios (SharePoint Ministerio)",
-            "tags": "subsidios, pagos, onedrive, MME",
-            "item_id_existente": null,
-            "columnas_coordenadas": null,
-            "activo": true
-        },
-        {
-            "nombre": "Matriz_Ejecucion_Presupuestal_2026",
-            "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQDnE_TXa3bUS66FeXe-jVH_AYBsfPzb348f45qNxMoHYZ8?e=QFqM19",
-            "hoja_excel": "resumen",
-            "titulo_arcgis": "Ejecución Presupuestal 2026 - Resumen",
-            "descripcion": "Hoja 'resumen' de la Matriz de Ejecución Presupuestal 2026 (SharePoint Ministerio)",
-            "tags": "presupuesto, ejecución, 2026, onedrive, MME",
-            "item_id_existente": null,
-            "columnas_coordenadas": null,
-            "activo": true
-        },
-        {
-            "nombre": "Comunidades_Energeticas_Avance",
-            "onedrive_link": "https://minenergiacol-my.sharepoint.com/:x:/g/personal/comunidadesenergeticas_minenergia_gov_co/IQDA_auz93mxQKlAMczHfiXhAfRg_4-645ekpjuwtESF-8c?e=oUuBdr",
-            "hoja_excel": "Hoja1",
-            "titulo_arcgis": "Comunidades Energéticas - Avance Proyectos",
-            "descripcion": "Seguimiento de avance de proyectos de Comunidades Energéticas (OneDrive público, Ministerio)",
-            "tags": "comunidades energéticas, avance, proyectos, onedrive, MME",
-            "item_id_existente": "cdc9130c08fc4f2381450b12f95fcd80",
-            "columnas_coordenadas": null,
-            "activo": true
-        }
-    ]
+  "_comentario": "Configuración de archivos SharePoint/OneDrive para cuenta ADMINPORTAL en ArcGIS Enterprise.",
+  "_instrucciones": [
+    "Copia de onedrive_archivos.json pero para la cuenta Adminportal",
+    "Los item_id_existente se llenarán automáticamente en la primera publicación",
+    "Mismos links de SharePoint, mismos Excel — distinta cuenta ArcGIS"
+  ],
+  "archivos": [
+    {
+      "nombre": "Matriz_Subsidios_DEE",
+      "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/DireccindeEnergaElctrica-DEE_Supervision/IQBYSwSMTWDaRZPZAV-5u2BHAccGnbwJQhONS1qjMMsOYKU?e=C5IhAD",
+      "hoja_excel": null,
+      "titulo_arcgis": "Matriz Subsidios DEE Supervisión",
+      "descripcion": "Matriz de subsidios de la Dirección de Energía Eléctrica – DEE Supervisión (SharePoint Ministerio)",
+      "tags": "subsidios, DEE, supervisión, onedrive, MME",
+      "item_id_existente": null,
+      "columnas_coordenadas": null,
+      "activo": true
+    },
+    {
+      "nombre": "Matriz_Implementacion_Base",
+      "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCLxc5fknfETpQmI8l32zfgASEAGD_mtf4Q_4oVwZ6PqLc?e=rPV0Dp",
+      "hoja_excel": "base",
+      "titulo_arcgis": "Matriz Implementación - Base",
+      "descripcion": "Hoja 'base' de la Matriz de Implementación (SharePoint Ministerio)",
+      "tags": "implementación, base, onedrive, MME",
+      "item_id_existente": null,
+      "columnas_coordenadas": null,
+      "activo": true
+    },
+    {
+      "nombre": "Matriz_Subsidios_KPIs",
+      "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCyIRV1_hUAQ6FABQZ9FC-2AbK6HZb4M2CL0K8ni4EqJpo?e=LTG7UB",
+      "hoja_excel": "kpis",
+      "titulo_arcgis": "Matriz Subsidios - KPIs",
+      "descripcion": "Hoja 'kpis' de la Matriz de Subsidios (SharePoint Ministerio)",
+      "tags": "subsidios, kpis, indicadores, onedrive, MME",
+      "item_id_existente": null,
+      "columnas_coordenadas": null,
+      "activo": true
+    },
+    {
+      "nombre": "Matriz_Subsidios_Validacion",
+      "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCyIRV1_hUAQ6FABQZ9FC-2AbK6HZb4M2CL0K8ni4EqJpo?e=LTG7UB",
+      "hoja_excel": "validación",
+      "titulo_arcgis": "Matriz Subsidios - Validación",
+      "descripcion": "Hoja 'validación' de la Matriz de Subsidios (SharePoint Ministerio)",
+      "tags": "subsidios, validación, onedrive, MME",
+      "item_id_existente": null,
+      "columnas_coordenadas": null,
+      "activo": true
+    },
+    {
+      "nombre": "Matriz_Subsidios_Pagos",
+      "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQCyIRV1_hUAQ6FABQZ9FC-2AbK6HZb4M2CL0K8ni4EqJpo?e=LTG7UB",
+      "hoja_excel": "pagos",
+      "titulo_arcgis": "Matriz Subsidios - Pagos",
+      "descripcion": "Hoja 'pagos' de la Matriz de Subsidios (SharePoint Ministerio)",
+      "tags": "subsidios, pagos, onedrive, MME",
+      "item_id_existente": null,
+      "columnas_coordenadas": null,
+      "activo": true
+    },
+    {
+      "nombre": "Matriz_Ejecucion_Presupuestal_2026",
+      "onedrive_link": "https://minenergiacol.sharepoint.com/:x:/s/msteams_c07b9d_609752/IQDnE_TXa3bUS66FeXe-jVH_AYBsfPzb348f45qNxMoHYZ8?e=QFqM19",
+      "hoja_excel": "resumen",
+      "titulo_arcgis": "Ejecución Presupuestal 2026 - Resumen",
+      "descripcion": "Hoja 'resumen' de la Matriz de Ejecución Presupuestal 2026 (SharePoint Ministerio)",
+      "tags": "presupuesto, ejecución, 2026, onedrive, MME",
+      "item_id_existente": null,
+      "columnas_coordenadas": null,
+      "activo": true
+    },
+    {
+      "nombre": "Comunidades_Energeticas_Avance",
+      "onedrive_link": "https://minenergiacol-my.sharepoint.com/:x:/g/personal/comunidadesenergeticas_minenergia_gov_co/IQDA_auz93mxQKlAMczHfiXhAfRg_4-645ekpjuwtESF-8c?e=oUuBdr",
+      "hoja_excel": "Hoja1",
+      "titulo_arcgis": "Comunidades Energéticas - Avance Proyectos",
+      "descripcion": "Seguimiento de avance de proyectos de Comunidades Energéticas (OneDrive público, Ministerio)",
+      "tags": "comunidades energéticas, avance, proyectos, onedrive, MME",
+      "item_id_existente": "c3bb4e3ed1374638b5ab8f8292552643",
+      "columnas_coordenadas": null,
+      "activo": true
+    }
+  ]
 }

@@ -126,7 +126,7 @@ def broadcast_telegram(
         for u in users:
             chat_id = u['chat_id']
             try:
-                # Enviar texto
+                # Enviar texto (con fallback si Markdown falla)
                 resp = client.post(
                     f"{base}/sendMessage",
                     json={
@@ -136,11 +136,26 @@ def broadcast_telegram(
                     },
                 )
                 if resp.status_code != 200:
+                    # Log detallado del error
+                    try:
+                        err_body = resp.json().get('description', resp.text[:200])
+                    except Exception:
+                        err_body = resp.text[:200]
                     logger.warning(
-                        f"Telegram sendMessage {chat_id}: {resp.status_code}"
+                        f"Telegram sendMessage {chat_id}: {resp.status_code} → {err_body}"
                     )
-                    failed += 1
-                    continue
+                    # Fallback: reintentar sin parse_mode (texto plano)
+                    resp2 = client.post(
+                        f"{base}/sendMessage",
+                        json={"chat_id": chat_id, "text": message},
+                    )
+                    if resp2.status_code != 200:
+                        logger.warning(
+                            f"Telegram sendMessage {chat_id} (plain): {resp2.status_code}"
+                        )
+                        failed += 1
+                        continue
+                    logger.info(f"Telegram {chat_id}: enviado como texto plano (fallback)")
 
                 # Enviar PDF si existe
                 if pdf_path and os.path.isfile(pdf_path):
@@ -1015,22 +1030,9 @@ def build_daily_email_html(
         p.append('<tr>' + kpi_cards + '</tr>')
         p.append('</table></td></tr>')
 
-    # ════════ Análisis Ejecutivo (texto narrativo IA) ════════
-    # Convertir markdown a HTML simplificado para email
-    narrative_html = _markdown_to_email_html(informe_texto)
-    if narrative_html:
-        analisis_titulo = ('An' + chr(225) + 'lisis Ejecutivo — Generado con IA'
-                           if generado_con_ia
-                           else 'Resumen Ejecutivo del Sector')
-        p.append('<tr><td style="padding:20px 26px 8px;">')
-        p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
-                 'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
-        p.append('<tr><td style="background:#F5F7FA;padding:14px 16px;'
-                 'font-size:14px;font-weight:700;color:#333;">'
-                 '&#128214; ' + analisis_titulo + '</td></tr>')
-        p.append('<tr><td style="padding:16px 18px;font-size:13px;color:#333;line-height:1.7;">')
-        p.append(narrative_html)
-        p.append('</td></tr></table></td></tr>')
+    # ════════ Análisis Ejecutivo REMOVIDO del email ════════
+    # El análisis completo ahora se incluye SOLO en el PDF adjunto.
+    # El email muestra únicamente KPIs, predicciones, anomalías y noticias.
 
     # ════════ Predicciones 1M ════════
     if pred_1m_rows:
@@ -1146,9 +1148,10 @@ def build_daily_email_html(
     p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
              'style="background:#EDE7F6;border-radius:8px;">')
     p.append('<tr><td style="padding:14px 18px;font-size:13px;color:#4527A0;line-height:1.6;">')
-    p.append('&#128206; <b>PDF adjunto:</b> Encuentre el informe completo con gr' + chr(225)
-             + 'ficos, predicciones detalladas y an' + chr(225) + 'lisis estad' + chr(237)
-             + 'stico en el archivo adjunto a este correo.')
+    p.append('&#128206; <b>Informe PDF adjunto:</b> Consulte el an' + chr(225)
+             + 'lisis ejecutivo completo con gr' + chr(225)
+             + 'ficos, predicciones detalladas por m' + chr(233)
+             + 'trica y an' + chr(225) + 'lisis de IA en el archivo PDF adjunto a este correo.')
     p.append('</td></tr></table></td></tr>')
 
     # ════════ Footer ════════

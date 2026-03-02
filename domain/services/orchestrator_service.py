@@ -3121,6 +3121,56 @@ class ChatbotOrchestratorService:
                 logger.warning(f"[INFORME] tabla_indicadores_clave falló (no crítico): {e}")
                 contexto['tabla_indicadores_clave'] = []
 
+            # (e) Anomalías recientes de BD (alertas_historial) — complementa
+            # las anomalías ya detectadas por _detect_anomalias_clave() que
+            # solo evalúa 3 indicadores. La BD contiene alertas adicionales
+            # como DEMANDA, DATOS_CONGELADOS, etc.
+            try:
+                from infrastructure.database.manager import db_manager
+                _df_alertas = db_manager.query_df("""
+                    SELECT metrica, severidad, descripcion
+                    FROM alertas_historial
+                    WHERE fecha_evaluacion >= CURRENT_DATE - INTERVAL '1 day'
+                      AND severidad NOT IN ('NORMAL', 'INFO')
+                    ORDER BY CASE severidad
+                        WHEN 'CRITICA' THEN 1 WHEN 'CRITICO' THEN 1
+                        WHEN 'ALERTA' THEN 2 ELSE 3
+                    END
+                    LIMIT 10
+                """)
+                if not _df_alertas.empty:
+                    # Deduplicar por (metrica, descripcion)
+                    _seen_keys = set()
+                    _alertas_bd = []
+                    for _rec in _df_alertas.to_dict('records'):
+                        _key = (
+                            str(_rec.get('metrica', '')).strip().upper(),
+                            str(_rec.get('descripcion', '')).strip()[:80],
+                        )
+                        if _key not in _seen_keys:
+                            _seen_keys.add(_key)
+                            _alertas_bd.append({
+                                'indicador': str(_rec.get('metrica', '')).strip(),
+                                'severidad': str(_rec.get('severidad', 'alerta')).lower(),
+                                'descripcion': str(_rec.get('descripcion', '')).strip(),
+                            })
+                    # Merge con lista existente (sin duplicar)
+                    _existing_keys = {
+                        (a.get('indicador', '').upper(), a.get('descripcion', '')[:80])
+                        for a in contexto['anomalias'].get('lista', [])
+                    }
+                    _nuevas = [a for a in _alertas_bd
+                               if (a['indicador'].upper(), a['descripcion'][:80])
+                               not in _existing_keys]
+                    if _nuevas:
+                        contexto['anomalias']['lista'].extend(_nuevas)
+                        logger.info(
+                            f"[INFORME] +{len(_nuevas)} anomalías de BD "
+                            f"inyectadas al contexto IA"
+                        )
+            except Exception as e:
+                logger.warning(f"[INFORME] alertas_historial falló (no crítico): {e}")
+
             # Actualizar conteo de anomalías post-deduplicación
             contexto['anomalias']['total_anomalias'] = len(
                 contexto['anomalias'].get('lista', [])
@@ -3146,6 +3196,9 @@ class ChatbotOrchestratorService:
                 informe_texto = cached['texto']
             else:
                 informe_texto = await self._generar_informe_con_ia(contexto)
+                # Post-validar y limpiar narrativa
+                if informe_texto:
+                    informe_texto = self._postprocess_informe_ia(informe_texto)
                 # Guardar en cache si fue exitoso
                 if informe_texto:
                     self._informe_ia_cache = {hoy: {
@@ -3185,6 +3238,144 @@ class ChatbotOrchestratorService:
         
         return data, errors
     
+    # ── Helper: Post-procesar narrativa IA ──
+
+    def _postprocess_informe_ia(self, texto: str) -> Optional[str]:
+        """
+        Limpia y valida el texto generado por la IA antes de usarlo.
+
+        Filtros aplicados:
+        1. Eliminar nombres de campos JSON que la IA no debería mencionar
+        2. Eliminar backticks accidentales
+        3. Verificar longitud mínima (>400 chars)
+        4. Verificar presencia de al menos 3 secciones (## headers)
+
+        Returns:
+            Texto limpio, o None si no pasa validación mínima.
+        """
+        import re as _re
+
+        if not texto or len(texto.strip()) < 100:
+            logger.warning("[INFORME_IA_POST] Texto demasiado corto, rechazado")
+            return None
+
+        original_len = len(texto)
+
+        # ── 1. Eliminar nombres de campos JSON ──
+        # Patrones comunes que la IA filtra del contexto JSON
+        _JSON_FIELD_PATTERNS = [
+            # Campos con underscores tipo JSON
+            r'`[a-z_]{5,60}`',                          # `campo_json_nombre`
+            r'\b(el|del|al|según el|según la|en el)\s+campo\s+[`\'"]\w+[`\'"]',  # "según el campo `xyz`"
+            r'\bsegún\s+(el|la|los)\s+[`\'"]\w+[`\'"]', # "según el/la `xyz`"
+            # Nombres específicos de campos del contexto
+            r'desviacion_pct_media_historica[_\w]*',
+            r'cambio_pct_vs_historico',
+            r'variacion_vs_promedio_pct',
+            r'promedio_30d_historico',
+            r'media_historica_2020_2025',
+            r'valor_actual_pct',
+            r'promedio_proyectado_1m',
+            r'rango_min|rango_max',
+            r'cambio_pct_vs_prom30d',
+            r'estado_actual\.fichas',
+            r'predicciones_mes\.metricas_clave',
+            r'generacion_por_fuente',
+            r'embalses_detalle',
+            r'semaforo_kpi',
+            r'confianza_modelo',
+        ]
+
+        n_replacements = 0
+        for pattern in _JSON_FIELD_PATTERNS:
+            texto_new = _re.sub(pattern, '', texto, flags=_re.IGNORECASE)
+            if texto_new != texto:
+                n_replacements += 1
+                texto = texto_new
+
+        # ── 2. Eliminar backticks residuales ──
+        # La IA a veces usa `dato` — limpiar backticks sueltos
+        texto = _re.sub(r'`([^`\n]{1,80})`', r'\1', texto)
+
+        # ── 3. Limpiar espacios múltiples y líneas vacías excesivas ──
+        texto = _re.sub(r'  +', ' ', texto)
+        texto = _re.sub(r'\n{4,}', '\n\n\n', texto)
+
+        # ── 4. Eliminar frases vacías/genéricas comunes ──
+        _FRASES_VACIAS = [
+            r',?\s*según el campo\s*',
+            r',?\s*como se refleja en los datos\s*',
+            r',?\s*de acuerdo (?:con|a) los datos proporcionados\s*',
+        ]
+        for pattern in _FRASES_VACIAS:
+            texto = _re.sub(pattern, '', texto, flags=_re.IGNORECASE)
+
+        # ── 5. Validar estructura mínima ──
+        section_headers = _re.findall(r'^##\s+', texto, flags=_re.MULTILINE)
+        n_sections = len(section_headers)
+
+        if n_sections < 3:
+            logger.warning(
+                f"[INFORME_IA_POST] Solo {n_sections} secciones detectadas "
+                f"(mínimo 3). Texto rechazado."
+            )
+            return None
+
+        if len(texto.strip()) < 400:
+            logger.warning(
+                f"[INFORME_IA_POST] Texto muy corto post-limpieza "
+                f"({len(texto.strip())} chars). Rechazado."
+            )
+            return None
+
+        if n_replacements > 0:
+            logger.info(
+                f"[INFORME_IA_POST] Limpieza: {n_replacements} patrones JSON "
+                f"eliminados, {original_len}→{len(texto)} chars, "
+                f"{n_sections} secciones OK"
+            )
+        else:
+            logger.info(
+                f"[INFORME_IA_POST] Texto limpio ({len(texto)} chars, "
+                f"{n_sections} secciones). Sin correcciones necesarias."
+            )
+
+        # ── 6. Limitar longitud máxima para que quepa en 1 página PDF ──
+        # ~3200 chars ≈ 1 página A4 a 8.5pt con margen.
+        MAX_CHARS = 3200
+        texto = texto.strip()
+        if len(texto) > MAX_CHARS:
+            # Estrategia: PRESERVAR sección 5 (Calificación) cortando
+            # secciones intermedias (4.2, 3.3) del medio.
+            _sec5_match = _re.search(r'\n(## 5\..*)', texto, _re.DOTALL)
+            if _sec5_match:
+                _sec5_text = _sec5_match.group(1).strip()
+                _before_sec5 = texto[:_sec5_match.start()]
+                _budget = MAX_CHARS - len(_sec5_text) - 4  # 4 for \n\n\n
+                if _budget > MAX_CHARS * 0.5:
+                    # Cortar _before_sec5 al budget en último párrafo
+                    cutoff = _before_sec5[:_budget].rfind('\n\n')
+                    if cutoff > _budget * 0.5:
+                        _before_sec5 = _before_sec5[:cutoff].rstrip()
+                    else:
+                        _before_sec5 = _before_sec5[:_budget].rstrip()
+                    texto = _before_sec5 + '\n\n' + _sec5_text
+                else:
+                    texto = texto[:MAX_CHARS].rstrip()
+            else:
+                # Sin sección 5: cortar en último párrafo completo
+                cutoff = texto[:MAX_CHARS].rfind('\n\n')
+                if cutoff > MAX_CHARS * 0.5:
+                    texto = texto[:cutoff].rstrip()
+                else:
+                    texto = texto[:MAX_CHARS].rstrip()
+            logger.info(
+                f"[INFORME_IA_POST] Texto truncado de {original_len} a "
+                f"{len(texto)} chars para caber en 1 página PDF"
+            )
+
+        return texto
+
     # ── Helper: Llamar a la IA (Groq/OpenRouter) ──
     
     async def _generar_informe_con_ia(
@@ -3268,105 +3459,115 @@ class ChatbotOrchestratorService:
             )
             
             system_prompt = (
-                "Eres un ingeniero eléctrico senior y asesor estratégico del "
-                "Viceministro de Minas y Energía de Colombia. Redactas un INFORME "
-                "EJECUTIVO DIARIO centrado en ANÁLISIS CUALITATIVO PROFUNDO, no "
-                "en repetir datos numéricos.\n\n"
+                "Eres un analista experto del sector energético colombiano "
+                "(MME, XM, UPME). Genera un INFORME EJECUTIVO de EXACTAMENTE "
+                "5 secciones numeradas.\n\n"
                 "DATOS QUE RECIBES (JSON):\n"
-                "• estado_actual.fichas: 3 KPIs (Generación, Precio Bolsa, Embalses) "
-                "con valor actual, promedio 7d, tendencia y contexto histórico.\n"
-                "• generacion_por_fuente: participación por tipo (hidráulica, térmica, "
-                "solar, eólica, etc.) con GWh y porcentaje.\n"
-                "• embalses_detalle: nivel actual vs media histórica 2020–2025 y "
-                "tendencia 30d.\n"
-                "• predicciones_mes: proyecciones a 1 mes para las 3 métricas clave "
-                "(promedio, rango, tendencia, cambio % vs histórico, confianza del modelo).\n"
-                "• anomalias: alertas detectadas con severidad, desvío % y comentarios.\n"
-                "• semaforo_kpi: estado semáforo (🟢/🟡/🔴) de cada indicador.\n"
-                "• noticias.titulares: hasta 5 noticias del sector energético del día.\n"
-                "• confianza: qué modelos son experimentales (PRECIO_BOLSA).\n\n"
-                "REGLAS ABSOLUTAS (violación = informe inválido):\n"
-                "1. NUNCA menciones nombres de campos JSON (ej: 'desviacion_pct_media_"
-                "historica_2020_2025', 'cambio_pct_vs_historico'). Usa lenguaje natural.\n"
-                "2. NUNCA inventes datos. Usa EXCLUSIVAMENTE los valores del JSON.\n"
-                "3. NUNCA uses frases vacías como 'requiere seguimiento' o 'podría "
-                "reflejar mayor competencia' sin explicar QUÉ dato lo justifica, "
-                "POR QUÉ es relevante y QUÉ acción implica.\n"
-                "4. SIEMPRE integra las NOTICIAS en secciones 3 y 4. Para cada titular, "
-                "explica qué IMPLICA para el sector (no repitas el título textual).\n"
-                "5. SIEMPRE menciona las ANOMALÍAS detectadas (sección 3.1), con el "
-                "indicador, magnitud del desvío y posible causa.\n"
-                "6. PRECIO_BOLSA es EXPERIMENTAL: calificarlo siempre como 'referencia "
-                "direccional del modelo experimental'. No formular conclusiones firmes.\n"
-                "7. Generación y Embalses son de ALTA CONFIANZA: sí admiten conclusiones.\n\n"
-                "INSTRUCCIONES PARA EMBALSES:\n"
-                "• Compara siempre el valor actual con la media histórica 2020–2025 "
-                "(dato en contexto de la ficha). Di 'X puntos por encima/debajo'.\n"
-                "• Desviación negativa: <-5% moderado, <-15% alto, <-25% crítico.\n"
-                "• Menciona la tendencia a 30 días y lo que implica para las "
-                "próximas semanas (agotamiento gradual vs reposición).\n\n"
-                "INSTRUCCIONES PARA GENERACIÓN POR FUENTE:\n"
-                "• Usa los datos de generacion_por_fuente para comentar la "
-                "participación de renovables vs fósiles. Indica si hay cambios "
-                "relevantes respecto a la composición habitual (hidráulica ~70%, "
-                "térmica ~25%, solar+eólica ~5% como referencia).\n\n"
-                "ESTRUCTURA OBLIGATORIA (5 secciones, máximo 1200 palabras total):\n\n"
+                "• fichas: 3 KPIs (Generación, Precio Bolsa, Embalses) con valor, "
+                "tendencia y contexto histórico.\n"
+                "• generacion_por_fuente: participación por tipo con GWh y %.\n"
+                "• embalses_detalle: nivel actual vs media histórica 2020–2025.\n"
+                "• predicciones_mes: proyecciones 1 mes (promedio, rango, tendencia).\n"
+                "• anomalias: alertas con severidad y desvío.\n"
+                "• noticias.titulares: hasta 5 noticias del sector.\n\n"
+                "═══ REGLAS OBLIGATORIAS ═══\n\n"
+                "R1 — NO REPITAS NÚMEROS: La página 1 del PDF ya muestra una TABLA "
+                "SEMÁFORO con los 3 indicadores, sus valores exactos, tendencia y estado. "
+                "Tu texto va en la página 4. PROHIBIDO mencionar valores específicos "
+                "como '247.85 GWh', '113.79 COP/kWh', '73.37%', '235.95 GWh', "
+                "'70.65%', '8.38 puntos'. En su lugar usa lenguaje CUALITATIVO:\n"
+                "  • INCORRECTO: 'La generación fue de 247.85 GWh'\n"
+                "  • CORRECTO: 'La generación se mantuvo ligeramente por encima del promedio semanal'\n"
+                "  • INCORRECTO: 'Los embalses están 8.38 puntos por encima'\n"
+                "  • CORRECTO: 'Los embalses están holgadamente por encima de la media histórica'\n"
+                "Solo usa cifras cuando aportan algo NUEVO (ej: desvío de anomalía, % renovables).\n\n"
+                "R2 — LONGITUD: Máximo 600 palabras / ≤3000 caracteres. Si excedes, "
+                "corta contenido secundario de secciones 3.3 o 4.2.\n\n"
+                "R3 — ESTRUCTURA EXACTA: Exactamente 5 secciones, ni más ni menos. "
+                "La sección 5 es OBLIGATORIA — si la omites, el informe es inválido.\n\n"
+                "R4 — NUNCA uses nombres de campos JSON, backticks, guiones bajos "
+                "ni corchetes. Todo en lenguaje natural profesional.\n\n"
+                "R5 — NUNCA inventes datos. SIEMPRE integra noticias (secciones 3-4) "
+                "y anomalías (sección 3.1).\n\n"
+                "R6 — PRECIO_BOLSA es experimental (referencia direccional). "
+                "Generación y Embalses son de alta confianza.\n\n"
+                "═══ ESTRUCTURA OBLIGATORIA (5 secciones) ═══\n\n"
                 "## 1. Contexto general del sistema\n"
-                "3-5 frases. Estado global: generación (fuentes), precio, embalses "
-                "vs media histórica, ¿día normal o señales de estrés? Incluir "
-                "participación renovable si hay datos.\n\n"
+                "2-3 frases de panorama. ¿Día normal, de estrés o de oportunidad? "
+                "¿Composición de fuentes notable? ¿Embalses por encima o debajo del "
+                "histórico y qué implica? NO listes los 3 indicadores con sus valores.\n\n"
                 "## 2. Señales clave y evolución\n"
                 "### 2.1 Proyecciones del próximo mes\n"
-                "3-6 líneas. Para cada métrica clave (Generación, Precio Bolsa, "
-                "Embalses): promedio esperado, cambio % vs últimos 30d, tendencia. "
-                "No repetir tablas; solo cifras que justifiquen una idea.\n\n"
+                "3-4 líneas. Solo las que revelan cambio significativo (>5%). "
+                "NO repitas la tabla de predicciones.\n\n"
                 "### 2.2 Análisis cualitativo\n"
-                "Interpretar las señales cruzando estado actual + predicciones. "
-                "Extraer 2-3 ideas prospectivas concretas "
-                "('si la tendencia de X sigue así, en Y semanas…'). "
-                "No repetir cifras de 2.1.\n\n"
+                "CORAZÓN del informe. Cruza estado actual + predicciones + noticias "
+                "→ 2-3 conclusiones prospectivas originales. NO repetir datos previos.\n\n"
                 "## 3. Riesgos y oportunidades\n"
                 "### 3.1 Riesgos operativos (corto plazo)\n"
-                "2-3 riesgos. OBLIGATORIO incluir cada anomalía detectada aquí, "
-                "con el desvío numérico. Para cada riesgo: causa (dato+noticia), "
-                "impacto potencial y horizonte temporal.\n\n"
+                "OBLIGATORIO incluir cada anomalía detectada con magnitud del desvío.\n\n"
                 "### 3.2 Riesgos estructurales (mediano plazo)\n"
-                "Conectar predicciones + noticias del día → riesgos sistémicos "
-                "(dependencia de fuentes, retrasos renovables, regulación). "
-                "OBLIGATORIO referenciar al menos 2 titulares de noticias, "
-                "explicando sus implicaciones (no repetir título textual).\n\n"
+                "Conectar predicciones + noticias → riesgos sistémicos. "
+                "OBLIGATORIO referenciar al menos 2 titulares.\n\n"
                 "### 3.3 Oportunidades\n"
                 "2-3 oportunidades con condición habilitante concreta.\n\n"
                 "## 4. Recomendaciones para el Viceministro\n"
                 "### 4.1 Corto plazo (días/semana)\n"
-                "3-5 acciones. Cada una vinculada a un dato o noticia específica "
-                "('dado que X, se recomienda Y').\n\n"
+                "3-4 acciones vinculadas a datos o noticias.\n\n"
                 "### 4.2 Mediano plazo (semanas/meses)\n"
-                "3-4 líneas estratégicas con dimensión concreta (plazos, metas).\n\n"
-                "## 5. Cierre ejecutivo\n"
-                "2-3 frases. ¿Cómodo, en vigilancia o preocupación? Foco inmediato.\n\n"
-                "ESTILO:\n"
-                "• Español profesional, directo, respetuoso. Sin tecnicismos innecesarios.\n"
-                "• Párrafos analíticos de 2-4 líneas. Listas breves (máx 5 ítems).\n"
-                "• ## para secciones, ### para sub-secciones, **negritas** para cifras clave.\n"
-                "• Unidades siempre: GWh, COP/kWh, %. Fechas cuando justifiques.\n"
-                "• NO empieces secciones con 'El sistema eléctrico colombiano presenta…' "
-                "ni variaciones genéricas. Ve directo al dato relevante."
+                "2-3 líneas estratégicas.\n\n"
+                "## 5. Calificación del sistema\n"
+                "OBLIGATORIO. Elige UNA calificación y justifica en 2-3 frases:\n"
+                "• **ESTABLE** — sistema operando en rangos normales, sin riesgos inminentes.\n"
+                "• **EN VIGILANCIA** — riesgos moderados que requieren monitoreo activo.\n"
+                "• **PREOCUPANTE** — riesgos altos que requieren intervención inmediata.\n\n"
+                "Ejemplo de sección 5 bien escrita:\n"
+                "'## 5. Calificación del sistema\n"
+                "**EN VIGILANCIA.** Escenario de riesgo moderado: los embalses se mantienen "
+                "por encima del histórico pero con tendencia descendente para el próximo mes, "
+                "lo cual coincide con señales de incertidumbre regulatoria tras la decisión "
+                "del Consejo de Estado sobre ISA. Acción prioritaria: asegurar seguimiento "
+                "semanal a la evolución hidrológica y sus implicaciones tarifarias.'\n\n"
+                "═══ ESTILO ═══\n"
+                "• Español profesional, directo. Párrafos de 2-4 líneas.\n"
+                "• ## para secciones, ### para sub-secciones.\n"
+                "• NO empieces con 'El sistema eléctrico colombiano presenta…'. "
+                "Ve directo al análisis."
             )
             
+            # ── Round 4: Inyectar anomalías explícitas en user_prompt ──
+            # Extraer anomalías del contexto para que la IA las mencione
+            # OBLIGATORIAMENTE en sección 3.1 (few-shot injection dinámica)
+            _anomalias_para_prompt = []
+            for _a in contexto_ia.get("anomalias", {}).get("lista", []):
+                _sev = _a.get("severidad", "alerta").upper()
+                _ind = _a.get("indicador", _a.get("metrica", "desconocida"))
+                _desc = _a.get("descripcion", _a.get("detalle", "sin detalle"))
+                _anomalias_para_prompt.append(f"  - [{_sev}] {_ind}: {_desc}")
+
+            if _anomalias_para_prompt:
+                _bloque_anomalias = (
+                    "\n\n⚠️ ANOMALÍAS DETECTADAS HOY (OBLIGATORIO incluirlas en sección 3.1):\n"
+                    + "\n".join(_anomalias_para_prompt)
+                    + "\n\nCada una DEBE aparecer en '3.1 Riesgos operativos' con su "
+                    "magnitud, causa probable e implicación. NO digas 'no se detectaron anomalías'."
+                )
+            else:
+                _bloque_anomalias = ""
+
             user_prompt = (
                 f"Datos del sistema eléctrico colombiano para hoy:\n\n"
-                f"```json\n{contexto_json}\n```\n\n"
-                f"Redacta el informe ejecutivo siguiendo EXACTAMENTE la estructura "
-                f"de 5 secciones indicada. Recuerda:\n"
-                f"- Sección 1: embalses vs media histórica 2020-2025 (en puntos, no %).\n"
-                f"- Sección 2.1 ANTES de 2.2.\n"
-                f"- Sección 3 es el CORAZÓN del informe: cruza datos + anomalías + "
-                f"noticias. No repitas datos, INTERPRETA causas e implicaciones.\n"
-                f"- Cada anomalía detectada DEBE aparecer en 3.1 con su magnitud.\n"
-                f"- Cada noticia relevante DEBE aparecer en 3.2 o 4 con su implicación.\n"
-                f"- NUNCA nombres campos JSON; usa lenguaje natural.\n"
-                f"- Máximo 1200 palabras."
+                f"```json\n{contexto_json}\n```\n"
+                f"{_bloque_anomalias}\n\n"
+                f"Genera el informe ejecutivo con EXACTAMENTE 5 secciones numeradas.\n\n"
+                f"RECORDATORIOS CRÍTICOS:\n"
+                f"- NO menciones valores numéricos específicos (la tabla semáforo de la "
+                f"página 1 ya los muestra). Usa lenguaje cualitativo.\n"
+                f"- Cada anomalía listada arriba → sección 3.1 con magnitud del desvío.\n"
+                f"- Cada noticia → secciones 3.2 o 4 con implicación.\n"
+                f"- Sección 5 es OBLIGATORIA: califica ESTABLE / EN VIGILANCIA / PREOCUPANTE.\n"
+                f"- Máximo 600 palabras. Sé CONCISO: cada frase aporta una idea nueva.\n"
+                f"- NUNCA uses campos JSON ni backticks."
             )
             
             # Llamada síncrona envuelta en thread para no bloquear
@@ -3378,7 +3579,7 @@ class ChatbotOrchestratorService:
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.3,
-                    max_tokens=6000,
+                    max_tokens=4000,
                 )
             
             response = await asyncio.wait_for(

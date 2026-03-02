@@ -1,182 +1,146 @@
-# ⏰ Cron Job ETL PostgreSQL - Configuración
+# ⏰ Cron Jobs — Portal Energético MME
 
 **Fecha de configuración**: 9 de febrero de 2026  
-**Estado**: ✅ **ACTIVO**
+**Última actualización**: 20 de febrero de 2026  
+**Estado**: ✅ **ACTIVO** — 9 entradas crontab operacionales
 
 ---
 
-## 📋 Configuración Actual
-
-### Línea de Crontab
+## 📋 Crontab Completo Actual
 
 ```bash
-0 7 * * * cd /home/admonctrlxm/server && /usr/bin/python3 etl/etl_todas_metricas_xm.py --dias 3 >> /home/admonctrlxm/server/logs/etl_postgresql_cron.log 2>&1
+# ============================================
+# CRONTAB - Portal Energético MME
+# Actualizado: 2026-02-19 (dual ArcGIS)
+# ============================================
+
+# 1. ETL Transmisión (diario a las 6:30 AM)
+30 6 * * * cd /home/admonctrlxm/server && /usr/bin/python3 etl/etl_transmision.py --days 7 --clean >> logs/etl/transmision.log 2>&1
+
+# 2. Auto-start API al reinicio del servidor
+@reboot sleep 30 && /home/admonctrlxm/server/api/start_api_daemon.sh >> logs/api-startup.log 2>&1
+
+# 3. Monitoreo y auto-recuperación de la API (cada 5 min)
+*/5 * * * * /home/admonctrlxm/server/scripts/monitor_api.sh
+
+# 4. Actualización HORARIA de datos XM en ArcGIS Enterprise (DUAL: Vice_Energia + Adminportal)
+0 * * * * /home/admonctrlxm/server/tests/ARGIS/ejecutar_dual.sh xm >> logs/arcgis_dual.log 2>&1
+
+# 5. ETL PostgreSQL — Todas las métricas XM (cada 6 horas: 0:00, 6:00, 12:00, 18:00)
+0 */6 * * * cd /home/admonctrlxm/server && /usr/bin/python3 etl/etl_todas_metricas_xm.py --dias 7 >> logs/etl_postgresql_cron.log 2>&1
+
+# 6. Actualización semanal de predicciones energéticas (Domingos 2:00 AM)
+0 2 * * 0 /home/admonctrlxm/server/scripts/actualizar_predicciones.sh
+
+# 7. Backup semanal de tabla metrics (Domingos 3:00 AM) — retiene últimos 28 días
+0 3 * * 0 pg_dump -U postgres -h localhost -d portal_energetico -t metrics --no-owner -Fc -f backups/database/metrics_$(date +%Y%m%d).dump && find backups/database/ -name "metrics_*.dump" -mtime +28 -delete
+
+# 8. Backfill mensual de métricas Sistema (1ro de cada mes 4:00 AM)
+0 4 1 * * cd /home/admonctrlxm/server && /usr/bin/python3 scripts/backfill_sistema_metricas.py --dias 90 >> logs/backfill_mensual.log 2>&1
+
+# 9. Actualización cada 30 min de archivos OneDrive/SharePoint en ArcGIS Enterprise (DUAL)
+30 * * * * /home/admonctrlxm/server/tests/ARGIS/ejecutar_dual.sh onedrive >> logs/arcgis_dual.log 2>&1
 ```
 
-### Parámetros
+---
 
-| Parámetro | Valor | Descripción |
-|-----------|-------|-------------|
-| **Frecuencia** | Diaria | Se ejecuta todos los días |
-| **Hora** | 7:00 AM | Después del ETL de transmisión (6:30 AM) |
-| **Script** | `etl/etl_todas_metricas_xm.py` | ETL principal de PostgreSQL |
-| **Días** | `--dias 3` | Descarga últimos 3 días de datos |
-| **Log** | `/home/admonctrlxm/server/logs/etl_postgresql_cron.log` | Archivo de log |
+## 📅 Cronograma Completo
+
+| # | Frecuencia | Hora | Script | Descripción | Log |
+|---|-----------|------|--------|-------------|-----|
+| 1 | Diaria | 6:30 AM | `etl/etl_transmision.py` | Líneas de transmisión SIMEN (7 días, limpia duplicados) | `logs/etl/transmision.log` |
+| 2 | @reboot | 30s post-boot | `api/start_api_daemon.sh` | Inicia API FastAPI automáticamente | `logs/api-startup.log` |
+| 3 | Cada 5 min | `*/5 * * * *` | `scripts/monitor_api.sh` | Monitoreo + auto-recuperación API | `logs/api-monitor.log` |
+| 4 | Cada hora | `:00` | `ejecutar_dual.sh xm` | ArcGIS Enterprise — datos XM (dual) | `logs/arcgis_dual.log` |
+| 5 | **Cada 6h** | 0/6/12/18 | **`etl_todas_metricas_xm.py`** | **ETL PostgreSQL — todas las métricas** ⭐ | `logs/etl_postgresql_cron.log` |
+| 6 | Semanal | Dom 2:00 AM | `actualizar_predicciones.sh` | Reentrenamiento predicciones ML | — |
+| 7 | Semanal | Dom 3:00 AM | `pg_dump` + `find` | Backup tabla `metrics` (retención 28 días) | `logs/backup_metrics.log` |
+| 8 | Mensual | 1ro 4:00 AM | `backfill_sistema_metricas.py` | Relleno de huecos métricas Sistema (90 días) | `logs/backfill_mensual.log` |
+| 9 | Cada 30 min | `:30` | `ejecutar_dual.sh onedrive` | ArcGIS Enterprise — OneDrive/SharePoint (dual) | `logs/arcgis_dual.log` |
 
 ---
 
-## 🎯 ¿Qué hace?
+## ⭐ ETL Principal — Detalle (`etl_todas_metricas_xm.py`)
 
-El cron job ejecuta diariamente el ETL que:
+### Configuración actual
 
-1. **Se conecta** a la API de XM (servicio web de Colombia)
-2. **Descarga** datos de aproximadamente **193 métricas** diferentes
-3. **Procesa** y transforma los datos
-4. **Inserta/actualiza** registros en PostgreSQL
-5. **Genera log** con el resultado de la ejecución
+| Parámetro | Valor | Nota |
+|-----------|-------|------|
+| **Frecuencia** | Cada 6 horas | `0 */6 * * *` — 0:00, 6:00, 12:00, 18:00 |
+| **Script** | `etl/etl_todas_metricas_xm.py` | ETL principal |
+| **Días** | `--dias 7` | Descarga últimos 7 días |
+| **Validación** | Pre-insert con `etl_rules.py` | 69 reglas centralizadas |
 
-### Métricas Descargadas
+### ¿Qué hace?
 
-El ETL descarga automáticamente:
+1. Se conecta a la API de XM (servicio web de Colombia)
+2. Descarga datos de ~193 métricas
+3. Valida con reglas centralizadas (`etl/etl_rules.py`)
+4. Inserta/actualiza registros en PostgreSQL
+5. Genera log con resultado de cada métrica
 
-- **Generación**: Gene, GeneFueraMerito, GeneIdea, CapEfecNeta, etc.
-- **Demanda**: DemaCome, DemaReal, DemaComeReg, etc.
-- **Precios**: PrecBolsNaci, PrecEsca, PrecPromCont, etc.
-- **Hidrología**: AporEner, VoluUtilDiarEner, PorcVoluUtilDiar, etc.
-- **Transacciones**: CompBolsNaciEner, VentBolsNaciEner, etc.
-- **Emisiones**: EmisionesCO2, EmisionesCH4, EmisionesN2O, etc.
-- Y **100+ métricas** más
+### Rendimiento típico
 
----
-
-## 📅 Cronograma Completo de ETLs
-
-| Hora | Script | Descripción |
-|------|--------|-------------|
-| 6:30 AM | `etl/etl_transmision.py` | Líneas de transmisión |
-| **7:00 AM** | **`etl/etl_todas_metricas_xm.py`** | **PostgreSQL (TODAS las métricas)** ⭐ |
-| Cada hora | `tests/ARGIS/actualizar_datos_xm_online.py` | ArcGIS Enterprise (visualizaciones) |
-| Cada 5 min | `scripts/monitor_api.sh` | Monitoreo y auto-recuperación API |
+| Modo | Duración | Registros |
+|------|----------|-----------|
+| Normal (`--dias 7`) | 3-5 min | ~10,000 - 25,000 |
+| Historial (`--dias 30`) | 10-15 min | ~100,000 - 150,000 |
+| Backfill (`--dias 90`) | 20-30 min | ~300,000+ |
 
 ---
 
 ## 🔍 Verificación y Monitoreo
 
-### Ver el log en tiempo real
-
-```bash
-tail -f /home/admonctrlxm/server/logs/etl_postgresql_cron.log
-```
-
-### Ver últimas 50 líneas del log
-
-```bash
-tail -50 /home/admonctrlxm/server/logs/etl_postgresql_cron.log
-```
-
-### Ver últimas 100 líneas del log
-
-```bash
-tail -100 /home/admonctrlxm/server/logs/etl_postgresql_cron.log
-```
-
-### Ver todos los cron jobs activos
-
+### Ver cron jobs activos
 ```bash
 crontab -l
 ```
 
-### Verificar última fecha en BD
-
+### Ver log ETL principal en tiempo real
 ```bash
-psql -U tu_usuario -d tu_database -c "SELECT MAX(fecha::date) FROM metrics WHERE metrica = 'Gene';"
+tail -f /home/admonctrlxm/server/logs/etl_postgresql_cron.log
 ```
 
-O con Python:
-
+### Buscar errores / bloqueos de validación
 ```bash
-cd /home/admonctrlxm/server
-python3 verificar_fechas_bd.py
+grep -E '🛑|ERROR UNIDAD|Inserción BLOQUEADA' /home/admonctrlxm/server/logs/etl_postgresql_cron.log | tail -20
+```
+
+### Verificar última fecha en BD
+```bash
+psql -U postgres -h localhost -d portal_energetico -c "SELECT MAX(fecha::date) FROM metrics WHERE metrica = 'Gene';"
+```
+
+### Verificar que cron está corriendo
+```bash
+systemctl status cron
+grep CRON /var/log/syslog | tail -20
 ```
 
 ---
 
 ## ⚡ Ejecución Manual
 
-Si necesitas ejecutar el ETL manualmente (sin esperar al cron job):
-
 ```bash
 cd /home/admonctrlxm/server
-python3 etl/etl_todas_metricas_xm.py --dias 3
-```
 
-### Opciones del ETL
+# Normal (últimos 7 días)
+python3 etl/etl_todas_metricas_xm.py --dias 7
 
-```bash
-# Ayuda
-python3 etl/etl_todas_metricas_xm.py --help
-
-# Cargar solo métricas nuevas
-python3 etl/etl_todas_metricas_xm.py --dias 10 --solo-nuevas
-
-# Cargar solo una métrica específica
+# Solo una métrica
 python3 etl/etl_todas_metricas_xm.py --dias 7 --metrica Gene
 
-# Cargar solo una sección
+# Solo una sección
 python3 etl/etl_todas_metricas_xm.py --dias 7 --seccion Generación
-```
 
----
+# Backfill largo
+python3 etl/etl_todas_metricas_xm.py --dias 30
 
-## 📧 Notificaciones por Email (Opcional)
+# Transmisión
+python3 etl/etl_transmision.py --days 7 --clean
 
-Si quieres recibir emails cuando el ETL falle:
-
-1. Editar crontab:
-   ```bash
-   crontab -e
-   ```
-
-2. Cambiar la línea a:
-   ```bash
-   0 7 * * * cd /home/admonctrlxm/server && \
-   /usr/bin/python3 etl/etl_todas_metricas_xm.py --dias 3 \
-   >> /home/admonctrlxm/server/logs/etl_postgresql_cron.log 2>&1 || \
-   echo "ETL PostgreSQL falló el $(date)" | mail -s "Error ETL PostgreSQL" admin@minenergia.gov.co
-   ```
-
----
-
-## 🔧 Modificar la Configuración
-
-### Cambiar la hora de ejecución
-
-Por ejemplo, para ejecutar a las 8:00 AM en lugar de 7:00 AM:
-
-```bash
-crontab -e
-# Cambiar: 0 7 * * * ...
-# Por:     0 8 * * * ...
-```
-
-### Cambiar el número de días
-
-Para descargar más días (por ejemplo, 7 días):
-
-```bash
-crontab -e
-# Cambiar: --dias 3
-# Por:     --dias 7
-```
-
-### Ejecutar dos veces al día
-
-Para ejecutar a las 7:00 AM y 7:00 PM:
-
-```bash
-crontab -e
-# Agregar segunda línea:
-0 7,19 * * * cd /home/admonctrlxm/server && /usr/bin/python3 etl/etl_todas_metricas_xm.py --dias 3 >> /home/admonctrlxm/server/logs/etl_postgresql_cron.log 2>&1
+# Diagnóstico post-ETL (solo lectura)
+python3 scripts/diagnostico_metricas_etl.py --dias 7
 ```
 
 ---
@@ -184,109 +148,71 @@ crontab -e
 ## 🚨 Troubleshooting
 
 ### El ETL no se ejecutó
-
-1. **Verificar que cron está activo**:
-   ```bash
-   systemctl status cron
-   ```
-
-2. **Ver logs del sistema**:
-   ```bash
-   grep CRON /var/log/syslog | tail -20
-   ```
-
-3. **Verificar permisos del script**:
-   ```bash
-   ls -l /home/admonctrlxm/server/etl/etl_todas_metricas_xm.py
-   chmod +x /home/admonctrlxm/server/etl/etl_todas_metricas_xm.py
-   ```
+1. `systemctl status cron` — verificar servicio cron activo
+2. `grep CRON /var/log/syslog | tail -20` — ver logs del sistema
+3. `ls -l etl/etl_todas_metricas_xm.py` — permisos OK
 
 ### El ETL falla
-
-1. **Ver el log completo**:
-   ```bash
-   cat /home/admonctrlxm/server/logs/etl_postgresql_cron.log
-   ```
-
-2. **Ejecutar manualmente para ver el error**:
-   ```bash
-   cd /home/admonctrlxm/server
-   python3 etl/etl_todas_metricas_xm.py --dias 3
-   ```
-
-3. **Verificar conexión a la API de XM**:
-   ```bash
-   curl -I https://servapibi.xm.com.co/hourly
-   ```
-
-4. **Verificar conexión a PostgreSQL**:
-   ```bash
-   psql -U tu_usuario -d tu_database -c "SELECT 1"
-   ```
+1. `tail -100 logs/etl_postgresql_cron.log` — ver log
+2. `python3 etl/etl_todas_metricas_xm.py --dias 7` — ejecutar manual
+3. `curl -I https://servapibi.xm.com.co/hourly` — API XM accesible
+4. `psql -U postgres -h localhost -d portal_energetico -c "SELECT 1"` — BD accesible
 
 ### No hay datos nuevos
-
-Si el ETL se ejecuta pero no carga datos nuevos:
-
-- **Causa**: XM no ha publicado datos aún (normal, demora 1-2 días)
-- **Verificar**: El log dirá "⚠️ Sin datos disponibles"
-- **Solución**: Esperar a que XM publique los datos
-
----
-
-## 📊 Métricas de Rendimiento
-
-### Ejecución Típica (últimos 3 días)
-
-- **Duración**: 3-4 minutos
-- **Métricas procesadas**: ~193
-- **Métricas exitosas**: ~155
-- **Registros insertados**: ~10,000 - 20,000
-- **Sin datos**: ~38 métricas (normal)
-
-### Ejecución Completa (últimos 10 días)
-
-- **Duración**: 10-15 minutos
-- **Registros insertados**: ~100,000 - 150,000
+- XM normalmente demora 1-2 días en publicar datos
+- Buscar en log: "⚠️ Sin datos disponibles"
 
 ---
 
 ## 📁 Archivos Relacionados
 
-- **Script ETL**: `/home/admonctrlxm/server/etl/etl_todas_metricas_xm.py`
-- **Log del cron**: `/home/admonctrlxm/server/logs/etl_postgresql_cron.log`
-- **Verificación BD**: `/home/admonctrlxm/server/verificar_fechas_bd.py`
-- **Crontab backup**: `/tmp/crontab_backup_*.txt`
+| Archivo | Propósito |
+|---------|-----------|
+| `etl/etl_todas_metricas_xm.py` | ETL principal PostgreSQL |
+| `etl/etl_transmision.py` | ETL líneas de transmisión |
+| `etl/etl_rules.py` | Reglas centralizadas (69 métricas) |
+| `scripts/monitor_api.sh` | Monitor y auto-recuperación API |
+| `scripts/actualizar_predicciones.sh` | Reentrenamiento predicciones ML |
+| `scripts/backfill_sistema_metricas.py` | Backfill mensual |
+| `tests/ARGIS/ejecutar_dual.sh` | ArcGIS Enterprise dual (xm/onedrive) |
+| `api/start_api_daemon.sh` | Inicio automático API |
 
 ---
 
 ## 📝 Historial de Cambios
 
-| Fecha | Cambio | Responsable |
-|-------|--------|-------------|
-| 2026-02-09 | Cron job configurado inicialmente a las 7:00 AM, --dias 3 | GitHub Copilot |
+| Fecha | Cambio |
+|-------|--------|
+| 2026-02-09 | Cron configurado: ETL a las 7:00 AM, `--dias 3` |
+| 2026-02-12 | ETL cambiado a cada 6h (`0 */6`), `--dias 7`. Diagnóstico post-ETL añadido |
+| 2026-02-19 | Dual ArcGIS (xm + onedrive), backup semanal, backfill mensual, predicciones semanales |
+| 2026-02-20 | Documentación reescrita v2.0 — crontab completo (9 entradas) |
 
 ---
 
 ## ✅ Checklist de Mantenimiento
 
-### Diario (Automático)
-- [x] ETL se ejecuta a las 7:00 AM
-- [x] Log se genera correctamente
-- [x] Datos se insertan en PostgreSQL
+### Automático (sin intervención)
+- [x] ETL PostgreSQL cada 6 horas
+- [x] ETL Transmisión diario 6:30 AM
+- [x] Monitoreo API cada 5 min
+- [x] ArcGIS XM horario + OneDrive cada 30 min
+- [x] Predicciones semanales (Dom 2:00 AM)
+- [x] Backup semanal (Dom 3:00 AM, retención 28 días)
+- [x] Backfill mensual (1ro cada mes 4:00 AM)
 
-### Semanal (Manual)
-- [ ] Revisar logs para detectar errores: `tail -100 /home/admonctrlxm/server/logs/etl_postgresql_cron.log`
-- [ ] Verificar última fecha en BD: `python3 verificar_fechas_bd.py`
-- [ ] Revisar espacio en disco: `df -h /home/admonctrlxm/server/logs`
+### Semanal (manual recomendado)
+- [ ] Revisar logs: `tail -100 logs/etl_postgresql_cron.log`
+- [ ] Diagnóstico: `python3 scripts/diagnostico_metricas_etl.py --dias 7`
+- [ ] Backups: `ls -lh backups/database/metrics_*.dump`
+- [ ] Disco: `df -h /home/admonctrlxm`
 
-### Mensual (Manual)
-- [ ] Limpiar logs antiguos: `find /home/admonctrlxm/server/logs -name "*.log" -mtime +30 -delete`
-- [ ] Verificar rendimiento del ETL (duración)
-- [ ] Actualizar documentación si hay cambios
+### Mensual
+- [ ] Rendimiento ETL (duración)
+- [ ] Limpiar logs: `find logs/ -name "*.log" -mtime +60 -delete`
+- [ ] Cobertura reglas: `python3 scripts/diagnostico_conversores_unidades.py`
 
 ---
 
-**Última actualización**: 2026-02-09 13:52  
-**Estado**: ✅ Operacional  
-**Próxima ejecución**: 2026-02-10 07:00 AM
+**Última actualización**: 2026-02-20  
+**Estado**: ✅ Operacional — 9 cron jobs activos

@@ -1,7 +1,7 @@
 # Plan de Estabilidad del ETL — Portal Energético MME
 
-**Fecha:** 2025-07-09 (actualizado 2026-02-12)  
-**Versión:** 1.1  
+**Fecha:** 2025-07-09 (actualizado 2026-02-20)  
+**Versión:** 1.2  
 **Autor:** Arquitecto ETL  
 
 ---
@@ -30,9 +30,9 @@ Este documento consolida el plan de estabilización del pipeline ETL que extrae 
 | F8 | `validar_etl.py` usa SQLite (obsoleto) | Sin validación post-ETL | ✅ **RESUELTO** — nuevo script |
 | F9 | Dashboard con unidades mixtas | UX incorrecta | ⚠️ Se resuelve con F2+F5+F6 |
 | F10 | `validaciones_rangos.py` con IDs incorrectos | Rangos no se aplican | ✅ **RESUELTO** — `etl_rules.py` |
-| F11 | Cron sin retry ni alertas | 6h sin datos si falla | ❌ Pendiente |
+| F11 | Cron sin retry ni alertas | 6h sin datos si falla | ⚠️ Mitigado (cron cada 6h con --dias 7, monitoreo cada 5 min) |
 
-Detalle completo: **[docs/etl_failure_root_causes.md](../docs/etl_failure_root_causes.md)**
+Detalle completo: Se documentó en el catálogo de fallos (archivo eliminado por obsoleto — los hallazgos están consolidados en esta tabla).
 
 ---
 
@@ -144,8 +144,8 @@ python3 scripts/diagnostico_conversores_unidades.py
 ### 4.3 Integración con cron (recomendado)
 
 ```bash
-# Agregar al crontab después del ETL:
-# 0 */6 * * * cd /home/admonctrlxm/server && python3 etl/etl_todas_metricas_xm.py --dias 7 >> logs/etl.log 2>&1
+# Agregar al crontab después del ETL (actualmente activo cada 6h):
+# 0 */6 * * * cd /home/admonctrlxm/server && python3 etl/etl_todas_metricas_xm.py --dias 7 >> logs/etl_postgresql_cron.log 2>&1
 # 10 */6 * * * cd /home/admonctrlxm/server && python3 scripts/diagnostico_metricas_etl.py --dias 7 >> logs/diagnostico.log 2>&1
 ```
 
@@ -213,8 +213,9 @@ python3 scripts/diagnostico_conversores_unidades.py
 
 ## 8. Checklist operativo diario/semanal
 
-> **Última verificación completa:** 2026-02-12  
+> **Última verificación completa:** 2026-02-20  
 > **Resultado:** 69 reglas OK · 14/14 tests · 69/69 coherencia · 0 fallos  
+> **Cron actual:** ETL cada 6h (`0 */6 * * *`) con `--dias 7` + backup semanal + backfill mensual  
 > **Hallazgos pendientes:** 58 métricas en BD sin regla (no críticas); bug de clave duplicada `metricas_restricciones` en `config_metricas.py` (F3, sin impacto directo porque el ETL principal ya usa `etl_rules.py`); 95 IDs en `METRICAS_POR_SECCION` sin regla centralizada (fallback legacy funcional).
 
 ### A. Después de cada ejecución del ETL (cron cada 6h o manual)

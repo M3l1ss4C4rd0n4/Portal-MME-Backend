@@ -149,3 +149,21 @@ node_modules/
 
 # Archivo con credenciales internas
 docs/LINKS_ACCESO.md
+
+# Artefactos de ML (TensorBoard, MLflow local)
+lightning_logs/
+mlruns/
+
+# Charts generados automáticamente (bot/reportes)
+data/charts/*.png
+
+# Celery artifacts
+celerybeat-schedule
+celerybeat.pid
+
+# Resultados de experimentos offline
+experiments/results/
+experiments/*.csv
+
+# Archivos .bak
+*.bak

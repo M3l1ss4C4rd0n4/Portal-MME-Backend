@@ -1,6 +1,6 @@
 # 🚀 Guía de Uso - API REST Portal Energético MME
 
-**Fecha:** 6 de febrero de 2026  
+**Fecha:** 6 de febrero de 2026 (actualizado 20 de febrero de 2026)  
 **Estado:** ✅ API Completamente Funcional
 
 ---
@@ -8,30 +8,33 @@
 ## ✅ **ESTADO ACTUAL**
 
 El servidor FastAPI está **funcionando correctamente** en:
-- **URL Base:** `http://localhost:8000`
+- **URL Base:** `http://localhost:8000` (local) / `https://portalenergetico.minenergia.gov.co` (público)
 - **Documentación Swagger:** `http://localhost:8000/api/docs`
 - **Documentación ReDoc:** `http://localhost:8000/api/redoc`
-- **Modo:** Desarrollo (autenticación deshabilitada)
+- **Modo:** Producción (autenticación API Key activa)
 
 ---
 
 ## 🎯 **INICIO RÁPIDO**
 
-### **Opción 1: Script de Desarrollo (Recomendado)**
+### **Opción 1: Servicio systemd (Producción — Recomendado)**
 
 ```bash
-# Ejecutar desde ~/server
-./api/start_dev.sh
+# Verificar estado
+sudo systemctl status api-mme
+
+# Reiniciar si es necesario
+sudo systemctl restart api-mme
 ```
 
 **Características:**
-- ✅ Entorno desarrollo
-- ✅ Documentación Swagger habilitada
-- ✅ Autenticación API Key deshabilitada
-- ✅ Auto-reload activado
-- ✅ Debug habilitado
+- ✅ Autenticación API Key activa (`X-API-Key` requerido)
+- ✅ Gunicorn con múltiples workers
+- ✅ Auto-restart si falla
+- ✅ Monitoreo cada 5 minutos (cron)
+- ✅ Disponible 24/7
 
-### **Opción 2: Inicio Manual**
+### **Opción 2: Inicio Manual (Desarrollo)**
 
 ```bash
 cd /home/admonctrlxm/server
@@ -229,7 +232,49 @@ curl "http://localhost:8000/api/v1/system/prices?start_date=2026-02-01"
 | `/api/v1/predictions/` | GET | Listar predicciones existentes |
 | `/api/v1/predictions/generate` | POST | Generar nueva predicción |
 
-**TOTAL: 25 endpoints disponibles**
+**TOTAL: 25 endpoints REST + 1 endpoint Orquestador (chatbot)**
+
+---
+
+## 🤖 **ENDPOINT ORQUESTADOR (Chatbot)**
+
+El orquestador centraliza 13 intents para integración con chatbots:
+
+```
+POST /api/v1/chatbot/orchestrator
+Header: X-API-Key: MME2026_SECURE_KEY
+Header: Content-Type: application/json
+```
+
+### Intents Disponibles
+
+| Intent | Descripción |
+|--------|-------------|
+| `generacion_electrica` | Generación eléctrica actual/histórica |
+| `hidrologia` | Datos hidrológicos (embalses, aportes) |
+| `demanda_sistema` | Demanda energética del sistema |
+| `precio_bolsa` | Precios en bolsa energética |
+| `predicciones` | Predicciones ML (7 días) |
+| `informe_ejecutivo` | Informe completo del sistema |
+| `metricas_generales` | Métricas generales del sector |
+| `estado_actual` | Estado actual del sistema en tiempo real |
+| `anomalias_sector` | Anomalías y alertas detectadas |
+| `predicciones_sector` | Predicciones por indicador |
+| `noticias_sector` | Noticias del sector energético |
+| `pregunta_libre` | Consulta en lenguaje natural (IA) |
+| `menu` / `ayuda` | Menú principal / navegación |
+
+### Ejemplo rápido
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chatbot/orchestrator \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: MME2026_SECURE_KEY" \
+  -d '{"sessionId": "test-001", "intent": "generacion_electrica", "parameters": {}}'
+```
+
+> Documentación completa del orquestador: `docs/DOCUMENTACION_TECNICA_ORQUESTADOR.md`  
+> Integración Java: `docs/ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md`
 
 ---
 
@@ -331,21 +376,21 @@ python3 -m uvicorn api.main:app --reload --port 8001
 ### **Error: "401 Unauthorized"**
 
 ```bash
-# Asegurar que autenticación esté deshabilitada
-export API_KEY_ENABLED=false
+# La API requiere autenticación en producción.
+# Incluir el header X-API-Key en cada request:
+curl -H "X-API-Key: MME2026_SECURE_KEY" http://localhost:8000/api/v1/generation/system
 
-# O iniciar con script de desarrollo
-./api/start_dev.sh
+# Para desarrollo local sin auth:
+export API_KEY_ENABLED=false
+python3 -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### **Documentación no disponible (404)**
 
 ```bash
-# Verificar que esté en modo desarrollo
+# Swagger está disponible solo en modo desarrollo
 export DASH_ENV=development
-
-# Reiniciar servidor
-./api/start_dev.sh
+python3 -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -446,16 +491,16 @@ curl http://localhost:8000/metrics
 ╔════════════════════════════════════════════════════════╗
 ║  ✅ API REST 100% FUNCIONAL                            ║
 ║                                                        ║
-║  🚀 25 endpoints operacionales                         ║
+║  🚀 25 endpoints REST + 1 orquestador (13 intents)     ║
 ║  📚 Documentación Swagger completa                     ║
-║  🔓 Sin autenticación en desarrollo                    ║
-║  ⚡ Auto-reload habilitado                             ║
+║  🔐 Autenticación API Key activa en producción          ║
+║  🤖 Orquestador chatbot operacional                    ║
 ║  📊 Formato JSON estandarizado                         ║
 ║  🎯 Rate limiting configurado                          ║
 ║  🔍 Validación Pydantic automática                     ║
-║  📈 Listo para integración externa                     ║
+║  📈 Disponible 24/7 con systemd                        ║
 ║                                                        ║
-║  🌐 URL: http://localhost:8000                         ║
+║  🌐 URL: https://portalenergetico.minenergia.gov.co    ║
 ║  📖 Docs: http://localhost:8000/api/docs               ║
 ╚════════════════════════════════════════════════════════╝
 ```
@@ -464,4 +509,4 @@ curl http://localhost:8000/metrics
 
 **Desarrollado por:** GitHub Copilot (Claude Sonnet 4.5)  
 **Proyecto:** Portal Energético MME  
-**Última actualización:** 6 de febrero de 2026
+**Última actualización:** 20 de febrero de 2026

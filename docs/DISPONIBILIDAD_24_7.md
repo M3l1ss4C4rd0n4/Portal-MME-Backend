@@ -1,19 +1,32 @@
 # Guía de Disponibilidad 24/7 - Portal Energético MME
 
+**Última actualización:** 20 de febrero de 2026
+
 ## ✅ Lo que está configurado AHORA
 
 ### 1. Reinicio Automático
 - **@reboot**: La API se inicia automáticamente cuando el servidor se reinicia
 - **Cron job**: Ejecuta el script de inicio 30 segundos después del reinicio
 
-### 2. Monitoreo Automático (NUEVO ✨)
-- **Cada 5 minutos**: Un script verifica que la API esté respondiendo
+### 2. Monitoreo Automático
+- **Cada 5 minutos**: Un script verifica que la API esté respondiendo (`scripts/monitor_api.sh`)
 - **Auto-recuperación**: Si la API no responde, se reinicia automáticamente
 - **Logs**: Registra todas las verificaciones en `logs/api-monitor.log`
 
-### 3. Redundancia
-- **4 workers**: Si uno falla, gunicorn lo reinicia automáticamente
-- **Gunicorn**: Reinicia workers que crashean
+### 3. Tareas Programadas (9 cron jobs activos)
+- **ETL Transmisión**: Diario 6:30 AM
+- **ETL PostgreSQL**: Cada 6 horas (0:00, 6:00, 12:00, 18:00) — `--dias 7`
+- **ArcGIS Enterprise XM**: Cada hora (dual: Vice_Energia + Adminportal)
+- **ArcGIS Enterprise OneDrive**: Cada 30 minutos (dual)
+- **Predicciones ML**: Domingos 2:00 AM
+- **Backup BD**: Domingos 3:00 AM (retención 28 días)
+- **Backfill mensual**: 1ro de cada mes 4:00 AM
+
+> Detalle completo: `docs/CRON_JOB_ETL_POSTGRESQL.md`
+
+### 3. Redundancia (Gunicorn)
+- **Múltiples workers**: `cpu_count() * 2 + 1` workers (calculado dinámicamente)
+- **Gunicorn**: Reinicia workers que crashean automáticamente
 
 ### 4. Dashboard
 - **Systemd service**: Configurado para iniciar automáticamente al boot
@@ -65,9 +78,17 @@ Esto significa:
 │                                          │
 │  ┌──────────────────────────────────┐   │
 │  │  API (Puerto 8000)               │   │
+│  │  • Systemd: api-mme.service      │   │
 │  │  • Cron @reboot: ✅               │   │
 │  │  • Monitoreo cada 5 min: ✅       │   │
-│  │  • 4 workers redundantes: ✅      │   │
+│  │  • Workers dinámicos: ✅          │   │
+│  │  • Auth: API Key activa 🔐       │   │
+│  └──────────────────────────────────┘   │
+│                                          │
+│  ┌──────────────────────────────────┐   │
+│  │  MLflow (Puerto 5000)            │   │
+│  │  • Tracking de experimentos ML   │   │
+│  │  • Solo localhost                │   │
 │  └──────────────────────────────────┘   │
 │                                          │
 │  ┌──────────────────────────────────┐   │
@@ -85,7 +106,23 @@ Esto significa:
 └─────────────────────────────────────────┘
 ```
 
-## 📊 Nivel de Disponibilidad Actual
+## � Tareas Cron Activas (9 entradas)
+
+| Frecuencia | Horario | Tarea |
+|-----------|---------|-------|
+| Diaria | 6:30 AM | ETL Transmisión (`etl_transmision.py --days 7`) |
+| @reboot | 30s post-boot | Auto-start API (`start_api_daemon.sh`) |
+| Cada 5 min | `*/5` | Monitoreo API (`monitor_api.sh`) |
+| Cada hora | `:00` | ArcGIS XM dual (`ejecutar_dual.sh xm`) |
+| Cada 6h | 0/6/12/18 | ETL PostgreSQL (`etl_todas_metricas_xm.py --dias 7`) |
+| Semanal | Dom 2:00 AM | Predicciones ML (`actualizar_predicciones.sh`) |
+| Semanal | Dom 3:00 AM | Backup BD (`pg_dump`, retención 28 días) |
+| Mensual | 1ro 4:00 AM | Backfill métricas (`backfill_sistema_metricas.py --dias 90`) |
+| Cada 30 min | `:30` | ArcGIS OneDrive dual (`ejecutar_dual.sh onedrive`) |
+
+> Detalle completo: `docs/CRON_JOB_ETL_POSTGRESQL.md`
+
+## �📊 Nivel de Disponibilidad Actual
 
 | Escenario | ¿Qué pasa? | Tiempo de recuperación |
 |-----------|------------|------------------------|
@@ -123,6 +160,11 @@ crontab -l
 ### Estado del dashboard
 ```bash
 sudo systemctl status dashboard-mme
+```
+
+### Estado de la API
+```bash
+sudo systemctl status api-mme
 ```
 
 ### Probar API manualmente
@@ -187,5 +229,5 @@ Esto es excelente para un servidor en producción de gobierno, pero NO es 100% i
 
 ---
 
-**Última actualización**: 6 de febrero de 2026
+**Última actualización**: 20 de febrero de 2026  
 **Configurado por**: GitHub Copilot + admonctrlxm

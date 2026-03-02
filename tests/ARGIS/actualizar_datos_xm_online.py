@@ -21,6 +21,7 @@ import sys
 import os
 import logging
 import argparse
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
@@ -106,6 +107,51 @@ def validar_credenciales():
         logger.error("❌ Credenciales no configuradas. Configura las variables de entorno:")
         logger.error("   ARCGIS_USERNAME y ARCGIS_PASSWORD")
         raise ValueError("Credenciales de ArcGIS no configuradas")
+
+
+# ============================================
+# TRACKING PER-CUENTA: hash del CSV publicado
+# ============================================
+# Cada cuenta guarda el hash MD5 del CSV la última vez que publicó.
+# Si otra cuenta actualizó el CSV pero esta no ha publicado aún,
+# los hashes no coincidirán y se forzará la publicación.
+
+def _hash_file(path: Path) -> str:
+    """Calcula MD5 del contenido del archivo."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _hash_file_path() -> Path:
+    """Ruta del archivo de hash per-cuenta (ej. .last_xm_hash_Adminportal.txt)."""
+    return Path(__file__).parent / f".last_xm_hash_{ARCGIS_USERNAME}.txt"
+
+
+def csv_ya_publicado_para_esta_cuenta() -> bool:
+    """Retorna True si el CSV local ya fue publicado por ESTA cuenta."""
+    hash_path = _hash_file_path()
+    if not hash_path.exists() or not CSV_OUTPUT_FILE.exists():
+        return False
+    try:
+        last_hash = hash_path.read_text().strip()
+        current_hash = _hash_file(CSV_OUTPUT_FILE)
+        return last_hash == current_hash
+    except Exception:
+        return False
+
+
+def registrar_publicacion():
+    """Guarda el hash del CSV actual como 'publicado' para esta cuenta."""
+    try:
+        if CSV_OUTPUT_FILE.exists():
+            current_hash = _hash_file(CSV_OUTPUT_FILE)
+            _hash_file_path().write_text(current_hash)
+            logger.info(f"📝 Hash de CSV registrado para {ARCGIS_USERNAME}")
+    except Exception as e:
+        logger.warning(f"⚠️  No se pudo guardar hash de publicación: {e}")
 
 
 def verificar_datos_nuevos():
@@ -657,6 +703,23 @@ def main():
         # Verificar si hay datos nuevos disponibles (optimización para ejecución horaria)
         hay_datos_nuevos, ultima_fecha = verificar_datos_nuevos()
         
+        # Si FEATURE_LAYER_ID está vacío, es una cuenta nueva que nunca ha publicado
+        # → forzar publicación aunque el CSV local ya esté actualizado
+        cuenta_nueva = not FEATURE_LAYER_ID
+        if cuenta_nueva:
+            logger.info("🆕 FEATURE_LAYER_ID vacío — cuenta nueva, forzando primera publicación")
+            hay_datos_nuevos = True
+        
+        # Verificar si el CSV fue actualizado por otra cuenta pero no publicado a ESTA cuenta
+        # (escenario dual: Vice_Energia actualiza el CSV, Adminportal necesita publicarlo también)
+        csv_pendiente = False
+        if not hay_datos_nuevos and not cuenta_nueva and CSV_OUTPUT_FILE.exists():
+            if not csv_ya_publicado_para_esta_cuenta():
+                logger.info(f"🔄 CSV actualizado por otra cuenta pero no publicado a {ARCGIS_USERNAME}")
+                logger.info("   Se procederá a publicar los datos existentes.")
+                csv_pendiente = True
+                hay_datos_nuevos = True
+        
         if not hay_datos_nuevos:
             logger.info("=" * 70)
             logger.info(f"✅ CSV ya actualizado hasta {ultima_fecha}. No se requiere actualización.")
@@ -665,14 +728,22 @@ def main():
             logger.info("=" * 70)
             return 0
         
-        # 1. Extraer datos de XM
-        gene_df, precio_df, volumen_df, capacidad_df = extraer_datos_xm()
-        
-        # 2. Procesar y combinar datos
-        df_combined = procesar_datos(gene_df, precio_df, volumen_df, capacidad_df)
-        
-        # 3. Crear Spatial DataFrame
-        sedf = crear_spatial_dataframe(df_combined)
+        # 1-3. Extraer y procesar datos de XM (o reusar CSV existente si csv_pendiente)
+        if csv_pendiente:
+            # El CSV ya fue actualizado por otra cuenta → reusar sin llamar a la API XM
+            logger.info("📄 Reusando CSV existente (actualizado por otra cuenta)...")
+            df_existente = pd.read_csv(CSV_OUTPUT_FILE)
+            df_combined = df_existente
+            sedf = crear_spatial_dataframe(df_combined)
+        else:
+            # 1. Extraer datos de XM
+            gene_df, precio_df, volumen_df, capacidad_df = extraer_datos_xm()
+            
+            # 2. Procesar y combinar datos
+            df_combined = procesar_datos(gene_df, precio_df, volumen_df, capacidad_df)
+            
+            # 3. Crear Spatial DataFrame
+            sedf = crear_spatial_dataframe(df_combined)
         
         # 4. Conectar a ArcGIS Enterprise
         logger.info(f"🔌 Conectando a ArcGIS Enterprise: {ARCGIS_PORTAL_URL}")
@@ -701,6 +772,10 @@ def main():
             except Exception as e:
                 logger.error(f"⚠️  Error actualizando capa hospedada: {e}")
                 logger.error("   El CSV se actualizó correctamente, pero la capa hospedada no.")
+        
+        # 7. Registrar hash del CSV publicado para esta cuenta
+        if not args.dry_run:
+            registrar_publicacion()
         
         logger.info("=" * 70)
         logger.info("🎉 PROCESO COMPLETADO EXITOSAMENTE")

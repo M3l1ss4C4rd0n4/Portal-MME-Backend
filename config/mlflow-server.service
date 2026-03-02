@@ -1,0 +1,24 @@
+[Unit]
+Description=MLflow Tracking Server — MME Portal Energético
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=admonctrlxm
+WorkingDirectory=/home/admonctrlxm/server
+Environment="PATH=/home/admonctrlxm/server/venv/bin:/usr/local/bin:/usr/bin"
+
+ExecStart=/home/admonctrlxm/server/venv/bin/mlflow server \
+    --backend-store-uri postgresql+psycopg2://postgres:meli2003@localhost:5432/mlflow_tracking \
+    --default-artifact-root /home/admonctrlxm/server/logs/mlflow_artifacts \
+    --host 0.0.0.0 \
+    --port 5000
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

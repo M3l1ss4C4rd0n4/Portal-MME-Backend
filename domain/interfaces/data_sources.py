@@ -101,3 +101,40 @@ class ISIMEMDataSource(ABC):
     def is_available(self) -> bool:
         """Verifica si el servicio SIMEM está disponible"""
         pass
+
+
+class IIDEAMDataSource(ABC):
+    """
+    Interface para acceso a datos del IDEAM (Instituto de Hidrología,
+    Meteorología y Estudios Ambientales) — FASE 18.
+
+    Fuentes: datos.gov.co (Socrata Open Data API)
+    Variables: velocidad_viento, precipitacion, temperatura
+    """
+
+    @abstractmethod
+    def fetch_weather_data(
+        self,
+        variable: str,
+        departamentos: list,
+        fecha_inicio: date,
+        fecha_fin: date = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Consulta datos meteorológicos del IDEAM.
+
+        Args:
+            variable: 'velocidad_viento', 'precipitacion', 'temperatura'
+            departamentos: Lista de departamentos a filtrar
+            fecha_inicio: Fecha inicio
+            fecha_fin: Fecha fin (default: hoy)
+
+        Returns:
+            DataFrame con [fecha, valor] (resolución diaria) o None
+        """
+        pass
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        """Verifica si la API datos.gov.co está disponible"""
+        pass

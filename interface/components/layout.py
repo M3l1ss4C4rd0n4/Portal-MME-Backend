@@ -16,6 +16,7 @@ def crear_navbar_horizontal():
             dbc.NavItem(dbc.NavLink("Pérdidas", href="/perdidas", active="exact")),
             dbc.NavItem(dbc.NavLink("Restricciones", href="/restricciones", active="exact")),
             dbc.NavItem(dbc.NavLink("Métricas", href="/metricas", active="exact")),
+            dbc.NavItem(dbc.NavLink("Predicciones", href="/seguimiento-predicciones", active="exact")),
         ],
         brand="Portal Energético MME",
         brand_href="/",

@@ -191,531 +191,521 @@ def _inline_format(text: str) -> str:
     return text
 
 
+
+
 # ═══════════════════════════════════════════════════════════════
-# CSS profesional institucional MME — v2
+# CSS — Estilo institucional inspirado en PDF modelo
+# Variables Eléctricas (XM / Ministerio de Minas y Energía)
 # ═══════════════════════════════════════════════════════════════
+
+# Paleta de colores del modelo
+_COLORS = {
+    'dark_blue': '#254553',
+    'teal': '#287270',
+    'teal_light': '#299d8f',
+    'blue_mme': '#125685',
+    'coral': '#e76f50',
+    'orange': '#f4a261',
+    'gold': '#e8c36a',
+    'lime': '#b4c657',
+    'violet': '#5d17eb',
+    'yellow': '#ffbf00',
+    'gray_bg': '#d8d8d9',
+    'gray_text': '#737373',
+    'dark_text': '#191717',
+    'green_ok': '#2E7D32',
+    'red_alert': '#C62828',
+    'orange_warn': '#E65100',
+}
 
 _CSS = """
 @page {
     size: letter;
-    margin: 1.8cm 2cm 2.2cm 2cm;
+    margin: 4mm 0mm 11mm 0mm;
+
     @bottom-center {
-        content: "Portal Energetico MME  |  Pagina " counter(page) " de " counter(pages);
-        font-size: 7pt;
-        color: #999;
-        font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
+        content: "Todos los datos presentados son recuperados del Operador del "
+                 "Sistema Interconectado Nacional - XM SA  |  Pagina "
+                 counter(page) " de " counter(pages);
+        font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif;
+        font-size: 6pt;
+        font-style: italic;
+        font-weight: bold;
+        color: #ffffff;
+        background: #254553;
+        padding: 4px 14px;
     }
 }
 
-@page :first {
-    @bottom-center { content: ""; }
-}
-
 body {
-    font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
-    font-size: 10.5pt;
-    line-height: 1.5;
-    color: #222;
-    text-rendering: optimizeLegibility;
-}
-
-/* ── Portada ── */
-.cover {
-    page-break-after: always;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 80%;
-    text-align: center;
-    padding-top: 120px;
-}
-
-.cover-logo img {
-    width: 90px;
-    height: auto;
-    margin-bottom: 24px;
-}
-
-.cover-title {
-    font-size: 24pt;
-    font-weight: 800;
-    color: #1a3c5e;
-    letter-spacing: 0.5pt;
-    margin: 0 0 6px 0;
-    line-height: 1.2;
-}
-
-.cover-subtitle {
-    font-size: 13pt;
-    color: #555;
-    font-weight: 400;
-    margin: 0 0 30px 0;
-}
-
-.cover-date {
-    font-size: 14pt;
-    color: #1a3c5e;
-    font-weight: 600;
-    margin: 0 0 8px 0;
-}
-
-.cover-meta {
+    font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif;
     font-size: 9pt;
-    color: #888;
-    margin-top: 6px;
-    line-height: 1.6;
-}
-
-.cover-line {
-    width: 60%;
-    height: 3px;
-    background: linear-gradient(90deg, #1a3c5e, #6c9ec2, #1a3c5e);
-    border: none;
-    margin: 25px auto;
-}
-
-.cover-institution {
-    font-size: 10pt;
-    color: #444;
-    margin-top: 60px;
-    line-height: 1.5;
-}
-
-/* ── Header de página (páginas interiores) ── */
-.page-header {
-    display: flex;
-    align-items: center;
-    border-bottom: 2pt solid #1a3c5e;
-    padding-bottom: 8px;
-    margin-bottom: 14px;
-}
-
-.page-header-logo img {
-    width: 38px;
-    height: auto;
-    margin-right: 12px;
-}
-
-.page-header-text {
-    flex: 1;
-}
-
-.page-header-text h1 {
-    font-size: 13pt;
-    font-weight: 700;
-    color: #1a3c5e;
+    line-height: 1.4;
+    color: #191717;
     margin: 0;
-    letter-spacing: 0.2pt;
-}
-
-.page-header-text .ph-sub {
-    font-size: 8pt;
-    color: #888;
-    margin: 0;
-}
-
-/* ── Metadata bar ── */
-.metadata-bar {
-    font-size: 8pt;
-    color: #666;
-    padding: 5px 10px;
-    background: #f5f7fa;
-    border-bottom: 1px solid #ddd;
-    margin-bottom: 14px;
-}
-
-.metadata-bar table {
-    width: 100%;
-    border: none;
-    border-collapse: collapse;
-}
-
-.metadata-bar td {
-    padding: 1px 0;
-    border: none;
-}
-
-.metadata-bar td:last-child {
-    text-align: right;
-}
-
-/* ── Secciones ── */
-h2 {
-    font-size: 13pt;
-    font-weight: 700;
-    color: #1a3c5e;
-    margin-top: 18px;
-    margin-bottom: 7px;
-    padding-bottom: 3px;
-    padding-left: 8px;
-    border-left: 3pt solid #1a3c5e;
-    border-bottom: 0.5pt solid #ccc;
-    page-break-after: avoid;
-}
-
-h3 {
-    font-size: 11pt;
-    font-weight: 600;
-    color: #2c3e50;
-    margin-top: 12px;
-    margin-bottom: 4px;
-    padding-left: 8px;
-    border-left: 2pt solid #6c9ec2;
-    page-break-after: avoid;
-}
-
-p {
-    margin: 4px 0;
-    text-align: justify;
-    orphans: 3;
-    widows: 3;
-}
-
-ul {
-    margin: 4px 0 4px 22px;
     padding: 0;
-    list-style-type: disc;
 }
 
-li {
-    margin-bottom: 2px;
-    text-align: justify;
+/* ── Page breaks ── */
+.page {
+    page-break-after: always;
+}
+.page:last-child {
+    page-break-after: avoid;
 }
 
-hr {
-    border: none;
-    border-top: 0.5pt solid #ccc;
-    margin: 10px 0;
-}
-
-strong { font-weight: 700; color: inherit; }
-em { font-style: italic; color: inherit; }
-
-/* ── Resumen ejecutivo: semáforo ── */
-.semaphore-section {
-    margin: 10px 0 16px 0;
-    page-break-inside: avoid;
-}
-
-.semaphore-table {
+/* ── Header bar (top of every page) ── */
+.header-bar {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10pt;
-    margin-top: 8px;
+    border-spacing: 0;
 }
-
-.semaphore-table th {
-    background: #1a3c5e;
-    color: #fff;
-    padding: 7px 10px;
-    text-align: left;
-    font-size: 9pt;
-    font-weight: 600;
+.sidebar-mark {
+    width: 44px;
+    background: #254553;
+    vertical-align: top;
 }
-
-.semaphore-table td {
-    padding: 6px 10px;
-    border-bottom: 1px solid #e0e0e0;
+.header-content {
+    padding: 10px 14px 6px 14px;
+    vertical-align: bottom;
+}
+.header-title {
+    font-size: 20pt;
+    font-weight: bold;
+    color: #191717;
+    line-height: 1.1;
+}
+.header-date {
+    font-size: 11pt;
+    font-weight: bold;
+    color: #000;
+    margin-top: 3px;
+}
+.header-logo-cell {
+    width: 70px;
     vertical-align: middle;
+    text-align: right;
+    padding-right: 14px;
+}
+.header-logo-cell img {
+    width: 50px;
+    height: auto;
+}
+.header-line {
+    height: 3px;
+    background: #000;
+    margin: 0 10px 0 56px;
+}
+.header-sep {
+    height: 1px;
+    background: #000;
+    margin: 3px 10px 6px 10px;
 }
 
-.semaphore-table tr:nth-child(even) {
-    background: #f8f9fa;
+/* ── Section headers (colored bar + white text) ── */
+.section-hdr {
+    color: #fff;
+    font-size: 10.5pt;
+    font-weight: bold;
+    padding: 5px 14px;
+    margin: 8px 10px 6px 10px;
 }
 
-.badge {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 10px;
-    font-size: 8.5pt;
-    font-weight: 700;
+/* ── Two-column layout (table) ── */
+.two-col {
+    width: calc(100% - 20px);
+    margin: 0 10px;
+    border-collapse: collapse;
+    border-spacing: 0;
+}
+.two-col td {
+    vertical-align: top;
+    padding: 3px 6px;
+}
+.col-55 { width: 55%; }
+.col-45 { width: 45%; }
+.col-50 { width: 50%; }
+.col-60 { width: 60%; }
+.col-40 { width: 40%; }
+
+/* ── KPI boxes ── */
+.kpi-box {
+    padding: 6px 10px;
+    margin: 3px 0;
+    border-radius: 4px;
     color: #fff;
 }
-.badge-normal { background: #2E7D32; }
-.badge-alerta { background: #E65100; }
-.badge-critico { background: #C62828; }
-
-/* ── KPI Cards ── */
-.kpi-row {
-    display: flex;
-    gap: 8px;
-    margin: 12px 0;
-    page-break-inside: avoid;
-}
-
-.kpi-card {
-    flex: 1;
-    background: #f8f9fa;
-    border-radius: 6px;
-    padding: 10px 12px;
-}
-
 .kpi-label {
-    font-size: 9pt;
-    color: #666;
-    margin-bottom: 3px;
+    font-size: 8pt;
+    font-weight: bold;
 }
-
 .kpi-value {
-    font-size: 18pt;
-    font-weight: 700;
+    font-size: 13pt;
+    font-weight: bold;
+    margin-top: 1px;
+}
+.kpi-sub {
+    font-size: 6.5pt;
+    opacity: 0.85;
+    margin-top: 1px;
 }
 
-.kpi-variation {
-    font-size: 8.5pt;
-    color: #666;
+/* ── Big numbers ── */
+.big-num {
+    font-size: 24pt;
+    font-weight: bold;
+    color: #000;
+    line-height: 1.1;
+}
+.big-label {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #000;
     margin-top: 2px;
 }
 
-/* ── Generación por fuente ── */
-.gen-source-table {
+/* ── Explanation text (italic) ── */
+.explanation {
+    font-size: 7.5pt;
+    font-style: italic;
+    color: #000;
+    line-height: 1.35;
+    margin: 3px 0;
+}
+.explanation-white {
+    font-size: 7pt;
+    font-style: italic;
+    color: #fff;
+    line-height: 1.3;
+    margin: 3px 0;
+}
+
+/* ── Variation badges ── */
+.var-box {
+    padding: 3px 8px;
+    margin: 2px 0;
+    font-size: 8pt;
+    font-weight: bold;
+    color: #fff;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+/* ── Source analysis blocks ── */
+.src-block {
+    margin: 3px 10px;
+    page-break-inside: avoid;
+}
+.src-block table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10pt;
-    margin: 8px 0;
 }
-
-.gen-source-table th {
-    background: #1a3c5e;
+.src-hdr {
     color: #fff;
-    padding: 6px 10px;
-    text-align: left;
-    font-size: 9pt;
+    font-size: 10pt;
+    font-weight: bold;
+    padding: 4px 12px;
+}
+.src-body {
+    font-size: 7.5pt;
+    color: #010113;
+    line-height: 1.35;
+    padding: 3px 12px 4px 12px;
+}
+.src-impl {
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: #010113;
+    padding: 0 12px 4px 12px;
 }
 
-.gen-source-table td {
-    padding: 5px 10px;
+/* Source-specific colors */
+.bg-hidra { background: #125685; }
+.bg-termi { background: #737373; }
+.bg-bioma { background: #b4c657; color: #000; }
+.bg-eolic { background: #5d17eb; }
+.bg-solar { background: #ffbf00; color: #000; }
+.bg-comen { background: #254553; }
+
+/* ── Data tables ── */
+.data-tbl {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.5pt;
+    margin: 4px 0;
+}
+.data-tbl th {
+    background: #254553;
+    color: #fff;
+    padding: 4px 8px;
+    text-align: left;
+    font-size: 8pt;
+    font-weight: bold;
+}
+.data-tbl td {
+    padding: 3px 8px;
     border-bottom: 1px solid #e0e0e0;
 }
-
-.gen-source-table tr:nth-child(even) td {
-    background: #f8f9fa;
+.data-tbl tr:nth-child(even) td {
+    background: #f5f7fa;
 }
 
-.bar-cell {
-    position: relative;
-    width: 120px;
-}
-
+/* ── Bar cell for generation ── */
 .bar-bg {
     display: inline-block;
-    height: 12px;
-    border-radius: 3px;
+    height: 9px;
+    border-radius: 2px;
     vertical-align: middle;
 }
 
-/* ── Predicciones compactas ── */
-.pred-compact-table {
+/* ── Prediction table ── */
+.pred-tbl {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10pt;
-    margin: 8px 0;
+    font-size: 8.5pt;
+    margin: 4px 0;
 }
-
-.pred-compact-table th {
-    background: #1a3c5e;
+.pred-tbl th {
+    background: #254553;
     color: #fff;
-    padding: 6px 10px;
+    padding: 4px 8px;
     text-align: left;
-    font-size: 9pt;
+    font-size: 8pt;
 }
-
-.pred-compact-table td {
-    padding: 6px 10px;
+.pred-tbl td {
+    padding: 4px 8px;
     border-bottom: 1px solid #e0e0e0;
 }
+.trend-up { color: #2E7D32; font-weight: bold; }
+.trend-dn { color: #C62828; font-weight: bold; }
+.trend-st { color: #555; font-weight: bold; }
 
-.pred-compact-table tr:nth-child(even) td {
-    background: #f8f9fa;
-}
-
-.trend-up { color: #2E7D32; font-weight: 600; }
-.trend-down { color: #C62828; font-weight: 600; }
-.trend-stable { color: #555; font-weight: 600; }
-
-/* ── Embalses detalle ── */
-.embalses-box {
-    background: #f5f7fa;
-    border-left: 4px solid #1565C0;
-    padding: 10px 14px;
-    border-radius: 6px;
-    margin: 8px 0;
-    page-break-inside: avoid;
-    font-size: 10pt;
-}
-
-.embalses-box .emb-title {
-    font-size: 11pt;
-    font-weight: 700;
-    color: #1a3c5e;
-    margin-bottom: 6px;
-}
-
-.embalses-box table {
+/* ── Semaphore table ── */
+.sema-tbl {
     width: 100%;
     border-collapse: collapse;
+    font-size: 8.5pt;
+    margin: 4px 0;
+}
+.sema-tbl th {
+    background: #254553;
+    color: #fff;
+    padding: 4px 8px;
+    text-align: left;
+    font-size: 8pt;
+}
+.sema-tbl td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #e0e0e0;
+    vertical-align: middle;
 }
 
-.embalses-box td {
-    padding: 3px 0;
-}
-
-.embalses-box td:last-child {
-    text-align: right;
-    font-weight: 600;
-}
-
-/* ── Gráficos ── */
-.charts-section {
-    page-break-inside: avoid;
-    margin: 10px 0;
-}
-
-.chart-container {
-    text-align: center;
-    margin: 6px 0;
-    page-break-inside: avoid;
-}
-
-.chart-container img {
-    width: 80%;
-    max-width: 420px;
-    height: auto;
-    border: 0.5pt solid #ddd;
-}
-
-.chart-caption {
+/* ── Badge de estado ── */
+.badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 8px;
     font-size: 7.5pt;
-    color: #666;
-    text-align: center;
-    margin-top: 2px;
-    margin-bottom: 5px;
+    font-weight: bold;
+    color: #fff;
+}
+.badge-ok { background: #2E7D32; }
+.badge-warn { background: #E65100; }
+.badge-crit { background: #C62828; }
+
+/* ── Prediction card per-page ── */
+.pred-card {
+    margin: 6px 10px;
+    padding: 8px 12px;
+    background: #f0f7f6;
+    border-left: 4px solid #287270;
+    border-radius: 0 4px 4px 0;
+    page-break-inside: avoid;
+    font-size: 8.5pt;
+    line-height: 1.4;
+}
+.pred-card-hdr {
+    font-size: 9pt;
+    font-weight: bold;
+    color: #254553;
+    margin-bottom: 4px;
+}
+.pred-card .pred-row {
+    display: inline-block;
+    margin-right: 18px;
+    margin-bottom: 2px;
+}
+.pred-card .pred-label {
+    font-size: 7.5pt;
+    color: #737373;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.pred-card .pred-val {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #254553;
+}
+.pred-card .pred-analysis {
+    font-size: 8pt;
+    color: #555;
+    margin-top: 4px;
     font-style: italic;
 }
 
-.chart-caption a {
-    color: #1a3c5e;
-    text-decoration: underline;
-}
-
-/* ── Anomalías ── */
-.anomaly-section {
-    margin: 14px 0;
+/* ── Embalses detail ── */
+.emb-box {
+    margin: 4px 10px;
+    padding: 8px 12px;
+    background: #f5f7fa;
+    border-left: 4px solid #287270;
     page-break-inside: avoid;
+    font-size: 8.5pt;
 }
-
-.anom-table {
+.emb-box table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10pt;
-    margin-top: 6px;
+}
+.emb-box td {
+    padding: 2px 0;
+}
+.emb-box td:last-child {
+    text-align: right;
+    font-weight: bold;
 }
 
-.anom-table th {
-    background: #FFF8E1;
-    padding: 6px 10px;
-    text-align: left;
-    font-size: 9pt;
-    font-weight: 600;
-    color: #E65100;
-}
-
-.anom-table td {
-    padding: 5px 10px;
-    border-bottom: 1px solid #eee;
-}
-
-/* ── Noticias ── */
-.news-section {
-    margin: 14px 0;
-}
-
-.news-item {
-    padding: 7px 0;
-    border-bottom: 1px solid #eee;
-}
-
-.news-title {
-    font-size: 10.5pt;
-    font-weight: 600;
-    color: #222;
-}
-
-.news-summary {
-    font-size: 9.5pt;
-    color: #555;
-    margin-top: 2px;
-    line-height: 1.4;
-}
-
-.news-meta {
-    font-size: 8pt;
-    color: #888;
-    margin-top: 2px;
-}
-
-/* ── Canales ── */
-.channels-box {
-    margin: 18px 0;
-    padding: 12px 16px;
-    background: #f5f7fa;
-    border-radius: 8px;
-    page-break-inside: avoid;
-}
-
-.channels-title {
-    font-size: 11pt;
-    font-weight: 700;
-    color: #333;
-    margin-bottom: 8px;
-}
-
-.channels-box table {
-    border: none;
+/* ── Anomaly table ── */
+.anom-tbl {
+    width: 100%;
     border-collapse: collapse;
+    font-size: 8.5pt;
+    margin: 4px 0;
+}
+.anom-tbl th {
+    background: #e76f50;
+    color: #fff;
+    padding: 4px 8px;
+    text-align: left;
+    font-size: 8pt;
+}
+.anom-tbl td {
+    padding: 3px 8px;
+    border-bottom: 1px solid #eee;
 }
 
-.channels-box td {
-    padding: 4px 0;
-    border: none;
+/* ── News items ── */
+.news-item {
+    padding: 4px 12px;
+    border-bottom: 1px solid #eee;
+}
+.news-title {
+    font-size: 9pt;
+    font-weight: bold;
+    color: #191717;
+}
+.news-summary {
+    font-size: 8pt;
+    color: #555;
+    margin-top: 1px;
+    line-height: 1.3;
+}
+.news-meta {
+    font-size: 7pt;
+    color: #8d8d8d;
+    margin-top: 1px;
 }
 
+/* ── Channels ── */
+.channels-box {
+    margin: 8px 10px;
+    padding: 8px 12px;
+    background: #f5f7fa;
+    border-radius: 4px;
+    page-break-inside: avoid;
+    font-size: 8.5pt;
+}
+.channels-title {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #254553;
+    margin-bottom: 4px;
+}
 .ch-btn {
     display: inline-block;
-    padding: 6px 14px;
-    border-radius: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
     color: #fff;
     text-decoration: none;
-    font-size: 10pt;
-    font-weight: 600;
+    font-size: 8.5pt;
+    font-weight: bold;
+    margin-right: 6px;
 }
 
-.ch-link {
-    padding-left: 10px;
-    font-size: 9pt;
-}
-
-/* ── Footer ── */
-.footer-note {
-    margin-top: 20px;
-    padding-top: 8px;
-    border-top: 1pt solid #1a3c5e;
-    font-size: 7pt;
-    color: #888;
+/* ── Charts ── */
+.chart-box {
     text-align: center;
-    line-height: 1.4;
+    page-break-inside: avoid;
+}
+.chart-box img {
+    max-width: 100%;
+    height: auto;
+}
+.chart-caption {
+    font-size: 6.5pt;
+    color: #8d8d8d;
+    font-style: italic;
+    text-align: center;
+    margin-top: 1px;
 }
 
-/* Forzar saltos de página */
-.page-break {
-    page-break-before: always;
+/* ── AI Narrative ── */
+.narrative {
+    font-size: 8.5pt;
+    line-height: 1.4;
+    padding: 2px 14px;
+    margin: 0 10px;
+}
+.narrative h2 {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #254553;
+    margin: 8px 0 3px 0;
+    padding-bottom: 2px;
+    border-bottom: 1px solid #ddd;
+}
+.narrative h3 {
+    font-size: 9pt;
+    font-weight: bold;
+    color: #287270;
+    margin: 6px 0 2px 0;
+}
+.narrative p {
+    margin: 2px 0;
+    text-align: justify;
+}
+.narrative ul {
+    margin: 2px 0 2px 16px;
+    padding: 0;
+}
+.narrative li {
+    margin-bottom: 1px;
+}
+.narrative strong {
+    font-weight: bold;
+}
+.narrative em {
+    font-style: italic;
+}
+.narrative hr {
+    border: none;
+    border-top: 0.5pt solid #ccc;
+    margin: 6px 0;
 }
 """
 
 
 # ═══════════════════════════════════════════════════════════════
-# Builders de secciones HTML
+# Utilidades
 # ═══════════════════════════════════════════════════════════════
 
 def _load_logo_b64() -> str:
@@ -729,73 +719,232 @@ def _load_logo_b64() -> str:
         return ''
 
 
-def _build_cover_html(logo_b64: str, fecha_label: str,
-                      metodo: str, hoy: str) -> str:
-    """Construye la página de portada institucional."""
+def _embed_chart(chart_paths: List[str], key_prefix: str) -> str:
+    """
+    Busca un chart en la lista por prefijo de nombre y retorna
+    HTML <img> con data URI base64, o '' si no existe.
+    """
+    if not chart_paths:
+        return ''
+    for path in chart_paths:
+        if not path or not os.path.exists(path):
+            continue
+        fname = os.path.basename(path).lower()
+        if fname.startswith(key_prefix):
+            try:
+                with open(path, 'rb') as f:
+                    b64 = base64.b64encode(f.read()).decode('utf-8')
+                return (
+                    f'<div class="chart-box">'
+                    f'<img src="data:image/png;base64,{b64}" alt="{key_prefix}">'
+                    f'</div>'
+                )
+            except Exception as e:
+                logger.warning(f'[REPORT] Error embediendo chart {path}: {e}')
+    return ''
+
+
+def _parse_narrative_sections(md_text: str) -> Dict[str, str]:
+    """
+    Divide el texto Markdown de la IA en secciones por encabezados ##.
+    Retorna dict: { 'titulo_seccion': 'contenido_md', ... }
+    Las claves son el texto del titulo (sin ##).
+    """
+    sections: Dict[str, str] = {}
+    current_key = '_intro'
+    current_lines: List[str] = []
+
+    for line in md_text.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('## '):
+            if current_lines:
+                sections[current_key] = '\n'.join(current_lines)
+            current_key = stripped[3:].strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_lines:
+        sections[current_key] = '\n'.join(current_lines)
+
+    return sections
+
+
+def _format_fecha_larga(fecha_str: str = '') -> str:
+    """Convierte fecha a formato largo: 'DD de MMMMM de YYYY'."""
+    meses = [
+        '', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+        'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+    ]
+    try:
+        if fecha_str:
+            dt = datetime.strptime(fecha_str[:10], '%Y-%m-%d')
+        else:
+            dt = datetime.now()
+        return f'{dt.day} de {meses[dt.month]} de {dt.year}'
+    except Exception:
+        return datetime.now().strftime('%Y-%m-%d')
+
+
+def _find_metric_prediction(pred_resumen: Dict[str, Any], keyword: str) -> Optional[Dict[str, Any]]:
+    """
+    Busca en pred_resumen['metricas'] la primera métrica cuyo 'indicador'
+    contenga *keyword* (case-insensitive). Retorna el dict o None.
+    """
+    metricas = (pred_resumen or {}).get('metricas', [])
+    kw = keyword.lower()
+    for m in metricas:
+        if kw in (m.get('indicador', '') or '').lower():
+            return m
+    return None
+
+
+def _build_pred_card(metric: Dict[str, Any], analysis_text: str = '') -> str:
+    """
+    Construye una tarjeta de predicción para insertar en cualquier página.
+    Muestra: valor actual → proyectado, rango, tendencia y análisis contextual.
+
+    Args:
+        metric: dict con indicador, unidad, valor_actual, promedio_proyectado_1m,
+                rango_min, rango_max, tendencia, cambio_pct_vs_prom30d, confianza_modelo.
+        analysis_text: texto breve de análisis/implicación (HTML safe).
+    """
+    if not metric:
+        return ''
+
+    nombre = _strip_emojis(metric.get('indicador', ''))
+    unidad = metric.get('unidad', '')
+    actual = metric.get('valor_actual')
+    prom_proy = metric.get('promedio_proyectado_1m')
+    rango_min = metric.get('rango_min')
+    rango_max = metric.get('rango_max')
+    tendencia = metric.get('tendencia', 'Estable')
+    cambio = metric.get('cambio_pct_vs_prom30d')
+    confianza = metric.get('confianza_modelo', '')
+
+    actual_s = f'{actual:,.1f}' if actual is not None else 'N/D'
+    proy_s = f'{prom_proy:,.1f}' if prom_proy is not None else 'N/D'
+
+    rango_html = ''
+    if rango_min is not None and rango_max is not None:
+        rango_html = (
+            '<span class="pred-row">'
+            '<span class="pred-label">Rango</span><br>'
+            f'<span class="pred-val" style="font-size:8.5pt;">{rango_min:,.1f} &ndash; {rango_max:,.1f} {unidad}</span>'
+            '</span>'
+        )
+
+    # Tendencia con color e ícono
+    if tendencia == 'Creciente':
+        t_color = '#2E7D32'
+        t_arrow = '&#9650;'
+    elif tendencia == 'Decreciente':
+        t_color = '#C62828'
+        t_arrow = '&#9660;'
+    else:
+        t_color = '#555'
+        t_arrow = '&#9654;'
+
+    cambio_s = ''
+    if cambio is not None:
+        cambio_s = f' ({cambio:+.1f}%)'
+
+    confianza_html = ''
+    if confianza:
+        confianza_html = f' &bull; Confianza: {confianza}'
+
+    analysis_html = ''
+    if analysis_text:
+        analysis_html = f'<div class="pred-analysis">{analysis_text}</div>'
+
+    return f"""
+    <div class="pred-card">
+      <div class="pred-card-hdr">&#128200; Proyecci&oacute;n: {nombre}</div>
+      <span class="pred-row">
+        <span class="pred-label">Actual</span><br>
+        <span class="pred-val">{actual_s} {unidad}</span>
+      </span>
+      <span class="pred-row">
+        <span class="pred-label">Proy. 1 mes</span><br>
+        <span class="pred-val" style="color:#287270;">{proy_s} {unidad}</span>
+      </span>
+      {rango_html}
+      <span class="pred-row">
+        <span class="pred-label">Tendencia</span><br>
+        <span class="pred-val" style="color:{t_color};font-size:8.5pt;">
+          {t_arrow} {tendencia}{cambio_s}</span>
+      </span>
+      <div style="font-size:6.5pt;color:#8d8d8d;margin-top:3px;">
+        Modelo: ENSEMBLE con validaci&oacute;n holdout{confianza_html}
+      </div>
+      {analysis_html}
+    </div>
+    """
+
+
+# ═══════════════════════════════════════════════════════════════
+# Builders de componentes reutilizables
+# ═══════════════════════════════════════════════════════════════
+
+def _build_header_html(logo_b64: str, fecha_label: str) -> str:
+    """
+    Header bar para cada página: barra lateral azul oscuro,
+    título grande, fecha, línea separadora. Replica el header del modelo.
+    """
     logo_img = ''
     if logo_b64:
         logo_img = f'<img src="data:image/png;base64,{logo_b64}" alt="MME">'
 
+    fecha_larga = _format_fecha_larga(fecha_label)
+
     return f"""
-    <div class="cover">
-        <div class="cover-logo">{logo_img}</div>
-        <div class="cover-title">Informe Ejecutivo</div>
-        <div class="cover-title" style="font-size:18pt;margin-top:4px;">
-            Sector El&eacute;ctrico Colombiano
-        </div>
-        <hr class="cover-line">
-        <div class="cover-date">{fecha_label}</div>
-        <div class="cover-meta">
-            Generado: {hoy}<br>
-            M&eacute;todo: {metodo}
-        </div>
-        <div class="cover-institution">
-            Rep&uacute;blica de Colombia<br>
-            Ministerio de Minas y Energ&iacute;a<br>
-            <em>Portal Energ&eacute;tico MME</em>
-        </div>
-    </div>
+    <table class="header-bar" cellpadding="0" cellspacing="0">
+      <tr>
+        <td class="sidebar-mark" rowspan="2">&nbsp;</td>
+        <td class="header-content">
+          <div class="header-title">Informe de Variables El&eacute;ctricas</div>
+          <div class="header-date">Fecha: {fecha_larga}</div>
+        </td>
+        <td class="header-logo-cell">{logo_img}</td>
+      </tr>
+    </table>
+    <div class="header-line"></div>
+    <div class="header-sep"></div>
     """
 
 
-def _build_page_header(logo_b64: str, fecha_label: str) -> str:
-    """Header compacto para páginas interiores."""
-    logo_html = ''
-    if logo_b64:
-        logo_html = (
-            f'<div class="page-header-logo">'
-            f'<img src="data:image/png;base64,{logo_b64}" alt="MME">'
-            f'</div>'
-        )
-    return f"""
-    <div class="page-header">
-        {logo_html}
-        <div class="page-header-text">
-            <h1>Informe Ejecutivo &mdash; Sector El&eacute;ctrico</h1>
-            <p class="ph-sub">{fecha_label} &bull; Portal Energ&eacute;tico MME</p>
-        </div>
-    </div>
-    """
+def _section_hdr(title: str, color: str = '#254553') -> str:
+    """Barra de sección con fondo de color y texto blanco."""
+    return f'<div class="section-hdr" style="background:{color};">{title}</div>'
 
 
-def _build_semaphore_html(tabla_indicadores: List[Dict[str, Any]]) -> str:
-    """
-    Construye tabla resumen ejecutivo con semáforo.
-    Usa datos de tabla_indicadores_clave del contexto.
-    """
-    if not tabla_indicadores:
-        return ''
+# ═══════════════════════════════════════════════════════════════
+# PAGE 1: Variables del Mercado y Resumen
+# ═══════════════════════════════════════════════════════════════
 
-    rows = []
-    for ind in tabla_indicadores:
-        nombre = _strip_emojis(ind.get('indicador', ''))
-        valor = ind.get('valor_actual')
+def _build_page_mercado(
+    logo_b64: str,
+    fecha_label: str,
+    fichas: List[Dict[str, Any]],
+    tabla_indicadores: List[Dict[str, Any]],
+    chart_paths: List[str],
+    pred_resumen: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Página 1: Resumen ejecutivo con semáforo + Variables del Mercado
+    (gráfico precios + KPIs + predicción de precio) — replica la Página 1 del modelo.
+    """
+    header = _build_header_html(logo_b64, fecha_label)
+
+    # ── Semáforo ejecutivo ──
+    sema_rows = ''
+    for ind in (tabla_indicadores or []):
+        nombre = _strip_emojis(ind.get('indicador', ind.get('nombre', '')))
+        valor = ind.get('valor_actual', 'N/D')
         unidad = ind.get('unidad', '')
         tendencia = ind.get('tendencia', 'Estable')
-        variacion = ind.get('variacion_pct', 0)
         estado = ind.get('estado', 'Normal')
 
-        # Formato valor
         if isinstance(valor, float):
             val_str = f'{valor:,.2f} {unidad}'
         elif valor is not None:
@@ -803,58 +952,47 @@ def _build_semaphore_html(tabla_indicadores: List[Dict[str, Any]]) -> str:
         else:
             val_str = 'N/D'
 
-        # Badge de estado
-        estado_lower = estado.lower()
-        if estado_lower == 'normal':
-            badge_cls = 'badge-normal'
-        elif estado_lower == 'alerta':
-            badge_cls = 'badge-alerta'
+        estado_l = estado.lower()
+        if estado_l == 'normal':
+            bcls = 'badge-ok'
+        elif estado_l == 'alerta':
+            bcls = 'badge-warn'
         else:
-            badge_cls = 'badge-critico'
+            bcls = 'badge-crit'
 
-        # Flecha de tendencia
         if tendencia == 'Alza':
-            trend_html = f'<span style="color:#2E7D32;">&#9650; +{abs(variacion):.1f}%</span>'
+            trend = '<span style="color:#2E7D32;">&#9650; Alza</span>'
         elif tendencia == 'Baja':
-            trend_html = f'<span style="color:#C62828;">&#9660; -{abs(variacion):.1f}%</span>'
+            trend = '<span style="color:#C62828;">&#9660; Baja</span>'
         else:
-            trend_html = f'<span style="color:#555;">&#9654; {variacion:+.1f}%</span>'
+            trend = '<span style="color:#555;">&#9654; Estable</span>'
 
-        rows.append(
-            f'<tr>'
-            f'<td><strong>{nombre}</strong></td>'
-            f'<td style="text-align:right;font-weight:600;">{val_str}</td>'
-            f'<td style="text-align:center;">{trend_html}</td>'
-            f'<td style="text-align:center;">'
-            f'<span class="badge {badge_cls}">{estado}</span></td>'
+        sema_rows += (
+            f'<tr><td><strong>{nombre}</strong></td>'
+            f'<td style="text-align:right;font-weight:bold;">{val_str}</td>'
+            f'<td style="text-align:center;">{trend}</td>'
+            f'<td style="text-align:center;"><span class="badge {bcls}">{estado}</span></td>'
             f'</tr>'
         )
 
-    return f"""
-    <div class="semaphore-section">
-        <h2>Resumen Ejecutivo</h2>
-        <table class="semaphore-table">
-            <tr>
-                <th>Indicador</th>
-                <th style="text-align:right;">Valor Actual</th>
-                <th style="text-align:center;">Tendencia</th>
-                <th style="text-align:center;">Estado</th>
-            </tr>
-            {''.join(rows)}
+    semaphore_html = ''
+    if sema_rows:
+        semaphore_html = f"""
+        <div style="margin:0 10px;">
+        <table class="sema-tbl">
+          <tr><th>Indicador</th><th style="text-align:right;">Valor Actual</th>
+              <th style="text-align:center;">Tendencia</th>
+              <th style="text-align:center;">Estado</th></tr>
+          {sema_rows}
         </table>
-    </div>
-    """
+        </div>
+        """
 
-
-def _build_kpi_cards_html(fichas: List[Dict[str, Any]]) -> str:
-    """Construye las 3 tarjetas KPI del encabezado."""
-    if not fichas:
-        return ''
-
-    colors = ['#1565C0', '#2E7D32', '#E65100']
-    cards = []
-    for i, f in enumerate(fichas[:3]):
-        color = colors[i % len(colors)]
+    # ── KPI boxes (right column) ──
+    kpi_html = ''
+    colors_kpi = ['#287270', '#299d8f', '#254553']
+    for i, f in enumerate((fichas or [])[:3]):
+        bg = colors_kpi[i % len(colors_kpi)]
         valor = f.get('valor', '')
         unidad = f.get('unidad', '')
         indicador = _strip_emojis(f.get('indicador', ''))
@@ -862,419 +1000,601 @@ def _build_kpi_cards_html(fichas: List[Dict[str, Any]]) -> str:
         var_pct = ctx.get('variacion_vs_promedio_pct')
 
         if isinstance(valor, float):
-            val_str = f'{valor:,.2f} {unidad}'
+            val_str = f'{valor:,.2f}'
         else:
-            val_str = f'{valor} {unidad}'
+            val_str = str(valor)
 
         var_line = ''
         if var_pct is not None:
-            sign = '+' if float(var_pct) >= 0 else ''
-            etiqueta = ctx.get('etiqueta_variacion', 'vs promedio 7d')
-            var_line = (
-                f'<div class="kpi-variation">'
-                f'{sign}{var_pct:.1f}% {etiqueta}</div>'
+            try:
+                v = float(var_pct)
+                sign = '+' if v >= 0 else ''
+                etiq = ctx.get('etiqueta_variacion', 'vs prom 7d')
+                vcolor = '#c8ffc8' if v >= 0 else '#ffc8c8'
+                var_line = (
+                    f'<div class="kpi-sub" style="color:{vcolor};">'
+                    f'{sign}{v:.1f}% {etiq}</div>'
+                )
+            except (ValueError, TypeError):
+                pass
+
+        kpi_html += (
+            f'<div class="kpi-box" style="background:{bg};">'
+            f'<div class="kpi-label">{indicador}</div>'
+            f'<div class="kpi-value">{val_str} {unidad}</div>'
+            f'{var_line}</div>'
+        )
+
+    # ── Explicaciones contextuales (estilo modelo) ──
+    explanations = []
+    for f in (fichas or [])[:3]:
+        indicador = _strip_emojis(f.get('indicador', '')).lower()
+        ctx = f.get('contexto', {})
+        if 'precio' in indicador or 'bolsa' in indicador:
+            explanations.append(
+                'El Precio Promedio Ponderado (PPP) diario es el precio horario '
+                'de la energ&iacute;a en el mercado spot, determinado por la '
+                'oferta y demanda del d&iacute;a anterior.'
+            )
+        elif 'generaci' in indicador:
+            explanations.append(
+                'Generaci&oacute;n Total del SIN: suma de la producci&oacute;n '
+                'de todas las fuentes (hidr&aacute;ulica, t&eacute;rmica, solar, '
+                'e&oacute;lica, biomasa) despachadas por XM.'
+            )
+        elif 'embalse' in indicador:
+            explanations.append(
+                'Nivel de embalses: porcentaje de volumen &uacute;til agregado '
+                'del Sistema Interconectado Nacional, indicador clave de '
+                'seguridad h&iacute;drica.'
             )
 
-        cards.append(
-            f'<div class="kpi-card" style="border-left:4px solid {color};">'
-            f'<div class="kpi-label">{indicador}</div>'
-            f'<div class="kpi-value" style="color:{color};">{val_str}</div>'
-            f'{var_line}'
-            f'</div>'
-        )
+    expl_html = ''
+    if explanations:
+        expl_html = '<div style="margin:4px 0;">'
+        for e in explanations:
+            expl_html += f'<p class="explanation">{e}</p>'
+        expl_html += '</div>'
 
-    return (
-        '<div class="kpi-row">'
-        + ''.join(cards)
-        + '</div>'
-    )
+    # ── Price chart (left column) ──
+    price_chart = _embed_chart(chart_paths, 'precio_evol')
+    if not price_chart:
+        price_chart = '<div style="text-align:center;padding:30px;color:#999;font-size:8pt;">Gr&aacute;fico de precios no disponible</div>'
 
-
-def _build_gen_source_html(gen_por_fuente: Dict[str, Any]) -> str:
+    # ── Assemble two-column layout ──
+    content = f"""
+    <table class="two-col" cellpadding="0" cellspacing="0">
+      <tr>
+        <td class="col-55">{price_chart}</td>
+        <td class="col-45">
+          {kpi_html}
+          {expl_html}
+        </td>
+      </tr>
+    </table>
     """
-    Construye tabla de desglose de generación por tipo de fuente.
-    Usa datos de generacion_por_fuente del contexto.
-    """
-    if not gen_por_fuente or gen_por_fuente.get('error'):
-        return ''
 
-    fuentes = gen_por_fuente.get('fuentes', [])
-    total_gwh = gen_por_fuente.get('total_gwh', 0)
-    fecha_dato = gen_por_fuente.get('fecha_dato', '')
-
-    if not fuentes:
-        return ''
-
-    rows = []
-    bar_colors = {
-        'Hidráulica': '#1565C0',
-        'Térmica': '#E65100',
-        'Solar': '#F9A825',
-        'Eólica': '#00897B',
-        'Biomasa/Cogeneración': '#6A1B9A',
-    }
-
-    for f in fuentes:
-        nombre = f.get('fuente', '')
-        gwh = f.get('gwh', 0)
-        pct = f.get('porcentaje', 0)
-        bar_color = bar_colors.get(nombre, '#999')
-        bar_width = min(pct * 1.2, 100)  # escala visual
-
-        rows.append(
-            f'<tr>'
-            f'<td>{nombre}</td>'
-            f'<td style="text-align:right;font-weight:600;">{gwh:,.1f} GWh</td>'
-            f'<td style="text-align:right;">{pct:.1f}%</td>'
-            f'<td class="bar-cell">'
-            f'<span class="bar-bg" style="width:{bar_width}px;background:{bar_color};"></span>'
-            f'</td>'
-            f'</tr>'
-        )
+    # ── Predicción de Precio de Bolsa ──
+    precio_pred = _find_metric_prediction(pred_resumen, 'precio')
+    if not precio_pred:
+        precio_pred = _find_metric_prediction(pred_resumen, 'bolsa')
+    precio_pred_html = _build_pred_card(
+        precio_pred,
+        'El Precio de Bolsa proyectado refleja la din&aacute;mica '
+        'esperada de oferta-demanda para el pr&oacute;ximo mes, '
+        'considerando disponibilidad h&iacute;drica y despacho t&eacute;rmico.'
+    ) if precio_pred else ''
 
     return f"""
-    <div style="margin:10px 0;page-break-inside:avoid;">
-        <h3>Desglose por Fuente de Generaci&oacute;n</h3>
-        <table class="gen-source-table">
-            <tr>
-                <th>Fuente</th>
-                <th style="text-align:right;">Generaci&oacute;n</th>
-                <th style="text-align:right;">Participaci&oacute;n</th>
-                <th></th>
-            </tr>
-            {''.join(rows)}
-            <tr style="border-top:2px solid #1a3c5e;">
-                <td><strong>Total</strong></td>
-                <td style="text-align:right;font-weight:700;">{total_gwh:,.1f} GWh</td>
-                <td style="text-align:right;font-weight:700;">100%</td>
-                <td></td>
-            </tr>
-        </table>
-        <div style="font-size:7.5pt;color:#888;margin-top:2px;">
-            Datos del {fecha_dato} &bull; Fuente: XM
-        </div>
-    </div>
-    """
-
-
-def _build_embalses_detail_html(embalses: Dict[str, Any]) -> str:
-    """
-    Construye bloque detallado de embalses.
-    Usa datos de embalses_detalle del contexto.
-    """
-    if not embalses or embalses.get('error'):
-        return ''
-
-    nivel = embalses.get('valor_actual_pct')
-    prom_30d = embalses.get('promedio_30d_pct')
-    media_hist = embalses.get('media_historica_2020_2025_pct')
-    desviacion = embalses.get('desviacion_pct_media_historica')
-    energia_gwh = embalses.get('energia_embalsada_gwh')
-    estado = _strip_emojis(embalses.get('estado', ''))
-
-    if nivel is None:
-        return ''
-
-    # Color del nivel
-    if nivel < 40:
-        nivel_color = '#C62828'
-    elif nivel < 60:
-        nivel_color = '#E65100'
-    else:
-        nivel_color = '#2E7D32'
-
-    detail_rows = f"""
-        <tr><td>Nivel actual</td>
-            <td style="color:{nivel_color};font-size:14pt;font-weight:700;">
-                {nivel:.1f}%</td></tr>
-    """
-
-    if prom_30d is not None:
-        detail_rows += f'<tr><td>Promedio 30 d&iacute;as</td><td>{prom_30d:.1f}%</td></tr>'
-
-    if media_hist is not None:
-        detail_rows += (
-            f'<tr><td>Media hist&oacute;rica 2020-2025</td>'
-            f'<td>{media_hist:.1f}%</td></tr>'
-        )
-
-    if desviacion is not None:
-        sign = '+' if desviacion >= 0 else ''
-        dev_color = '#2E7D32' if desviacion >= 0 else '#C62828'
-        detail_rows += (
-            f'<tr><td>Desviaci&oacute;n vs hist&oacute;rica</td>'
-            f'<td style="color:{dev_color};">{sign}{desviacion:.1f}%</td></tr>'
-        )
-
-    if energia_gwh is not None:
-        detail_rows += (
-            f'<tr><td>Energ&iacute;a embalsada</td>'
-            f'<td>{energia_gwh:,.0f} GWh</td></tr>'
-        )
-
-    if estado:
-        detail_rows += f'<tr><td>Evaluaci&oacute;n</td><td>{estado}</td></tr>'
-
-    return f"""
-    <div class="embalses-box">
-        <div class="emb-title">Embalses del SIN</div>
-        <table>{detail_rows}</table>
-    </div>
-    """
-
-
-def _build_pred_compact_html(pred_resumen: Dict[str, Any]) -> str:
-    """
-    Construye tabla compacta de predicciones a 1 mes (3 filas).
-    Usa datos de predicciones_mes_resumen del contexto.
-    Reemplaza las tablas extensas de 31 rows × 3 métricas.
-    """
-    if not pred_resumen or pred_resumen.get('error'):
-        return ''
-
-    metricas = pred_resumen.get('metricas', [])
-    if not metricas:
-        return ''
-
-    horizonte = pred_resumen.get('horizonte', 'Pr\u00f3ximo mes')
-
-    rows = []
-    for m in metricas:
-        nombre = _strip_emojis(m.get('indicador', ''))
-        # Acortar nombre para la tabla
-        nombre_corto = nombre.replace('del Sistema', '').replace('Nacional', '').strip()
-        unidad = m.get('unidad', '')
-        actual = m.get('valor_actual')
-        prom_proy = m.get('promedio_proyectado_1m')
-        rango_min = m.get('rango_min')
-        rango_max = m.get('rango_max')
-        tendencia = m.get('tendencia', 'Estable')
-        cambio = m.get('cambio_pct_vs_prom30d')
-
-        # Formato valores
-        if actual is not None:
-            actual_str = f'{actual:,.1f}'
-        else:
-            actual_str = 'N/D'
-
-        if prom_proy is not None:
-            proy_str = f'{prom_proy:,.1f}'
-        else:
-            proy_str = 'N/D'
-
-        rango_str = ''
-        if rango_min is not None and rango_max is not None:
-            rango_str = f'{rango_min:,.1f} &ndash; {rango_max:,.1f}'
-
-        # Styling de tendencia
-        if tendencia == 'Creciente':
-            trend_cls = 'trend-up'
-            trend_arrow = '&#9650;'
-        elif tendencia == 'Decreciente':
-            trend_cls = 'trend-down'
-            trend_arrow = '&#9660;'
-        else:
-            trend_cls = 'trend-stable'
-            trend_arrow = '&#9654;'
-
-        cambio_str = ''
-        if cambio is not None:
-            cambio_str = f' ({cambio:+.1f}%)'
-
-        rows.append(
-            f'<tr>'
-            f'<td>{nombre_corto}</td>'
-            f'<td style="text-align:center;">{unidad}</td>'
-            f'<td style="text-align:right;font-weight:600;">{actual_str}</td>'
-            f'<td style="text-align:right;font-weight:600;">{proy_str}</td>'
-            f'<td style="text-align:center;font-size:9pt;">{rango_str}</td>'
-            f'<td style="text-align:center;">'
-            f'<span class="{trend_cls}">{trend_arrow} {tendencia}{cambio_str}</span></td>'
-            f'</tr>'
-        )
-
-    return f"""
-    <div style="margin:12px 0;page-break-inside:avoid;">
-        <h2>Proyecciones a 1 Mes</h2>
-        <table class="pred-compact-table">
-            <tr>
-                <th>Indicador</th>
-                <th style="text-align:center;">Unidad</th>
-                <th style="text-align:right;">Actual</th>
-                <th style="text-align:right;">Prom. Proyectado</th>
-                <th style="text-align:center;">Rango</th>
-                <th style="text-align:center;">Tendencia</th>
-            </tr>
-            {''.join(rows)}
-        </table>
-        <div style="font-size:7.5pt;color:#888;margin-top:3px;">
-            Horizonte: {horizonte} &bull; Modelo: ENSEMBLE con validaci&oacute;n holdout &bull;
-            Tendencia vs promedio real 30d
-        </div>
-    </div>
-    """
-
-
-def _build_charts_html(chart_paths: List[str]) -> str:
-    """
-    Convierte una lista de paths a imágenes PNG en HTML con data URIs base64.
-    Las imágenes se incrustan directamente en el HTML para WeasyPrint.
-    """
-    if not chart_paths:
-        return ''
-
-    captions = {
-        'gen_pie': 'Fig. 1 — Participaci\u00f3n por fuente de generaci\u00f3n',
-        'embalses_map': 'Fig. 2 — Nivel de embalses por regi\u00f3n hidrol\u00f3gica',
-        'precio_evol': 'Fig. 3 — Evoluci\u00f3n del Precio de Bolsa Nacional (90 d\u00edas)',
-    }
-
-    urls = {
-        'gen_pie': 'https://portalenergetico.minenergia.gov.co/generacion/fuentes',
-        'embalses_map': 'https://portalenergetico.minenergia.gov.co/generacion/hidraulica/hidrologia',
-        'precio_evol': 'https://portalenergetico.minenergia.gov.co/comercializacion',
-    }
-
-    img_blocks = []
-    for path in chart_paths:
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            with open(path, 'rb') as f:
-                b64 = base64.b64encode(f.read()).decode('utf-8')
-
-            fname = os.path.basename(path).split('_202')[0]
-            caption = captions.get(fname, '')
-            url = urls.get(fname, '')
-
-            block = '<div class="chart-container">'
-            block += f'<img src="data:image/png;base64,{b64}" alt="{caption}">'
-            if caption:
-                if url:
-                    block += (
-                        f'<p class="chart-caption">{caption} &mdash; '
-                        f'<a href="{url}">Ver en el Portal Energ&eacute;tico</a></p>'
-                    )
-                else:
-                    block += f'<p class="chart-caption">{caption}</p>'
-            block += '</div>'
-            img_blocks.append(block)
-        except Exception as e:
-            logger.warning(f'[REPORT] Error embediendo imagen {path}: {e}')
-
-    if not img_blocks:
-        return ''
-
-    return (
-        '<div class="charts-section">'
-        + '\n'.join(img_blocks)
-        + '</div>'
-    )
-
-
-def _build_anomalies_html(anomalias: List[Dict[str, Any]]) -> str:
-    """Construye tabla de anomalías / riesgos."""
-    if not anomalias:
-        return ''
-
-    rows = []
-    for a in anomalias[:10]:
-        sev = a.get('severidad', 'ALERTA')
-        if sev in ('CRITICA', 'CRITICO', 'CRITICAL'):
-            badge_cls = 'badge-critico'
-        elif sev == 'ALERTA':
-            badge_cls = 'badge-alerta'
-        else:
-            badge_cls = 'badge-normal'
-
-        rows.append(
-            f'<tr>'
-            f'<td><span class="badge {badge_cls}">{sev}</span></td>'
-            f'<td style="font-weight:600;">'
-            f'{_strip_emojis(a.get("metrica", ""))}</td>'
-            f'<td style="font-size:9.5pt;">'
-            f'{_strip_emojis(a.get("descripcion", ""))}</td>'
-            f'</tr>'
-        )
-
-    return f"""
-    <div class="anomaly-section">
-        <h2 style="color:#E65100;border-color:#E65100;">
-            Riesgos y Anomal&iacute;as</h2>
-        <table class="anom-table">
-            <tr>
-                <th style="width:80px;">Severidad</th>
-                <th>M&eacute;trica</th>
-                <th>Descripci&oacute;n</th>
-            </tr>
-            {''.join(rows)}
-        </table>
-    </div>
-    """
-
-
-def _build_news_html(noticias: List[Dict[str, Any]]) -> str:
-    """Construye sección de noticias del sector."""
-    if not noticias:
-        return ''
-
-    items = []
-    for n in noticias[:5]:
-        titulo = _strip_emojis(n.get('titulo', ''))
-        resumen = _strip_emojis(n.get('resumen', n.get('resumen_corto', '')))
-        fuente = n.get('fuente', '')
-        fecha_n = n.get('fecha', n.get('fecha_publicacion', ''))
-        url = n.get('url', '')
-        link = f' <a href="{url}" style="color:#1565C0;">Leer m&aacute;s</a>' if url else ''
-        meta = ''
-        if fuente or fecha_n:
-            parts = [p for p in [fuente, str(fecha_n)] if p]
-            meta = f'<div class="news-meta">{" | ".join(parts)}</div>'
-        items.append(
-            f'<div class="news-item">'
-            f'<div class="news-title">{titulo}</div>'
-            f'<div class="news-summary">{resumen}{link}</div>'
-            f'{meta}</div>'
-        )
-
-    return (
-        '<div class="news-section">'
-        '<h2 style="color:#1565C0;border-color:#1565C0;">'
-        'Noticias del Sector Energ&eacute;tico</h2>'
-        + ''.join(items)
-        + '</div>'
-    )
-
-
-def _build_channels_html() -> str:
-    """Construye bloque de canales de consulta."""
-    return """
-    <div class="channels-box">
-        <div class="channels-title">Canales de Consulta</div>
-        <table cellpadding="0" cellspacing="0" border="0">
-            <tr><td>
-                <a class="ch-btn" style="background:#0088cc;"
-                   href="https://t.me/MinEnergiaColombia_bot">
-                   Chatbot Telegram</a>
-                <a class="ch-link" style="color:#0088cc;"
-                   href="https://t.me/MinEnergiaColombia_bot">
-                   t.me/MinEnergiaColombia_bot</a>
-            </td></tr>
-            <tr><td style="padding-top:6px;">
-                <a class="ch-btn" style="background:#1565C0;"
-                   href="https://portalenergetico.minenergia.gov.co/">
-                   Portal Energ&eacute;tico</a>
-                <a class="ch-link" style="color:#1565C0;"
-                   href="https://portalenergetico.minenergia.gov.co/">
-                   portalenergetico.minenergia.gov.co</a>
-            </td></tr>
-        </table>
+    <div class="page">
+      {header}
+      {_section_hdr('Resumen Ejecutivo')}
+      {semaphore_html}
+      {_section_hdr('Variables del Mercado', '#287270')}
+      {content}
+      {precio_pred_html}
     </div>
     """
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Función principal de generación de PDF
+# PAGE 2: Generación Real por Fuente
+# ═══════════════════════════════════════════════════════════════
+
+def _build_page_generacion(
+    logo_b64: str,
+    fecha_label: str,
+    gen_por_fuente: Dict[str, Any],
+    chart_paths: List[str],
+    pred_resumen: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Página 2: Gráfico de generación + tabla de fuentes +
+    análisis por tipo de fuente + predicción de generación.
+    """
+    header = _build_header_html(logo_b64, fecha_label)
+
+    # ── Gen pie chart ──
+    gen_chart = _embed_chart(chart_paths, 'gen_pie')
+
+    # ── Gen by source table ──
+    fuentes = (gen_por_fuente or {}).get('fuentes', [])
+    total_gwh = (gen_por_fuente or {}).get('total_gwh', 0)
+    fecha_dato = (gen_por_fuente or {}).get('fecha_dato', '')
+
+    bar_colors = {
+        'Hidráulica': '#125685',
+        'Térmica': '#737373',
+        'Solar': '#ffbf00',
+        'Eólica': '#5d17eb',
+        'Biomasa/Cogeneración': '#b4c657',
+        'Biomasa': '#b4c657',
+        'Cogeneración': '#b4c657',
+    }
+
+    table_rows = ''
+    for f in fuentes:
+        nombre = f.get('fuente', '')
+        gwh = f.get('gwh', 0)
+        pct = f.get('porcentaje', 0)
+        bc = bar_colors.get(nombre, '#999')
+        bw = min(pct * 1.5, 100)
+        table_rows += (
+            f'<tr><td>{nombre}</td>'
+            f'<td style="text-align:right;font-weight:bold;">{gwh:,.1f} GWh</td>'
+            f'<td style="text-align:right;">{pct:.1f}%</td>'
+            f'<td><span class="bar-bg" style="width:{bw}px;background:{bc};"></span></td>'
+            f'</tr>'
+        )
+
+    if total_gwh:
+        table_rows += (
+            f'<tr style="border-top:2px solid #254553;">'
+            f'<td><strong>Total</strong></td>'
+            f'<td style="text-align:right;font-weight:bold;">{total_gwh:,.1f} GWh</td>'
+            f'<td style="text-align:right;font-weight:bold;">100%</td>'
+            f'<td></td></tr>'
+        )
+
+    gen_table = ''
+    if table_rows:
+        gen_table = f"""
+        <table class="data-tbl">
+          <tr><th>Fuente</th><th style="text-align:right;">GWh</th>
+              <th style="text-align:right;">%</th><th></th></tr>
+          {table_rows}
+        </table>
+        <div style="font-size:6.5pt;color:#8d8d8d;margin-top:1px;">
+          Datos del {fecha_dato} &bull; Fuente: XM
+        </div>
+        """
+
+    # ── Two-column: chart + table ──
+    top_section = f"""
+    <table class="two-col" cellpadding="0" cellspacing="0">
+      <tr>
+        <td class="col-50">{gen_chart or '<div style="text-align:center;padding:20px;color:#999;font-size:8pt;">Grafico no disponible</div>'}</td>
+        <td class="col-50">{gen_table}</td>
+      </tr>
+    </table>
+    """
+
+    # ── Per-source analysis blocks (data-driven, like model Pg 2) ──
+    src_blocks = ''
+    src_config = {
+        'Hidráulica': ('bg-hidra', 'Generaci&oacute;n Hidr&aacute;ulica',
+                       'Principal fuente de generaci&oacute;n del sistema colombiano.',
+                       'El sistema mantiene alta dependencia hidr&aacute;ulica, sensible a cambios clim&aacute;ticos.'),
+        'Térmica': ('bg-termi', 'Generaci&oacute;n F&oacute;sil (T&eacute;rmica)',
+                    'Segunda fuente en importancia, respaldo del sistema.',
+                    'La t&eacute;rmica sigue siendo clave para cubrir demanda en eventos de menor disponibilidad h&iacute;drica.'),
+        'Biomasa/Cogeneración': ('bg-bioma', 'Generaci&oacute;n por Biomasa',
+                                 'Fuente estable, fracci&oacute;n marginal de la matriz.',
+                                 'Muestra estabilidad en autogeneradores con excedentes.'),
+        'Biomasa': ('bg-bioma', 'Generaci&oacute;n por Biomasa',
+                    'Fuente estable, fracci&oacute;n marginal de la matriz.',
+                    'Muestra estabilidad en autogeneradores con excedentes.'),
+        'Eólica': ('bg-eolic', 'Generaci&oacute;n E&oacute;lica',
+                   'Magnitud baja pero tendencia constante.',
+                   'Se espera crecimiento con desarrollo de proyectos en La Guajira.'),
+        'Solar': ('bg-solar', 'Generaci&oacute;n Solar',
+                  'Fuente con variabilidad por radiaci&oacute;n y disponibilidad operativa.',
+                  'Comienza a consolidarse como complemento constante de la matriz.'),
+    }
+
+    # Two-column layout for source blocks
+    src_left = ''
+    src_right = ''
+    for idx, f in enumerate(fuentes):
+        nombre = f.get('fuente', '')
+        gwh = f.get('gwh', 0)
+        pct = f.get('porcentaje', 0)
+        cfg = src_config.get(nombre)
+        if not cfg:
+            continue
+        css_class, titulo, desc_base, implicacion = cfg
+        desc = f'Aport&oacute; {gwh:,.1f} GWh/d&iacute;a ({pct:.1f}% del total). {desc_base}'
+
+        block = (
+            f'<div class="src-block">'
+            f'<div class="src-hdr {css_class}">{titulo}</div>'
+            f'<div class="src-body">{desc}</div>'
+            f'<div class="src-impl"><strong>Implicaci&oacute;n:</strong> {implicacion}</div>'
+            f'</div>'
+        )
+
+        if idx % 2 == 0:
+            src_left += block
+        else:
+            src_right += block
+
+    # Comentarios finales
+    comentarios = (
+        '<div class="src-block">'
+        '<div class="src-hdr bg-comen">Comentarios Finales</div>'
+        '<div class="src-body">'
+        'El sistema mantiene alta dependencia de la generaci&oacute;n '
+        'hidr&aacute;ulica, con fuentes t&eacute;rmicas como principal respaldo. '
+        'Las FNCER tienen presencia creciente pero a&uacute;n limitada en '
+        't&eacute;rminos absolutos. El incremento sostenido de solar y '
+        'e&oacute;lica es una se&ntilde;al positiva en el marco de la '
+        'transici&oacute;n energ&eacute;tica.'
+        '</div></div>'
+    )
+    src_right += comentarios
+
+    src_blocks = f"""
+    <table class="two-col" cellpadding="0" cellspacing="0">
+      <tr>
+        <td class="col-50">{src_left}</td>
+        <td class="col-50">{src_right}</td>
+      </tr>
+    </table>
+    """
+
+    # ── Predicción de Generación Total ──
+    gen_pred = _find_metric_prediction(pred_resumen, 'generaci')
+    if not gen_pred:
+        gen_pred = _find_metric_prediction(pred_resumen, 'GENE')
+    gen_pred_html = _build_pred_card(
+        gen_pred,
+        'La generaci&oacute;n total proyectada considera la estacionalidad '
+        'h&iacute;drica, la disponibilidad t&eacute;rmica programada y '
+        'el crecimiento de FNCER en la matriz energ&eacute;tica.'
+    ) if gen_pred else ''
+
+    return f"""
+    <div class="page">
+      {header}
+      {_section_hdr('Generaci&oacute;n Real por Fuente')}
+      {top_section}
+      {src_blocks}
+      {gen_pred_html}
+    </div>
+    """
+
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE 3: Hidrología y Embalses + Proyecciones
+# ═══════════════════════════════════════════════════════════════
+
+def _build_page_hidrologia(
+    logo_b64: str,
+    fecha_label: str,
+    embalses_detalle: Dict[str, Any],
+    pred_resumen: Dict[str, Any],
+    chart_paths: List[str],
+) -> str:
+    """
+    Página 3: Hidrología + embalses + predicciones compactas.
+    Replica Página 3 del modelo.
+    """
+    header = _build_header_html(logo_b64, fecha_label)
+
+    # ── Embalses chart ──
+    emb_chart = _embed_chart(chart_paths, 'embalses_map')
+
+    # ── Embalses data box ──
+    emb = embalses_detalle or {}
+    nivel = emb.get('valor_actual_pct')
+    prom_30d = emb.get('promedio_30d_pct')
+    media_hist = emb.get('media_historica_2020_2025_pct')
+    desviacion = emb.get('desviacion_pct_media_historica')
+    energia_gwh = emb.get('energia_embalsada_gwh')
+    estado = _strip_emojis(emb.get('estado', ''))
+
+    emb_html = ''
+    if nivel is not None:
+        # Big number for current level
+        if nivel < 40:
+            nc = '#C62828'
+        elif nivel < 60:
+            nc = '#E65100'
+        else:
+            nc = '#287270'
+
+        # Build analysis text
+        emb_analysis = (
+            f'Los embalses presentan un nivel actual de <strong>{nivel:.1f}%</strong>'
+        )
+        if media_hist is not None and desviacion is not None:
+            sign = '+' if desviacion >= 0 else ''
+            emb_analysis += (
+                f', que se mantiene <strong>{sign}{desviacion:.1f} puntos</strong> '
+                f'porcentuales {"por encima" if desviacion >= 0 else "por debajo"} '
+                f'de la media hist&oacute;rica 2020-2025 ({media_hist:.1f}%).'
+            )
+        else:
+            emb_analysis += '.'
+
+        if desviacion is not None and desviacion > 5:
+            emb_analysis += ' <strong>No se generan alertas relacionadas con el abastecimiento de energ&iacute;a de hidroel&eacute;ctricas.</strong>'
+        elif desviacion is not None and desviacion < -5:
+            emb_analysis += ' <strong>Se recomienda monitoreo especial por nivel inferior al hist&oacute;rico.</strong>'
+
+        data_rows = ''
+        if prom_30d is not None:
+            data_rows += f'<tr><td>Promedio 30 d&iacute;as</td><td>{prom_30d:.1f}%</td></tr>'
+        if media_hist is not None:
+            data_rows += f'<tr><td>Senda de Referencia</td><td>{media_hist:.1f}%</td></tr>'
+        if desviacion is not None:
+            dc = '#2E7D32' if desviacion >= 0 else '#C62828'
+            sign = '+' if desviacion >= 0 else ''
+            data_rows += f'<tr><td>Diferencia</td><td style="color:{dc};">{sign}{desviacion:.1f}%</td></tr>'
+        if energia_gwh is not None:
+            data_rows += f'<tr><td>Energ&iacute;a embalsada</td><td>{energia_gwh:,.0f} GWh</td></tr>'
+
+        emb_html = f"""
+        <div style="margin:4px 0;">
+          <div class="big-num" style="color:{nc};">{nivel:.1f}%</div>
+          <div class="big-label">Reserva Nacional</div>
+        </div>
+        <div style="font-size:8.5pt;line-height:1.4;margin:6px 0;">{emb_analysis}</div>
+        <div class="emb-box" style="margin:4px 0;">
+          <table>{data_rows}</table>
+        </div>
+        """
+
+    # ── Two-column: chart + data ──
+    hydro_section = f"""
+    <table class="two-col" cellpadding="0" cellspacing="0">
+      <tr>
+        <td class="col-55">{emb_chart or '<div style="text-align:center;padding:30px;color:#999;font-size:8pt;">Mapa no disponible</div>'}</td>
+        <td class="col-45">{emb_html}</td>
+      </tr>
+    </table>
+    """
+
+    # ── Predicciones compactas ──
+    pred_html = ''
+    metricas = (pred_resumen or {}).get('metricas', [])
+    if metricas:
+        horizonte = (pred_resumen or {}).get('horizonte', 'Pr&oacute;ximo mes')
+        rows = ''
+        for m in metricas:
+            nombre = _strip_emojis(m.get('indicador', ''))
+            nombre = nombre.replace('del Sistema', '').replace('Nacional', '').strip()
+            unidad = m.get('unidad', '')
+            actual = m.get('valor_actual')
+            prom_proy = m.get('promedio_proyectado_1m')
+            rango_min = m.get('rango_min')
+            rango_max = m.get('rango_max')
+            tendencia = m.get('tendencia', 'Estable')
+            cambio = m.get('cambio_pct_vs_prom30d')
+
+            actual_s = f'{actual:,.1f}' if actual is not None else 'N/D'
+            proy_s = f'{prom_proy:,.1f}' if prom_proy is not None else 'N/D'
+            rango_s = ''
+            if rango_min is not None and rango_max is not None:
+                rango_s = f'{rango_min:,.1f} &ndash; {rango_max:,.1f}'
+
+            if tendencia == 'Creciente':
+                tcls = 'trend-up'
+                tarr = '&#9650;'
+            elif tendencia == 'Decreciente':
+                tcls = 'trend-dn'
+                tarr = '&#9660;'
+            else:
+                tcls = 'trend-st'
+                tarr = '&#9654;'
+
+            cambio_s = ''
+            if cambio is not None:
+                cambio_s = f' ({cambio:+.1f}%)'
+
+            rows += (
+                f'<tr>'
+                f'<td>{nombre}</td>'
+                f'<td style="text-align:center;">{unidad}</td>'
+                f'<td style="text-align:right;font-weight:bold;">{actual_s}</td>'
+                f'<td style="text-align:right;font-weight:bold;">{proy_s}</td>'
+                f'<td style="text-align:center;font-size:7.5pt;">{rango_s}</td>'
+                f'<td style="text-align:center;">'
+                f'<span class="{tcls}">{tarr} {tendencia}{cambio_s}</span></td>'
+                f'</tr>'
+            )
+
+        pred_html = f"""
+        <div style="margin:0 10px;">
+        <table class="pred-tbl">
+          <tr>
+            <th>Indicador</th><th style="text-align:center;">Und</th>
+            <th style="text-align:right;">Actual</th>
+            <th style="text-align:right;">Prom. Proy.</th>
+            <th style="text-align:center;">Rango</th>
+            <th style="text-align:center;">Tendencia</th>
+          </tr>
+          {rows}
+        </table>
+        <div style="font-size:6.5pt;color:#8d8d8d;margin-top:2px;">
+          Horizonte: {horizonte} &bull; Modelo: ENSEMBLE con validaci&oacute;n holdout
+        </div>
+        </div>
+        """
+
+    # ── Predicción específica de Embalses ──
+    emb_pred = _find_metric_prediction(pred_resumen, 'embalse')
+    if not emb_pred:
+        emb_pred = _find_metric_prediction(pred_resumen, 'porcentaje')
+    emb_pred_html = _build_pred_card(
+        emb_pred,
+        'La proyecci&oacute;n de embalses incorpora la estacionalidad '
+        'de aportes h&iacute;dricos, consumo programado de centrales '
+        'hidroel&eacute;ctricas y perspectivas clim&aacute;ticas regionales.'
+    ) if emb_pred else ''
+
+    return f"""
+    <div class="page">
+      {header}
+      {_section_hdr('Hidrolog&iacute;a y Embalses')}
+      {hydro_section}
+      {emb_pred_html}
+      {_section_hdr('Proyecciones a 1 Mes', '#287270') if pred_html else ''}
+      {pred_html}
+    </div>
+    """
+
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE 4: Análisis IA (narrativa completa)
+# ═══════════════════════════════════════════════════════════════
+
+def _build_page_analisis(
+    logo_b64: str,
+    fecha_label: str,
+    informe_texto: str,
+) -> str:
+    """
+    Página 4: Análisis ejecutivo generado por IA.
+    Incluye todas las secciones de la narrativa.
+    """
+    header = _build_header_html(logo_b64, fecha_label)
+
+    if not informe_texto or not informe_texto.strip():
+        return ''
+
+    # Clean and convert narrative
+    cleaned = _strip_redundant_header(informe_texto)
+    cleaned = _strip_emojis(cleaned)
+    body_html = _markdown_to_html(cleaned)
+
+    return f"""
+    <div class="page">
+      {header}
+      {_section_hdr('An&aacute;lisis Ejecutivo del Sector')}
+      <div class="narrative">
+        {body_html}
+      </div>
+    </div>
+    """
+
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE 5: Riesgos, Noticias y Cierre
+# ═══════════════════════════════════════════════════════════════
+
+def _build_page_noticias(
+    logo_b64: str,
+    fecha_label: str,
+    anomalias: List[Dict[str, Any]],
+    noticias: List[Dict[str, Any]],
+) -> str:
+    """
+    Página 5: Anomalías/riesgos + Noticias + Canales.
+    Replica Páginas 4-5 del modelo (Alertas del Sector).
+    """
+    header = _build_header_html(logo_b64, fecha_label)
+
+    # ── Anomalías ──
+    anom_html = ''
+    if anomalias:
+        rows = ''
+        for a in (anomalias or [])[:8]:
+            sev = a.get('severidad', 'ALERTA')
+            if sev in ('CRITICA', 'CRITICO', 'CRITICAL'):
+                bcls = 'badge-crit'
+            elif sev == 'ALERTA':
+                bcls = 'badge-warn'
+            else:
+                bcls = 'badge-ok'
+            rows += (
+                f'<tr>'
+                f'<td><span class="badge {bcls}">{sev}</span></td>'
+                f'<td style="font-weight:bold;">{_strip_emojis(a.get("metrica", ""))}</td>'
+                f'<td style="font-size:8pt;">{_strip_emojis(a.get("descripcion", ""))}</td>'
+                f'</tr>'
+            )
+        anom_html = f"""
+        {_section_hdr('Riesgos y Anomal&iacute;as Detectadas', '#e76f50')}
+        <div style="margin:0 10px;">
+        <table class="anom-tbl">
+          <tr><th style="width:70px;">Severidad</th>
+              <th>M&eacute;trica</th><th>Descripci&oacute;n</th></tr>
+          {rows}
+        </table>
+        </div>
+        """
+
+    # ── Noticias ──
+    news_html = ''
+    if noticias:
+        items = ''
+        for n in (noticias or [])[:5]:
+            titulo = _strip_emojis(n.get('titulo', ''))
+            resumen = _strip_emojis(n.get('resumen', n.get('resumen_corto', '')))
+            fuente = n.get('fuente', '')
+            fecha_n = n.get('fecha', n.get('fecha_publicacion', ''))
+            url = n.get('url', '')
+            link = f' <a href="{url}" style="color:#125685;">Leer m&aacute;s</a>' if url else ''
+            meta = ''
+            if fuente or fecha_n:
+                parts = [p for p in [fuente, str(fecha_n)] if p]
+                meta = f'<div class="news-meta">{" | ".join(parts)}</div>'
+            items += (
+                f'<div class="news-item">'
+                f'<div class="news-title">{titulo}</div>'
+                f'<div class="news-summary">{resumen}{link}</div>'
+                f'{meta}</div>'
+            )
+        news_html = f"""
+        {_section_hdr('Noticias del Sector Energ&eacute;tico')}
+        {items}
+        """
+
+    # ── Canales ──
+    channels_html = f"""
+    {_section_hdr('Canales de Consulta', '#287270')}
+    <div class="channels-box">
+      <table cellpadding="0" cellspacing="0" border="0">
+        <tr><td style="padding:3px 0;">
+          <a class="ch-btn" style="background:#0088cc;"
+             href="https://t.me/MinEnergiaColombia_bot">Chatbot Telegram</a>
+          <span style="font-size:8pt;color:#737373;padding-left:6px;">
+            t.me/MinEnergiaColombia_bot</span>
+        </td></tr>
+        <tr><td style="padding:3px 0;">
+          <a class="ch-btn" style="background:#125685;"
+             href="https://portalenergetico.minenergia.gov.co/">
+             Portal Energ&eacute;tico</a>
+          <span style="font-size:8pt;color:#737373;padding-left:6px;">
+            portalenergetico.minenergia.gov.co</span>
+        </td></tr>
+      </table>
+    </div>
+    """
+
+    return f"""
+    <div class="page">
+      {header}
+      {anom_html}
+      {news_html}
+      {channels_html}
+    </div>
+    """
+
+
+# ═══════════════════════════════════════════════════════════════
+# Función principal: generar PDF
 # ═══════════════════════════════════════════════════════════════
 
 def generar_pdf_informe(
@@ -1289,36 +1609,34 @@ def generar_pdf_informe(
     contexto_datos: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """
-    Genera un PDF del informe ejecutivo con portada institucional,
-    resumen con semáforo, datos estructurados y narrativa IA.
+    Genera un PDF estilo modelo XM del informe ejecutivo diario.
+
+    Estructura de 5 páginas:
+      P1: Variables del Mercado y Resumen Ejecutivo
+      P2: Generación Real por Fuente (con análisis por tipo)
+      P3: Hidrología/Embalses + Proyecciones a 1 Mes
+      P4: Análisis Ejecutivo IA (narrativa completa)
+      P5: Riesgos, Noticias y Cierre
 
     Args:
-        informe_texto: Texto Markdown del informe.
+        informe_texto: Texto Markdown de la narrativa IA.
         fecha_generacion: Fecha/hora de generación.
         generado_con_ia: Si fue generado con IA.
-        chart_paths: Lista de paths a imágenes PNG de gráficos.
-        fichas: Lista de KPIs estructurados [{indicador, valor, unidad, ...}].
-        predicciones: Dict o lista de dicts con estadisticas, predicciones[], modelo.
+        chart_paths: Lista de paths a PNGs (gen_pie, embalses_map, precio_evol).
+        fichas: Lista de KPIs [{indicador, valor, unidad, contexto}].
+        predicciones: Dict o lista de predicciones (legacy, fallback).
         anomalias: Lista de anomalías [{severidad, metrica, descripcion}].
         noticias: Lista de noticias [{titulo, resumen, fuente, url}].
-        contexto_datos: Dict con campos extra del orquestador:
-            - tabla_indicadores_clave: lista de dicts con semáforo
-            - generacion_por_fuente: dict con fuentes y porcentajes
-            - embalses_detalle: dict consolidado de embalses
-            - predicciones_mes_resumen: dict con métricas compactas
+        contexto_datos: Dict del orquestador con campos enriquecidos.
 
     Returns:
-        Ruta absoluta al archivo PDF temporal, o None si falla.
+        Ruta absoluta al PDF temporal, o None si falla.
     """
     try:
         from weasyprint import HTML
 
-        # ── Preparación de datos ──
-        informe_texto = _strip_redundant_header(informe_texto)
-        informe_texto = _strip_emojis(informe_texto)
-
+        # ── Preparar datos ──
         hoy = fecha_generacion or datetime.now().strftime('%Y-%m-%d %H:%M')
-        metodo = 'Asistido por IA' if generado_con_ia else 'Datos consolidados'
         fecha_label = datetime.now().strftime('%Y-%m-%d')
 
         ctx = contexto_datos or {}
@@ -1328,111 +1646,53 @@ def generar_pdf_informe(
         pred_resumen = ctx.get('predicciones_mes_resumen', {})
 
         logo_b64 = _load_logo_b64()
+        charts = chart_paths or []
 
-        # ── Construir secciones ──
-        cover_html = _build_cover_html(logo_b64, fecha_label, metodo, hoy)
-        page_header = _build_page_header(logo_b64, fecha_label)
-        metadata_html = f"""
-        <div class="metadata-bar">
-            <table><tr>
-                <td>Generado: {hoy}</td>
-                <td>M&eacute;todo: {metodo}</td>
-                <td>Destinatario: Despacho del Viceministro</td>
-            </tr></table>
-        </div>
-        """
+        # ── Construir las 5 páginas ──
+        page1 = _build_page_mercado(
+            logo_b64, fecha_label,
+            fichas or [], tabla_indicadores, charts,
+            pred_resumen=pred_resumen,
+        )
 
-        # Semáforo ejecutivo
-        semaphore_html = _build_semaphore_html(tabla_indicadores)
+        page2 = _build_page_generacion(
+            logo_b64, fecha_label,
+            gen_por_fuente, charts,
+            pred_resumen=pred_resumen,
+        )
 
-        # KPI cards
-        kpi_html = _build_kpi_cards_html(fichas or [])
+        page3 = _build_page_hidrologia(
+            logo_b64, fecha_label,
+            embalses_detalle, pred_resumen, charts,
+        )
 
-        # Generación por fuente
-        gen_source_html = _build_gen_source_html(gen_por_fuente)
+        page4 = _build_page_analisis(
+            logo_b64, fecha_label,
+            informe_texto or '',
+        )
 
-        # Embalses detalle
-        embalses_html = _build_embalses_detail_html(embalses_detalle)
+        page5 = _build_page_noticias(
+            logo_b64, fecha_label,
+            anomalias or [], noticias or [],
+        )
 
-        # Convertir narrativa Markdown a HTML
-        body_html = _markdown_to_html(informe_texto)
-
-        # Gráficos con captions
-        charts_html = _build_charts_html(chart_paths or [])
-
-        # Insertar gráficos contextualizados en la narrativa
-        # Buscar primera y segunda sección h2 para distribuir gráficos
-        if charts_html:
-            h2_positions = [m.start() for m in re.finditer(r'<h2>', body_html)]
-            if len(h2_positions) >= 2:
-                insert_pos = h2_positions[1]
-                body_html = body_html[:insert_pos] + charts_html + body_html[insert_pos:]
-            else:
-                body_html += charts_html
-
-        # Predicciones compactas (reemplaza tablas de 31 filas)
-        pred_html = _build_pred_compact_html(pred_resumen)
-
-        # Si no hay predicciones compactas, usar las legacy pero truncadas
-        if not pred_html and predicciones:
-            pred_html = _build_legacy_pred_html(predicciones)
-
-        # Anomalías
-        anom_html = _build_anomalies_html(anomalias or [])
-
-        # Noticias
-        news_html = _build_news_html(noticias or [])
-
-        # Canales
-        channels_html = _build_channels_html()
-
-        # ══════════════════════════════════════════════
-        # Ensamblar HTML completo
-        # ══════════════════════════════════════════════
-        # Orden: Portada → Header + Metadata → Semáforo → KPIs →
-        #        Datos estructurados (gen/embalses) → Narrativa+Charts →
-        #        Predicciones → Anomalías → Noticias → Canales → Footer
-
+        # ── Ensamblar HTML ──
         full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <style>{_CSS}</style>
+  <meta charset="UTF-8">
+  <style>{_CSS}</style>
 </head>
 <body>
-
-    {cover_html}
-
-    {page_header}
-    {metadata_html}
-
-    {semaphore_html}
-
-    {kpi_html}
-
-    {gen_source_html}
-
-    {embalses_html}
-
-    {body_html}
-
-    {pred_html}
-
-    {anom_html}
-
-    {news_html}
-
-    {channels_html}
-
-    <div class="footer-note">
-        Documento generado autom&aacute;ticamente por el Portal Energ&eacute;tico MME &bull;
-        Datos: XM, SIMEM y fuentes oficiales &bull;
-        Predicciones: modelos ENSEMBLE con validaci&oacute;n holdout
-    </div>
+  {page1}
+  {page2}
+  {page3}
+  {page4}
+  {page5}
 </body>
 </html>"""
 
-        # Generar PDF en /tmp
+        # ── Generar PDF ──
         filename = f'Informe_Ejecutivo_MME_{fecha_label}.pdf'
         pdf_path = os.path.join(tempfile.gettempdir(), filename)
 
@@ -1440,8 +1700,8 @@ def generar_pdf_informe(
 
         file_size = os.path.getsize(pdf_path)
         logger.info(
-            f'[REPORT_SERVICE] PDF generado: {pdf_path} '
-            f'({file_size / 1024:.1f} KB)'
+            f'[REPORT_SERVICE] PDF generado ({file_size / 1024:.1f} KB): '
+            f'{pdf_path}'
         )
         return pdf_path
 
@@ -1449,62 +1709,7 @@ def generar_pdf_informe(
         logger.error('[REPORT_SERVICE] weasyprint no instalado')
         return None
     except Exception as e:
-        logger.error(f'[REPORT_SERVICE] Error generando PDF: {e}', exc_info=True)
-        return None
-
-
-def _build_legacy_pred_html(predicciones) -> str:
-    """
-    Fallback: genera HTML de predicciones cuando no hay predicciones_mes_resumen.
-    Solo tabla de estadísticas, SIN la tabla detallada de 31 filas.
-    """
-    _pred_items = []
-    if isinstance(predicciones, list):
-        _pred_items = [p for p in predicciones if p and p.get('estadisticas')]
-    elif isinstance(predicciones, dict) and predicciones.get('estadisticas'):
-        _pred_items = [predicciones]
-
-    if not _pred_items:
-        return ''
-
-    if len(_pred_items) >= 3:
-        sec_title = 'Proyecciones a 1 Mes &mdash; 3 M&eacute;tricas Clave'
-    elif len(_pred_items) == 1:
-        fl = _pred_items[0].get('fuente_label', _pred_items[0].get('fuente', 'General'))
-        sec_title = f'Proyecciones a 1 Mes &mdash; {fl}'
-    else:
-        sec_title = 'Proyecciones a 1 Mes'
-
-    html = f'<div style="margin:12px 0;"><h2>{sec_title}</h2>'
-
-    for pred_item in _pred_items:
-        stats = pred_item['estadisticas']
-        fuente_label = pred_item.get('fuente_label', pred_item.get('fuente', 'General'))
-        fuente_lower = (pred_item.get('fuente', '') or '').lower()
-
-        if 'precio' in fuente_lower or 'bolsa' in fuente_lower:
-            unidad = 'COP/kWh'
-        elif 'embalse' in fuente_lower:
-            unidad = '%'
-        else:
-            unidad = 'GWh/d\u00eda'
-
-        html += (
-            f'<h3>{fuente_label}</h3>'
-            '<table class="pred-compact-table">'
-            '<tr><th>Estad&iacute;stica</th>'
-            '<th style="text-align:right;">Valor</th></tr>'
-            f'<tr><td>Promedio diario</td>'
-            f'<td style="text-align:right;font-weight:600;">'
-            f'{stats.get("promedio_gwh", 0):,.1f} {unidad}</td></tr>'
-            f'<tr><td>M&aacute;ximo esperado</td>'
-            f'<td style="text-align:right;">'
-            f'{stats.get("maximo_gwh", 0):,.1f} {unidad}</td></tr>'
-            f'<tr><td>M&iacute;nimo esperado</td>'
-            f'<td style="text-align:right;">'
-            f'{stats.get("minimo_gwh", 0):,.1f} {unidad}</td></tr>'
-            '</table>'
+        logger.error(
+            f'[REPORT_SERVICE] Error generando PDF: {e}', exc_info=True
         )
-
-    html += '</div>'
-    return html
+        return None

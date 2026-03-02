@@ -183,12 +183,15 @@ def main():
     except Exception as e:
         print(f"  ⚠️ Error generando PDF: {e}")
 
-    # ── 5. Construir mensaje Telegram ──
+    # ── 5. Construir mensaje Telegram (KPIs + resumen, sin narrativa) ──
+    # El análisis completo va SOLO en el PDF adjunto.
     tg_message = (
-        f"📊 *INFORME EJECUTIVO — TEST DE CAMBIOS*\n\n"
+        f"📊 *INFORME EJECUTIVO — TEST DE CAMBIOS*\n"
         f"📅 Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        f"🔧 _Prueba de cambios: embalses + predicciones mes_\n\n"
+        f"{'─' * 30}\n\n"
     )
+
+    # ── KPIs principales ──
     if fichas_kpi:
         for f in fichas_kpi[:3]:
             emoji = f.get('emoji', '⚡')
@@ -203,7 +206,7 @@ def main():
                 tg_message += f" ({var_pct:+.1f}% {etiqueta_var})"
             tg_message += "\n"
 
-            # Si es embalses, mostrar los campos nuevos
+            # Detalle embalses
             if 'embalse' in ind.lower():
                 media_h = ctx.get('media_historica_2020_2025')
                 desv_h = ctx.get('desviacion_pct_media_historica_2020_2025')
@@ -215,15 +218,40 @@ def main():
                     )
         tg_message += "\n"
 
-    # Resumen narrativo (recortado + limpio para Telegram)
-    narrative_short = _clean_markdown_for_telegram(informe_texto[:1500])
-    if len(narrative_short) > 1500:
-        narrative_short = narrative_short[:1497] + '...'
-    tg_message += f"{narrative_short}\n\n"
-    tg_message += "_Portal Energético — TEST de cambios_"
+    # ── Predicciones compactas ──
+    _pred_mes = contexto.get('predicciones_mes', {})
+    _metricas = _pred_mes.get('metricas_clave', {})
+    if _metricas:
+        tg_message += "📈 *Proyecciones próximo mes:*\n"
+        for clave in ['generacion', 'precio_bolsa', 'embalses']:
+            m = _metricas.get(clave, {})
+            if m:
+                emoji_m = m.get('emoji', '▸')
+                nom = m.get('indicador', clave)
+                prom = m.get('promedio_periodo', '')
+                uni_m = m.get('unidad', '')
+                tend = m.get('tendencia', '')
+                tg_message += f"  {emoji_m} {nom}: {prom} {uni_m} {tend}\n"
+        tg_message += "\n"
 
-    if len(tg_message) > 4000:
-        tg_message = tg_message[:3900] + "\n\n_(recortado)_"
+    # ── Noticias (solo títulos) ──
+    if noticias:
+        tg_message += "📰 *Noticias del Sector:*\n"
+        for i, n in enumerate(noticias[:3], 1):
+            titulo = n.get('titulo', '')
+            fuente = n.get('fuente', '')
+            tg_message += f"  {i}. {titulo}"
+            if fuente:
+                tg_message += f" ({fuente})"
+            tg_message += "\n"
+        tg_message += "\n"
+
+    # ── Cierre ──
+    tg_message += (
+        "📎 *El análisis completo con gráficas y predicciones "
+        "se encuentra en el PDF adjunto.*\n\n"
+        "Portal Energético — TEST de cambios"
+    )
 
     # ── 6. Enviar SOLO a Melissa (Telegram) ──
     print(f"\n📤 Enviando a Telegram chat_id={DEST_CHAT_ID}...")

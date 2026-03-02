@@ -581,13 +581,16 @@ def send_daily_summary():
             logger.warning(f"[RESUMEN DIARIO] Error generando PDF: {e}")
 
         # ══════════════════════════════════════════════
-        # 5. Construir mensaje Telegram
+        # 5. Construir mensaje Telegram (KPIs + resumen compacto)
+        # El análisis completo va SOLO en el PDF adjunto.
         # ══════════════════════════════════════════════
         tg_message = (
-            f"📊 *INFORME EJECUTIVO DIARIO DEL SIN*\n\n"
-            f"📅 Fecha: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+            f"📊 *INFORME EJECUTIVO DIARIO DEL SIN*\n"
+            f"📅 Fecha: {datetime.now().strftime('%Y-%m-%d')}\n"
+            f"{'─' * 30}\n\n"
         )
-        # KPIs
+
+        # ── KPIs principales ──
         if fichas:
             for f in fichas[:3]:
                 emoji = f.get('emoji', '⚡')
@@ -597,46 +600,68 @@ def send_daily_summary():
                 ctx = f.get('contexto', {})
                 var_pct = ctx.get('variacion_vs_promedio_pct', '')
                 etiqueta_var = ctx.get('etiqueta_variacion', 'vs 7d')
-                tend = ctx.get('tendencia', '')
                 tg_message += f"{emoji} *{ind}:* {val} {uni}"
-                if var_pct:
-                    tg_message += f" ({var_pct:+.1f}% {etiqueta_var})" if isinstance(var_pct, (int, float)) else f" ({var_pct})"
+                if isinstance(var_pct, (int, float)):
+                    tg_message += f" ({var_pct:+.1f}% {etiqueta_var})"
+                tg_message += "\n"
+
+                # Detalle embalses: media histórica
+                if 'embalse' in ind.lower():
+                    media_h = ctx.get('media_historica_2020_2025')
+                    desv_h = ctx.get('desviacion_pct_media_historica_2020_2025')
+                    if media_h is not None and desv_h is not None:
+                        dir_txt = "por encima" if desv_h >= 0 else "por debajo"
+                        tg_message += (
+                            f"   📊 Media 2020-2025: {media_h:.1f}% → "
+                            f"*{abs(desv_h):.1f}% {dir_txt}*\n"
+                        )
+            tg_message += "\n"
+
+        # ── Predicciones compactas (del contexto) ──
+        _ctx = d_informe.get('contexto_datos', {}) if d_informe else {}
+        _pred_mes = _ctx.get('predicciones_mes', {})
+        _metricas = _pred_mes.get('metricas_clave', {})
+        if _metricas:
+            tg_message += "📈 *Proyecciones próximo mes:*\n"
+            for clave in ['generacion', 'precio_bolsa', 'embalses']:
+                m = _metricas.get(clave, {})
+                if m:
+                    emoji_m = m.get('emoji', '▸')
+                    nom = m.get('indicador', clave)
+                    prom = m.get('promedio_periodo', '')
+                    uni_m = m.get('unidad', '')
+                    tend = m.get('tendencia', '')
+                    tg_message += f"  {emoji_m} {nom}: {prom} {uni_m} {tend}\n"
+            tg_message += "\n"
+
+        # ── Anomalías (si hay) ──
+        if anomalias:
+            tg_message += f"⚠️ *Anomalías detectadas ({len(anomalias)}):*\n"
+            for a in anomalias[:5]:
+                sev = a.get('severidad', 'ALERTA')
+                met = a.get('metrica', '')
+                desc_short = a.get('descripcion', '')[:80]
+                tg_message += f"  {'🔴' if 'CRIT' in sev.upper() else '🟡'} {met}: {desc_short}\n"
+            tg_message += "\n"
+
+        # ── Noticias (solo títulos) ──
+        if noticias:
+            tg_message += "📰 *Noticias del Sector:*\n"
+            for i, n in enumerate(noticias[:3], 1):
+                titulo = n.get('titulo', '')
+                fuente = n.get('fuente', '')
+                tg_message += f"  {i}. {titulo}"
+                if fuente:
+                    tg_message += f" ({fuente})"
                 tg_message += "\n"
             tg_message += "\n"
 
-        # Resumen narrativo (recortado + limpio para Telegram)
-        narrative_short = _clean_markdown_for_telegram(informe_texto[:1500])
-        if len(narrative_short) > 1500:
-            narrative_short = narrative_short[:1497] + '...'
-        tg_message += f"{narrative_short}\n\n"
-
-        # Noticias
-        if noticias:
-            tg_message += "📰 *Noticias del Sector Energético*\n\n"
-            for i, n in enumerate(noticias[:3], 1):
-                titulo = n.get('titulo', 'Sin título')
-                fuente = n.get('fuente', '')
-                url = n.get('url', '')
-                resumen = n.get('resumen', n.get('resumen_corto', ''))
-                if len(resumen) > 120:
-                    resumen = resumen[:117] + '...'
-                tg_message += f"*{i}.* {titulo}\n"
-                if resumen:
-                    tg_message += f"   {resumen}\n"
-                if fuente:
-                    tg_message += f"   _Fuente: {fuente}_\n"
-                if url:
-                    tg_message += f"   🔗 [Leer más]({url})\n"
-                tg_message += "\n"
-
-        tg_message += "_Portal Energético — Ministerio de Minas y Energía_"
-
-        if len(tg_message) > 4000:
-            tg_message = (
-                tg_message[:3900] + "\n\n"
-                "_(Informe recortado — consulte el PDF adjunto para "
-                "la versión completa)_"
-            )
+        # ── Cierre ──
+        tg_message += (
+            "📎 *El análisis completo con gráficas y predicciones "
+            "se encuentra en el PDF adjunto.*\n\n"
+            "Portal Energético — Ministerio de Minas y Energía"
+        )
 
         # ══════════════════════════════════════════════
         # 6. Construir email HTML y enviar
@@ -671,6 +696,21 @@ def send_daily_summary():
             f"(TG={result['telegram']['sent']}, "
             f"Email={result['email']['sent']})"
         )
+
+        # Guardar copia del PDF en informes/ antes de limpiar
+        if pdf_path and os.path.isfile(pdf_path):
+            try:
+                informes_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "whatsapp_bot", "informes"
+                )
+                os.makedirs(informes_dir, exist_ok=True)
+                import shutil
+                copia_pdf = os.path.join(informes_dir, os.path.basename(pdf_path))
+                shutil.copy2(pdf_path, copia_pdf)
+                logger.info(f"[RESUMEN DIARIO] Copia PDF guardada: {copia_pdf}")
+            except Exception as e_copy:
+                logger.warning(f"[RESUMEN DIARIO] No se pudo copiar PDF: {e_copy}")
 
         # Limpiar archivos temporales
         if pdf_path and os.path.isfile(pdf_path):

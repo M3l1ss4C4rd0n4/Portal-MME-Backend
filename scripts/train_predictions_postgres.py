@@ -33,6 +33,15 @@ MODELO_VERSION = 'ENSEMBLE_v1.0'
 # Fuentes de generación
 FUENTES = ['Hidráulica', 'Térmica', 'Eólica', 'Solar', 'Biomasa']
 
+# ── FASE 8: Parámetros de calidad y auditoría ──
+# Umbral máximo de MAPE aceptable: predicciones con MAPE > este valor NO se guardan en BD.
+# Un MAPE > 50% implica que la predicción es peor que un modelo naïve.
+# Ajustable: reducir a 0.30 cuando los modelos mejoren.
+UMBRAL_MAPE_MAXIMO = 0.50  # 50%
+# Confianza asignada cuando no hay holdout disponible (datos insuficientes).
+# Antes se usaba CONFIANZA=0.95 hardcoded, lo cual era engañoso.
+CONFIANZA_SIN_VALIDACION = 0.50
+
 
 def get_postgres_connection():
     """Obtiene conexión a PostgreSQL usando el connection manager del sistema"""
@@ -138,9 +147,13 @@ class PredictorEnsemble:
         df_val_p = df_prophet.iloc[-dias_validacion:]
         
         if len(df_train_p) < 365:
-            print(f"    ⚠️  Datos insuficientes para validación con holdout, usando pesos fijos", flush=True)
+            print(f"    ⚠️  Datos insuficientes para holdout ({len(df_train_p)} < 365), pesos fijos", flush=True)
             self.pesos = {'prophet': 0.6, 'sarima': 0.4} if self.modelo_sarima else {'prophet': 1.0, 'sarima': 0.0}
-            self.metricas = {'mape_ensemble': -1, 'mape_prophet': -1, 'mape_sarima': -1}
+            # FASE 8: Usar None (no -1) y confianza conservadora sin validar
+            self.metricas = {
+                'mape_ensemble': None, 'mape_prophet': None, 'mape_sarima': None,
+                'rmse': None, 'confianza': CONFIANZA_SIN_VALIDACION
+            }
             return
         
         # Re-entrenar Prophet con subset de entrenamiento
@@ -370,17 +383,18 @@ def guardar_predicciones(predicciones_dict, predictores):
         
         fecha_generacion = datetime.now()
         total_registros = 0
+        fuentes_descartadas = []  # FASE 8: tracking de fuentes filtradas por calidad
         
         for fuente, df_pred in predicciones_dict.items():
-            # FASE 7B: Obtener métricas reales del predictor
+            # FASE 8: Obtener métricas reales del predictor
             predictor = predictores.get(fuente)
             if predictor:
                 mape_val = predictor.metricas.get('mape_ensemble')
                 rmse_val = predictor.metricas.get('rmse')
                 confianza_real = predictor.metricas.get('confianza')
-                # Si no se pudo calcular, usar fallback
+                # Si no se pudo calcular MAPE, usar confianza conservadora (no 0.95)
                 if confianza_real is None or (mape_val is not None and mape_val < 0):
-                    confianza_real = CONFIANZA
+                    confianza_real = CONFIANZA_SIN_VALIDACION
                     mape_val = None
                     rmse_val = None
                 else:
@@ -389,9 +403,22 @@ def guardar_predicciones(predicciones_dict, predictores):
                     mape_val = float(mape_val) if mape_val is not None else None
                     rmse_val = float(rmse_val) if rmse_val is not None else None
             else:
-                confianza_real = CONFIANZA
+                confianza_real = CONFIANZA_SIN_VALIDACION
                 mape_val = None
                 rmse_val = None
+            
+            # ── FASE 8: Quality gate — descartar predicciones de baja calidad ──
+            if mape_val is not None and mape_val > UMBRAL_MAPE_MAXIMO:
+                mp = predictor.metricas.get('mape_prophet') if predictor else None
+                ms = predictor.metricas.get('mape_sarima') if predictor else None
+                rmse_d = predictor.metricas.get('rmse') if predictor else None
+                print(f"  ⚠️  DESCARTADA {fuente}: MAPE Ensemble={mape_val:.2%} > "
+                      f"umbral {UMBRAL_MAPE_MAXIMO:.0%}.", flush=True)
+                print(f"      Detalle: Prophet={f'{mp:.2%}' if mp is not None else 'N/A'}, "
+                      f"SARIMA={f'{ms:.2%}' if ms is not None else 'N/A'}, "
+                      f"RMSE={f'{rmse_d:.2f}' if rmse_d is not None else 'N/A'}", flush=True)
+                fuentes_descartadas.append((fuente, mape_val, mp, ms, rmse_d))
+                continue
             
             print(f"  → Guardando {len(df_pred)} predicciones de {fuente} "
                   f"(confianza={confianza_real:.2f}, "
@@ -422,6 +449,19 @@ def guardar_predicciones(predicciones_dict, predictores):
         
         conn.commit()
         print(f"  ✓ {total_registros} predicciones guardadas exitosamente")
+        
+        # ── FASE 8: Log de fuentes descartadas por calidad ──
+        if fuentes_descartadas:
+            print(f"\n  ⚠️  Fuentes descartadas por MAPE > {UMBRAL_MAPE_MAXIMO:.0%}:")
+            for item in fuentes_descartadas:
+                nombre, mape = item[0], item[1]
+                mp = item[2] if len(item) > 2 else None
+                ms = item[3] if len(item) > 3 else None
+                rmse_d = item[4] if len(item) > 4 else None
+                mp_s = f"Prophet={mp:.1%}" if mp is not None else "Prophet=N/A"
+                ms_s = f"SARIMA={ms:.1%}" if ms is not None else "SARIMA=N/A"
+                rmse_s = f"RMSE={rmse_d:.1f}" if rmse_d is not None else "RMSE=N/A"
+                print(f"      • {nombre}: Ensemble={mape:.1%} ({mp_s}, {ms_s}, {rmse_s})")
         
     except Exception as e:
         conn.rollback()
@@ -459,26 +499,35 @@ def generar_reporte_metricas(predictores):
             else:
                 print(f"  ❌ MEJORA REQUERIDA (> 10%)")
     
-    # Promedio general
-    mape_promedio = np.mean([p.metricas.get('mape_ensemble', 0) for p in predictores.values()])
+    # Promedio general (excluir métricas sin MAPE válido)
+    mapes_validos = [p.metricas.get('mape_ensemble') for p in predictores.values()
+                     if p.metricas.get('mape_ensemble') is not None and p.metricas.get('mape_ensemble') >= 0]
+    mape_promedio = np.mean(mapes_validos) if mapes_validos else float('nan')
     print(f"\n{'='*60}")
-    print(f"MAPE PROMEDIO GENERAL: {mape_promedio:.2%}")
-    
-    if mape_promedio < 0.05:
-        print("✅ SISTEMA ENSEMBLE APROBADO - Precisión nacional garantizada")
+    if not np.isnan(mape_promedio):
+        print(f"MAPE PROMEDIO GENERAL: {mape_promedio:.2%} ({len(mapes_validos)}/{len(predictores)} fuentes)")
     else:
-        print("⚠️  Considerar FASE 3 (TFT) para mejorar precisión")
+        print(f"MAPE PROMEDIO GENERAL: N/A (sin métricas con MAPE válido)")
+    
+    if not np.isnan(mape_promedio) and mape_promedio < 0.05:
+        print("✅ SISTEMA ENSEMBLE APROBADO - Precisión nacional garantizada")
+    elif not np.isnan(mape_promedio) and mape_promedio < 0.10:
+        print("⚠️  SISTEMA ACEPTABLE (MAPE < 10%)")
+    else:
+        print("⚠️  Considerar mejoras en modelos para reducir MAPE")
     
     print("="*60)
 
 
 def main():
     """Función principal de entrenamiento y predicción"""
+    fecha_ejecucion = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print("\n" + "="*60)
     print("🚀 SISTEMA DE PREDICCIONES - FASE 2 (PostgreSQL)")
-    print("   Modelo: ENSEMBLE (Prophet + SARIMA)")
-    print("   Horizonte: 3 meses (90 días)")
-    print("   Objetivo: MAPE < 5%")
+    print(f"   Modelo: {MODELO_VERSION}")
+    print(f"   Horizonte: {HORIZONTE_DIAS} días")
+    print(f"   Umbral MAPE máximo: {UMBRAL_MAPE_MAXIMO:.0%}")
+    print(f"   Fecha ejecución: {fecha_ejecucion}")
     print("="*60)
     
     # Verificar conexión PostgreSQL
@@ -499,6 +548,13 @@ def main():
     predicciones_dict = {}
     
     for fuente in FUENTES:
+        # FASE 12-13: Térmica/Solar/Eólica usan LightGBM directo (sector script)
+        if fuente in ('Térmica', 'Solar', 'Eólica'):
+            print(f"\n{'='*60}")
+            print(f"⏭️  Saltando {fuente} — usa LightGBM directo (FASE 12-13)")
+            print("="*60)
+            continue
+
         print(f"\n{'='*60}")
         print(f"🔧 Procesando: {fuente}")
         print("="*60)

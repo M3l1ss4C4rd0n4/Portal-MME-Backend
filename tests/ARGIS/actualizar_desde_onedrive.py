@@ -22,7 +22,7 @@ ARCHIVOS CONFIGURADOS:
 
 AUTENTICACIÓN:
     Requiere un App Registration en Azure AD del Ministerio.
-    Ver SETUP_SHAREPOINT_AUTH.md para instrucciones.
+    Ver ACTUALIZACIONES_ARCGIS.md para instrucciones.
 
     Alternativa: Device Code Flow (autenticación interactiva una sola vez,
     luego usa refresh token automáticamente).
@@ -115,7 +115,10 @@ LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data" / "onedrive"
 CONFIG_FILE = _config_override if _config_override else (SCRIPT_DIR / "onedrive_archivos.json")
 TOKEN_CACHE_FILE = SCRIPT_DIR / ".ms_token_cache.json"
-HASH_CACHE_FILE = SCRIPT_DIR / ".onedrive_hashes.json"
+# Hash por cuenta: cada cuenta ArcGIS tiene su propio archivo de hashes
+# para que Vice_Energia y Adminportal detecten cambios independientemente.
+_hash_suffix = f"_{ARCGIS_USERNAME}" if ARCGIS_USERNAME else ""
+HASH_CACHE_FILE = SCRIPT_DIR / f".onedrive_hashes{_hash_suffix}.json"
 
 # --- Logging ---
 LOG_FILE = LOG_DIR / "actualizacion_onedrive_arcgis.log"
@@ -199,7 +202,7 @@ class MicrosoftGraphAuth:
             "    MS_TENANT_ID=<tenant-id-del-ministerio>\n"
             "    MS_CLIENT_ID=<client-id-del-app>\n"
             "    Luego ejecuta: python3 actualizar_desde_onedrive.py --auth\n\n"
-            "Ver SETUP_SHAREPOINT_AUTH.md para instrucciones detalladas."
+            "Ver ACTUALIZACIONES_ARCGIS.md para instrucciones detalladas."
         )
 
     def _auth_client_credentials(self) -> str:
@@ -276,7 +279,7 @@ class MicrosoftGraphAuth:
         if not MS_TENANT_ID or not MS_CLIENT_ID:
             raise RuntimeError(
                 "Configura MS_TENANT_ID y MS_CLIENT_ID en .env antes de autenticar.\n"
-                "Ver SETUP_SHAREPOINT_AUTH.md"
+                "Ver ACTUALIZACIONES_ARCGIS.md"
             )
 
         cache = msal.SerializableTokenCache()
