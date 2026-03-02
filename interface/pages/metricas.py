@@ -57,6 +57,9 @@ warnings.filterwarnings("ignore")
 # Configurar logger para este módulo
 logger = setup_logger(__name__)
 
+# Ruta de la base de datos
+DB_PATH = '/home/admonctrlxm/server/portal_energetico.db'
+
 # =============================================================================
 # SISTEMA AUTOMÁTICO DE GENERACIÓN DE INFORMACIÓN DE MÉTRICAS
 # =============================================================================

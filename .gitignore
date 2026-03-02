@@ -169,3 +169,11 @@ experiments/*.csv
 
 # Archivos .bak
 *.bak
+
+# WhatsApp Web Service runtime
+whatsapp_bot/whatsapp-web-service/node_modules/
+whatsapp_bot/whatsapp-web-service/.wwebjs_auth/
+
+# OneDrive test files
+data/onedrive/test_*
+data/onedrive/Test_*

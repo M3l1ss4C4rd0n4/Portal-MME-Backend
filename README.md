@@ -1,7 +1,7 @@
 # Portal Energético Colombia — Dashboard MME
 
 > **Sistema Integral de Monitoreo y Análisis del Sector Energético Colombiano**  
-> **Versión 6.0 — Arquitectura Hexagonal + IA + Bots + API REST + ML (Marzo 2026)**
+> **Versión 6.1 — Arquitectura Hexagonal + IA + Bots + API REST + ML (Marzo 2026)**
 
 Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine Learning**, **Bots multicanal (Telegram + WhatsApp)**, **API REST pública**, **Noticias del sector**, **ETL automatizado** y **publicación ArcGIS** para análisis en tiempo real del Sistema Interconectado Nacional (SIN).
 
@@ -10,22 +10,22 @@ Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine 
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-316192)]()
 [![Architecture](https://img.shields.io/badge/Architecture-Hexagonal-purple)]()
 [![AI](https://img.shields.io/badge/AI-Llama%203.3%2070B-orange)]()
-[![API](https://img.shields.io/badge/API-FastAPI%2025%20endpoints-009688)]()
+[![API](https://img.shields.io/badge/API-FastAPI%2029%20endpoints-009688)]()
 [![Telegram](https://img.shields.io/badge/Bot-Telegram-26A5E4)]()
 
 ---
 
-## Estado Actual del Sistema (1 Marzo 2026)
+## Estado Actual del Sistema (2 Marzo 2026)
 
 ### Plataforma
 
 | Componente | Detalle |
-|-----------|---------|
+|-----------|--------|
 | **Servidor** | `portalenergetico.minenergia.gov.co` (172.17.0.46) |
 | **Dashboard** | Dash/Plotly — 12 tableros activos, port 8050 |
-| **API REST** | FastAPI — 25 endpoints, port 8000 |
+| **API REST** | FastAPI — 29 endpoints (12 routers), port 8000 |
 | **Bot Telegram** | Polling mode, inline keyboards, informes ejecutivos |
-| **Bot WhatsApp** | FastAPI + whatsapp-web.js, port 8001 |
+| **Bot WhatsApp** | FastAPI + whatsapp-web.js, port 8001 (experimental) |
 | **MLflow** | Tracking server, port 5000 |
 
 ### Base de Datos PostgreSQL
@@ -45,12 +45,16 @@ Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine 
 
 | Métrica | Valor |
 |---------|-------|
-| Archivos Python | 200 |
-| Líneas de código Python | ~65,000 |
+| Archivos Python | ~130 |
+| Líneas de código Python | ~55,000 |
 | Servicios de dominio | 24 |
-| Endpoints API | 25 |
-| Callbacks Dash | ~59 |
-| Cron jobs activos | 9 |
+| Repositorios | 5 |
+| Endpoints API | 29 |
+| Callbacks Dash | ~60 |
+| Tests | 128 (85 pasando) |
+| Cron jobs activos | 10 + 4 Celery Beat |
+| Tablas PostgreSQL | 8 principales |
+| Espacio código neto | ~19 MB |
 
 ---
 
@@ -171,17 +175,17 @@ server/
 | Generación | `/v1/generation` | system, by-source, resources, mix | 100/min |
 | Hidrología | `/v1/hydrology` | aportes, reservoirs, energy | 100/min |
 | Sistema | `/v1/system` | demand, prices | 100/min |
-| Transmisión | `/v1/transmission` | lines, international | 100/min |
+| Transmisión | `/v1/transmission` | lines, flows, international | 100/min |
 | Distribución | `/v1/distribution` | data, operators | 100/min |
-| Comercial | `/v1/commercial` | prices | 100/min |
+| Comercial | `/v1/commercial` | prices, contracts | 100/min |
 | Pérdidas | `/v1/losses` | data | 100/min |
 | Restricciones | `/v1/restrictions` | data | 100/min |
-| Métricas | `/v1/metrics` | by id, list | 60-100/min |
-| Predicciones | `/v1/predictions` | forecast, train, cache | 5-20/min |
+| Métricas | `/v1/metrics` | list, by id | 60-100/min |
+| Predicciones | `/v1/predictions` | forecast, train, batch, cache stats, cache flush | 5-20/min |
 | Chatbot | `/v1/chatbot` | orchestrator, health | 100/min |
 | WhatsApp | `/v1/whatsapp` | send-alert, bot-status | — |
 
-**Total:** 25 endpoints (22 GET, 2 POST, 1 DELETE)
+**Total:** 29 endpoints (25 GET, 2 POST, 1 DELETE, 1 batch)
 
 ---
 
@@ -211,8 +215,8 @@ server/
 |-----------|-------|--------|
 | Cada 6 horas | ETL métricas XM (106 métricas) | `etl/etl_todas_metricas_xm.py` |
 | Diario 6:30 AM | ETL transmisión | `etl/etl_transmision.py` |
-| Cada hora | ArcGIS Enterprise (dual account) | `tests/ARGIS/ejecutar_dual.sh` |
-| Cada 30 min | ArcGIS Online | `tests/ARGIS/actualizar_datos_xm_online.py` |
+| Cada hora | ArcGIS Enterprise (dual account) | `scripts/arcgis/ejecutar_dual.sh` |
+| Cada 30 min | ArcGIS Online | `scripts/arcgis/actualizar_datos_xm_online.py` |
 | Semanal dom 2 AM | Predicciones ML | `scripts/actualizar_predicciones.sh` |
 | Semanal dom 3 AM | Backup PostgreSQL | `scripts/backup_postgres_diario.sh` |
 | Mensual día 1 | Backfill métricas | `scripts/backfill_sistema_metricas.py` |
@@ -223,10 +227,10 @@ server/
 
 | Tarea | Frecuencia |
 |-------|-----------|
-| ETL métricas | Cada 6 horas |
-| CSV ArcGIS | Cada hora |
-| Reporte ejecutivo | Diario 7:00 AM |
-| Estado del sistema | Cada 3 horas |
+| ETL métricas core | Cada 6 horas |
+| Limpieza logs | Diario 3:00 AM |
+| Detección anomalías | Cada 30 minutos |
+| Resumen diario (PDF + charts) | Diario 8:00 AM |
 
 ---
 
@@ -317,7 +321,7 @@ uvicorn whatsapp_bot.app.main:app --host 0.0.0.0 --port 8001
 
 | Documento | Contenido |
 |-----------|-----------|
-| [Informe Arquitectura Completa](docs/informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-01.md) | Auditoría archivo por archivo, hallazgos, recomendaciones |
+| [Informe Arquitectura Completa v3](docs/informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-02.md) | Auditoría file-by-file: 10 secciones, flujo datos, deuda técnica, evaluación API |
 | [Documentación Técnica Orquestador](docs/DOCUMENTACION_TECNICA_ORQUESTADOR.md) | 20+ intents, timeout, flujo completo |
 | [Guía de Uso del API](docs/GUIA_USO_API.md) | Endpoints, autenticación, ejemplos |
 | [Endpoint Orchestrator](docs/ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md) | Integración para Oscar (WhatsApp) |
@@ -354,4 +358,4 @@ kill -HUP $(pgrep -f "gunicorn.*8000" | head -1)
 Propiedad del **Ministerio de Minas y Energía de Colombia**.
 
 **Repositorio:** https://github.com/MelissaCardona2003/Dashboard_Multipage_MME  
-**Última actualización:** 1 de marzo de 2026
+**Última actualización:** 2 de marzo de 2026
