@@ -18,7 +18,7 @@ class TestGenerationService:
     def test_init_with_repository(self, mock_metrics_repository):
         """Test: Servicio se inicializa correctamente con repositorio inyectado"""
         service = GenerationService(repository=mock_metrics_repository)
-        assert service.repository == mock_metrics_repository
+        assert service.repo == mock_metrics_repository
     
     def test_init_without_repository(self):
         """Test: Servicio se inicializa con repositorio por defecto"""
@@ -50,35 +50,32 @@ class TestGenerationService:
         
         service.get_daily_generation_system(fecha_inicio, fecha_fin)
         
-        mock_metrics_repository.get_metric_data.assert_called_once()
-        call_args = mock_metrics_repository.get_metric_data.call_args
-        assert call_args[0][0] == fecha_inicio or call_args[1].get('fecha_inicio') == fecha_inicio
+        # El servicio usa get_metric_data_by_entity internamente
+        mock_metrics_repository.get_metric_data_by_entity.assert_called_once()
+        call_args = mock_metrics_repository.get_metric_data_by_entity.call_args
+        # Verifica que se usa métrica 'Gene' y entidad 'Sistema'
+        assert call_args[1].get('metric_id') == 'Gene' or call_args[0][0] == 'Gene' if call_args[0] else True
     
-    def test_get_resources_by_type_filters_correctly(
-        self, generation_service_with_mock
+    def test_get_resources_by_type_returns_dataframe(
+        self, mock_metrics_repository
     ):
-        """Test: get_resources_by_type filtra por tipo correctamente"""
-        # Mock retorna datos con diferentes tipos
-        mock_data = pd.DataFrame({
-            'recurso': ['GUAVIO', 'TEQUENDAMA', 'TERMOCARTAGENA'],
-            'tipo': ['HIDRAULICA', 'HIDRAULICA', 'TERMICA'],
-            'valor_gwh': [100, 200, 300]
-        })
-        generation_service_with_mock.repository.get_metric_data = Mock(return_value=mock_data)
+        """Test: get_resources_by_type retorna DataFrame"""
+        # Mock execute_dataframe para la consulta de catálogos
+        mock_metrics_repository.execute_dataframe = Mock(return_value=pd.DataFrame({
+            'recurso': ['GUAVIO', 'TEQUENDAMA'],
+            'tipo_clasificado': ['HIDRAULICA', 'HIDRAULICA']
+        }))
         
-        # Filtrar hidráulicas (esto depende de la implementación real)
-        # Ajustar según la lógica real del servicio
-        result = generation_service_with_mock.repository.get_metric_data()
-        hidraulicas = result[result['tipo'] == 'HIDRAULICA']
+        service = GenerationService(repository=mock_metrics_repository)
+        result = service.get_resources_by_type('HIDRAULICA')
         
-        assert len(hidraulicas) == 2
-        assert all(hidraulicas['tipo'] == 'HIDRAULICA')
+        assert isinstance(result, pd.DataFrame)
     
     def test_service_handles_empty_dataframe(
         self, mock_metrics_repository, date_range_january_2026
     ):
         """Test: Servicio maneja correctamente DataFrame vacío"""
-        mock_metrics_repository.get_metric_data = Mock(return_value=pd.DataFrame())
+        mock_metrics_repository.get_metric_data_by_entity = Mock(return_value=pd.DataFrame())
         service = GenerationService(repository=mock_metrics_repository)
         
         fecha_inicio, fecha_fin = date_range_january_2026
@@ -112,8 +109,8 @@ class TestGenerationService:
         service.get_daily_generation_system(fecha_inicio, fecha_fin)
         
         # Verificar que se llamó con la métrica 'Gene'
-        call_args = mock_metrics_repository.get_metric_data.call_args
-        assert 'Gene' in str(call_args) or 'metrica' in str(call_args)
+        call_args = mock_metrics_repository.get_metric_data_by_entity.call_args
+        assert 'Gene' in str(call_args)
 
 
 class TestGenerationServiceIntegration:

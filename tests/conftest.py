@@ -77,7 +77,14 @@ def mock_metrics_repository() -> Mock:
         'fecha': pd.date_range('2026-01-01', periods=30),
         'valor_gwh': [10000] * 30
     }))
-    repo.list_available_metrics = Mock(return_value=['Gene', 'DemaReal', 'DemaCome'])
+    repo.get_metric_data_by_entity = Mock(return_value=pd.DataFrame({
+        'fecha': pd.date_range('2026-01-01', periods=30),
+        'valor_gwh': [10000] * 30,
+        'recurso': ['Sistema'] * 30,
+        'entidad': ['Sistema'] * 30
+    }))
+    repo.list_metrics = Mock(return_value=[{'metrica': 'Gene'}, {'metrica': 'DemaReal'}, {'metrica': 'DemaCome'}])
+    repo.execute_dataframe = Mock(return_value=pd.DataFrame())
     return repo
 
 
@@ -85,16 +92,17 @@ def mock_metrics_repository() -> Mock:
 def mock_transmission_repository() -> Mock:
     """Mock del TransmissionRepository"""
     repo = Mock()
-    repo.get_transmission_lines = Mock(return_value=pd.DataFrame({
-        'linea': ['L001', 'L002'],
-        'tension_kv': [500, 230],
-        'longitud_km': [150.5, 89.3]
+    # Methods used by TransmissionService internally
+    repo.get_latest_lines = Mock(return_value=pd.DataFrame({
+        'CodigoLinea': ['L001', 'L002', 'L003'],
+        'Tension': [500, 230, 115],
+        'Longitud': [150.5, 89.3, 45.2],
+        'LongitudTotal': [285.0, 285.0, 285.0],
+        'CodigoOperador': ['ISA', 'CELSIA', 'EPM'],
+        'Sistema': ['STN', 'STN', 'STR'],
+        'Fecha': pd.to_datetime(['2026-02-28'] * 3),
     }))
-    repo.get_summary_stats = Mock(return_value={
-        'total_lines': 857,
-        'total_km': 30946,
-        'operators': 34
-    })
+    repo.get_latest_date = Mock(return_value='2026-02-28')
     return repo
 
 

@@ -13,12 +13,16 @@ Fecha: 9 de febrero de 2026
 
 import asyncio
 import logging
+import pytest
 from datetime import date, timedelta
 from pprint import pprint
 
 from domain.services.executive_report_service import ExecutiveReportService
 from domain.services.orchestrator_service import ChatbotOrchestratorService
 from domain.schemas.orchestrator import OrchestratorRequest
+
+# Marcar todo el módulo como slow/integration para que no se ejecute por defecto
+pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
 # Configurar logging
 logging.basicConfig(

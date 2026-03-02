@@ -12,4 +12,5 @@ def test_predictions_repo_count():
 def test_predictions_repo_latest_date():
     repo = PredictionsRepository()
     latest = repo.get_latest_prediction_date()
-    assert latest is None or isinstance(latest, str)
+    from datetime import date as date_type
+    assert latest is None or isinstance(latest, (str, date_type))

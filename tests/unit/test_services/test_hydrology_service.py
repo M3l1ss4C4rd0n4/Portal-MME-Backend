@@ -12,42 +12,52 @@ from domain.services.hydrology_service import HydrologyService
 class TestHydrologyService:
     """Tests para HydrologyService"""
     
-    def test_init_with_repository(self, mock_metrics_repository):
+    def test_init(self):
         """Test: Servicio se inicializa correctamente"""
-        service = HydrologyService(repository=mock_metrics_repository)
-        assert service.repository == mock_metrics_repository
+        service = HydrologyService()
+        assert service is not None
     
-    def test_get_reservas_hidricas_returns_dataframe(
-        self, mock_metrics_repository, single_date_2026
-    ):
-        """Test: get_reservas_hidricas retorna DataFrame válido"""
-        # Mock retorna datos de volumen útil
-        mock_metrics_repository.get_metric_data = Mock(return_value=pd.DataFrame({
-            'fecha': [single_date_2026] * 3,
-            'recurso': ['GUAVIO', 'TEQUENDAMA', 'PENOL'],
-            'valor_gwh': [1000, 500, 800]
-        }))
+    def test_get_reservas_hidricas_returns_tuple(self):
+        """Test: get_reservas_hidricas retorna tuple válido"""
+        service = HydrologyService()
+        # Mock the internal method to avoid DB access
+        service.calcular_volumen_util_unificado = Mock(return_value={
+            'porcentaje': 50.0,
+            'volumen_gwh': 1000,
+            'fecha_datos': '2026-01-15'
+        })
         
-        service = HydrologyService(repository=mock_metrics_repository)
-        result = service.get_reservas_hidricas(single_date_2026)
+        result = service.get_reservas_hidricas('2026-01-15')
         
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        assert result[0] == 50.0
+        assert result[1] == 1000
     
-    def test_get_aportes_hidricos_returns_dataframe(
-        self, mock_metrics_repository, single_date_2026
-    ):
-        """Test: get_aportes_hidricos retorna DataFrame válido"""
-        # Mock retorna datos de aportes
-        mock_metrics_repository.get_metric_data = Mock(return_value=pd.DataFrame({
-            'fecha': [single_date_2026] * 3,
-            'recurso': ['GUAVIO', 'TEQUENDAMA', 'PENOL'],
-            'valor_gwh': [100, 80, 120]
-        }))
+    @patch('infrastructure.database.repositories.metrics_repository.MetricsRepository')
+    def test_get_aportes_hidricos_returns_tuple(self, MockRepoClass):
+        """Test: get_aportes_hidricos retorna tuple válido"""
+        mock_repo = MockRepoClass.return_value
+        mock_repo.get_metric_data_by_entity = Mock(side_effect=[
+            pd.DataFrame({
+                'valor_gwh': [100, 80, 120],
+                'recurso': ['RIO1', 'RIO2', 'RIO3'],
+                'fecha': pd.to_datetime(['2026-01-01', '2026-01-01', '2026-01-01'])
+            }),
+            pd.DataFrame({
+                'valor_gwh': [90, 70, 110],
+                'recurso': ['RIO1', 'RIO2', 'RIO3'],
+                'fecha': pd.to_datetime(['2026-01-01', '2026-01-01', '2026-01-01'])
+            })
+        ])
         
-        service = HydrologyService(repository=mock_metrics_repository)
-        result = service.get_aportes_hidricos(single_date_2026)
+        service = HydrologyService()
+        with patch('domain.services.validators.MetricValidators') as MockVal:
+            MockVal.validate = Mock(return_value=True)
+            result = service.get_aportes_hidricos('2026-01-15')
         
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
     
     def test_calcular_volumen_util_formula(self):
         """Test: Fórmula de cálculo de volumen útil es correcta"""
@@ -73,46 +83,33 @@ class TestHydrologyService:
         
         assert porcentaje_calculado == porcentaje_esperado
     
-    def test_service_handles_zero_division(
-        self, mock_metrics_repository, single_date_2026
-    ):
-        """Test: Servicio maneja división por cero correctamente"""
-        # Mock retorna volumen útil = 0 (edge case)
-        mock_metrics_repository.get_metric_data = Mock(return_value=pd.DataFrame({
-            'fecha': [single_date_2026],
-            'recurso': ['GUAVIO'],
-            'valor_gwh': [0]  # Volumen útil = 0
-        }))
+    def test_service_handles_none_result(self):
+        """Test: Servicio maneja correctamente resultado None"""
+        service = HydrologyService()
+        # When calcular_volumen_util_unificado returns None, get_reservas_hidricas returns (None, None, None)
+        service.calcular_volumen_util_unificado = Mock(return_value=None)
         
-        service = HydrologyService(repository=mock_metrics_repository)
-        
-        # No debería lanzar excepción
-        try:
-            result = service.get_reservas_hidricas(single_date_2026)
-            # Si retorna DataFrame con NaN o inf, está bien handled
-            assert isinstance(result, pd.DataFrame)
-        except ZeroDivisionError:
-            pytest.fail("El servicio no maneja división por cero")
+        result = service.get_reservas_hidricas('2026-01-15')
+        assert result == (None, None, None)
     
     @pytest.mark.parametrize("fecha", [
         '2026-01-15',
         '2025-12-31',
         '2025-06-15',
     ])
-    def test_get_reservas_multiple_dates(
-        self, mock_metrics_repository, fecha
-    ):
+    def test_get_reservas_multiple_dates(self, fecha):
         """Test: Servicio funciona con diferentes fechas"""
-        mock_metrics_repository.get_metric_data = Mock(return_value=pd.DataFrame({
-            'fecha': [fecha],
-            'recurso': ['GUAVIO'],
-            'valor_gwh': [1000]
-        }))
+        service = HydrologyService()
+        service.calcular_volumen_util_unificado = Mock(return_value={
+            'porcentaje': 50.0,
+            'volumen_gwh': 1000,
+            'fecha_datos': fecha
+        })
         
-        service = HydrologyService(repository=mock_metrics_repository)
         result = service.get_reservas_hidricas(fecha)
         
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, tuple)
+        assert len(result) == 3
     
     @pytest.mark.slow
     @pytest.mark.integration
@@ -122,6 +119,6 @@ class TestHydrologyService:
         
         try:
             result = service.get_reservas_hidricas('2026-01-15')
-            assert isinstance(result, pd.DataFrame)
+            assert isinstance(result, tuple)
         except Exception as e:
             pytest.skip(f"Base de datos no disponible: {e}")

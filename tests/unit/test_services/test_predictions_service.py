@@ -12,5 +12,6 @@ def test_predictions_count():
 def test_predictions_latest_date():
     service = PredictionsService()
     latest = service.get_latest_prediction_date()
-    # Puede ser None si no hay predicciones
-    assert latest is None or isinstance(latest, str)
+    # Puede ser None si no hay predicciones, o date si hay
+    from datetime import date as date_type
+    assert latest is None or isinstance(latest, (str, date_type))

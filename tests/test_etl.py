@@ -71,11 +71,11 @@ class TestValidadorDatos(unittest.TestCase):
         self.assertIsNotNone(error)
     
     def test_normalizar_recurso_sistema(self):
-        """Valida normalización de 'Sistema' a '_SISTEMA_'"""
-        self.assertEqual(self.validador.normalizar_recurso('Sistema'), '_SISTEMA_')
-        self.assertEqual(self.validador.normalizar_recurso('SISTEMA'), '_SISTEMA_')
-        self.assertEqual(self.validador.normalizar_recurso('sistema'), '_SISTEMA_')
-        self.assertEqual(self.validador.normalizar_recurso('  Sistema  '), '_SISTEMA_')
+        """Valida normalización de variantes a 'Sistema'"""
+        self.assertEqual(self.validador.normalizar_recurso('Sistema'), 'Sistema')
+        self.assertEqual(self.validador.normalizar_recurso('SISTEMA'), 'Sistema')
+        self.assertEqual(self.validador.normalizar_recurso('sistema'), 'Sistema')
+        self.assertEqual(self.validador.normalizar_recurso('  Sistema  '), 'Sistema')
     
     def test_normalizar_recurso_otros(self):
         """Valida que otros recursos no se modifiquen"""
@@ -111,8 +111,8 @@ class TestValidadorDatos(unittest.TestCase):
         
         df_limpio, errores = self.validador.validar_dataframe(df, 'Gene')
         
-        # Verificar normalización
-        self.assertTrue(all(df_limpio['recurso'] == '_SISTEMA_'))
+        # Verificar normalización (normalizar_recurso convierte a 'Sistema')
+        self.assertTrue(all(df_limpio['recurso'] == 'Sistema'))
         self.assertEqual(len(df_limpio), 2)
 
 

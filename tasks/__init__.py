@@ -43,6 +43,7 @@ app.conf.update(
     task_time_limit=3600,  # 1 hora máximo por tarea
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
+    broker_connection_retry_on_startup=True,  # Celery 6.x deprecation fix
 )
 
 # Tareas programadas

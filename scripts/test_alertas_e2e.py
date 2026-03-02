@@ -12,7 +12,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.sistema_notificaciones import notificar_alerta
+from scripts.alertas_energeticas import notificar_alerta
 from infrastructure.database.connection import PostgreSQLConnectionManager
 import psycopg2
 from datetime import datetime

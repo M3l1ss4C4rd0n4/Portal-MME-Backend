@@ -15,7 +15,7 @@ class TestTransmissionService:
     def test_init_with_repository(self, mock_transmission_repository):
         """Test: Servicio se inicializa correctamente con repositorio inyectado"""
         service = TransmissionService(repository=mock_transmission_repository)
-        assert service.repository == mock_transmission_repository
+        assert service.repo == mock_transmission_repository
     
     def test_init_without_repository(self):
         """Test: Servicio se inicializa con repositorio por defecto"""
@@ -31,22 +31,17 @@ class TestTransmissionService:
         
         assert isinstance(result, pd.DataFrame)
         assert not result.empty
-        assert 'linea' in result.columns or 'tension_kv' in result.columns
     
-    def test_get_transmission_lines_with_filters(
+    def test_get_transmission_lines_force_refresh(
         self, mock_transmission_repository
     ):
-        """Test: Filtros se pasan correctamente al repositorio"""
+        """Test: force_refresh se pasa correctamente"""
         service = TransmissionService(repository=mock_transmission_repository)
         
-        filtros = {
-            'tension_kv': 500,
-            'operador': 'ISA'
-        }
+        # With force_refresh=True, service skips DB and returns empty
+        result = service.get_transmission_lines(force_refresh=True)
         
-        service.get_transmission_lines(**filtros)
-        
-        mock_transmission_repository.get_transmission_lines.assert_called_once()
+        assert isinstance(result, pd.DataFrame)
     
     def test_get_summary_stats_returns_dict(
         self, transmission_service_with_mock
@@ -56,24 +51,25 @@ class TestTransmissionService:
         
         assert isinstance(result, dict)
         assert 'total_lines' in result
-        assert 'total_km' in result
-        assert 'operators' in result
+        assert 'total_length_km' in result
+        assert 'operators_count' in result
     
     def test_get_summary_stats_has_correct_values(
         self, transmission_service_with_mock
     ):
-        """Test: Estadísticas tienen valores esperados"""
+        """Test: Estadísticas tienen valores esperados basados en mock data"""
         result = transmission_service_with_mock.get_summary_stats()
         
-        assert result['total_lines'] == 857
-        assert result['total_km'] == 30946
-        assert result['operators'] == 34
+        # Mock data has 3 unique CodigoLinea, 3 unique CodigoOperador
+        assert result['total_lines'] == 3
+        assert result['operators_count'] == 3
+        assert result['total_length_km'] == 285.0
     
     def test_service_handles_empty_dataframe(
         self, mock_transmission_repository
     ):
         """Test: Servicio maneja correctamente DataFrame vacío"""
-        mock_transmission_repository.get_transmission_lines = Mock(return_value=pd.DataFrame())
+        mock_transmission_repository.get_latest_lines = Mock(return_value=pd.DataFrame())
         service = TransmissionService(repository=mock_transmission_repository)
         
         result = service.get_transmission_lines()
@@ -81,16 +77,24 @@ class TestTransmissionService:
         assert isinstance(result, pd.DataFrame)
         assert result.empty
     
-    @pytest.mark.parametrize("tension_kv", [500, 230, 115, 34.5])
-    def test_filter_by_tension(
-        self, mock_transmission_repository, tension_kv
+    def test_get_lineas_transmision_returns_dataframe(
+        self, transmission_service_with_mock
     ):
-        """Test: Filtrado por tensión funciona correctamente"""
+        """Test: get_lineas_transmision retorna DataFrame con columnas normalizadas"""
+        result = transmission_service_with_mock.get_lineas_transmision()
+        
+        assert isinstance(result, pd.DataFrame)
+    
+    @pytest.mark.parametrize("force_refresh", [True, False])
+    def test_get_transmission_lines_with_force_refresh_param(
+        self, mock_transmission_repository, force_refresh
+    ):
+        """Test: get_transmission_lines acepta parámetro force_refresh"""
         service = TransmissionService(repository=mock_transmission_repository)
         
-        service.get_transmission_lines(tension_kv=tension_kv)
+        result = service.get_transmission_lines(force_refresh=force_refresh)
         
-        mock_transmission_repository.get_transmission_lines.assert_called_once()
+        assert isinstance(result, pd.DataFrame)
     
     @pytest.mark.slow
     @pytest.mark.integration

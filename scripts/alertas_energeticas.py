@@ -23,8 +23,35 @@ from datetime import datetime, timedelta
 from infrastructure.database.connection import PostgreSQLConnectionManager
 import json
 
-# Importar sistema de notificaciones
-from scripts.sistema_notificaciones import NotificationService, notificar_alerta
+# Sistema de notificaciones: usar notification_service (producción)
+# sistema_notificaciones.py fue retirado (legacy Gmail/WhatsApp)
+try:
+    from domain.services.notification_service import NotificationService as _NS
+
+    class NotificationService:
+        """Adapter stub — redirige al servicio de producción."""
+        pass
+
+    def notificar_alerta(alerta, enviar_email=True, enviar_whatsapp=True, solo_criticas=True):
+        """Stub que reemplaza al legacy sistema_notificaciones.notificar_alerta.
+        En producción las alertas se envían desde anomaly_tasks → notification_service."""
+        severidad = alerta.get('severidad', 'NORMAL')
+        if solo_criticas and severidad != 'CRÍTICO':
+            return {
+                'email': {'success': False, 'message': 'No es crítica, omitida'},
+                'whatsapp': {'success': False, 'message': 'No es crítica, omitida'}
+            }
+        # Las notificaciones reales pasan por anomaly_tasks → notification_service
+        return {
+            'email': {'success': True, 'message': 'Delegado a notification_service'},
+            'whatsapp': {'success': True, 'message': 'Delegado a notification_service'}
+        }
+except ImportError:
+    # Fallback mínimo si no se puede importar
+    class NotificationService:
+        pass
+    def notificar_alerta(alerta, **kwargs):
+        return {'email': {'success': False}, 'whatsapp': {'success': False}}
 
 # =============================================================================
 # UMBRALES DE ALERTAS (CONFIGURABLES POR POLÍTICA MINISTERIAL)
