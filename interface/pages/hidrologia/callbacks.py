@@ -269,7 +269,7 @@ def render_hidro_tab_content(active_tab):
                 if not es_valido:
                     return dbc.Alert(mensaje, color="warning", className="text-start")
                 try:
-                    # ✅ OPTIMIZADO: Consulta inteligente SQLite (>=2020) vs API (<2020)
+                    # ✅ OPTIMIZADO: Consulta inteligente PostgreSQL (>=2020) vs API (<2020)
                     # La conversión kWh→GWh se hace automáticamente
                     data, warning_msg = obtener_datos_inteligente('AporEner', 'Rio', start_date, end_date)
                     if warning_msg:
@@ -585,7 +585,7 @@ def update_content(n_clicks, rio, start_date, end_date, region):
             return dbc.Alert(mensaje, color="warning", className="text-start")
         
         try:
-            # ✅ OPTIMIZADO: Consulta inteligente SQLite (>=2020) vs API (<2020)
+            # ✅ OPTIMIZADO: Consulta inteligente PostgreSQL (>=2020) vs API (<2020)
             # La conversión kWh→GWh se hace automáticamente
             data, warning_msg = obtener_datos_inteligente('AporEner', 'Rio', start_date, end_date)
             if warning_msg:
@@ -916,7 +916,7 @@ def update_content(n_clicks, rio, start_date, end_date, region):
         return dbc.Alert(mensaje, color="warning", className="text-start")
 
     try:
-        # ✅ OPTIMIZADO: Consulta inteligente SQLite (>=2020) vs API (<2020)
+        # ✅ OPTIMIZADO: Consulta inteligente PostgreSQL (>=2020) vs API (<2020)
         # La conversión a GWh se hace automáticamente
         data, warning_msg = obtener_datos_inteligente('AporEner', 'Rio', start_date, end_date)
         if warning_msg:

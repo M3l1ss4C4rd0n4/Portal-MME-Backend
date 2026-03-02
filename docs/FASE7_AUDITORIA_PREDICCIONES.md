@@ -517,6 +517,191 @@ monitor_predictions_quality.py
 /home/admonctrlxm/server/whatsapp_bot/venv/bin/python3 scripts/monitor_predictions_quality.py
 ```
 
+#### 5.4.1.1 Explicación detallada del flujo de verificación día a día
+
+El script `monitor_predictions_quality.py` (433 líneas) implementa un **sistema completo de verificación ex-post** que compara las predicciones generadas por los modelos ML contra los datos reales publicados por XM. A continuación se explica paso a paso cómo funciona:
+
+##### Paso 1: Configuración y mapeo de las 13 fuentes
+
+El script define un diccionario `FUENTES_MAPPING` que mapea cada una de las 13 fuentes de predicción a su consulta correspondiente en la tabla `metrics` de PostgreSQL:
+
+| Fuente predicción | Métrica XM (tabla `metrics`) | Agregación | Filtro especial |
+|---|---|---|---|
+| GENE_TOTAL | `Gene` | SUM | `entidad='Sistema'` |
+| DEMANDA | `DemaReal` | SUM | `prefer_sistema=True` |
+| PRECIO_BOLSA | `PrecBolsNaci` | AVG | `entidad='Sistema'` |
+| PRECIO_ESCASEZ | `PrecEsca` | AVG | — |
+| APORTES_HIDRICOS | `AporEner` | SUM | — |
+| EMBALSES | `CapaUtilDiarEner` | SUM | `entidad='Sistema'` |
+| EMBALSES_PCT | `PorcVoluUtilDiar` | AVG×100 | `entidad='Sistema'` |
+| PERDIDAS | `PerdidasEner` | SUM | `prefer_sistema=True` |
+| Hidráulica | `Gene` JOIN `catalogos` | SUM | `tipo='HIDRAULICA'` |
+| Térmica | `Gene` JOIN `catalogos` | SUM | `tipo='TERMICA'` |
+| Eólica | `Gene` JOIN `catalogos` | SUM | `tipo='EOLICA'` |
+| Solar | `Gene` JOIN `catalogos` | SUM | `tipo='SOLAR'` |
+| Biomasa | `Gene` JOIN `catalogos` | SUM | `tipo='COGENERADOR'` |
+
+##### Paso 2: Carga de predicciones de la BD
+
+La función `cargar_predicciones(conn, fuente)` consulta la tabla `predictions` para obtener todas las predicciones vigentes de una fuente:
+
+```sql
+SELECT fecha_prediccion AS fecha,
+       valor_gwh_predicho AS predicho,
+       mape, rmse, modelo
+FROM predictions
+WHERE fuente = %s
+ORDER BY fecha_prediccion
+```
+
+Esto retorna un DataFrame con las fechas predichas, el valor predicho, y las métricas del entrenamiento (MAPE/RMSE de validación holdout).
+
+##### Paso 3: Carga de datos reales (dos estrategias)
+
+Dependiendo del tipo de fuente se usa una de dos funciones:
+
+- **`cargar_reales_metrica()`** — Para métricas sectoriales (DEMANDA, GENE_TOTAL, precios, embalses, etc.):
+  ```sql
+  SELECT fecha, AGG(valor_gwh) AS valor
+  FROM metrics
+  WHERE metrica = %s AND fecha BETWEEN %s AND %s AND valor_gwh > 0
+  GROUP BY fecha ORDER BY fecha
+  ```
+  Soporta filtros por `entidad`, `prefer_sistema` (prefiere 'Sistema' si existe, sino suma todo), y `escala` (ej: EMBALSES_PCT se multiplica ×100).
+
+- **`cargar_reales_generacion()`** — Para fuentes de generación (Hidráulica, Térmica, Eólica, Solar, Biomasa):
+  ```sql
+  SELECT m.fecha, SUM(m.valor_gwh) AS valor
+  FROM metrics m
+  INNER JOIN catalogos c ON m.recurso = c.codigo
+  WHERE c.tipo = %s AND m.metrica = 'Gene'
+    AND m.fecha BETWEEN %s AND %s AND m.valor_gwh > 0
+  GROUP BY m.fecha ORDER BY m.fecha
+  ```
+  Usa JOIN con `catalogos` para filtrar por tipo de planta (HIDRAULICA, TERMICA, etc.).
+
+##### Paso 4: Merge predicho vs real y cálculo ex-post (`evaluar_fuente()`)
+
+Esta es la función central. Ejecuta las siguientes operaciones:
+
+1. **Carga predicciones** de la BD para la fuente
+2. **Determina rango de fechas** (fecha_desde a fecha_hasta del set de predicciones)
+3. **Carga datos reales** de XM para ese mismo rango
+4. **INNER JOIN por fecha**: solo se evalúan los días donde **ya hay dato real publicado por XM**
+5. **Filtro de datos parciales**: Si un valor real es < 50% de la mediana del overlap, se excluye (XM a veces publica datos incompletos los últimos 2-3 días — ej: DEMANDA reportando 48 GWh cuando lo real son ~230 GWh)
+6. **Verificación de mínimo**: Se requieren al menos `MIN_DIAS_OVERLAP = 3` días de overlap
+7. **Cálculo de métricas ex-post**:
+   - **MAPE ex-post** = `mean_absolute_percentage_error(y_real, y_pred)` — error porcentual absoluto medio **real** (no el de entrenamiento)
+   - **RMSE ex-post** = `√(mean_squared_error(y_real, y_pred))` — raíz del error cuadrático medio **real**
+8. **Recupera MAPE/RMSE de entrenamiento** del batch más reciente para comparación
+
+```python
+# Merge por fecha — solo días con dato real
+df_merge = pd.merge(
+    df_pred[['fecha', 'predicho']],
+    df_real[['fecha', 'valor']],
+    on='fecha', how='inner'
+)
+# Filtrar datos parciales de XM
+if len(df_merge) > 3:
+    mediana_overlap = df_merge['valor'].median()
+    umbral_parcial = mediana_overlap * 0.5
+    df_merge = df_merge[df_merge['valor'] >= umbral_parcial]
+# Calcular MAPE y RMSE ex-post
+mape_expost = mean_absolute_percentage_error(y_real, y_pred)
+rmse_expost = float(np.sqrt(mean_squared_error(y_real, y_pred)))
+```
+
+##### Paso 5: Sistema de alertas (drift detection)
+
+La función `generar_alertas()` evalúa dos umbrales:
+
+| Alerta | Condición | Significado |
+|---|---|---|
+| 🔴 **CRÍTICO** | MAPE ex-post > 50% (`UMBRAL_MAPE_CRITICO`) | Error masivo, el modelo no funciona |
+| 🟡 **DRIFT** | MAPE ex-post > 2× MAPE entrenamiento (`FACTOR_DRIFT`) | El modelo se está degradando vs cuando se entrenó |
+
+Ejemplo: Si Biomasa tiene MAPE de entrenamiento = 6.11% y el MAPE ex-post sube a 13.07%, se dispara alerta DRIFT (13.07% > 2 × 6.11% = 12.22%).
+
+##### Paso 6: Persistencia en `predictions_quality_history`
+
+La función `guardar_evaluacion()` inserta un registro por cada fuente evaluada:
+
+```sql
+INSERT INTO predictions_quality_history
+    (fuente, fecha_desde, fecha_hasta, dias_overlap,
+     mape_expost, rmse_expost, mape_train, rmse_train, modelo, notas)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+```
+
+Esto crea un **historial auditable** que permite:
+- Rastrear la evolución de calidad de cada modelo a lo largo del tiempo
+- Detectar tendencias de degradación
+- Comparar MAPE ex-post vs MAPE de entrenamiento por fuente
+- Verificar cuántos días de overlap hubo en cada evaluación
+
+##### Paso 7: Ejecución y resumen (`main()`)
+
+La función `main()` itera sobre las 13 fuentes del `FUENTES_MAPPING` y para cada una:
+1. Llama a `evaluar_fuente()` → obtiene métricas ex-post o motivo de omisión
+2. Genera alertas con `generar_alertas()`
+3. Guarda resultado con `guardar_evaluacion()`
+4. Al final imprime resumen clasificado: ✅ Sin problemas / ⚠️ Con alertas / ⏭️ Omitidas
+
+##### Ejemplo de salida real (24 evaluaciones en BD)
+
+Última evaluación (2026-02-28, 6 días de overlap):
+
+| Fuente | MAPE ex-post | MAPE train | Status |
+|---|---|---|---|
+| EMBALSES | 0.04% | 0.08% | ✅ OK |
+| EMBALSES_PCT | 1.81% | 1.14% | ✅ OK |
+| PRECIO_ESCASEZ | 0.53% | 1.37% | ✅ OK |
+| Hidráulica | 2.54% | 3.77% | ✅ OK |
+| PERDIDAS | 8.72% | 10.00% | ✅ OK |
+| Eólica | 9.06% | 22.00% | ✅ OK |
+| Solar | 13.99% | 18.75% | ✅ OK |
+| Biomasa | 13.07% | 6.11% | 🟡 DRIFT |
+| Térmica | 15.55% | 12.15% | ✅ OK |
+| APORTES_HIDRICOS | 15.60% | 16.52% | ✅ OK |
+
+##### Diagrama de flujo completo
+
+```
+ETL diario (datos XM) → tabla metrics (datos reales)
+                              │
+   ┌──────────────────────────┼──────────────────────────┐
+   │                          ▼                          │
+   │        monitor_predictions_quality.py               │
+   │   ┌──────────────────────────────────────┐          │
+   │   │ Para cada fuente (×13):              │          │
+   │   │  1. SELECT predicciones (predictions)│          │
+   │   │  2. SELECT reales (metrics)          │          │
+   │   │  3. INNER JOIN por fecha             │          │
+   │   │  4. Filtrar datos parciales XM       │          │
+   │   │  5. Calcular MAPE/RMSE ex-post      │          │
+   │   │  6. Comparar vs MAPE entrenamiento   │          │
+   │   │  7. Generar alertas si drift         │          │
+   │   │  8. INSERT quality_history           │          │
+   │   └──────────────────────────────────────┘          │
+   │              │                    │                  │
+   │              ▼                    ▼                  │
+   │   predictions_quality_history   Alertas (DRIFT/OK)  │
+   │         (PostgreSQL)            Telegram (si drift)  │
+   └─────────────────────────────────────────────────────┘
+              │
+              ▼
+   Dashboard: /seguimiento-predicciones (CB3)
+   → Lee quality_history y muestra evolución
+```
+
+##### Cron job diario (configurado 2026-03-01)
+
+```bash
+# Verificación diaria de predicciones vs datos reales (8:00 AM)
+0 8 * * * cd /home/admonctrlxm/server && /usr/bin/python3 scripts/monitor_predictions_quality.py >> logs/etl/quality_monitor.log 2>&1
+```
+
 #### 5.4.2 FASE 4.B: Regresores Calendario para DEMANDA
 
 **Archivo modificado:** `scripts/train_predictions_sector_energetico.py` (1022 → 1181 líneas)

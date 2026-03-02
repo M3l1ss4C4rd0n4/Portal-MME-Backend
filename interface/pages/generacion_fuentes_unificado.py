@@ -31,7 +31,7 @@ from core.constants import UIColors as COLORS
 from infrastructure.external.xm_service import fetch_gene_recurso_chunked
 from infrastructure.external.xm_service import get_objetoAPI, fetch_metric_data, obtener_datos_desde_bd, obtener_datos_inteligente
 from infrastructure.database.manager import db_manager
-# CACHE ELIMINADO - Ahora usamos solo ETL-SQLite
+# CACHE ELIMINADO - Ahora usamos solo ETL-PostgreSQL
 
 # SERVICIO DE DOMINIO - GENERACIÓN
 from domain.services.generation_service import GenerationService
@@ -120,8 +120,8 @@ def obtener_listado_recursos(tipo_fuente='EOLICA'):
 
 
 def obtener_listado_recursos_desde_api(tipo_fuente='EOLICA'):
-    """Fallback: obtener listado desde API XM (LENTO - solo si SQLite falla)"""
-    # CACHE ELIMINADO - Consulta directa a SQLite/API
+    """Fallback: obtener listado desde API XM (LENTO - solo si PostgreSQL falla)"""
+    # CACHE ELIMINADO - Consulta directa a PostgreSQL/API
     
     try:
         objetoAPI = get_objetoAPI()
@@ -132,15 +132,15 @@ def obtener_listado_recursos_desde_api(tipo_fuente='EOLICA'):
         fecha_fin = date.today() - timedelta(days=14)
         fecha_inicio = fecha_fin - timedelta(days=7)
         
-        logger.info(f"✅ Consultando ListadoRecursos desde SQLite ({tipo_fuente})...")
+        logger.info(f"✅ Consultando ListadoRecursos desde PostgreSQL ({tipo_fuente})...")
         
-        # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (SQLite)
+        # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (PostgreSQL)
         recursos, warning = obtener_datos_inteligente("ListadoRecursos", "Sistema", 
                                                        fecha_inicio.strftime('%Y-%m-%d'), 
                                                        fecha_fin.strftime('%Y-%m-%d'))
         
         if recursos is not None and not recursos.empty:
-            logger.info(f"✅ SQLite/API: {len(recursos)} recursos obtenidos")
+            logger.info(f"✅ PostgreSQL/API: {len(recursos)} recursos obtenidos")
             
             # Filtrar por tipo
             if tipo_fuente.upper() != 'TODAS':
@@ -655,7 +655,7 @@ def crear_fichas_generacion_xm():
         # PASO 1: Obtener ListadoRecursos para mapear códigos (tolerante a fallas)
         codigo_info = {}
         try:
-            # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (SQLite)
+            # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (PostgreSQL)
             recursos_df, warning = obtener_datos_inteligente("ListadoRecursos", "Sistema", 
                                                               fecha_inicio.strftime('%Y-%m-%d'), 
                                                               fecha_fin.strftime('%Y-%m-%d'))
@@ -672,7 +672,7 @@ def crear_fichas_generacion_xm():
         except Exception as e:
             recursos_df = pd.DataFrame()
         
-        # PASO 2: Obtener datos de generación Gene/Recurso desde SQLite
+        # PASO 2: Obtener datos de generación Gene/Recurso desde PostgreSQL
         df_gene, warning = obtener_datos_inteligente("Gene", "Recurso", 
                                                       fecha_inicio.strftime('%Y-%m-%d'), 
                                                       fecha_fin.strftime('%Y-%m-%d'))
@@ -908,7 +908,7 @@ def crear_grafica_barras_apiladas():
         objetoAPI = get_objetoAPI()
         if objetoAPI:
             try:
-                # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (SQLite)
+                # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (PostgreSQL)
                 recursos_df, warning = obtener_datos_inteligente("ListadoRecursos", "Sistema", 
                                                                   fecha_inicio.strftime('%Y-%m-%d'), 
                                                                   fecha_fin.strftime('%Y-%m-%d'))
@@ -2460,7 +2460,7 @@ def crear_fichas_generacion_xm_con_fechas(fecha_inicio, fecha_fin, tipo_fuente='
         
         
         # PASO 1: Obtener ListadoRecursos para mapear códigos
-        # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (SQLite)
+        # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (PostgreSQL)
         recursos_df, warning = obtener_datos_inteligente("ListadoRecursos", "Sistema", 
                                                           fecha_inicio.strftime('%Y-%m-%d'), 
                                                           fecha_fin.strftime('%Y-%m-%d'))
@@ -2481,7 +2481,7 @@ def crear_fichas_generacion_xm_con_fechas(fecha_inicio, fecha_fin, tipo_fuente='
         
         
         # PASO 2: Obtener datos de generación Gene/Recurso
-        # ✅ OPTIMIZADO: Consulta inteligente SQLite (>=2020) vs API (<2020)
+        # ✅ OPTIMIZADO: Consulta inteligente PostgreSQL (>=2020) vs API (<2020)
         df_gene, warning_msg = obtener_datos_inteligente("Gene", "Recurso", 
                                                           fecha_inicio, 
                                                           fecha_fin)
@@ -2652,7 +2652,7 @@ def actualizar_comparacion_anual(n_clicks, years_selected):
                 fecha_fin = date.today() - timedelta(days=1)
             
             # Obtener datos de generación agregada por tipo
-            # Usamos la función existente que consulta SQLite
+            # Usamos la función existente que consulta PostgreSQL
             df_year_hidraulica = obtener_generacion_agregada_por_tipo(
                 fecha_inicio.strftime('%Y-%m-%d'),
                 fecha_fin.strftime('%Y-%m-%d'),

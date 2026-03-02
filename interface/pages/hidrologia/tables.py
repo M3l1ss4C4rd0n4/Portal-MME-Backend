@@ -708,7 +708,7 @@ def get_tabla_regiones_embalses(start_date=None, end_date=None):
         df_vol, _ = obtener_datos_desde_bd('VoluUtilDiarEner', 'Embalse', fecha_encontrada)
         df_cap, _ = obtener_datos_desde_bd('CapaUtilDiarEner', 'Embalse', fecha_encontrada)
 
-        # ✅ NO CONVERTIR: obtener_datos_inteligente ya devuelve valores en GWh cuando viene de SQLite
+        # ✅ NO CONVERTIR: obtener_datos_inteligente ya devuelve valores en GWh cuando viene de PostgreSQL
         # Los datos de la API XM vienen en Wh, pero se convierten en obtener_datos_inteligente
         # Por lo tanto, 'Value' ya está en GWh aquí
         df_vol['Value_GWh'] = df_vol['Value']

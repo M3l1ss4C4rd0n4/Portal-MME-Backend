@@ -611,7 +611,7 @@ def actualizar_tablero_transmision(trigger_data, n_clicks, fecha_inicio, fecha_f
             return mensaje_error, go.Figure(), go.Figure(), go.Figure(), html.Div(), datos_error
         
         # --- CONVERSIÓN DE TIPOS CRÍTICA ---
-        # SQLite devuelve fechas como strings, pandas no las convierte automáticamente en read_sql_query
+        # La BD devuelve fechas como strings, pandas no las convierte automáticamente en read_sql_query
         if 'Fecha' in df_lineas.columns:
             df_lineas['Fecha'] = pd.to_datetime(df_lineas['Fecha'])
         

@@ -1171,5 +1171,3 @@ def build_daily_email_html(
     p.append('</table></td></tr></table></body></html>')
 
     return '\n'.join(p)
-
-    return '\n'.join(p)

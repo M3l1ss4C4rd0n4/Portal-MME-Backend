@@ -56,7 +56,7 @@ class HydrologyService:
             fecha_inicio_str = fecha_inicio.strftime('%Y-%m-%d')
             fecha_final_str = fecha_final.strftime('%Y-%m-%d')
 
-            # NUEVO: Obtener datos desde SQLite directamente (más confiable)
+            # NUEVO: Obtener datos desde PostgreSQL directamente (más confiable)
             from infrastructure.database.repositories.metrics_repository import MetricsRepository
             repo = MetricsRepository()
             
@@ -124,7 +124,7 @@ class HydrologyService:
         
         try:
             fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
-            # Usar directamente el SQLite helper (infraestructura)
+            # Usar directamente el helper de BD local (infraestructura)
             df_vol, fecha_vol = obtener_datos_desde_bd('VoluUtilDiarEner', 'Embalse', fecha_obj)
             df_cap, fecha_cap = obtener_datos_desde_bd('CapaUtilDiarEner', 'Embalse', fecha_obj)
             

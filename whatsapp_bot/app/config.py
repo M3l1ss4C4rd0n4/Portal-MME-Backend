@@ -58,8 +58,8 @@ class Settings(BaseSettings):
     # Database
     # ═══════════════════════════════════════════════════════════
     DATABASE_URL: str = Field(
-        default="sqlite:///portal_energetico.db",
-        description="Database connection URL"
+        default="postgresql://postgres@localhost:5432/portal_energetico",
+        description="Database connection URL (PostgreSQL)"
     )
     
     # ═══════════════════════════════════════════════════════════

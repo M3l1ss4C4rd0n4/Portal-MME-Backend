@@ -43,7 +43,7 @@ def get_aportes_hidricos_por_region(fecha, region):
         fecha_inicio_str = fecha_inicio.strftime('%Y-%m-%d')
         fecha_final_str = fecha_final.strftime('%Y-%m-%d')
         
-        # Obtener aportes energía por río desde SQLite
+        # Obtener aportes energía por río desde PostgreSQL
         aportes_data, warning = obtener_datos_inteligente('AporEner', 'Rio', fecha_inicio_str, fecha_final_str)
         
         if aportes_data is not None and not aportes_data.empty:
@@ -99,7 +99,7 @@ def get_aportes_hidricos_por_rio(fecha, rio):
     """
     
     try:
-        # Obtener aportes del río específico desde SQLite
+        # Obtener aportes del río específico desde PostgreSQL
         aportes_data, warning = obtener_datos_inteligente('AporEner', 'Rio', fecha, fecha)
         
         if aportes_data is not None and not aportes_data.empty:
@@ -1005,7 +1005,7 @@ def get_embalses_capacidad(region=None, start_date=None, end_date=None):
                 antes_filtro = len(df_capacidad)
                 df_capacidad = df_capacidad[df_capacidad['Region'] == region_normalized]
             
-            # ✅ NO CONVERTIR: obtener_datos_inteligente ya devuelve valores en GWh cuando viene de SQLite
+            # ✅ NO CONVERTIR: obtener_datos_inteligente ya devuelve valores en GWh cuando viene de PostgreSQL
             # Los datos de la API XM vienen en Wh, pero obtener_datos_inteligente los convierte automáticamente
             df_capacidad['Value_GWh'] = df_capacidad['Value']
             

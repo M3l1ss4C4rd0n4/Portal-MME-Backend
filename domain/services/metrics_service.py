@@ -49,7 +49,7 @@ class MetricsService:
         Garantiza que existan 'Date' y 'Value'.
         
         Args:
-            df (pd.DataFrame): DataFrame original (puede venir de SQLite o API XM)
+            df (pd.DataFrame): DataFrame original (puede venir de PostgreSQL o API XM)
             
         Returns:
             pd.DataFrame: DataFrame normalizado con columnas Date y Value

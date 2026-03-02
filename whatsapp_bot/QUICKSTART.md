@@ -136,8 +136,8 @@ tail -f logs/whatsapp_bot.log
 
 DATABASE_URL=postgresql://admin:pass@localhost:5432/portal_energetico
 
-# O ruta absoluta a SQLite:
-DATABASE_URL=sqlite:////home/admonctrlxm/server/portal_energetico.db
+# O con host explícito:
+DATABASE_URL=postgresql://admin:pass@127.0.0.1:5432/portal_energetico
 ```
 
 ## 📚 Comandos del Bot

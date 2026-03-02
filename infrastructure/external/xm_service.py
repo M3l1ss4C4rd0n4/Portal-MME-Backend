@@ -1,6 +1,6 @@
 """Helper ligero para inicializar la conexión a pydataxm de forma perezosa (lazy).
 
-IMPORTANTE: Sistema de caché ELIMINADO - Ahora usamos ETL-SQLite para datos históricos.
+IMPORTANTE: Sistema de caché ELIMINADO - Ahora usamos ETL-PostgreSQL para datos históricos.
 La función fetch_metric_data() consulta directamente la API XM cuando es necesario.
 """
 from typing import Optional
@@ -125,9 +125,9 @@ def obtener_datos_desde_bd(metric: str, entity: str, fecha_fin, dias_busqueda: i
         
         if df is not None and not df.empty:
             if dias_atras > 0:
-                logger.info(f"✅ [SQLite] {metric}/{entity} en {fecha_str} ({dias_atras}d atrás)")
+                logger.info(f"✅ [DB Local] {metric}/{entity} en {fecha_str} ({dias_atras}d atrás)")
             else:
-                logger.info(f"✅ [SQLite] {metric}/{entity} en {fecha_str}")
+                logger.info(f"✅ [DB Local] {metric}/{entity} en {fecha_str}")
             
             if 'valor_gwh' in df.columns:
                 df = df.rename(columns={'valor_gwh': 'Value', 'fecha': 'Date'})
@@ -144,14 +144,14 @@ def obtener_datos_desde_bd(metric: str, entity: str, fecha_fin, dias_busqueda: i
             
             return df, fecha_inicio
     
-    logger.warning(f"❌ [SQLite] Sin datos {metric}/{entity} últimos {dias_busqueda}d")
+    logger.warning(f"❌ [DB Local] Sin datos {metric}/{entity} últimos {dias_busqueda}d")
     return None, None
 def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin, recurso: str = None):
     """
-    Consulta inteligente de datos: SQLite (>=2020, rápido) vs API XM (<2020, lento con advertencia).
+    Consulta inteligente de datos: DB local (>=2020, rápido) vs API XM (<2020, lento con advertencia).
     
     Esta función decide automáticamente la fuente de datos basándose en el rango de fechas:
-    - Si fecha_inicio >= 2020-01-01: Consulta SQLite (rápido, <5s)
+    - Si fecha_inicio >= 2020-01-01: Consulta DB local (rápido, <5s)
     - Si fecha_inicio < 2020-01-01: Consulta API XM directo (lento, 30-60s, muestra advertencia)
     
     Args:
@@ -165,7 +165,7 @@ def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin,
         tuple: (DataFrame con datos, str mensaje de advertencia o None)
     
     Ejemplos:
-        # Consulta reciente (>= 2020) - Usa SQLite
+        # Consulta reciente (>= 2020) - Usa DB local
         df, warning = obtener_datos_inteligente('Gene', 'Sistema', '2023-01-01', '2024-01-01')
         # warning = None, consulta rápida
         
@@ -178,7 +178,7 @@ def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin,
     
     logger = logging.getLogger('xm_helper')
     
-    # Fecha límite: datos antes del 2020 no están en SQLite
+    # Fecha límite: datos antes del 2020 no están en DB local
     FECHA_LIMITE_SQLITE = date(2020, 1, 1)
     
     # Convertir fechas a objetos date
@@ -200,10 +200,10 @@ def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin,
     fecha_inicio_str = fecha_inicio_date.strftime('%Y-%m-%d')
     fecha_fin_str = fecha_fin_date.strftime('%Y-%m-%d')
     
-    # Decisión: SQLite vs API XM
+    # Decisión: DB local vs API XM
     if fecha_inicio_date >= FECHA_LIMITE_SQLITE:
-        # CASO 1: Datos recientes (>= 2020) - Usar SQLite (rápido)
-        logger.info(f"📊 [SQLite] Consultando {metric}/{entity} desde {fecha_inicio_str} hasta {fecha_fin_str}")
+        # CASO 1: Datos recientes (>= 2020) - Usar DB local (rápido)
+        logger.info(f"📊 [DB Local] Consultando {metric}/{entity} desde {fecha_inicio_str} hasta {fecha_fin_str}")
         
         # Para métricas de nivel Sistema, filtrar por recurso='Sistema' para evitar duplicados
         recurso_filtro = recurso
@@ -222,7 +222,7 @@ def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin,
         
         if df is not None and not df.empty:
             # Renombrar columnas para compatibilidad con código existente
-            # SQLite: fecha, metrica, entidad, recurso, valor_gwh, unidad
+            # DB local: fecha, metrica, entidad, recurso, valor_gwh, unidad
             # API XM: Date, Name, Value, Id
             
             if 'valor_gwh' in df.columns:
@@ -293,18 +293,18 @@ def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin,
             
             # VERIFICAR: Si todos los valores de Name son None, usar API como fallback
             if 'Name' in df.columns and df['Name'].isna().all():
-                logger.warning(f"⚠️ [SQLite] Columna 'Name' vacía, fallback a API XM")
+                logger.warning(f"⚠️ [DB Local] Columna 'Name' vacía, fallback a API XM")
                 # No retornar estos datos vacíos, dejar que consulte API
                 df = None
             
             if df is not None:
-                logger.info(f"✅ [SQLite] {len(df)} registros obtenidos con nombres mapeados")
+                logger.info(f"✅ [DB Local] {len(df)} registros obtenidos con nombres mapeados")
                 return df, None  # Sin advertencia
         
-        # Si no hay datos en SQLite o están incompletos, usar API XM
+        # Si no hay datos en DB local o están incompletos, usar API XM
         logger.info(f"📡 [Fallback] Consultando API XM para {metric}/{entity}")
     
-    # CASO 2: Datos históricos (< 2020) o fallback desde SQLite
+    # CASO 2: Datos históricos (< 2020) o fallback desde DB local
     mensaje_advertencia = None
     if fecha_inicio_date < FECHA_LIMITE_SQLITE:
         mensaje_advertencia = (
@@ -313,7 +313,7 @@ def obtener_datos_inteligente(metric: str, entity: str, fecha_inicio, fecha_fin,
         )
         logger.warning(f"🐌 [API XM] Consultando datos históricos {metric}/{entity} desde {fecha_inicio_str}")
     else:
-        logger.info(f"📡 [API XM] Fallback desde SQLite, consultando {metric}/{entity}")
+        logger.info(f"📡 [API XM] Fallback desde DB local, consultando {metric}/{entity}")
     
     try:
         df = fetch_metric_data(

@@ -146,156 +146,236 @@ def test_dashboard_callbacks():
     return results
 
 
-def build_tech_validation_html(dash_results):
-    """Genera sección HTML con los resultados de validación técnica."""
-    
-    cb1 = dash_results.get('cb1', {})
-    cb2 = dash_results.get('cb2', {})
-    cb3 = dash_results.get('cb3', {})
-    
-    # Tabla de métricas del store
+def _mape_to_calidad(mape_decimal):
+    """Convierte MAPE (decimal, ej: 0.05) a etiqueta de calidad."""
+    if not isinstance(mape_decimal, (int, float)):
+        return '?', '#9ca3af'
+    if mape_decimal < 0.05:
+        return 'Excelente', '#10b981'
+    elif mape_decimal < 0.10:
+        return 'Bueno', '#3b82f6'
+    elif mape_decimal < 0.15:
+        return 'Aceptable', '#f59e0b'
+    else:
+        return 'Revisar', '#ef4444'
+
+
+def generate_prediction_charts(pred_data_list):
+    """
+    Genera gráficas PNG de predicciones para incluir en el PDF.
+    Recibe lista de dicts del orquestador con 'fuente', 'predicciones', etc.
+    Retorna lista de paths a PNGs temporales.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    import tempfile
+
+    chart_paths = []
+    colors = ['#1e3a5f', '#e76f50', '#287270', '#8b5cf6']
+
+    for i, pred_data in enumerate(pred_data_list):
+        fuente = pred_data.get('fuente', f'Métrica_{i}')
+        preds = pred_data.get('predicciones', [])
+        stats = pred_data.get('estadisticas', {})
+        modelo = pred_data.get('modelo', '')
+
+        if not preds:
+            continue
+
+        try:
+            fechas = [datetime.strptime(p['fecha'], '%Y-%m-%d') for p in preds]
+
+            # Detectar campo de valor (puede ser valor_gwh, valor_pct, valor_cop, etc.)
+            val_key = None
+            for k in preds[0].keys():
+                if k.startswith('valor'):
+                    val_key = k
+                    break
+            if not val_key:
+                continue
+
+            valores = [p[val_key] for p in preds]
+            inf_key = 'intervalo_inferior'
+            sup_key = 'intervalo_superior'
+            tiene_ic = inf_key in preds[0] and sup_key in preds[0]
+
+            fig, ax = plt.subplots(figsize=(7, 2.8))
+            color = colors[i % len(colors)]
+
+            ax.plot(fechas, valores, color=color, linewidth=2, label='Predicción')
+
+            if tiene_ic:
+                inf = [p[inf_key] for p in preds]
+                sup = [p[sup_key] for p in preds]
+                ax.fill_between(fechas, inf, sup, alpha=0.15, color=color, label='IC 95%')
+
+            ax.set_title(f'{fuente} — Predicción 30 días', fontsize=11, fontweight='bold', color='#1e293b')
+            if modelo:
+                ax.text(0.99, 0.97, f'Modelo: {modelo}', transform=ax.transAxes,
+                        fontsize=7, color='#6b7280', ha='right', va='top')
+
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+            plt.xticks(fontsize=8)
+            plt.yticks(fontsize=8)
+
+            # Unidad del eje Y
+            unit = val_key.replace('valor_', '').upper()
+            ax.set_ylabel(unit, fontsize=8, color='#475569')
+
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.legend(fontsize=7, loc='upper left')
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            plt.tight_layout()
+            path = os.path.join(tempfile.gettempdir(), f'pred_chart_{fuente}.png')
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            chart_paths.append((fuente, path))
+        except Exception as e:
+            print(f"   ⚠️ Chart {fuente}: {e}")
+
+    return chart_paths
+
+
+def build_pdf_validation_page(store_data, pred_chart_paths=None):
+    """
+    Genera página(s) HTML para el PDF con:
+      - Tabla de las 13 métricas con MAPE real y Calidad
+      - Gráficas de predicciones
+    Solo datos relevantes. NO va en email ni en Telegram.
+    """
+    import base64
+
+    # ── Tabla de métricas ──
     metricas_rows = ""
-    store = cb1.get('store', [])
-    for s in store:
+    # Ordenar: Excelente primero, luego Bueno, Aceptable, Revisar
+    sorted_store = sorted(store_data, key=lambda s: s.get('mape_entrenamiento', 999))
+
+    for s in sorted_store:
         fuente = s.get('fuente', '?')
         modelo = s.get('modelo', '?')
-        mape = s.get('mape', '?')
-        calidad = s.get('calidad', '?')
-        
-        if calidad == 'Excelente':
-            badge_color = '#10b981'
-        elif calidad == 'Bueno':
-            badge_color = '#3b82f6'
-        elif calidad == 'Aceptable':
-            badge_color = '#f59e0b'
-        else:
-            badge_color = '#ef4444'
-        
-        mape_str = f"{mape:.2f}%" if isinstance(mape, (int, float)) else str(mape)
-        
+        mape = s.get('mape_entrenamiento', None)
+        confianza = s.get('confianza', None)
+        dias = s.get('dias_predichos', '?')
+
+        calidad, badge_color = _mape_to_calidad(mape)
+        mape_str = f"{mape*100:.2f}%" if isinstance(mape, (int, float)) else '?'
+        conf_str = f"{confianza*100:.0f}%" if isinstance(confianza, (int, float)) else '?'
+
         metricas_rows += f"""
         <tr>
-            <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;">{fuente}</td>
-            <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280;">{modelo}</td>
-            <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:center;">{mape_str}</td>
-            <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">
-                <span style="background:{badge_color};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">{calidad}</span>
-            </td>
+          <td style="padding:5px 8px;border-bottom:1px solid #dee2e6;font-size:8pt;font-weight:bold;">{fuente}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #dee2e6;font-size:7pt;color:#6b7280;">{modelo}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #dee2e6;font-size:8pt;text-align:center;">{mape_str}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #dee2e6;font-size:8pt;text-align:center;">{conf_str}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #dee2e6;font-size:8pt;text-align:center;">{dias}d</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #dee2e6;text-align:center;">
+            <span style="background:{badge_color};color:#fff;padding:2px 8px;border-radius:10px;font-size:7pt;">{calidad}</span>
+          </td>
         </tr>"""
-    
-    # Tabla de pruebas callbacks
-    tests_rows = ""
-    # CB1
-    cb1_icon = "✅" if cb1.get('status') == 'OK' else "❌"
-    tests_rows += f"""
-    <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">{cb1_icon} CB1: Resumen Ejecutivo</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">HTTP {cb1.get('http', '?')}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">{cb1.get('bytes', 0):,} bytes</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">{cb1.get('metricas', 0)} métricas</td>
-    </tr>"""
-    
-    # CB2 per metric
-    for metric, info in cb2.items():
-        icon = "✅" if info.get('status') == 'OK' else "❌"
-        has_chart = "📊 con gráfica" if info.get('bytes', 0) > 1000 else "ℹ️ pendiente datos"
-        tests_rows += f"""
-    <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">{icon} CB2: {metric}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">HTTP {info.get('http', '?')}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">{info.get('bytes', 0):,} bytes</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">{has_chart}</td>
-    </tr>"""
-    
-    # CB3
-    cb3_icon = "✅" if cb3.get('status') == 'OK' else "❌"
-    tests_rows += f"""
-    <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">{cb3_icon} CB3: Historial Calidad</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">HTTP {cb3.get('http', '?')}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">{cb3.get('bytes', 0):,} bytes</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">Evaluaciones ex-post</td>
-    </tr>"""
-    
-    # Count totals
-    total_ok = sum(1 for m, i in cb2.items() if i.get('status') == 'OK')
-    total_ok += (1 if cb1.get('status') == 'OK' else 0) + (1 if cb3.get('status') == 'OK' else 0)
-    total_tests = len(cb2) + 2  # CB1 + CB2s + CB3
-    
+
+    # Conteo por calidad
+    counts = {'Excelente': 0, 'Bueno': 0, 'Aceptable': 0, 'Revisar': 0}
+    for s in store_data:
+        cal, _ = _mape_to_calidad(s.get('mape_entrenamiento'))
+        if cal in counts:
+            counts[cal] += 1
+
+    # ── Gráficas de predicciones como imágenes embebidas ──
+    charts_html = ""
+    if pred_chart_paths:
+        for fuente, path in pred_chart_paths:
+            try:
+                with open(path, 'rb') as f:
+                    img_b64 = base64.b64encode(f.read()).decode()
+                charts_html += f"""
+        <div style="margin:8px 10px;">
+          <img src="data:image/png;base64,{img_b64}"
+               style="width:100%;max-width:680px;border:1px solid #e5e7eb;border-radius:6px;" />
+        </div>"""
+            except Exception:
+                pass
+
     return f"""
-    <!-- Sección Validación Técnica -->
-    <div style="margin-top:30px;padding:25px;background:linear-gradient(135deg,#1e293b,#334155);border-radius:12px;">
-        <h2 style="color:#f59e0b;margin:0 0 5px;font-size:20px;">🔬 Validación Técnica — FASE 20</h2>
-        <p style="color:#94a3b8;margin:0 0 20px;font-size:13px;">
-            Nueva página de Seguimiento de Predicciones + Redis API Caching
-        </p>
-        
-        <!-- KPI badges -->
-        <div style="display:flex;gap:15px;flex-wrap:wrap;margin-bottom:20px;">
-            <div style="background:#10b981;color:#fff;padding:10px 20px;border-radius:8px;text-align:center;flex:1;min-width:120px;">
-                <div style="font-size:24px;font-weight:700;">{total_ok}/{total_tests}</div>
-                <div style="font-size:11px;opacity:0.9;">Tests Pasaron</div>
-            </div>
-            <div style="background:#3b82f6;color:#fff;padding:10px 20px;border-radius:8px;text-align:center;flex:1;min-width:120px;">
-                <div style="font-size:24px;font-weight:700;">{cb1.get('metricas', 0)}</div>
-                <div style="font-size:11px;opacity:0.9;">Métricas ML Activas</div>
-            </div>
-            <div style="background:#8b5cf6;color:#fff;padding:10px 20px;border-radius:8px;text-align:center;flex:1;min-width:120px;">
-                <div style="font-size:24px;font-weight:700;">3</div>
-                <div style="font-size:11px;opacity:0.9;">Callbacks Dashboard</div>
-            </div>
-            <div style="background:#f59e0b;color:#000;padding:10px 20px;border-radius:8px;text-align:center;flex:1;min-width:120px;">
-                <div style="font-size:24px;font-weight:700;">~3ms</div>
-                <div style="font-size:11px;">Redis Cache HIT</div>
-            </div>
-        </div>
-        
-        <!-- Tabla de pruebas -->
-        <h3 style="color:#e2e8f0;font-size:15px;margin:20px 0 10px;">📋 Resultados de Pruebas de Callbacks</h3>
-        <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;">
-            <thead>
-                <tr style="background:#f1f5f9;">
-                    <th style="padding:10px 12px;text-align:left;font-size:12px;color:#475569;">Test</th>
-                    <th style="padding:10px 12px;text-align:center;font-size:12px;color:#475569;">HTTP</th>
-                    <th style="padding:10px 12px;text-align:center;font-size:12px;color:#475569;">Tamaño</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:12px;color:#475569;">Detalle</th>
-                </tr>
-            </thead>
-            <tbody>
-                {tests_rows}
-            </tbody>
-        </table>
-        
-        <!-- Tabla de métricas -->
-        <h3 style="color:#e2e8f0;font-size:15px;margin:20px 0 10px;">📊 Estado de las 13 Métricas Predictivas</h3>
-        <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;">
-            <thead>
-                <tr style="background:#f1f5f9;">
-                    <th style="padding:10px 12px;text-align:left;font-size:12px;color:#475569;">Métrica</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:12px;color:#475569;">Modelo ML</th>
-                    <th style="padding:10px 12px;text-align:center;font-size:12px;color:#475569;">MAPE %</th>
-                    <th style="padding:10px 12px;text-align:center;font-size:12px;color:#475569;">Calidad</th>
-                </tr>
-            </thead>
-            <tbody>
-                {metricas_rows}
-            </tbody>
-        </table>
-        
-        <!-- Nuevas funcionalidades implementadas -->
-        <h3 style="color:#e2e8f0;font-size:15px;margin:20px 0 10px;">🚀 Funcionalidades Implementadas</h3>
-        <div style="background:#0f172a;border-radius:8px;padding:15px;color:#e2e8f0;font-size:13px;">
-            <div style="margin-bottom:8px;">✅ <strong>FASE 19 — Redis API Caching:</strong> TTL 3600s predicciones, ~3ms cache HIT, 5 endpoints (GET cached, POST invalidation, batch, stats, flush)</div>
-            <div style="margin-bottom:8px;">✅ <strong>Auditoría Producción:</strong> 100% integración confirmada — orquestador, informe ejecutivo, dashboard, Telegram bot</div>
-            <div style="margin-bottom:8px;">✅ <strong>Nueva Página Seguimiento:</strong> /seguimiento-predicciones — Resumen ejecutivo, tabla maestra 13 métricas, análisis detallado por métrica, gráficas Predicho vs Real con IC 95%, error diario, historial de calidad ex-post</div>
-            <div style="margin-bottom:8px;">✅ <strong>Navbar actualizado:</strong> Link "Predicciones" integrado en la barra de navegación principal</div>
-            <div>✅ <strong>Bug fixes:</strong> Plotly add_vline con datetime, tipo string en periodo_dias dropdown</div>
-        </div>
-        
-        <p style="color:#64748b;font-size:11px;margin-top:15px;text-align:center;">
-            Prueba generada automáticamente — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — Portal Energético MME
-        </p>
+    <div class="page">
+      <table class="header-bar" cellpadding="0" cellspacing="0">
+        <tr>
+          <td class="sidebar-mark" rowspan="2">&nbsp;</td>
+          <td class="header-content">
+            <div class="header-title">Seguimiento de Predicciones ML</div>
+            <div class="header-date">Fecha: {datetime.now().strftime('%d de %B de %Y')}</div>
+          </td>
+        </tr>
+      </table>
+      <div class="header-line"></div>
+      <div class="header-sep"></div>
+
+      <!-- Resumen compacto -->
+      <div class="section-hdr" style="background:#254553;">Resumen &mdash; 13 M&eacute;tricas Predictivas en Producci&oacute;n</div>
+      <table style="width:90%;margin:6px auto;border-collapse:collapse;">
+        <tr>
+          <td style="text-align:center;padding:8px;background:#e8f5e9;width:25%;">
+            <div style="font-size:16pt;font-weight:bold;color:#10b981;">{counts['Excelente']}</div>
+            <div style="font-size:7pt;color:#555;">Excelente (&lt;5%)</div>
+          </td>
+          <td style="text-align:center;padding:8px;background:#e3f2fd;width:25%;">
+            <div style="font-size:16pt;font-weight:bold;color:#3b82f6;">{counts['Bueno']}</div>
+            <div style="font-size:7pt;color:#555;">Bueno (&lt;10%)</div>
+          </td>
+          <td style="text-align:center;padding:8px;background:#fff8e1;width:25%;">
+            <div style="font-size:16pt;font-weight:bold;color:#f59e0b;">{counts['Aceptable']}</div>
+            <div style="font-size:7pt;color:#555;">Aceptable (&lt;15%)</div>
+          </td>
+          <td style="text-align:center;padding:8px;background:#fce4ec;width:25%;">
+            <div style="font-size:16pt;font-weight:bold;color:#ef4444;">{counts['Revisar']}</div>
+            <div style="font-size:7pt;color:#555;">Revisar (&ge;15%)</div>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Tabla completa -->
+      <div style="margin:4px 10px;">
+      <table style="width:100%;border-collapse:collapse;font-size:8pt;">
+        <tr style="background:#1e3a5f;color:#fff;">
+          <th style="padding:6px 8px;text-align:left;">M&eacute;trica</th>
+          <th style="padding:6px 8px;text-align:left;">Modelo ML</th>
+          <th style="padding:6px 8px;text-align:center;">MAPE %</th>
+          <th style="padding:6px 8px;text-align:center;">Confianza</th>
+          <th style="padding:6px 8px;text-align:center;">Horizonte</th>
+          <th style="padding:6px 8px;text-align:center;">Calidad</th>
+        </tr>
+        {metricas_rows}
+      </table>
+      </div>
+
+      <div style="margin-top:10px;text-align:center;font-size:7pt;color:#999;">
+        MAPE = Error Absoluto Medio Porcentual (entrenamiento) &bull;
+        Calidad: Excelente &lt;5% | Bueno &lt;10% | Aceptable &lt;15% | Revisar &ge;15%
+      </div>
     </div>
+
+    <!-- Página de gráficas de predicciones -->
+    {"" if not charts_html else f'''
+    <div class="page">
+      <table class="header-bar" cellpadding="0" cellspacing="0">
+        <tr>
+          <td class="sidebar-mark" rowspan="2">&nbsp;</td>
+          <td class="header-content">
+            <div class="header-title">Gr&aacute;ficas de Predicciones</div>
+            <div class="header-date">Fecha: {datetime.now().strftime('%d de %B de %Y')}</div>
+          </td>
+        </tr>
+      </table>
+      <div class="header-line"></div>
+      <div class="header-sep"></div>
+      <div class="section-hdr" style="background:#125685;">Predicciones a 30 d&iacute;as con Intervalo de Confianza 95%</div>
+      {charts_html}
+    </div>
+    '''}
     """
 
 
@@ -341,17 +421,25 @@ def main():
     if d_news:
         noticias = d_news.get('noticias', [])
     
-    # Predicciones
+    # Predicciones (4 métricas clave para gráficas + 3 para email)
     predicciones_lista = []
-    for metric_id, metric_name in [('GENE_TOTAL', 'Generación Total'), ('PRECIO_BOLSA', 'Precio Bolsa'), ('EMBALSES_PCT', 'Embalses %')]:
+    pred_para_graficas = []
+    METRICAS_GRAFICAS = [
+        ('DEMANDA', 'Demanda'),
+        ('GENE_TOTAL', 'Generación Total'),
+        ('PRECIO_BOLSA', 'Precio Bolsa'),
+        ('EMBALSES_PCT', 'Embalses %'),
+    ]
+    for metric_id, metric_name in METRICAS_GRAFICAS:
         d_pred = api_call('predicciones', {'fuente': metric_id, 'horizonte': 30}, timeout=60)
         if d_pred and d_pred.get('estadisticas'):
             predicciones_lista.append(d_pred)
+            pred_para_graficas.append(d_pred)
     
     print(f"   KPIs: {len(fichas_kpi)}, Noticias: {len(noticias)}, Predicciones: {len(predicciones_lista)}")
     
     # ── 4. Generar gráficos ──
-    print("\n4️⃣  Generando gráficos...")
+    print("\n4️⃣  Generando gráficos del informe + predicciones...")
     chart_paths = []
     try:
         from whatsapp_bot.services.informe_charts import generate_all_informe_charts
@@ -360,33 +448,101 @@ def main():
             path = charts.get(key, (None,))[0]
             if path and os.path.isfile(path):
                 chart_paths.append(path)
-        print(f"   ✅ Gráficos: {len(chart_paths)}")
+        print(f"   ✅ Gráficos informe: {len(chart_paths)}")
     except Exception as e:
-        print(f"   ⚠️ Gráficos: {e}")
+        print(f"   ⚠️ Gráficos informe: {e}")
     
-    # ── 5. Generar PDF ──
-    print("\n5️⃣  Generando PDF...")
+    # Gráficas de predicciones para la página 6
+    pred_chart_paths = []
+    try:
+        pred_chart_paths = generate_prediction_charts(pred_para_graficas)
+        print(f"   ✅ Gráficos predicciones: {len(pred_chart_paths)} ({', '.join(f[0] for f in pred_chart_paths)})")
+    except Exception as e:
+        print(f"   ⚠️ Gráficos predicciones: {e}")
+    
+    # ── 5. Generar PDF (con página 6 de validación técnica) ──
+    print("\n5️⃣  Generando PDF con página de validación técnica...")
     pdf_path = None
     try:
-        from domain.services.report_service import generar_pdf_informe
-        pdf_path = generar_pdf_informe(
-            informe_texto or "Informe en proceso de generación",
-            fecha_generacion, generado_con_ia,
-            chart_paths=chart_paths,
-            fichas=fichas_kpi,
-            predicciones=predicciones_lista,
-            anomalias=[],
-            noticias=noticias,
-            contexto_datos=contexto,
+        from domain.services.report_service import (
+            generar_pdf_informe,
+            _CSS, _load_logo_b64,
+            _build_page_mercado, _build_page_generacion,
+            _build_page_hidrologia, _build_page_analisis,
+            _build_page_noticias,
         )
-        if pdf_path:
-            size_kb = os.path.getsize(pdf_path) / 1024
-            print(f"   ✅ PDF: {pdf_path} ({size_kb:.1f} KB)")
+        import tempfile
+        from weasyprint import HTML as WP_HTML
+
+        # Generar las 5 páginas normales + página 6 de validación
+        hoy = fecha_generacion or datetime.now().strftime('%Y-%m-%d %H:%M')
+        fecha_label = datetime.now().strftime('%Y-%m-%d')
+        ctx = contexto or {}
+        logo_b64 = _load_logo_b64()
+
+        page1 = _build_page_mercado(
+            logo_b64, fecha_label,
+            fichas_kpi or [], ctx.get('tabla_indicadores_clave', []),
+            chart_paths, pred_resumen=ctx.get('predicciones_mes_resumen', {}),
+        )
+        page2 = _build_page_generacion(
+            logo_b64, fecha_label,
+            ctx.get('generacion_por_fuente', {}), chart_paths,
+            pred_resumen=ctx.get('predicciones_mes_resumen', {}),
+        )
+        page3 = _build_page_hidrologia(
+            logo_b64, fecha_label,
+            ctx.get('embalses_detalle', {}),
+            ctx.get('predicciones_mes_resumen', {}), chart_paths,
+        )
+        page4 = _build_page_analisis(logo_b64, fecha_label, informe_texto or '')
+        page5 = _build_page_noticias(logo_b64, fecha_label, [], noticias or [])
+
+        # Página 6+7: Tabla métricas + gráficas predicciones (SOLO en el PDF)
+        store_data = cb1.get('store', []) if cb1 else []
+        page6 = build_pdf_validation_page(store_data, pred_chart_paths)
+
+        full_html = f"""<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><style>{_CSS}</style></head>
+<body>
+  {page1}
+  {page2}
+  {page3}
+  {page4}
+  {page5}
+  {page6}
+</body>
+</html>"""
+
+        filename = f'Informe_Ejecutivo_MME_{fecha_label}.pdf'
+        pdf_path = os.path.join(tempfile.gettempdir(), filename)
+        WP_HTML(string=full_html).write_pdf(pdf_path)
+
+        size_kb = os.path.getsize(pdf_path) / 1024
+        print(f"   ✅ PDF: {pdf_path} ({size_kb:.1f} KB) — 6 páginas (incl. validación técnica)")
     except Exception as e:
-        print(f"   ⚠️ PDF: {e}")
+        print(f"   ⚠️ PDF custom falló ({e}), intentando PDF estándar...")
+        try:
+            from domain.services.report_service import generar_pdf_informe
+            pdf_path = generar_pdf_informe(
+                informe_texto or "Informe en proceso de generación",
+                fecha_generacion, generado_con_ia,
+                chart_paths=chart_paths,
+                fichas=fichas_kpi,
+                predicciones=predicciones_lista,
+                anomalias=[],
+                noticias=noticias,
+                contexto_datos=contexto,
+            )
+            if pdf_path:
+                size_kb = os.path.getsize(pdf_path) / 1024
+                print(f"   ✅ PDF fallback: {pdf_path} ({size_kb:.1f} KB) — 5 páginas")
+        except Exception as e2:
+            print(f"   ⚠️ PDF fallback: {e2}")
     
-    # ── 6. Construir HTML email ──
-    print("\n6️⃣  Construyendo email HTML premium...")
+    # ── 6. Construir HTML email (SIN validación técnica — eso va SOLO en el PDF) ──
+    print("\n6️⃣  Construyendo email HTML premium (informe estándar)...")
     try:
         from domain.services.notification_service import build_daily_email_html, send_email
         
@@ -398,106 +554,60 @@ def main():
             anomalias=[],
             generado_con_ia=generado_con_ia,
         )
-        
-        # Inyectar sección de validación técnica antes del cierre
-        tech_section = build_tech_validation_html(dash_results)
-        # Insertar antes de </body> o al final del HTML
-        if '</body>' in email_html:
-            email_html = email_html.replace('</body>', f'{tech_section}</body>')
-        else:
-            email_html += tech_section
-        
-        print(f"   ✅ HTML: {len(email_html):,} chars (con sección validación técnica)")
+        # NO se inyecta sección técnica — eso va SOLO en el PDF adjunto
+        print(f"   ✅ HTML: {len(email_html):,} chars (informe estándar, sin datos técnicos)")
     except Exception as e:
         print(f"   ⚠️ Error HTML: {e}")
-        # Fallback: solo sección técnica
-        tech_section = build_tech_validation_html(dash_results)
-        email_html = f"""
-        <html><head><meta charset="utf-8"></head>
-        <body style="font-family:Inter,Arial,sans-serif;background:#f8fafc;padding:20px;">
-            <div style="max-width:700px;margin:0 auto;">
-                <div style="background:linear-gradient(135deg,#1e3a5f,#2d5a87);padding:25px;border-radius:12px 12px 0 0;text-align:center;">
-                    <h1 style="color:#fff;margin:0;font-size:22px;">📊 Portal Energético MME</h1>
-                    <p style="color:#93c5fd;margin:5px 0 0;font-size:14px;">Informe de Prueba — Validación Técnica FASE 20</p>
-                </div>
-                <div style="background:#fff;padding:25px;border-radius:0 0 12px 12px;">
-                    <p style="color:#475569;">Este informe contiene los resultados de validación técnica de las nuevas funcionalidades implementadas.</p>
-                    {tech_section}
-                </div>
-            </div>
-        </body></html>
-        """
+        email_html = None
     
-    # ── 7. Enviar por Telegram ──
-    print(f"\n7️⃣  Enviando por Telegram (chat_id={DEST_CHAT_ID})...")
+    # ── 7. Enviar por Telegram (SOLO el PDF, sin detalles técnicos en el mensaje) ──
+    print(f"\n7️⃣  Enviando PDF por Telegram (chat_id={DEST_CHAT_ID})...")
     try:
         from domain.services.notification_service import _get_telegram_token
         import httpx
-        
-        # Mensaje Telegram compacto
-        tg_msg = (
-            f"🔬 *INFORME DE PRUEBA — FASE 20*\n"
-            f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-            f"{'─' * 30}\n\n"
-            f"✅ *Validación Técnica:* {total_ok}/{total_tests} tests OK\n"
-            f"📊 *Métricas ML:* {cb1.get('metricas', '?')} activas\n"
-            f"🔗 *Nueva página:* /seguimiento-predicciones\n\n"
-        )
-        
-        # Resultados por callback
-        tg_msg += "*Callbacks Dashboard:*\n"
-        tg_msg += f"  {'✅' if cb1.get('status')=='OK' else '❌'} CB1 Resumen: {cb1.get('bytes',0):,}b\n"
-        for metric, info in cb2.items():
-            icon = '✅' if info.get('status')=='OK' else '❌'
-            tg_msg += f"  {icon} CB2 {metric}: {info.get('bytes',0):,}b\n"
-        tg_msg += f"  {'✅' if cb3.get('status')=='OK' else '❌'} CB3 Calidad: {cb3.get('bytes',0):,}b\n"
-        
-        tg_msg += f"\n📎 *El informe completo con detalle de métricas, gráficas y PDF va por email a {DEST_EMAIL}*"
         
         token = _get_telegram_token()
         if token:
             base = f"https://api.telegram.org/bot{token}"
             with httpx.Client(timeout=30.0) as client:
-                # Mensaje texto
-                resp = client.post(f"{base}/sendMessage", json={
-                    "chat_id": DEST_CHAT_ID,
-                    "text": tg_msg,
-                    "parse_mode": "Markdown",
-                })
-                if resp.status_code == 200:
-                    print(f"   ✅ Mensaje Telegram enviado")
-                else:
-                    print(f"   ❌ Telegram: {resp.status_code} {resp.text[:200]}")
-                
-                # PDF
+                # Solo enviar el PDF con un caption breve
                 if pdf_path and os.path.isfile(pdf_path):
                     with open(pdf_path, 'rb') as f:
                         resp_doc = client.post(
                             f"{base}/sendDocument",
-                            data={"chat_id": str(DEST_CHAT_ID), "caption": "📎 Informe Ejecutivo + Validación FASE 20"},
+                            data={
+                                "chat_id": str(DEST_CHAT_ID),
+                                "caption": f"Informe Ejecutivo MME — {datetime.now().strftime('%Y-%m-%d')}\nIncluye validacion tecnica de nuevas funcionalidades (pag. 6)",
+                            },
                             files={"document": (os.path.basename(pdf_path), f, "application/pdf")},
                         )
                         if resp_doc.status_code == 200:
                             print(f"   ✅ PDF enviado por Telegram")
                         else:
-                            print(f"   ❌ PDF Telegram: {resp_doc.status_code}")
+                            print(f"   ❌ PDF Telegram: {resp_doc.status_code} {resp_doc.text[:200]}")
+                else:
+                    print("   ⚠️ No hay PDF para enviar")
         else:
             print("   ❌ TELEGRAM_BOT_TOKEN no configurado")
     except Exception as e:
         print(f"   ❌ Error Telegram: {e}")
     
-    # ── 8. Enviar por Email ──  
+    # ── 8. Enviar por Email (informe estándar + PDF con validación en pág. 6) ──
     print(f"\n8️⃣  Enviando email a {DEST_EMAIL}...")
-    try:
-        result = send_email(
-            to_list=[DEST_EMAIL],
-            subject=f"🔬 [PRUEBA FASE 20] Informe Ejecutivo + Seguimiento Predicciones — {datetime.now().strftime('%Y-%m-%d')}",
-            body_html=email_html,
-            pdf_path=pdf_path,
-        )
-        print(f"   📧 Resultado: {result}")
-    except Exception as e:
-        print(f"   ❌ Error email: {e}")
+    if email_html:
+        try:
+            result = send_email(
+                to_list=[DEST_EMAIL],
+                subject=f"Informe Ejecutivo Diario — Portal Energetico MME — {datetime.now().strftime('%Y-%m-%d')}",
+                body_html=email_html,
+                pdf_path=pdf_path,
+            )
+            print(f"   📧 Resultado: {result}")
+            print(f"   ℹ️  Validación técnica incluida en página 6 del PDF adjunto")
+        except Exception as e:
+            print(f"   ❌ Error email: {e}")
+    else:
+        print("   ❌ No se pudo construir el HTML del email")
     
     # ── 9. Limpieza ──
     if pdf_path and os.path.isfile(pdf_path):
@@ -506,6 +616,12 @@ def main():
         except OSError:
             pass
     for cp in chart_paths:
+        try:
+            if cp and os.path.isfile(cp):
+                os.remove(cp)
+        except OSError:
+            pass
+    for _, cp in pred_chart_paths:
         try:
             if cp and os.path.isfile(cp):
                 os.remove(cp)

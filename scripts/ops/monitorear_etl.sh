@@ -69,33 +69,38 @@ fi
 
 echo ""
 echo "────────────────────────────────────────────────────────────"
-echo "📊 ESTADO DE LA BASE DE DATOS"
+echo "📊 ESTADO DE LA BASE DE DATOS (PostgreSQL)"
 echo "────────────────────────────────────────────────────────────"
 
-DB_SIZE=$(du -h portal_energetico.db | cut -f1)
-echo "   Tamaño: $DB_SIZE"
+# Tamaño de la BD PostgreSQL
+DB_SIZE=$(psql -U postgres -d portal_energetico -t -c "SELECT pg_size_pretty(pg_database_size('portal_energetico'));" 2>/dev/null | xargs)
+echo "   Tamaño PostgreSQL: ${DB_SIZE:-N/A}"
 
-# Verificar fechas más recientes
+# Verificar fechas más recientes via psql
 python3 << 'PYEOF'
-import sqlite3
-conn = sqlite3.connect("portal_energetico.db")
-cursor = conn.cursor()
-
-# Fechas más recientes
-metricas = ['VoluUtilDiarEner', 'AporEner', 'Gene', 'CapaUtilDiarEner']
-print("\n   Fechas más recientes:")
-for metrica in metricas:
-    cursor.execute("SELECT MAX(fecha) FROM metrics WHERE metrica = ?", (metrica,))
-    result = cursor.fetchone()
-    if result[0]:
-        print(f"   • {metrica:20} → {result[0]}")
-
-# Total de registros
-cursor.execute("SELECT COUNT(*) FROM metrics")
-total = cursor.fetchone()[0]
-print(f"\n   Total registros: {total:,}")
-
-conn.close()
+import psycopg2, os
+try:
+    conn = psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST", "localhost"),
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        dbname=os.getenv("POSTGRES_DB", "portal_energetico"),
+        user=os.getenv("POSTGRES_USER", "postgres"),
+        password=os.getenv("POSTGRES_PASSWORD", ""),
+    )
+    cursor = conn.cursor()
+    metricas = ['VoluUtilDiarEner', 'AporEner', 'Gene', 'CapaUtilDiarEner']
+    print("\n   Fechas más recientes:")
+    for metrica in metricas:
+        cursor.execute("SELECT MAX(fecha) FROM metrics WHERE metrica = %s", (metrica,))
+        result = cursor.fetchone()
+        if result and result[0]:
+            print(f"   • {metrica:20} → {result[0]}")
+    cursor.execute("SELECT COUNT(*) FROM metrics")
+    total = cursor.fetchone()[0]
+    print(f"\n   Total registros: {total:,}")
+    conn.close()
+except Exception as e:
+    print(f"   ❌ Error conectando a PostgreSQL: {e}")
 PYEOF
 
 echo ""

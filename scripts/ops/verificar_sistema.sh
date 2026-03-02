@@ -79,25 +79,19 @@ else
 fi
 echo ""
 
-# 6. Base de datos
-echo "🗄️  BASE DE DATOS:"
+# 6. Base de datos (PostgreSQL)
+echo "🗄️  BASE DE DATOS (PostgreSQL):"
 echo "────────────────────────────────────────────"
-if [ -f portal_energetico.db ]; then
-    RECORDS=$(sqlite3 portal_energetico.db "SELECT COUNT(*) FROM metrics;" 2>/dev/null)
-    INDICES=$(sqlite3 portal_energetico.db "SELECT COUNT(*) FROM sqlite_master WHERE type='index';" 2>/dev/null)
-    INTEGRITY=$(sqlite3 portal_energetico.db "PRAGMA integrity_check;" 2>/dev/null)
+if psql -U postgres -d portal_energetico -c "SELECT 1;" >/dev/null 2>&1; then
+    RECORDS=$(psql -U postgres -d portal_energetico -t -c "SELECT COUNT(*) FROM metrics;" 2>/dev/null | xargs)
+    INDICES=$(psql -U postgres -d portal_energetico -t -c "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public';" 2>/dev/null | xargs)
     
     echo "   Registros: $(printf "%'d" $RECORDS)"
     echo "   Índices: $INDICES"
-    
-    if [ "$INTEGRITY" = "ok" ]; then
-        echo "   ✅ Integridad: OK"
-    else
-        echo "   ⚠️  Problema de integridad detectado"
-    fi
+    echo "   ✅ Conexión PostgreSQL: OK"
     
     # Fecha de últimos datos
-    LAST_DATE=$(sqlite3 portal_energetico.db "SELECT MAX(fecha) FROM metrics WHERE metrica='Gene' AND entidad='Sistema';" 2>/dev/null)
+    LAST_DATE=$(psql -U postgres -d portal_energetico -t -c "SELECT MAX(fecha) FROM metrics WHERE metrica='Gene' AND entidad='Sistema';" 2>/dev/null | xargs)
     if [ ! -z "$LAST_DATE" ]; then
         echo "   Última actualización: $LAST_DATE"
         
@@ -110,7 +104,7 @@ if [ -f portal_energetico.db ]; then
         fi
     fi
 else
-    echo "   ❌ Base de datos no encontrada"
+    echo "   ❌ No se puede conectar a PostgreSQL"
 fi
 echo ""
 

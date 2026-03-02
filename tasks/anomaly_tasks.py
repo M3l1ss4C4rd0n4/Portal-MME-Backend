@@ -121,6 +121,7 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
                      valor_promedio, json_completo,
                      notificacion_whatsapp_enviada)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT ON CONSTRAINT unique_alerta_fecha_metrica DO NOTHING
                 """, (
                     date.today(),
                     alerta.get('categoria', alerta.get('metrica', 'SISTEMA')),
@@ -386,8 +387,33 @@ def send_daily_summary():
       - 3 gráficos PNG (generación pie, embalses mapa, precio evolución)
 
     Envía por Telegram (texto + PDF) y email (HTML premium + PDF adjunto).
+
+    Incluye guarda anti-duplicación: si el informe ya se envió hoy
+    (por reinicios de beat), no se vuelve a enviar.
     """
     try:
+        # ── Guarda anti-duplicación ──
+        # Los reinicios de celery-beat pueden re-disparar esta tarea
+        # múltiples veces el mismo día. Verificamos si ya se envió hoy.
+        try:
+            _lock_key = f"daily_summary_{date.today().isoformat()}"
+            import redis as _redis
+            _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
+            if _r.get(_lock_key):
+                logger.info(
+                    f"⏭️ [RESUMEN DIARIO] Ya se envió hoy ({date.today()}). "
+                    f"Omitido por guarda anti-duplicación."
+                )
+                return {
+                    "status": "skipped",
+                    "reason": "already_sent_today",
+                    "date": date.today().isoformat(),
+                }
+            # Marcar como enviado con TTL de 20 horas (expira antes del próximo día)
+            _r.setex(_lock_key, 72000, "sent")
+        except Exception as e_lock:
+            logger.warning(f"[RESUMEN DIARIO] Guarda anti-dup no disponible: {e_lock}")
+
         logger.info("📊 [RESUMEN DIARIO] Generando informe ejecutivo completo…")
 
         import requests

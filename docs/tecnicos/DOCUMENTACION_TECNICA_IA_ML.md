@@ -100,7 +100,7 @@ El sistema de chatbot opera mediante un pipeline de cinco etapas secuenciales:
                          ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │ ETAPA 2: EXTRACCIÓN DE CONTEXTO                                │
-│ AgentIA.get_db_connection() → Conexión SQLite                  │
+│ AgentIA.get_db_connection() → Conexión PostgreSQL               │
 │ Query: SELECT fecha, metrica, entidad, recurso, valor_gwh      │
 │        FROM metrics                                             │
 │        WHERE fecha >= date('now', '-30 days')                   │
@@ -111,7 +111,7 @@ El sistema de chatbot opera mediante un pipeline de cinco etapas secuenciales:
 ┌─────────────────────────────────────────────────────────────────┐
 │ ETAPA 3: CONSTRUCCIÓN DE PROMPT                                │
 │ System Prompt: "Eres experto en análisis energético..."        │
-│ Contexto: Datos SQLite formateados como tabla Markdown         │
+│ Contexto: Datos PostgreSQL formateados como tabla Markdown      │
 │ User Query: Pregunta original del usuario                       │
 │ Template: {system} + {context} + {user_query}                  │
 └────────────────────────┬────────────────────────────────────────┘
@@ -212,7 +212,7 @@ response = self.client.chat.completions.create(
 
 - **Top_p 0.9:** Nucleus sampling que considera el 90% de la distribución de probabilidad acumulada, eliminando tokens muy improbables pero manteniendo diversidad léxica.
 
-### 1.4 Integración con Base de Datos SQLite
+### 1.4 Integración con Base de Datos PostgreSQL
 
 #### 1.4.1 Esquema de Acceso a Datos
 
@@ -275,7 +275,7 @@ Estas funciones permiten respuestas más sofisticadas que trascienden la simple 
 
 **Procesamiento interno:**
 1. Extracción de parámetros: métrica="DemaCome", mes="noviembre", año="2024"
-2. Query SQLite:
+2. Query PostgreSQL:
    ```sql
    SELECT AVG(valor_gwh) as promedio, 
           MAX(valor_gwh) as maximo,
@@ -317,7 +317,7 @@ post-pandemia y la expansión del sector industrial colombiano.
 
 **Procesamiento interno:**
 1. Llamada a `detectar_alertas()`
-2. Query SQLite de niveles de embalses:
+2. Query PostgreSQL de niveles de embalses:
    ```sql
    SELECT recurso, 
           valor_gwh as nivel_actual,
@@ -932,9 +932,9 @@ def sanitize_input(user_query: str) -> str:
 
 **Optimizaciones implementadas:**
 
-1. **Caché de prompts:** Contextos de base de datos se cachean durante 5 minutos para reducir queries SQLite repetitivas
+1. **Caché de prompts:** Contextos de base de datos se cachean durante 5 minutos para reducir queries PostgreSQL repetitivas
 
-2. **Conexión pooling:** Pool de 5 conexiones SQLite mantenidas abiertas para reducir overhead de conexión
+2. **Conexión pooling:** Pool de 5 conexiones PostgreSQL mantenidas abiertas para reducir overhead de conexión
 
 3. **Paralelización de entrenamiento:** Modelos de las 5 fuentes se entrenan simultáneamente usando `multiprocessing.Pool`
 
@@ -1060,7 +1060,7 @@ scikit-learn==1.5.2     # Métricas de validación (MAPE)
 pandas==2.2.2           # Procesamiento de datos
 plotly==5.17.0          # Visualizaciones interactivas
 dash==2.17.1            # Framework web
-sqlite3                 # Base de datos (nativo Python)
+psycopg2==2.9.9         # Driver PostgreSQL
 ```
 
 ### Anexo B: Referencias Bibliográficas

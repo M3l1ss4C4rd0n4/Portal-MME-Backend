@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Entorno: {settings.APP_ENV}")
     logger.info(f"Puerto: {settings.APP_PORT}")
     logger.info(f"Proveedor WhatsApp: {settings.WHATSAPP_PROVIDER}")
-    logger.info(f"Database: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else 'SQLite'}")
+    logger.info(f"Database: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else settings.DATABASE_URL}")
     logger.info(f"Redis: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
     
     # Verificar configuración

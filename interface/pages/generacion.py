@@ -73,7 +73,7 @@ def obtener_datos_fichas_realtime(metrica, entidad, fecha_inicio, fecha_fin):
         fecha_fin: Fecha fin (str 'YYYY-MM-DD' o date)
     
     Returns:
-        DataFrame con columna 'valor_gwh' (API XM o SQLite) o None
+        DataFrame con columna 'valor_gwh' (API XM o PostgreSQL) o None
     """
     import logging
     logger = logging.getLogger('generacion_dashboard')
@@ -121,7 +121,7 @@ def obtener_metricas_hidricas():
     
     NUEVA ARQUITECTURA PARA FICHAS (2025-11-24):
     - API XM como fuente PRIMARIA (tiempo real, datos actualizados)
-    - SQLite como FALLBACK (si API no disponible)
+    - PostgreSQL como FALLBACK (si API no disponible)
     - Conversión automática de unidades según fuente
     
     METODOLOGÍA OFICIAL XM:
@@ -140,7 +140,7 @@ def obtener_metricas_hidricas():
         for dias_atras in range(6):
             fecha_busqueda = (fecha_fin - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
             
-            # Obtener volumen y capacidad desde API XM (primero) o SQLite (fallback)
+            # Obtener volumen y capacidad desde API XM (primero) o PostgreSQL (fallback)
             df_vol = obtener_datos_fichas_realtime('VoluUtilDiarEner', 'Embalse', fecha_busqueda, fecha_busqueda)
             df_cap = obtener_datos_fichas_realtime('CapaUtilDiarEner', 'Embalse', fecha_busqueda, fecha_busqueda)
             
@@ -165,7 +165,7 @@ def obtener_metricas_hidricas():
                     reserva_pct = round((vol_total_gwh / cap_total_gwh) * 100, 2)
                     reserva_gwh = round(vol_total_gwh, 2)
                     fecha_reserva = datetime.strptime(fecha_busqueda, '%Y-%m-%d').date()
-                    print(f"Reservas: {reserva_pct}% ({reserva_gwh:,.2f} GWh) - {fecha_busqueda}{' (datos históricos)' if dias_atras > 0 else ''} [API XM ↔ SQLite]")
+                    print(f"Reservas: {reserva_pct}% ({reserva_gwh:,.2f} GWh) - {fecha_busqueda}{' (datos históricos)' if dias_atras > 0 else ''} [API XM ↔ PostgreSQL]")
                     break
         
         # === 2. APORTES HÍDRICOS ===
@@ -185,7 +185,7 @@ def obtener_metricas_hidricas():
                 aporte_pct = round((aportes_promedio / media_promedio) * 100, 2)
                 aporte_gwh = round(media_promedio, 2)  # Mostrar Media Histórica (como XM)
                 fecha_aporte = fecha_fin
-                print(f"Aportes: {aporte_pct}% (Real: {aportes_promedio:.2f} GWh, Hist: {media_promedio:.2f} GWh) [API XM ↔ SQLite]")
+                print(f"Aportes: {aporte_pct}% (Real: {aportes_promedio:.2f} GWh, Hist: {media_promedio:.2f} GWh) [API XM ↔ PostgreSQL]")
         
         # === 3. GENERACIÓN SIN ===
         # Buscar última fecha con datos
@@ -197,7 +197,7 @@ def obtener_metricas_hidricas():
                 # Valor en GWh (ya convertido por obtener_datos_fichas_realtime)
                 gen_gwh = round(df_gen['valor_gwh'].iloc[0], 2)
                 fecha_gen = datetime.strptime(fecha_busqueda, '%Y-%m-%d').date()
-                print(f"Generación SIN: {gen_gwh:.2f} GWh - {fecha_busqueda} [API XM ↔ SQLite]")
+                print(f"Generación SIN: {gen_gwh:.2f} GWh - {fecha_busqueda} [API XM ↔ PostgreSQL]")
                 break
 
         

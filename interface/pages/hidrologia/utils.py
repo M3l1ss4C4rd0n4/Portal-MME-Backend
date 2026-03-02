@@ -218,7 +218,7 @@ def validar_rango_fechas(start_date, end_date):
     """
     Valida que el rango de fechas sea lógicamente válido.
 
-    Permite cualquier rango de fechas – los datos se consultarán desde SQLite
+    Permite cualquier rango de fechas – los datos se consultarán desde PostgreSQL
     (>=2020, rápido) o desde API XM (<2020, lento pero funcional).
     """
     if not start_date or not end_date:
@@ -231,10 +231,10 @@ def validar_rango_fechas(start_date, end_date):
         if start_dt > end_dt:
             return False, "La fecha de inicio debe ser anterior a la fecha final."
 
-        FECHA_LIMITE_SQLITE = date(2020, 1, 1)
+        FECHA_LIMITE_BD = date(2020, 1, 1)
         start_date_obj = start_dt.date() if isinstance(start_dt, datetime) else start_dt
 
-        if start_date_obj < FECHA_LIMITE_SQLITE:
+        if start_date_obj < FECHA_LIMITE_BD:
             mensaje_info = (
                 "ℹ️ Consultando datos anteriores a 2020 desde API XM "
                 "(puede demorar 30-90 segundos). Datos desde 2020 en adelante "
@@ -336,7 +336,7 @@ def normalizar_region(texto):
 # ---------------------------------------------------------------------------
 
 def get_rio_region_dict():
-    """Obtiene la relación río-región directamente desde la API XM / SQLite."""
+    """Obtiene la relación río-región directamente desde la API XM / PostgreSQL."""
     try:
         today = datetime.now().strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')

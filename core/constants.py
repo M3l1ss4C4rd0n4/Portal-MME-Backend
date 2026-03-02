@@ -27,7 +27,7 @@ HEALTH_CHECK_ENDPOINT = "/health"
 # BASE DE DATOS
 # ═══════════════════════════════════════════════════════════════
 
-# Nombre del archivo de base de datos SQLite
+# Nombre del archivo de base de datos legacy (PostgreSQL es el backend principal)
 DATABASE_FILENAME = "portal_energetico.db"
 
 # Tablas principales

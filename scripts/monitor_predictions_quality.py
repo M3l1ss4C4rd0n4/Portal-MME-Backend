@@ -22,6 +22,9 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
+import urllib.request
+import urllib.parse
+import json
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -290,6 +293,66 @@ def evaluar_fuente(conn, fuente, cfg):
     }, None
 
 
+def enviar_alerta_telegram(alertas_globales, resumen):
+    """
+    Envía resumen de alertas por Telegram cuando hay drift o errores críticos.
+    Usa urllib (sin dependencia de requests).
+    """
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID_ALERTAS', '5084190952')
+
+    if not bot_token:
+        print("⚠️  TELEGRAM_BOT_TOKEN no configurado — alerta Telegram omitida")
+        return
+
+    fecha = datetime.now().strftime('%Y-%m-%d %H:%M')
+    ok_count = len([r for r in resumen if r.get('status') == 'OK'])
+    alerta_count = len([r for r in resumen if r.get('status') == 'ALERTA'])
+    omitidas_count = len([r for r in resumen if r.get('status') not in ('OK', 'ALERTA')])
+
+    lines = [f"🔔 *Monitoreo Predicciones — {fecha}*"]
+    lines.append(f"✅ OK: {ok_count} | ⚠️ Alertas: {alerta_count} | ⏭️ Omitidas: {omitidas_count}")
+    lines.append("")
+
+    for a in alertas_globales:
+        lines.append(f"• {a}")
+
+    # Detalle de las fuentes con alerta
+    lines.append("")
+    for r in resumen:
+        if r.get('status') == 'ALERTA':
+            mt = f"{r['mape_train']:.1%}" if r.get('mape_train') is not None else "N/A"
+            lines.append(f"📊 *{r['fuente']}*: MAPE ex\\-post={r['mape_expost']:.1%} vs train={mt} \\({r['dias']}d\\)")
+
+    text = "\n".join(lines)
+
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        data = urllib.parse.urlencode({
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'MarkdownV2',
+        }).encode('utf-8')
+        req = urllib.request.Request(url, data=data)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status == 200:
+                print(f"📱 Alerta Telegram enviada a chat {chat_id}")
+            else:
+                print(f"⚠️  Telegram respondió HTTP {resp.status}")
+    except Exception as e:
+        # Reintentar sin MarkdownV2 (por si hay caracteres problemáticos)
+        try:
+            data_plain = urllib.parse.urlencode({
+                'chat_id': chat_id,
+                'text': text.replace('*', '').replace('\\-', '-').replace('\\(', '(').replace('\\)', ')'),
+            }).encode('utf-8')
+            req2 = urllib.request.Request(url, data=data_plain)
+            with urllib.request.urlopen(req2, timeout=15) as resp2:
+                print(f"📱 Alerta Telegram enviada (plain text) a chat {chat_id}")
+        except Exception as e2:
+            print(f"⚠️  Error enviando Telegram: {e2}")
+
+
 def generar_alertas(resultado):
     """Genera alertas basadas en el resultado de evaluación."""
     alertas = []
@@ -424,6 +487,10 @@ def main():
 
     print(f"\n💾 Resultados guardados en predictions_quality_history")
     print(f"{'=' * 70}\n")
+
+    # ── Enviar alerta Telegram si hay problemas ──
+    if alertas_globales:
+        enviar_alerta_telegram(alertas_globales, resumen)
 
     conn.close()
 

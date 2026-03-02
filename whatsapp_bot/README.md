@@ -299,8 +299,8 @@ curl https://api.groq.com/openai/v1/models \
 # Verificar conexión a DB
 psql $DATABASE_URL -c "SELECT 1"
 
-# O para SQLite
-sqlite3 portal_energetico.db "SELECT COUNT(*) FROM metrics"
+# Verificar conteo de métricas
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM metrics"
 ```
 
 ## 📞 Soporte

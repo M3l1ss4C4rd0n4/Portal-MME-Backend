@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     
     @property
     def DATABASE_PATH(self) -> Path:
-        """Ruta a la base de datos SQLite"""
+        """Ruta a la base de datos legacy (no usada — PostgreSQL es el backend principal)"""
         return self.BASE_DIR / "portal_energetico.db"
     
     @property
@@ -58,31 +58,31 @@ class Settings(BaseSettings):
         return self.BASE_DIR / "backups"
     
     # ═══════════════════════════════════════════════════════════
-    # BASE DE DATOS - SQLite (actual)
+    # BASE DE DATOS - Parámetros legacy (solo ETL fallback)
     # ═══════════════════════════════════════════════════════════
     
     DB_CACHE_SIZE_MB: int = Field(
         default=64,
-        description="Tamaño de cache SQLite en MB"
+        description="Tamaño de cache para consultas locales (legacy)"
     )
     
     DB_WAL_MODE: bool = Field(
         default=True,
-        description="Habilitar modo WAL en SQLite"
+        description="Modo WAL para escrituras concurrentes (legacy)"
     )
     
     DB_JOURNAL_MODE: Literal["DELETE", "WAL", "MEMORY"] = Field(
         default="WAL",
-        description="Modo de journal SQLite"
+        description="Modo de journal para operaciones locales (legacy)"
     )
     
     # ═══════════════════════════════════════════════════════════
-    # BASE DE DATOS - PostgreSQL (preparado para futuro)
+    # BASE DE DATOS - PostgreSQL (backend principal)
     # ═══════════════════════════════════════════════════════════
     
     USE_POSTGRES: bool = Field(
         default=True,
-        description="Usar PostgreSQL en lugar de SQLite"
+        description="Usar PostgreSQL como backend principal"
     )
     
     POSTGRES_HOST: str = Field(
@@ -452,7 +452,7 @@ def is_debug_enabled() -> bool:
 
 
 def get_database_path() -> Path:
-    """Obtiene ruta de la base de datos SQLite"""
+    """Obtiene ruta de la base de datos legacy (PostgreSQL es el backend principal)"""
     return settings.DATABASE_PATH
 
 

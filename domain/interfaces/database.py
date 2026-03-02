@@ -17,7 +17,7 @@ import pandas as pd
 class IDatabaseManager(ABC):
     """
     Interface para gestión de conexiones a base de datos.
-    Permite intercambiar entre PostgreSQL, SQLite u otra BD sin afectar dominio.
+    Permite intercambiar entre PostgreSQL u otra BD sin afectar dominio.
     """
     
     @abstractmethod
@@ -27,7 +27,7 @@ class IDatabaseManager(ABC):
         Context manager para obtener conexión segura a base de datos.
         
         Yields:
-            Objeto de conexión (psycopg2.connection, sqlite3.Connection, etc.)
+            Objeto de conexión (psycopg2.connection, etc.)
             
         Example:
             with db_manager.get_connection() as conn:

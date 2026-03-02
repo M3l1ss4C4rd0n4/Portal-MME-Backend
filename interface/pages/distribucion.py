@@ -97,7 +97,7 @@ def obtener_datos_inteligente(metrica, entidad, fecha_inicio, fecha_fin):
 def obtener_demanda_no_atendida(fecha_inicio, fecha_fin):
     """Obtener datos de Demanda No Atendida Programada por Área"""
     try:
-        # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (SQLite)
+        # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (PostgreSQL)
         df, warning = obtener_datos_inteligente('DemaNoAtenProg', 'Area', 
                                                  fecha_inicio.strftime('%Y-%m-%d') if hasattr(fecha_inicio, 'strftime') else fecha_inicio,
                                                  fecha_fin.strftime('%Y-%m-%d') if hasattr(fecha_fin, 'strftime') else fecha_fin)
@@ -111,11 +111,11 @@ def obtener_demanda_no_atendida(fecha_inicio, fecha_fin):
             df = df[df['Name'] != 'Area'].copy()
         
         # Renombrar columnas para mayor claridad
-        # NOTA: Los datos de SQLite ya vienen en GWh (no dividir de nuevo)
+        # NOTA: Los datos de PostgreSQL ya vienen en GWh (no dividir de nuevo)
         df_resultado = pd.DataFrame({
             'Fecha': pd.to_datetime(df['Date']),
             'Area': df['Name'],
-            'Demanda_No_Atendida_GWh': df['Value']  # Ya en GWh desde SQLite
+            'Demanda_No_Atendida_GWh': df['Value']  # Ya en GWh desde BD local
         })
         
         # Ordenar por fecha descendente
@@ -868,10 +868,10 @@ def actualizar_datos_distribucion(n_clicks, codigo_agente, fecha_inicio_str, fec
         else:
             # Todos los agentes - consultar a nivel sistema
             df_reg, _ = obtener_datos_inteligente('DemaRealReg', 'Sistema', fecha_inicio, fecha_fin)
-            demanda_regulada = df_reg['Value'].sum() if df_reg is not None and not df_reg.empty else 0.0  # Ya en GWh desde SQLite
+            demanda_regulada = df_reg['Value'].sum() if df_reg is not None and not df_reg.empty else 0.0  # Ya en GWh desde BD local
             
             df_noreg, _ = obtener_datos_inteligente('DemaRealNoReg', 'Sistema', fecha_inicio, fecha_fin)
-            demanda_no_regulada = df_noreg['Value'].sum() if df_noreg is not None and not df_noreg.empty else 0.0  # Ya en GWh desde SQLite
+            demanda_no_regulada = df_noreg['Value'].sum() if df_noreg is not None and not df_noreg.empty else 0.0  # Ya en GWh desde BD local
         
         # Porcentajes
         porcentaje_regulado = (demanda_regulada / demanda_real_total * 100) if demanda_real_total > 0 else 0.0
