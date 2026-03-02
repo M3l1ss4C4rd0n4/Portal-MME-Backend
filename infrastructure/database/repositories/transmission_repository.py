@@ -135,7 +135,7 @@ class TransmissionRepository(BaseRepository, ITransmissionRepository):
         available_cols = [col for col in column_mapping.values() if col in df_mapped.columns]
         df_insert = df_mapped[available_cols].copy()
         
-        # Convertir Timestamps a string para SQLite
+        # Convertir Timestamps a string para inserción
         date_cols = ['fecha_publicacion', 'fecha_registro', 'fpo']
         for col in date_cols:
             if col in df_insert.columns:

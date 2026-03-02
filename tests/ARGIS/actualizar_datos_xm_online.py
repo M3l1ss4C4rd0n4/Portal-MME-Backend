@@ -59,7 +59,7 @@ except ImportError:
 
 ARCGIS_PORTAL_URL = os.getenv("ARCGIS_PORTAL_URL", "https://arcgisenterprise.minenergia.gov.co/portal/")
 ARCGIS_USERNAME = os.getenv("ARCGIS_USERNAME", "Vice_Energia")
-ARCGIS_PASSWORD = os.getenv("ARCGIS_PASSWORD", "Survey123+")
+ARCGIS_PASSWORD = os.getenv("ARCGIS_PASSWORD", "")
 
 # ID del Feature Layer (obtenido después de la primera ejecución)
 FEATURE_LAYER_ID = os.getenv("FEATURE_LAYER_ID", None)

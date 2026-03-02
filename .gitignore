@@ -73,6 +73,8 @@ fix_syntax.py
 
 # Archivos de configuración local
 .env
+.env.*
+!.env.example
 config_local.py
 portal_energetico.db
 portal_energetico.db.tar.gz

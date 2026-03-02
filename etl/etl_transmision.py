@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ETL para Líneas de Transmisión
-Descarga datos desde SIMEM API y los almacena en SQLite
+Descarga datos desde SIMEM API y los almacena en PostgreSQL
 
 Uso:
     python3 etl/etl_transmision.py [--days DAYS] [--clean]
@@ -92,7 +92,7 @@ def run_etl(days_back: int = 7, clean_old: bool = False):
     try:
         repo = TransmissionRepository()
         
-        print(f"💾 Insertando {len(df)} registros en SQLite...")
+        print(f"💾 Insertando {len(df)} registros en PostgreSQL...")
         inserted = repo.bulk_insert_lines(df)
         print(f"✅ Insertados {inserted} registros nuevos (duplicados omitidos)")
         

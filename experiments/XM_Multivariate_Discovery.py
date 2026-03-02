@@ -71,13 +71,13 @@ import plotly
 print(f"   Pandas {pd.__version__}, Plotly {plotly.__version__}")
 print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-# Configuración
+# Configuración (credenciales desde variables de entorno)
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'dbname': 'portal_energetico',
-    'user': 'postgres',
-    'password': 'meli2003',
+    'host': os.getenv('POSTGRES_HOST', 'localhost'),
+    'port': int(os.getenv('POSTGRES_PORT', '5432')),
+    'dbname': os.getenv('POSTGRES_DB', 'portal_energetico'),
+    'user': os.getenv('POSTGRES_USER', 'postgres'),
+    'password': os.getenv('POSTGRES_PASSWORD', ''),
 }
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'logs', 'fase15_discovery')
 os.makedirs(OUTPUT_DIR, exist_ok=True)

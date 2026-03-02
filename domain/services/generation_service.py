@@ -104,15 +104,17 @@ class GenerationService:
                     ORDER BY codigo
                 """
             else:
-                query = f"""
+                query = """
                     SELECT codigo as recurso, tipo as tipo_clasificado
                     FROM catalogos
                     WHERE catalogo = 'ListadoRecursos'
-                    AND tipo = '{tipo_consulta}'
+                    AND tipo = %s
                     ORDER BY codigo
                 """
             
-            df_recursos = self.repo.execute_dataframe(query)
+            df_recursos = self.repo.execute_dataframe(
+                query, (tipo_consulta,)
+            ) if source_type.upper() != 'TODAS' else self.repo.execute_dataframe(query)
             
             if df_recursos is None or df_recursos.empty:
                 logger.warning(f"⚠️ No se encontraron recursos de tipo {source_type} en catalogos")

@@ -32,7 +32,10 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ── FASE 17: MLflow tracking ──
-MLFLOW_TRACKING_URI = 'postgresql+psycopg2://postgres:meli2003@localhost:5432/mlflow_tracking'
+MLFLOW_TRACKING_URI = os.getenv(
+    'MLFLOW_TRACKING_URI',
+    f'postgresql+psycopg2://{os.getenv("POSTGRES_USER", "postgres")}:{os.getenv("POSTGRES_PASSWORD", "")}@localhost:5432/mlflow_tracking'
+)
 MLFLOW_ARTIFACT_ROOT = os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), 'logs', 'mlflow_artifacts')
 _MLFLOW_ENABLED = False  # Se activa con --mlflow

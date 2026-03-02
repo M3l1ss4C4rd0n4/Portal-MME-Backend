@@ -1,7 +1,7 @@
 """
 Agente IA para análisis en tiempo real del Dashboard MME
 Usa OpenRouter/Groq con modelos de última generación
-Conecta a SQLite a través de DatabaseManager
+Conecta a PostgreSQL a través de DatabaseManager
 """
 import os
 from openai import OpenAI
@@ -43,11 +43,21 @@ class AgentIA:
         # Método mantenido por compatibilidad temporal si es necesario
         pass
     
+    # Tablas permitidas para consultas directas (whitelist anti SQL-injection)
+    ALLOWED_TABLES = frozenset({
+        'metrics', 'metrics_hourly', 'predictions', 'catalogos',
+        'lineas_transmision', 'alertas_historial', 'commercial_metrics'
+    })
+
     def obtener_datos_recientes(self, tabla: str, limite: int = 100) -> List[Dict]:
-        """Obtiene datos recientes de una tabla específica desde SQLite"""
+        """Obtiene datos recientes de una tabla específica desde PostgreSQL"""
         try:
-            # Nota: Validar nombre de tabla si viniera de input usuario
-            query = f"SELECT * FROM {tabla} ORDER BY Date DESC LIMIT %s"
+            # Validar nombre de tabla contra whitelist (prevenir SQL injection)
+            if tabla not in self.ALLOWED_TABLES:
+                print(f"⚠️ Tabla '{tabla}' no está en la whitelist de tablas permitidas")
+                return []
+            # tabla validada contra whitelist → seguro usar en query
+            query = f"SELECT * FROM {tabla} ORDER BY fecha DESC LIMIT %s"
             df = db_manager.query_df(query, params=(limite,))
             
             if df.empty:

@@ -13,6 +13,14 @@ class DatabaseManager(IDatabaseManager):
     """
     Singleton para manejo de conexiones a base de datos PostgreSQL.
     Implementa IDatabaseManager para cumplir con arquitectura limpia.
+
+    .. note:: Ruta de conexión legada
+        Este manager es utilizado por servicios y repositorios que
+        requieren ``execute_query``/``execute_dataframe`` directamente.
+        Los repositorios nuevos deben extender ``BaseRepository``
+        (que usa ``PostgreSQLConnectionManager`` de ``connection.py``).
+        Ambas rutas apuntan al mismo servidor PostgreSQL con las mismas
+        credenciales de ``core.config.settings``.
     """
     
     def __init__(self):

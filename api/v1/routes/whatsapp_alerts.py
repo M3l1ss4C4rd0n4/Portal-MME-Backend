@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 import logging
-import requests
+import httpx
 
 from api.dependencies import get_api_key
 
@@ -78,6 +78,7 @@ class AlertNotification(BaseModel):
 )
 async def send_alert_to_whatsapp(
     request: Request,
+    api_key: str = Depends(get_api_key),
 ) -> dict:
     """
     Broadcast de alerta via el WhatsApp Bot de Oscar.
@@ -109,11 +110,8 @@ async def send_alert_to_whatsapp(
             'severity': severity,
         }
         
-        response = requests.post(
-            bot_url,
-            json=bot_payload,
-            timeout=WHATSAPP_BOT_CONFIG['timeout']
-        )
+        async with httpx.AsyncClient(timeout=WHATSAPP_BOT_CONFIG['timeout']) as client:
+            response = await client.post(bot_url, json=bot_payload)
         
         if response.status_code == 200:
             result = response.json()
@@ -139,14 +137,14 @@ async def send_alert_to_whatsapp(
                 detail=f"WhatsApp Bot respondió con error: {response.status_code}"
             )
     
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         logger.error(f"[BROADCAST_ALERT] ⏱️ Timeout conectando al WhatsApp Bot")
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="Timeout conectando al WhatsApp Bot"
         )
     
-    except requests.exceptions.ConnectionError:
+    except httpx.ConnectError:
         logger.error(f"[BROADCAST_ALERT] 🔌 Error de conexión al WhatsApp Bot")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -170,17 +168,21 @@ async def send_alert_to_whatsapp(
     description="Verifica si el WhatsApp Bot está disponible",
     tags=["🤖 Chatbot"]
 )
-async def check_whatsapp_bot_status() -> dict:
+async def check_whatsapp_bot_status(
+    api_key: str = Depends(get_api_key),
+) -> dict:
     """Verificar conectividad con el WhatsApp Bot y cantidad de usuarios"""
     try:
         bot_health_url = f"{WHATSAPP_BOT_CONFIG['base_url']}/health"
         bot_users_url = f"{WHATSAPP_BOT_CONFIG['base_url']}{WHATSAPP_BOT_CONFIG['status_endpoint']}"
         
-        health_response = requests.get(bot_health_url, timeout=5)
+        async with httpx.AsyncClient(timeout=5) as client:
+            health_response = await client.get(bot_health_url)
         
         users_info = {}
         try:
-            users_response = requests.get(bot_users_url, timeout=5)
+            async with httpx.AsyncClient(timeout=5) as client:
+                users_response = await client.get(bot_users_url)
             if users_response.status_code == 200:
                 users_info = users_response.json()
         except Exception:
