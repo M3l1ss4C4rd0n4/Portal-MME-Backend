@@ -33,11 +33,11 @@ import pandas as pd
 import numpy as np
 from datetime import date, datetime, timedelta
 import logging
-import psycopg2
 
 from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar
 from interface.components.chart_card import crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
+from infrastructure.database.repositories.predictions_repository import PredictionsRepository
 
 logger = logging.getLogger("seguimiento_predicciones")
 
@@ -99,75 +99,28 @@ def clasificar_mape(mape):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FUNCIONES DE ACCESO A DATOS
+# FUNCIONES DE ACCESO A DATOS (via PredictionsRepository — sin psycopg2 directo)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _get_conn():
-    """Conexión PostgreSQL via ConnectionManager."""
-    try:
-        from infrastructure.database.connection import PostgreSQLConnectionManager
-        mgr = PostgreSQLConnectionManager()
-        params = {'host': mgr.host, 'port': mgr.port, 'database': mgr.database, 'user': mgr.user}
-        if mgr.password:
-            params['password'] = mgr.password
-        return psycopg2.connect(**params)
-    except Exception as e:
-        logger.error(f"Error conexión PostgreSQL: {e}")
-        return None
+_predictions_repo = PredictionsRepository()
 
 
 def cargar_resumen_predicciones():
     """Carga resumen de todas las predicciones en la BD."""
-    conn = _get_conn()
-    if not conn:
-        return pd.DataFrame()
     try:
-        query = """
-        SELECT fuente, modelo, 
-               COUNT(*) as dias_predichos,
-               MIN(fecha_prediccion) as fecha_inicio,
-               MAX(fecha_prediccion) as fecha_fin,
-               ROUND(AVG(mape)::numeric, 4) as mape_entrenamiento,
-               ROUND(AVG(rmse)::numeric, 2) as rmse_entrenamiento,
-               ROUND(AVG(confianza)::numeric, 2) as confianza,
-               MAX(fecha_generacion) as ultima_generacion
-        FROM predictions
-        GROUP BY fuente, modelo
-        ORDER BY fuente
-        """
-        df = pd.read_sql_query(query, conn)
-        return df
+        return _predictions_repo.get_predictions_summary()
     except Exception as e:
         logger.error(f"Error cargando resumen: {e}")
         return pd.DataFrame()
-    finally:
-        conn.close()
 
 
 def cargar_predicciones_metrica(fuente):
     """Carga todas las predicciones de una métrica."""
-    conn = _get_conn()
-    if not conn:
-        return pd.DataFrame()
     try:
-        query = """
-        SELECT fecha_prediccion as fecha, valor_gwh_predicho as predicho,
-               intervalo_inferior, intervalo_superior, 
-               modelo, confianza, mape as mape_train, rmse as rmse_train,
-               fecha_generacion
-        FROM predictions
-        WHERE fuente = %s
-        ORDER BY fecha_prediccion
-        """
-        df = pd.read_sql_query(query, conn, params=(fuente,))
-        if not df.empty:
-            df['fecha'] = pd.to_datetime(df['fecha'])
-        return df
+        return _predictions_repo.get_predictions_for_metric(fuente)
     except Exception as e:
         logger.error(f"Error cargando predicciones {fuente}: {e}")
         return pd.DataFrame()
-    finally:
-        conn.close()
 
 
 def cargar_reales_metrica(fuente, fecha_desde, fecha_hasta):
@@ -176,62 +129,27 @@ def cargar_reales_metrica(fuente, fecha_desde, fecha_hasta):
     if not cfg:
         return pd.DataFrame()
     
-    conn = _get_conn()
-    if not conn:
-        return pd.DataFrame()
-    
     try:
         if 'tipo_catalogo' in cfg:
-            # Fuente de generación → JOIN con catalogos
-            query = """
-            SELECT m.fecha, SUM(m.valor_gwh) AS valor
-            FROM metrics m
-            INNER JOIN catalogos c ON m.recurso = c.codigo
-            WHERE c.tipo = %s AND m.metrica = 'Gene'
-              AND m.fecha BETWEEN %s AND %s AND m.valor_gwh > 0
-            GROUP BY m.fecha ORDER BY m.fecha
-            """
-            params = (cfg['tipo_catalogo'], fecha_desde, fecha_hasta)
+            df = _predictions_repo.get_real_generation_by_type(
+                cfg['tipo_catalogo'], fecha_desde, fecha_hasta
+            )
         else:
-            # Métrica sectorial
             metrica = cfg['metrica']
             agg_fn = cfg.get('agg', 'SUM')
             entidad = cfg.get('entidad')
             prefer_sistema = cfg.get('prefer_sistema', False)
             
-            if entidad:
-                query = f"""
-                SELECT fecha, {agg_fn}(valor_gwh) AS valor
-                FROM metrics
-                WHERE metrica = %s AND fecha BETWEEN %s AND %s
-                  AND entidad = %s AND valor_gwh > 0
-                GROUP BY fecha ORDER BY fecha
-                """
-                params = (metrica, fecha_desde, fecha_hasta, entidad)
-            elif prefer_sistema:
-                query = f"""
-                SELECT fecha,
-                  CASE WHEN MAX(CASE WHEN entidad='Sistema' THEN 1 ELSE 0 END) = 1
-                       THEN {agg_fn}(CASE WHEN entidad='Sistema' THEN valor_gwh END)
-                       ELSE {agg_fn}(valor_gwh)
-                  END AS valor
-                FROM metrics
-                WHERE metrica = %s AND fecha BETWEEN %s AND %s AND valor_gwh > 0
-                GROUP BY fecha ORDER BY fecha
-                """
-                params = (metrica, fecha_desde, fecha_hasta)
-            else:
-                query = f"""
-                SELECT fecha, {agg_fn}(valor_gwh) AS valor
-                FROM metrics
-                WHERE metrica = %s AND fecha BETWEEN %s AND %s AND valor_gwh > 0
-                GROUP BY fecha ORDER BY fecha
-                """
-                params = (metrica, fecha_desde, fecha_hasta)
+            df = _predictions_repo.get_real_metric_data(
+                metrica=metrica,
+                agg_fn=agg_fn,
+                fecha_desde=fecha_desde,
+                fecha_hasta=fecha_hasta,
+                entidad=entidad,
+                prefer_sistema=prefer_sistema,
+            )
         
-        df = pd.read_sql_query(query, conn, params=params)
         if not df.empty:
-            df['fecha'] = pd.to_datetime(df['fecha'])
             escala = cfg.get('escala', 1)
             if escala != 1:
                 df['valor'] = df['valor'] * escala
@@ -239,30 +157,15 @@ def cargar_reales_metrica(fuente, fecha_desde, fecha_hasta):
     except Exception as e:
         logger.error(f"Error cargando reales {fuente}: {e}")
         return pd.DataFrame()
-    finally:
-        conn.close()
 
 
 def cargar_quality_history():
     """Carga historial de evaluaciones de calidad ex-post."""
-    conn = _get_conn()
-    if not conn:
-        return pd.DataFrame()
     try:
-        query = """
-        SELECT fuente, fecha_evaluacion, fecha_desde, fecha_hasta,
-               dias_overlap, mape_expost, rmse_expost, mape_train, rmse_train,
-               modelo, notas
-        FROM predictions_quality_history
-        ORDER BY fecha_evaluacion DESC, fuente
-        """
-        df = pd.read_sql_query(query, conn)
-        return df
+        return _predictions_repo.get_quality_history()
     except Exception as e:
         logger.error(f"Error cargando quality history: {e}")
         return pd.DataFrame()
-    finally:
-        conn.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

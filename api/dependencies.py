@@ -170,6 +170,60 @@ def get_ai_service() -> AgentIA:
 
 
 # ═══════════════════════════════════════════════════════════
+# SERVICIO ORQUESTADOR (singleton via DI Container)
+# ═══════════════════════════════════════════════════════════
+
+def get_cu_service():
+    """
+    Singleton del servicio de Costo Unitario (CU).
+    
+    Usa el DI Container para reutilizar la misma instancia
+    entre requests.
+    
+    Returns:
+        Instancia compartida de CUService
+    """
+    from core.container import container
+    return container.get_cu_service()
+
+
+def get_losses_nt_service():
+    """
+    Singleton del servicio de Pérdidas No Técnicas.
+    
+    Returns:
+        Instancia compartida de LossesNTService
+    """
+    from core.container import container
+    return container.losses_nt_service
+
+
+def get_simulation_service():
+    """
+    Singleton del servicio de Simulación CREG.
+
+    Returns:
+        Instancia compartida de SimulationService
+    """
+    from core.container import container
+    return container.simulation_service
+
+
+def get_orchestrator_service():
+    """
+    Singleton del servicio orquestador de chatbot.
+    
+    Usa el DI Container para reutilizar la misma instancia
+    entre requests (evita re-inicializar 7 sub-servicios).
+    
+    Returns:
+        Instancia compartida de ChatbotOrchestratorService
+    """
+    from core.container import container
+    return container.get_orchestrator_service()
+
+
+# ═══════════════════════════════════════════════════════════
 # DEPENDENCIAS DE PAGINACIÓN
 # ═══════════════════════════════════════════════════════════
 

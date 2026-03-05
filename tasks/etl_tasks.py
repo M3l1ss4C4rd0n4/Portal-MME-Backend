@@ -1,10 +1,12 @@
 """Tareas Celery para ETL automatizado"""
 from celery import shared_task, Task
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 import logging
 import os
 import glob
 from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
+
+from tasks import app
 
 logger = logging.getLogger(__name__)
 
@@ -249,3 +251,50 @@ def test_task():
         "message": "Test task completed",
         "timestamp": datetime.now().isoformat()
     }
+
+
+@app.task(bind=True, max_retries=3, default_retry_delay=300)
+def calcular_cu_diario(self):
+    """
+    Calcula el Costo Unitario (CU) diario.
+    
+    Ejecuta a las 10:00 AM para capturar datos con lag de 2 días.
+    Calcula CU para los últimos 7 días (cubre posible lag de RestAliv/PerdidasEner).
+    
+    Retries: 3 veces con 5 min de delay (por si hay datos no disponibles aún)
+    """
+    from domain.services.cu_service import CUService
+
+    logger.info("💰 Iniciando cálculo del CU diario")
+
+    try:
+        cu_service = CUService()
+        hoy = date.today()
+        insertados = 0
+        errores = 0
+
+        # Calcular últimos 7 días para cubrir el lag
+        for i in range(7):
+            fecha = hoy - timedelta(days=i)
+            try:
+                saved = cu_service.save_cu_for_date(fecha)
+                if saved:
+                    insertados += 1
+                    logger.info(f"💰 CU {fecha}: guardado OK")
+            except Exception as e:
+                errores += 1
+                logger.error(f"💰 CU {fecha}: error → {e}")
+
+        result = {
+            "status": "success",
+            "insertados": insertados,
+            "errores": errores,
+            "dias_procesados": 7,
+            "timestamp": datetime.now().isoformat()
+        }
+        logger.info(f"💰 CU diario completado: {result}")
+        return result
+
+    except Exception as exc:
+        logger.error(f"💰 Error en calcular_cu_diario: {exc}")
+        raise self.retry(exc=exc)

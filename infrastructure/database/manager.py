@@ -1,3 +1,4 @@
+import warnings
 import psycopg2
 import psycopg2.extras
 import pandas as pd
@@ -8,6 +9,14 @@ from infrastructure.logging.logger import get_logger
 from domain.interfaces.database import IDatabaseManager
 
 logger = get_logger(__name__)
+
+# ──────────────────────────────────────────────────────────────
+# DEPRECATION NOTICE
+# ──────────────────────────────────────────────────────────────
+# Este módulo será deprecado.  Los repositorios nuevos deben usar
+# infrastructure.database.connection.PostgreSQLConnectionManager
+# vía BaseRepository.  La migración se completará progresivamente.
+# ──────────────────────────────────────────────────────────────
 
 class DatabaseManager(IDatabaseManager):
     """
@@ -36,7 +45,9 @@ class DatabaseManager(IDatabaseManager):
                 port=settings.POSTGRES_PORT,
                 database=settings.POSTGRES_DB,
                 user=settings.POSTGRES_USER,
-                password=settings.POSTGRES_PASSWORD
+                password=settings.POSTGRES_PASSWORD,
+                connect_timeout=10,
+                options='-c statement_timeout=30000',  # 30s max query
             )
             conn.autocommit = False
             yield conn

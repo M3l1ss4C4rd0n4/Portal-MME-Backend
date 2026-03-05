@@ -18,7 +18,7 @@ import dash_bootstrap_components as dbc
 import plotly.express as px
 
 from infrastructure.logging.logger import setup_logger
-from infrastructure.external.xm_service import obtener_datos_inteligente
+from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI, obtener_datos_desde_bd
 from domain.services.geo_service import REGIONES_COORDENADAS
 
 from interface.components.layout import (
@@ -2180,8 +2180,8 @@ def cargar_mapa_embalses(data):
             volumen_pct = emb.get('volumen_valor', 0)
             nombre_embalse = emb.get('nombre', '').replace('    └─ ', '')
             
-            # Calcular riesgo con LA MISMA función del semáforo
-            riesgo, color, icono = calcular_semaforo_embalse(participacion, volumen_pct)
+            # Calcular riesgo con función que retorna ALTO/MEDIO/BAJO
+            riesgo, color, icono = calcular_semaforo_embalse_local(participacion, volumen_pct)
             
             regiones_embalses[region].append({
                 'nombre': nombre_embalse,

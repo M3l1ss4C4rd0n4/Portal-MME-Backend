@@ -13,13 +13,14 @@ Autor: Diagnóstico técnico – Portal Energético MME
 Fecha: 19 de febrero de 2026
 """
 
+import os
 import requests
 import json
 import sys
 from datetime import datetime
 
-API_BASE = "http://127.0.0.1:8000"
-API_KEY = "mme-portal-energetico-2026-secret-key"
+API_BASE = os.environ.get("PORTAL_API_URL", "http://127.0.0.1:8000")
+API_KEY = os.environ.get("PORTAL_API_KEY", "")
 HEADERS = {
     "Content-Type": "application/json",
     "X-API-Key": API_KEY,

@@ -8,6 +8,9 @@ Funciones para crear mapas de Colombia (embalses por región, choropleth).
 import pandas as pd
 import json
 
+from dash import dcc, html
+import dash_bootstrap_components as dbc
+
 from infrastructure.logging.logger import setup_logger
 from domain.services.geo_service import REGIONES_COORDENADAS, obtener_coordenadas_region
 
@@ -249,7 +252,7 @@ def crear_mapa_embalses_directo(regiones_totales, df_completo_embalses):
             participacion = float(row.get('Participación (%)', 0))
             volumen_pct = float(row.get('Volumen Útil (%)', 0))
             
-            riesgo, color, icono = calcular_semaforo_embalse(participacion, volumen_pct)
+            riesgo, color, icono = calcular_semaforo_embalse_local(participacion, volumen_pct)
             
             coords_region = REGIONES_COORDENADAS[region_normalizada]
             lat_centro = coords_region['lat']

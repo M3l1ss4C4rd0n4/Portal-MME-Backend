@@ -66,6 +66,12 @@ app.conf.beat_schedule = {
         'task': 'tasks.anomaly_tasks.send_daily_summary',
         'schedule': crontab(hour=8, minute=0),  # Diario a las 8 AM
     },
+    # Cálculo del Costo Unitario (CU) diario a las 10:00 AM
+    # (espera a que RestAliv y PerdidasEner estén disponibles — lag ~2 días)
+    'calcular-cu-diario': {
+        'task': 'tasks.etl_tasks.calcular_cu_diario',
+        'schedule': crontab(hour=10, minute=0),  # Diario a las 10 AM
+    },
 }
 
 if __name__ == '__main__':

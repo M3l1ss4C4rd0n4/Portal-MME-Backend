@@ -24,6 +24,12 @@ from .utils import (
     calcular_volumen_util_unificado,
     normalizar_codigo, ensure_rio_region_loaded,
 )
+from .data_services import (
+    get_aportes_hidricos_por_region,
+    get_aportes_hidricos_por_rio,
+    get_reservas_hidricas_por_region,
+    get_porcapor_data,
+)
 
 def crear_fichas_sin_seguras(region=None, rio=None):
     """

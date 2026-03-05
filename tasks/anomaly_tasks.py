@@ -291,6 +291,56 @@ def check_anomalies(self):
             alertas_criticas.extend(staleness_alerts)
             logger.warning(f"⚠️ [ANOMALÍAS] {len(staleness_alerts)} métricas con datos congelados")
 
+        # ── CU/PNT alertas (Fase 7) ──
+        try:
+            from core.container import container as _ctnr
+            _cu = _ctnr.get_cu_service().get_cu_current()
+            if _cu:
+                cu_val = _cu.get('cu_total', 0)
+                if cu_val > 600:
+                    alertas_criticas.append({
+                        'titulo': f'CU_EXTREMO: {cu_val:.0f} COP/kWh',
+                        'categoria': 'Costo Unitario',
+                        'severidad': 'CRÍTICO',
+                        'descripcion': (
+                            f'El Costo Unitario alcanzó {cu_val:.2f} COP/kWh '
+                            f'(umbral crítico: >600). Posible estrés tarifario.'
+                        ),
+                    })
+                    logger.warning(f"🔴 [ANOMALÍAS] CU CRÍTICO: {cu_val:.2f} COP/kWh")
+                elif cu_val > 400:
+                    alertas_criticas.append({
+                        'titulo': f'CU_ELEVADO: {cu_val:.0f} COP/kWh',
+                        'categoria': 'Costo Unitario',
+                        'severidad': 'ALERTA',
+                        'descripcion': (
+                            f'El Costo Unitario alcanzó {cu_val:.2f} COP/kWh '
+                            f'(umbral alerta: >400).'
+                        ),
+                    })
+                    logger.info(f"⚠️ [ANOMALÍAS] CU elevado: {cu_val:.2f} COP/kWh")
+        except Exception as e:
+            logger.warning(f"[ANOMALÍAS] CU check falló (no crítico): {e}")
+
+        try:
+            from core.container import container as _ctnr
+            _pnt = _ctnr.losses_nt_service.get_losses_statistics()
+            if _pnt:
+                pnt_val = _pnt.get('pct_promedio_nt_30d', 0)
+                if pnt_val > 8.0:
+                    alertas_criticas.append({
+                        'titulo': f'PNT_ELEVADA: {pnt_val:.1f}%',
+                        'categoria': 'Pérdidas No Técnicas',
+                        'severidad': 'ALERTA',
+                        'descripcion': (
+                            f'Las P_NT promedio 30d alcanzaron {pnt_val:.2f}% '
+                            f'(umbral alerta: >8%). Posible incremento de hurto.'
+                        ),
+                    })
+                    logger.info(f"⚠️ [ANOMALÍAS] PNT elevada: {pnt_val:.2f}%")
+        except Exception as e:
+            logger.warning(f"[ANOMALÍAS] PNT check falló (no crítico): {e}")
+
         # Registrar TODAS las alertas en BD (para el informe diario)
         if alertas_criticas:
             _registrar_alerta_bd(alertas_criticas, 0)
@@ -642,6 +692,23 @@ def send_daily_summary():
                             f"*{abs(desv_h):.1f}% {dir_txt}*\n"
                         )
             tg_message += "\n"
+
+        # ── CU/PNT KPIs (Fase 7) ──
+        try:
+            from core.container import container as _ctnr
+            _cu = _ctnr.get_cu_service().get_cu_current()
+            _pnt = _ctnr.losses_nt_service.get_losses_statistics()
+            if _cu:
+                cu_val = _cu.get('cu_total', 0)
+                tg_message += f"💰 *CU:* {cu_val:.2f} COP/kWh ({_cu.get('fecha', '')})\n"
+            if _pnt:
+                pnt_30d = _pnt.get('pct_promedio_nt_30d', 0)
+                tend = _pnt.get('tendencia_nt', '')
+                tg_message += f"🔌 *P\\_NT 30d:* {pnt_30d:.2f}% ({tend})\n"
+            if _cu or _pnt:
+                tg_message += "\n"
+        except Exception as _e:
+            logger.warning(f"[RESUMEN] CU/PNT para Telegram falló: {_e}")
 
         # ── Predicciones compactas (del contexto) ──
         _ctx = d_informe.get('contexto_datos', {}) if d_informe else {}

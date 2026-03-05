@@ -456,12 +456,29 @@ METRICAS_CONFIG = {
     },
     
     # 1b. GENERACIÓN TOTAL DEL SISTEMA - Para chatbot Viceministro
+    # FASE 4.2: Regresores calendario + EMBALSES_PCT para capturar estacionalidad
     'GENE_TOTAL': {
         'metricas': [
             'Gene'             # Generación Total Nacional
         ],
         'tipo': 'suma_diaria',
         'entidad_filtro': 'Sistema',   # Total nacional únicamente
+        'regresores': {
+            'es_festivo':  {'tipo': 'calendario'},
+            'dow_lun':     {'tipo': 'calendario'},
+            'dow_mar':     {'tipo': 'calendario'},
+            'dow_mie':     {'tipo': 'calendario'},
+            'dow_jue':     {'tipo': 'calendario'},
+            'dow_vie':     {'tipo': 'calendario'},
+            'dow_sab':     {'tipo': 'calendario'},
+            'embalses_pct': {
+                'metrica_bd': 'PorcVoluUtilDiar',
+                'entidad': 'Sistema',
+                'agg': 'AVG',
+                'escala': 100,
+                'fuente_prediccion': 'EMBALSES_PCT'
+            },
+        },
         'descripcion': 'Generación total del SIN (Sistema Interconectado Nacional)',
         'unidad': 'GWh',
         'criticidad': 'CRÍTICA',
@@ -543,11 +560,22 @@ METRICAS_CONFIG = {
     },
     
     # 4. PRECIO DE ESCASEZ
+    # FASE 4.2: Regresor EMBALSES_PCT — precio de escasez gobierna Cargo por
+    # Confiabilidad, inversamente correlacionado con nivel de embalses.
     'PRECIO_ESCASEZ': {
         'metricas': [
             'PrecEsca'         # Precio de Escasez (Señal de Confiabilidad)
         ],
         'tipo': 'promedio_diario',
+        'regresores': {
+            'embalses_pct': {
+                'metrica_bd': 'PorcVoluUtilDiar',
+                'entidad': 'Sistema',
+                'agg': 'AVG',
+                'escala': 100,
+                'fuente_prediccion': 'EMBALSES_PCT'
+            },
+        },
         'descripcion': 'Precio de Escasez - Señal de confiabilidad',
         'unidad': '$/kWh',
         'criticidad': 'CRÍTICA',
@@ -594,17 +622,74 @@ METRICAS_CONFIG = {
     },
     
     # 7. PÉRDIDAS DEL SISTEMA
+    # FASE 4.2: Regresores (DEMANDA + GENE_TOTAL + EMBALSES_PCT) para reducir MAPE
+    # Pérdidas correlacionan con demanda (más demanda = más pérdidas) y generación.
     'PERDIDAS': {
         'metricas': [
             'PerdidasEner'       # Pérdidas totales del sistema
         ],
         'tipo': 'suma_diaria',
         'prefer_sistema': True,  # Preferir Sistema; si no existe, sumar Agentes (evita doble conteo)
+        'regresores': {
+            'es_festivo':  {'tipo': 'calendario'},
+            'dow_lun':     {'tipo': 'calendario'},
+            'dow_mar':     {'tipo': 'calendario'},
+            'dow_mie':     {'tipo': 'calendario'},
+            'dow_jue':     {'tipo': 'calendario'},
+            'dow_vie':     {'tipo': 'calendario'},
+            'dow_sab':     {'tipo': 'calendario'},
+            'demanda_gwh': {
+                'metrica_bd': 'DemaReal',
+                'prefer_sistema': True,
+                'agg': 'SUM',
+                'fuente_prediccion': 'DEMANDA'
+            },
+            'gene_total_gwh': {
+                'metrica_bd': 'Gene',
+                'entidad': 'Sistema',
+                'agg': 'SUM',
+                'fuente_prediccion': 'GENE_TOTAL'
+            },
+            'embalses_pct': {
+                'metrica_bd': 'PorcVoluUtilDiar',
+                'entidad': 'Sistema',
+                'agg': 'AVG',
+                'escala': 100,
+                'fuente_prediccion': 'EMBALSES_PCT'
+            },
+        },
         'descripcion': 'Pérdidas técnicas y no técnicas del SIN',
         'unidad': 'GWh',
         'criticidad': 'IMPORTANTE',
         'prioridad': 2
-    }
+    },
+
+    # ── FASE 4 — Nuevas fuentes de predicción ──
+
+    # 8. COSTO UNITARIO DIARIO (calculado desde cu_daily)
+    'CU_DIARIO': {
+        'tabla_custom': 'cu_daily',
+        'columna_valor': 'cu_total',
+        'columna_fecha': 'fecha',
+        'tipo': 'custom',
+        'descripcion': 'Costo Unitario diario de energía eléctrica',
+        'unidad': '$/kWh',
+        'criticidad': 'CRÍTICA',
+        'prioridad': 1,
+    },
+
+    # 9. PÉRDIDAS TOTALES estimadas (calculado desde losses_detailed)
+    'PERDIDAS_TOTALES': {
+        'tabla_custom': 'losses_detailed',
+        'columna_valor': 'perdidas_total_pct',
+        'columna_fecha': 'fecha',
+        'tipo': 'custom',
+        'descripcion': 'Pérdidas totales del sistema (método híbrido CREG)',
+        'unidad': '%',
+        'criticidad': 'IMPORTANTE',
+        'prioridad': 2,
+        'allow_negative': True,  # P_total puede variar; predicción podría ser ligeramente negativa
+    },
 }
 
 # ── FASE 3: Orden de procesamiento ──
@@ -614,6 +699,7 @@ ORDEN_PROCESAMIENTO = [
     'GENE_TOTAL', 'DEMANDA', 'APORTES_HIDRICOS',
     'EMBALSES', 'EMBALSES_PCT', 'PRECIO_ESCASEZ', 'PERDIDAS',
     'PRECIO_BOLSA',  # Último: usa predicciones de EMBALSES_PCT, DEMANDA, APORTES como regresores
+    'CU_DIARIO', 'PERDIDAS_TOTALES',  # FASE 4: nuevas fuentes
 ]
 
 
@@ -843,7 +929,84 @@ class PredictorMetricaSectorial:
         # FASE 3: soporte para regresores Prophet
         self.regresores_nombres = []        # nombres de columnas regresoras en df_prophet
         self.regresores_completo = None    # DataFrame fecha→valor para todo el rango (hist+futuro)
-        
+        # FASE 4.3: Ajuste adaptativo basado en quality_history ex-post
+        self._adjust_weights_from_history()
+
+    def _adjust_weights_from_history(self):
+        """
+        FASE 4.3: Ensemble adaptativo — ajusta pesos iniciales Prophet/SARIMA
+        según el rendimiento ex-post histórico de predictions_quality_history.
+
+        Lógica:
+        - Si hay evaluaciones ex-post, calcula MAPE promedio ponderado
+          (decay exponencial: evaluaciones recientes pesan más).
+        - Si MAPE ex-post > MAPE train × 1.5 → el model overfittea →
+          reducir confianza del modelo dominante (dar más peso al otro).
+        - Si MAPE ex-post < 5%: modelo funciona bien → mantener pesos.
+        - Si MAPE ex-post > 20%: modelo falla → forzar solo-Prophet
+          (Prophet tiene regularización más fuerte que SARIMA para drift).
+        """
+        try:
+            conn = get_postgres_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT mape_expost, mape_train, fecha_evaluacion, modelo
+                FROM predictions_quality_history
+                WHERE fuente = %s
+                ORDER BY fecha_evaluacion DESC
+                LIMIT 5
+            """, (self.nombre,))
+            rows = cur.fetchall()
+            conn.close()
+
+            if not rows:
+                return  # Sin historial → mantener default 0.6/0.4
+
+            # Calcular MAPE ex-post ponderado (decay=0.7 por evaluación anterior)
+            total_weight = 0.0
+            weighted_mape = 0.0
+            avg_train_mape = 0.0
+            decay = 1.0
+            for mape_ex, mape_tr, _, _ in rows:
+                if mape_ex is not None:
+                    weighted_mape += mape_ex * decay
+                    if mape_tr is not None:
+                        avg_train_mape += mape_tr * decay
+                    total_weight += decay
+                    decay *= 0.7  # Evaluaciones más antiguas pesan menos
+
+            if total_weight == 0:
+                return
+
+            mape_expost_avg = weighted_mape / total_weight
+            mape_train_avg = avg_train_mape / total_weight if avg_train_mape > 0 else None
+
+            # Decisiones adaptativas
+            if mape_expost_avg > 0.20:
+                # MAPE ex-post > 20%: modelo falla → solo Prophet (más robusto)
+                self.pesos = {'prophet': 0.85, 'sarima': 0.15}
+                print(f"  🔄 [ADAPTATIVO] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} > 20% "
+                      f"→ Prophet dominante (0.85/0.15)")
+            elif mape_train_avg and mape_expost_avg > mape_train_avg * 1.5:
+                # Overfitting detectado: ex-post >> train → reducir SARIMA (sobreajuste)
+                self.pesos = {'prophet': 0.70, 'sarima': 0.30}
+                print(f"  🔄 [ADAPTATIVO] {self.nombre}: Overfitting detectado "
+                      f"(ex-post={mape_expost_avg:.1%} vs train={mape_train_avg:.1%}) "
+                      f"→ Pesos ajustados (0.70/0.30)")
+            elif mape_expost_avg < 0.05:
+                # Buen rendimiento: mantener balance o incluso dar más SARIMA
+                self.pesos = {'prophet': 0.55, 'sarima': 0.45}
+                print(f"  🔄 [ADAPTATIVO] {self.nombre}: Buen rendimiento ex-post={mape_expost_avg:.1%} "
+                      f"→ Balance equilibrado (0.55/0.45)")
+            else:
+                # Rendimiento moderado: mantener default
+                print(f"  ℹ️ [ADAPTATIVO] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} "
+                      f"→ Pesos default (0.60/0.40)")
+
+        except Exception as e:
+            # Si falla la lookup, mantener defaults — no bloquear entrenamiento
+            print(f"  ⚠️ [ADAPTATIVO] {self.nombre}: No se pudo consultar historial: {e}")
+
     def entrenar_prophet(self, df_prophet):
         """Entrena modelo Prophet con estacionalidad anual"""
         print(f"  → Entrenando Prophet para {self.nombre}...", flush=True)
@@ -1117,8 +1280,59 @@ class PredictorMetricaSectorial:
         return df_predicciones
 
 
+def _cargar_datos_tabla_custom(metrica_nombre, config, fecha_inicio='2020-01-01'):
+    """
+    FASE 4: Carga datos desde tablas custom (cu_daily, losses_detailed).
+    Retorna DataFrame con columnas ['fecha', 'valor'] igual que cargar_datos_metrica.
+    """
+    tabla = config['tabla_custom']
+    col_valor = config.get('columna_valor', 'valor')
+    col_fecha = config.get('columna_fecha', 'fecha')
+
+    print(f"\n📊 Cargando datos custom para {metrica_nombre} desde tabla '{tabla}' (col={col_valor})...")
+
+    conn = get_postgres_connection()
+    query = f"""
+        SELECT {col_fecha}::date AS fecha, {col_valor} AS valor
+        FROM {tabla}
+        WHERE {col_valor} IS NOT NULL
+          AND {col_fecha} >= %s
+        ORDER BY {col_fecha}
+    """
+    try:
+        df = pd.read_sql(query, conn, params=[fecha_inicio])
+    except Exception as e:
+        print(f"  ❌ Error cargando tabla custom '{tabla}': {e}")
+        conn.close()
+        return None
+    finally:
+        conn.close()
+
+    if df.empty:
+        print(f"  ⚠️ Sin datos en {tabla} para {metrica_nombre}")
+        return None
+
+    # Excluir datos parciales del último día (hoy puede estar incompleto)
+    hoy = datetime.now().date()
+    df['fecha'] = pd.to_datetime(df['fecha'])
+    df = df[df['fecha'].dt.date < hoy]
+
+    # Eliminar duplicados (tomar último registro por fecha)
+    df = df.drop_duplicates(subset='fecha', keep='last')
+    df = df.sort_values('fecha').reset_index(drop=True)
+
+    print(f"  ✅ {len(df)} registros cargados ({df['fecha'].min().date()} → {df['fecha'].max().date()})")
+    print(f"  📈 Rango valores: {df['valor'].min():.4f} → {df['valor'].max():.4f}, media={df['valor'].mean():.4f}")
+
+    return df
+
+
 def cargar_datos_metrica(metrica_nombre, config, fecha_inicio='2020-01-01'):
     """Carga datos históricos de una métrica específica"""
+    # ── FASE 4: Soporte para tablas custom (cu_daily, losses_detailed) ──
+    if config.get('tabla_custom'):
+        return _cargar_datos_tabla_custom(metrica_nombre, config, fecha_inicio)
+
     # Ventana limitada: usar solo últimos N meses si configurado
     ventana = config.get('ventana_meses')
     if ventana:
@@ -4345,7 +4559,9 @@ def main():
             # 3. Preparar datos
             df_prophet = df[['fecha', 'valor']].copy()
             df_prophet.columns = ['ds', 'y']
-            df_prophet = df_prophet[df_prophet['y'] > 0]  # Eliminar valores negativos/cero
+            # Eliminar valores negativos/cero para métricas de energía (no aplica a custom)
+            if config['tipo'] != 'custom':
+                df_prophet = df_prophet[df_prophet['y'] > 0]
             
             serie_sarima = df.set_index('fecha')['valor'].asfreq('D')
             
@@ -4368,8 +4584,9 @@ def main():
             # 5. Validar con holdout REAL
             predictor.validar_y_generar(df_prophet, serie_sarima)
             
-            # 6. Predecir (PRECIO_BOLSA puede tener valores que fluctúan, pero no negativos)
-            allow_neg = False  # Ninguna métrica energética debe ser negativa
+            # 6. Predecir
+            # FASE 4: PERDIDAS_TOTALES puede ser negativa (P_NT range [-6%, 4%])
+            allow_neg = config.get('allow_negative', False)
             df_pred = predictor.predecir(HORIZONTE_DIAS, allow_negative=allow_neg)
             
             # FASE 3: almacenar predicciones para uso como regresores

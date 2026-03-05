@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import logging
 from typing import Dict, Any
@@ -28,6 +29,39 @@ from api.v1 import api_router_v1
 
 # Configurar logging
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════
+# SECURITY HEADERS MIDDLEWARE
+# ═══════════════════════════════════════════════════════════
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware que agrega cabeceras de seguridad HTTP a todas las respuestas.
+    
+    Headers:
+    - X-Content-Type-Options: nosniff (previene MIME-type sniffing)
+    - X-Frame-Options: DENY (previene clickjacking)
+    - X-XSS-Protection: 1; mode=block (previene XSS reflejado)
+    - Referrer-Policy: strict-origin-when-cross-origin
+    - Permissions-Policy: deshabilita APIs sensibles del navegador
+    - Cache-Control: no-store para endpoints sensibles
+    """
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
+        # No cachear endpoints de API por defecto
+        if "/health" not in request.url.path and "/docs" not in request.url.path:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        return response
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -109,6 +143,12 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"]
 )
+
+# ═══════════════════════════════════════════════════════════
+# MIDDLEWARE - SECURITY HEADERS
+# ═══════════════════════════════════════════════════════════
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ═══════════════════════════════════════════════════════════
 # EXCEPTION HANDLERS
@@ -274,35 +314,169 @@ async def custom_redoc_html():
 @limiter.limit("30/minute")
 async def health_check(request: Request) -> Dict[str, Any]:
     """
-    Health check endpoint para monitoreo
+    Health check completo: DB, Redis, XM API, frescura de datos, predicciones.
     
-    Returns:
-        Estado de salud de la API y servicios dependientes
+    Devuelve status: healthy / degraded / unhealthy con HTTP 200 / 503.
     """
+    import time as _time
     from infrastructure.database.manager import db_manager
+    from infrastructure.cache.redis_client import get_redis_client
+    from infrastructure.external.circuit_breaker import get_xm_circuit_breaker
     
-    # Verificar conectividad a base de datos
-    db_status = "healthy"
+    checks = {}
+    degraded = False
+    unhealthy = False
+    
+    # ── 1. PostgreSQL ──
     try:
+        t0 = _time.time()
         df = db_manager.query_df("SELECT COUNT(*) as total FROM metrics")
-        db_healthy = not df.empty
-        if db_healthy:
-            db_status = f"healthy ({int(df.iloc[0]['total'])} metrics)"
+        db_latency_ms = round((_time.time() - t0) * 1000, 1)
+        if not df.empty:
+            total = int(df.iloc[0]['total'])
+            checks["database"] = {
+                "status": "healthy",
+                "latency_ms": db_latency_ms,
+                "rows": total,
+            }
+        else:
+            checks["database"] = {"status": "unhealthy", "detail": "empty result"}
+            unhealthy = True
     except Exception as e:
-        db_status = f"unhealthy: {str(e)}"
-        db_healthy = False
+        checks["database"] = {"status": "unhealthy", "error": str(e)[:200]}
+        unhealthy = True
     
-    overall_status = "healthy" if db_healthy else "degraded"
+    # ── 2. Redis ──
+    try:
+        t0 = _time.time()
+        client = get_redis_client()
+        pong = client.ping()
+        redis_latency_ms = round((_time.time() - t0) * 1000, 1)
+        checks["redis"] = {
+            "status": "healthy" if pong else "unhealthy",
+            "latency_ms": redis_latency_ms,
+        }
+        if not pong:
+            degraded = True
+    except Exception as e:
+        checks["redis"] = {"status": "degraded", "error": str(e)[:200]}
+        degraded = True
     
-    return {
-        "status": overall_status,
+    # ── 3. XM API (circuit breaker state) ──
+    try:
+        breaker = get_xm_circuit_breaker()
+        cb_status = breaker.get_status()
+        xm_state = cb_status["state"]
+        checks["xm_api"] = {
+            "status": "healthy" if xm_state == "closed" else (
+                "degraded" if xm_state == "half_open" else "unhealthy"
+            ),
+            "circuit_state": xm_state,
+            "consecutive_failures": cb_status["consecutive_failures"],
+            "times_opened": cb_status["stats"]["times_opened"],
+        }
+        if xm_state == "open":
+            checks["xm_api"]["seconds_until_recovery"] = cb_status["seconds_until_recovery"]
+            degraded = True
+    except Exception as e:
+        checks["xm_api"] = {"status": "unknown", "error": str(e)[:200]}
+    
+    # ── 4. Data freshness ──
+    try:
+        df_fresh = db_manager.query_df(
+            "SELECT MAX(fecha) as ultima FROM metrics"
+        )
+        if not df_fresh.empty and df_fresh.iloc[0]['ultima'] is not None:
+            from datetime import datetime as _dt
+            ultima = df_fresh.iloc[0]['ultima']
+            if isinstance(ultima, str):
+                ultima = _dt.strptime(ultima[:10], '%Y-%m-%d')
+            hours_since = round((_dt.now() - _dt.combine(ultima, _dt.min.time())).total_seconds() / 3600, 1) \
+                if not isinstance(ultima, _dt) else round((_dt.now() - ultima).total_seconds() / 3600, 1)
+            checks["data_freshness"] = {
+                "status": "healthy" if hours_since < 48 else "degraded",
+                "last_date": str(ultima)[:10],
+                "hours_since_update": hours_since,
+            }
+            if hours_since >= 48:
+                degraded = True
+        else:
+            checks["data_freshness"] = {"status": "unknown"}
+    except Exception as e:
+        checks["data_freshness"] = {"status": "unknown", "error": str(e)[:200]}
+    
+    # ── 5. Predictions ──
+    try:
+        df_pred = db_manager.query_df(
+            "SELECT COUNT(*) as total FROM predictions"
+        )
+        if not df_pred.empty:
+            checks["predictions"] = {
+                "status": "healthy",
+                "total": int(df_pred.iloc[0]['total']),
+            }
+        else:
+            checks["predictions"] = {"status": "unknown"}
+    except Exception:
+        checks["predictions"] = {"status": "not_available"}
+    
+    # ── Overall ──
+    if unhealthy:
+        overall = "unhealthy"
+        http_code = 503
+    elif degraded:
+        overall = "degraded"
+        http_code = 200
+    else:
+        overall = "healthy"
+        http_code = 200
+    
+    result = {
+        "status": overall,
         "timestamp": datetime.now().isoformat(),
         "environment": settings.DASH_ENV,
-        "services": {
-            "database": db_status,
-            "api": "healthy"
-        }
+        "version": "1.0.0",
+        "services": checks,
     }
+    
+    return JSONResponse(content=result, status_code=http_code)
+
+
+@app.get("/health/live", tags=["health"])
+@limiter.limit("60/minute")
+async def health_live(request: Request) -> Dict[str, str]:
+    """Liveness probe — la API está viva"""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready", tags=["health"])
+@limiter.limit("30/minute")
+async def health_ready(request: Request) -> JSONResponse:
+    """Readiness probe — DB y Redis conectados"""
+    from infrastructure.database.manager import db_manager
+    from infrastructure.cache.redis_client import get_redis_client
+    
+    ready = True
+    details = {}
+    
+    try:
+        db_manager.query_df("SELECT 1")
+        details["database"] = "ok"
+    except Exception as e:
+        details["database"] = f"error: {str(e)[:100]}"
+        ready = False
+    
+    try:
+        get_redis_client().ping()
+        details["redis"] = "ok"
+    except Exception as e:
+        details["redis"] = f"error: {str(e)[:100]}"
+        ready = False
+    
+    return JSONResponse(
+        content={"ready": ready, "checks": details},
+        status_code=200 if ready else 503
+    )
 
 
 # ═══════════════════════════════════════════════════════════

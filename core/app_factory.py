@@ -102,6 +102,7 @@ def _register_layout(app):
         # Elementos invisibles
         dcc.Location(id="url", refresh=False),
         dcc.Store(id='store-datos-chatbot-generacion', data={}),
+        dcc.Store(id='error-log-store', data=None),
         
         # Contenedor principal con padding superior para compensar el header fijo
         html.Div([
@@ -117,8 +118,14 @@ def _register_callbacks(app):
     """Registra callbacks globales"""
     from dash import Input, Output
 
+    NAV_NAMES = [
+        'inicio', 'generacion', 'transmision', 'distribucion',
+        'comercializacion', 'perdidas', 'costo-unitario', 'simulacion-creg',
+        'perdidas-nt', 'restricciones', 'metricas'
+    ]
+
     @app.callback(
-        [Output(f'nav-link-{name}', 'style') for name in ['inicio', 'generacion', 'transmision', 'distribucion', 'comercializacion', 'perdidas', 'restricciones', 'metricas']],
+        [Output(f'nav-link-{name}', 'style') for name in NAV_NAMES],
         Input('url-navbar', 'pathname')
     )
     def update_navbar_active(pathname):
@@ -154,13 +161,16 @@ def _register_callbacks(app):
             'transmision': lambda p: p.startswith('/transmision'),
             'distribucion': lambda p: p.startswith('/distribucion'),
             'comercializacion': lambda p: p.startswith('/comercializacion'),
-            'perdidas': lambda p: p.startswith('/perdidas'),
+            'perdidas': lambda p: p == '/perdidas' or p.startswith('/perdidas/'),
+            'costo-unitario': lambda p: p.startswith('/costo-unitario'),
+            'simulacion-creg': lambda p: p.startswith('/simulacion-creg'),
+            'perdidas-nt': lambda p: p.startswith('/perdidas-nt'),
             'restricciones': lambda p: p.startswith('/restricciones'),
             'metricas': lambda p: p.startswith('/metricas')
         }
 
         styles = []
-        for name in ['inicio', 'generacion', 'transmision', 'distribucion', 'comercializacion', 'perdidas', 'restricciones', 'metricas']:
+        for name in NAV_NAMES:
             if route_mapping[name](pathname):
                 styles.append(active_style)
             else:
@@ -226,7 +236,20 @@ def create_app() -> Dash:
         """Endpoint de métricas Prometheus"""
         logger.info("📊 Endpoint /metrics solicitado")
         return Response(generate_latest(METRICS_REGISTRY), mimetype=CONTENT_TYPE_LATEST)
-    
+
+    # ── Error boundary: captura errores 500 no manejados ──
+    @server.errorhandler(500)
+    def handle_500(e):
+        logger.error(f"[DASHBOARD] Error 500: {e}", exc_info=True)
+        return jsonify({
+            "error": "Error interno del servidor",
+            "message": "El equipo técnico ha sido notificado.",
+        }), 500
+
+    @server.errorhandler(404)
+    def handle_404(e):
+        return jsonify({"error": "Página no encontrada"}), 404
+
     # _register_pages() — ELIMINADO: Dash Pages usa auto-discovery
     _register_layout(app)
     _register_callbacks(app)

@@ -40,7 +40,9 @@ class PostgreSQLConnectionManager:
                 'host': self.host,
                 'port': self.port,
                 'database': self.database,
-                'user': self.user
+                'user': self.user,
+                'connect_timeout': 10,
+                'options': '-c statement_timeout=30000',  # 30s max query
             }
             
             # Agregar cursor_factory solo si se solicita explícitamente

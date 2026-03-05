@@ -3,7 +3,7 @@ Repositorio para predicciones de machine learning.
 Implementa IPredictionsRepository (Arquitectura Limpia - Inversión de Dependencias)
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import date
 import pandas as pd
 import logging
@@ -149,3 +149,141 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
         except Exception as e:
             logger.error(f"Error eliminando predicciones: {e}")
             return 0
+    
+    # ══════════════════════════════════════════════════════════
+    # MÉTODOS PARA SEGUIMIENTO DE PREDICCIONES (FASE 0.5)
+    # ══════════════════════════════════════════════════════════
+    
+    def get_predictions_summary(self) -> pd.DataFrame:
+        """
+        Resumen agrupado por fuente y modelo para la página de seguimiento.
+        Reemplaza la query directa que existía en seguimiento_predicciones.py.
+        """
+        query = """
+        SELECT fuente, modelo, 
+               COUNT(*) as dias_predichos,
+               MIN(fecha_prediccion) as fecha_inicio,
+               MAX(fecha_prediccion) as fecha_fin,
+               ROUND(AVG(mape)::numeric, 4) as mape_entrenamiento,
+               ROUND(AVG(rmse)::numeric, 2) as rmse_entrenamiento,
+               ROUND(AVG(confianza)::numeric, 2) as confianza,
+               MAX(fecha_generacion) as ultima_generacion
+        FROM predictions
+        GROUP BY fuente, modelo
+        ORDER BY fuente
+        """
+        try:
+            return self.execute_dataframe(query)
+        except Exception as e:
+            logger.error(f"[PREDICTIONS_REPO] Error cargando resumen: {e}")
+            return pd.DataFrame()
+    
+    def get_predictions_for_metric(self, fuente: str) -> pd.DataFrame:
+        """
+        Carga todas las predicciones de una métrica específica.
+        Reemplaza cargar_predicciones_metrica() en seguimiento_predicciones.py.
+        """
+        query = """
+        SELECT fecha_prediccion as fecha, valor_gwh_predicho as predicho,
+               intervalo_inferior, intervalo_superior, 
+               modelo, confianza, mape as mape_train, rmse as rmse_train,
+               fecha_generacion
+        FROM predictions
+        WHERE fuente = %s
+        ORDER BY fecha_prediccion
+        """
+        try:
+            df = self.execute_dataframe(query, (fuente,))
+            if not df.empty:
+                df['fecha'] = pd.to_datetime(df['fecha'])
+            return df
+        except Exception as e:
+            logger.error(f"[PREDICTIONS_REPO] Error cargando predicciones {fuente}: {e}")
+            return pd.DataFrame()
+    
+    def get_real_metric_data(self, metrica: str, agg_fn: str, fecha_desde: str,
+                             fecha_hasta: str, entidad: Optional[str] = None,
+                             prefer_sistema: bool = False) -> pd.DataFrame:
+        """
+        Carga datos reales de una métrica sectorial desde la tabla metrics.
+        Reemplaza la lógica de SQL directo en seguimiento_predicciones.py.
+        """
+        try:
+            if entidad:
+                query = f"""
+                SELECT fecha, {agg_fn}(valor_gwh) AS valor
+                FROM metrics
+                WHERE metrica = %s AND fecha BETWEEN %s AND %s
+                  AND entidad = %s AND valor_gwh > 0
+                GROUP BY fecha ORDER BY fecha
+                """
+                params = (metrica, fecha_desde, fecha_hasta, entidad)
+            elif prefer_sistema:
+                query = f"""
+                SELECT fecha,
+                  CASE WHEN MAX(CASE WHEN entidad='Sistema' THEN 1 ELSE 0 END) = 1
+                       THEN {agg_fn}(CASE WHEN entidad='Sistema' THEN valor_gwh END)
+                       ELSE {agg_fn}(valor_gwh)
+                  END AS valor
+                FROM metrics
+                WHERE metrica = %s AND fecha BETWEEN %s AND %s AND valor_gwh > 0
+                GROUP BY fecha ORDER BY fecha
+                """
+                params = (metrica, fecha_desde, fecha_hasta)
+            else:
+                query = f"""
+                SELECT fecha, {agg_fn}(valor_gwh) AS valor
+                FROM metrics
+                WHERE metrica = %s AND fecha BETWEEN %s AND %s AND valor_gwh > 0
+                GROUP BY fecha ORDER BY fecha
+                """
+                params = (metrica, fecha_desde, fecha_hasta)
+            
+            df = self.execute_dataframe(query, params)
+            if not df.empty:
+                df['fecha'] = pd.to_datetime(df['fecha'])
+            return df
+        except Exception as e:
+            logger.error(f"[PREDICTIONS_REPO] Error cargando reales {metrica}: {e}")
+            return pd.DataFrame()
+    
+    def get_real_generation_by_type(self, tipo_catalogo: str, fecha_desde: str,
+                                     fecha_hasta: str) -> pd.DataFrame:
+        """
+        Carga datos reales de generación por tipo de fuente (JOIN con catalogos).
+        Reemplaza la rama 'tipo_catalogo' de seguimiento_predicciones.py.
+        """
+        query = """
+        SELECT m.fecha, SUM(m.valor_gwh) AS valor
+        FROM metrics m
+        INNER JOIN catalogos c ON m.recurso = c.codigo
+        WHERE c.tipo = %s AND m.metrica = 'Gene'
+          AND m.fecha BETWEEN %s AND %s AND m.valor_gwh > 0
+        GROUP BY m.fecha ORDER BY m.fecha
+        """
+        try:
+            df = self.execute_dataframe(query, (tipo_catalogo, fecha_desde, fecha_hasta))
+            if not df.empty:
+                df['fecha'] = pd.to_datetime(df['fecha'])
+            return df
+        except Exception as e:
+            logger.error(f"[PREDICTIONS_REPO] Error cargando generación {tipo_catalogo}: {e}")
+            return pd.DataFrame()
+    
+    def get_quality_history(self) -> pd.DataFrame:
+        """
+        Carga historial de evaluaciones de calidad ex-post.
+        Reemplaza cargar_quality_history() en seguimiento_predicciones.py.
+        """
+        query = """
+        SELECT fuente, fecha_evaluacion, fecha_desde, fecha_hasta,
+               dias_overlap, mape_expost, rmse_expost, mape_train, rmse_train,
+               modelo, notas
+        FROM predictions_quality_history
+        ORDER BY fecha_evaluacion DESC, fuente
+        """
+        try:
+            return self.execute_dataframe(query)
+        except Exception as e:
+            logger.error(f"[PREDICTIONS_REPO] Error cargando quality history: {e}")
+            return pd.DataFrame()

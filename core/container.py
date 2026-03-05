@@ -38,6 +38,7 @@ from domain.services.metrics_service import MetricsService
 from domain.services.commercial_service import CommercialService
 from domain.services.distribution_service import DistributionService
 from domain.services.transmission_service import TransmissionService
+from domain.services.cu_service import CUService
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,48 @@ class DependencyContainer:
         """
         return TransmissionService(repository=self.get_transmission_repository())
     
+    def get_cu_service(self) -> CUService:
+        """
+        Obtiene CUService como singleton lazy.
+        
+        Returns:
+            CUService para cálculo de Costo Unitario
+        """
+        if not hasattr(self, '_cu_service') or self._cu_service is None:
+            self._cu_service = CUService()
+            logger.debug("CUService creado (singleton)")
+        return self._cu_service
+    
+    @property
+    def losses_nt_service(self):
+        """Obtiene LossesNTService como singleton lazy."""
+        if not hasattr(self, '_losses_nt_service') or self._losses_nt_service is None:
+            from domain.services.losses_nt_service import LossesNTService
+            self._losses_nt_service = LossesNTService()
+            logger.debug("LossesNTService creado (singleton)")
+        return self._losses_nt_service
+
+    @property
+    def simulation_service(self):
+        """Obtiene SimulationService como singleton lazy."""
+        if not hasattr(self, '_simulation_service') or self._simulation_service is None:
+            from domain.services.simulation_service import SimulationService
+            self._simulation_service = SimulationService()
+            logger.debug("SimulationService creado (singleton)")
+        return self._simulation_service
+    
+    # ============================================================================
+    # ORCHESTRATOR SERVICE - Singleton pesado (4.197 líneas, 7 sub-servicios)
+    # ============================================================================
+    
+    def get_orchestrator_service(self):
+        """Obtiene ChatbotOrchestratorService como singleton lazy."""
+        if not hasattr(self, '_orchestrator_service') or self._orchestrator_service is None:
+            from domain.services.orchestrator_service import ChatbotOrchestratorService
+            self._orchestrator_service = ChatbotOrchestratorService()
+            logger.debug("ChatbotOrchestratorService creado (singleton)")
+        return self._orchestrator_service
+    
     # ============================================================================
     # OVERRIDES - Para testing con mocks
     # ============================================================================
@@ -218,6 +261,10 @@ class DependencyContainer:
         self._predictions_repository = None
         self._database_manager = None
         self._xm_datasource = None
+        self._orchestrator_service = None
+        self._cu_service = None
+        self._losses_nt_service = None
+        self._simulation_service = None
         logger.debug("DependencyContainer reseteado")
 
 
@@ -256,3 +303,18 @@ def get_distribution_service() -> DistributionService:
 def get_transmission_service() -> TransmissionService:
     """Función de conveniencia para obtener TransmissionService."""
     return container.get_transmission_service()
+
+
+def get_cu_service() -> CUService:
+    """Función de conveniencia para obtener CUService."""
+    return container.get_cu_service()
+
+
+def get_losses_nt_service():
+    """Función de conveniencia para obtener LossesNTService."""
+    return container.losses_nt_service
+
+
+def get_simulation_service():
+    """Función de conveniencia para obtener SimulationService."""
+    return container.simulation_service

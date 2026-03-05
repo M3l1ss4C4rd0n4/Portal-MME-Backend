@@ -9,7 +9,11 @@ para datos hidrológicos.
 import pandas as pd
 from datetime import datetime
 
+from dash import dcc, html, dash_table
+import dash_bootstrap_components as dbc
+
 from infrastructure.logging.logger import setup_logger
+from infrastructure.external.xm_service import obtener_datos_inteligente
 
 from .utils import (
     logger, get_plotly_modules, format_number, format_date,

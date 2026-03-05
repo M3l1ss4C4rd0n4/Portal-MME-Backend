@@ -31,7 +31,9 @@ from api.v1.routes import (
     metrics,
     predictions,
     chatbot,
-    whatsapp_alerts
+    whatsapp_alerts,
+    cu,
+    simulation,
 )
 
 # Router principal de v1
@@ -121,6 +123,20 @@ api_router_v1.include_router(
     whatsapp_alerts.router,
     prefix="/whatsapp",
     tags=["📱 WhatsApp Alerts"]
+)
+
+# 13. Costo Unitario (CU) de energía eléctrica
+api_router_v1.include_router(
+    cu.router,
+    prefix="/cu",
+    tags=["💰 Costo Unitario"]
+)
+
+# 14. Motor de Simulación CREG
+api_router_v1.include_router(
+    simulation.router,
+    prefix="/simulation",
+    tags=["🔬 Simulación CREG"]
 )
 
 __all__ = ["api_router_v1"]

@@ -54,6 +54,8 @@ def get_objetoAPI():
 def fetch_metric_data(metric: str, entity: str, start_date, end_date):
     """
     Consultar datos directamente desde API XM (sin caché).
+    Protegido por Circuit Breaker: si la API XM falla 3 veces seguidas,
+    las requests se bloquean durante 5 minutos.
     
     Args:
         metric: Métrica (ej: 'PrecBolsNaci', 'Gene')
@@ -64,11 +66,21 @@ def fetch_metric_data(metric: str, entity: str, start_date, end_date):
     Returns:
         DataFrame o None
     """
+    from infrastructure.external.circuit_breaker import get_xm_circuit_breaker
+    
     logger = logging.getLogger('xm_helper')
+    breaker = get_xm_circuit_breaker()
+    
+    # Circuit breaker check
+    if not breaker.allow_request():
+        logger.warning(f'🔴 [CircuitBreaker] Request bloqueada para {metric}/{entity}')
+        return None
+    
     objetoAPI = get_objetoAPI()
     
     if objetoAPI is None:
         logger.warning(f'❌ API XM no disponible para {metric}/{entity}')
+        breaker.record_failure(Exception("pydataxm no disponible"))
         return None
     
     try:
@@ -83,16 +95,20 @@ def fetch_metric_data(metric: str, entity: str, start_date, end_date):
         
         if data is not None and not data.empty:
             logger.info(f'✅ API XM: {len(data)} registros')
+            breaker.record_success()
             return data
         else:
             logger.warning(f'⚠️ API XM: Sin datos')
+            breaker.record_success()  # Empty is not a failure
             return None
             
     except FutureTimeoutError:
         logger.error(f'⏱️ Timeout (30s) {metric}/{entity}')
+        breaker.record_failure(FutureTimeoutError(f"Timeout 30s {metric}/{entity}"))
         return None
     except Exception as e:
         logger.exception(f'❌ Error: {e}')
+        breaker.record_failure(e)
         return None
 
 

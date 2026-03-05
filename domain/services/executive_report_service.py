@@ -161,6 +161,8 @@ class ExecutiveReportService:
                 tasks.append(self._report_distribucion(parameters))
             elif section == '6_comercializacion':
                 tasks.append(self._report_comercializacion(parameters))
+            elif section == '6.5_cu_pnt':
+                tasks.append(self._report_cu_pnt(parameters))
             elif section == '7_perdidas':
                 tasks.append(self._report_perdidas(parameters))
             elif section == '8_restricciones':
@@ -1472,3 +1474,145 @@ class ExecutiveReportService:
         """
         
         return resumen.strip()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SECCIÓN 6.5: COSTO UNITARIO Y PÉRDIDAS NO TÉCNICAS
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def _report_cu_pnt(self, params: Dict) -> Dict[str, Any]:
+        """Sección CU + PNT para el informe ejecutivo."""
+        try:
+            cu_data = await asyncio.to_thread(self._sync_get_cu_pnt_data)
+            return cu_data
+        except Exception as e:
+            logger.warning(f"[EXEC_REPORT] CU/PNT sección falló: {e}")
+            return {'error': str(e), 'data': None}
+
+    def _sync_get_cu_pnt_data(self) -> Dict[str, Any]:
+        """Obtiene datos CU y PNT sincrónicamente."""
+        from core.container import container
+        result = {
+            'titulo': 'Costo Unitario y Pérdidas No Técnicas',
+            'conclusiones': [],
+            'recomendaciones': [],
+        }
+        try:
+            cu = container.get_cu_service().get_cu_current()
+            if cu:
+                cu_total = cu.get('cu_total', 0)
+                result['cu'] = {
+                    'fecha': str(cu.get('fecha', '')),
+                    'cu_total_cop_kwh': round(cu_total, 2) if cu_total else None,
+                    'componente_g': round(cu.get('componente_g', 0), 2),
+                    'componente_d': round(cu.get('componente_d', 0), 2),
+                    'componente_c': round(cu.get('componente_c', 0), 2),
+                    'componente_t': round(cu.get('componente_t', 0), 2),
+                    'componente_p': round(cu.get('componente_p', 0), 2),
+                    'confianza': cu.get('confianza'),
+                }
+                if cu_total and cu_total > 300:
+                    result['conclusiones'].append(
+                        f'CU elevado: {cu_total:.1f} COP/kWh — '
+                        f'posible efecto de restricciones o precio bolsa alto.'
+                    )
+                elif cu_total and cu_total < 150:
+                    result['conclusiones'].append(
+                        f'CU bajo: {cu_total:.1f} COP/kWh — '
+                        f'condiciones hídricas favorables.'
+                    )
+        except Exception as e:
+            logger.warning(f"[EXEC_REPORT] CU data error: {e}")
+            result['cu'] = {'error': str(e)}
+
+        try:
+            stats = container.losses_nt_service.get_losses_statistics()
+            if stats:
+                pnt_30d = stats.get('pct_promedio_nt_30d', 0)
+                result['pnt'] = {
+                    'pct_promedio_nt_30d': round(pnt_30d, 2),
+                    'pct_promedio_nt_12m': round(stats.get('pct_promedio_nt_12m', 0), 2),
+                    'tendencia': stats.get('tendencia_nt', 'ESTABLE'),
+                    'costo_nt_12m_mcop': round(stats.get('costo_nt_12m_mcop', 0), 0),
+                    'anomalias_30d': stats.get('anomalias_30d', 0),
+                }
+                if pnt_30d > 5.0:
+                    result['conclusiones'].append(
+                        f'P_NT elevadas: {pnt_30d:.1f}% — '
+                        f'por encima del umbral regulatorio.'
+                    )
+                    result['recomendaciones'].append(
+                        'Revisar focos de pérdidas no técnicas con '
+                        'distribuidoras con mayor incidencia.'
+                    )
+        except Exception as e:
+            logger.warning(f"[EXEC_REPORT] PNT data error: {e}")
+            result['pnt'] = {'error': str(e)}
+
+        return result
+
+    def _generar_seccion_cu_pnt(self) -> str:
+        """
+        Genera el bloque Markdown/texto para la sección
+        CU + PNT del informe diario.
+
+        Formato de salida (Markdown):
+        ## ⚡ Costo Unitario y Pérdidas
+
+        | Indicador | Valor | Nota |
+        |---|---|---|
+        | CU hoy | XXX.XX COP/kWh | Desglose: G 59.7%... |
+        | P_NT promedio 30d | X.XX% | Tendencia: ESTABLE |
+        | Costo PNT 12m | XXX,XXX MCOP | — |
+        """
+        try:
+            data = self._sync_get_cu_pnt_data()
+            partes = []
+            partes.append('## ⚡ Costo Unitario y Pérdidas\n')
+
+            cu = data.get('cu', {})
+            pnt = data.get('pnt', {})
+
+            if cu and not cu.get('error'):
+                cu_val = cu.get('cu_total_cop_kwh')
+                g = cu.get('componente_g', 0)
+                d = cu.get('componente_d', 0)
+                c = cu.get('componente_c', 0)
+                t = cu.get('componente_t', 0)
+                p = cu.get('componente_p', 0)
+                if cu_val:
+                    partes.append(f'**CU actual:** {cu_val:.2f} COP/kWh '
+                                  f'(fecha: {cu.get("fecha", "N/D")})')
+                    # Desglose porcentual
+                    total = g + d + c + t + p
+                    if total > 0:
+                        partes.append(
+                            f'**Desglose:** Generación {g/total*100:.1f}% · '
+                            f'Distribución {d/total*100:.1f}% · '
+                            f'Comercialización {c/total*100:.1f}% · '
+                            f'Transmisión {t/total*100:.1f}% · '
+                            f'Pérdidas {p/total*100:.1f}%'
+                        )
+
+            if pnt and not pnt.get('error'):
+                pnt_30d = pnt.get('pct_promedio_nt_30d', 0)
+                tendencia = pnt.get('tendencia', 'N/D')
+                costo_12m = pnt.get('costo_nt_12m_mcop', 0)
+                partes.append(
+                    f'\n**Pérdidas No Técnicas (P_NT):** '
+                    f'{pnt_30d:.2f}% promedio 30d | '
+                    f'Tendencia: {tendencia} | '
+                    f'Costo 12m: {costo_12m:,.0f} MCOP'
+                )
+                partes.append(
+                    '\n> Nota: P_NT estimado por método residuo '
+                    'Gene−DemaReal. Precisión validada: 0.000026% '
+                    'sobre 1,985 días.'
+                )
+
+            if not partes[1:]:
+                return ''
+
+            return '\n'.join(partes)
+        except Exception as e:
+            logger.warning(f"[EXEC_REPORT] CU/PNT section skip: {e}")
+            return ''

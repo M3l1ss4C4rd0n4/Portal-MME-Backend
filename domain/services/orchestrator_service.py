@@ -102,8 +102,15 @@ class ChatbotOrchestratorService:
         # Servicio de informes ejecutivos (completo con análisis estadístico)
         self.executive_report_service = ExecutiveReportService()
         
-        # Cache diario del informe IA para no repetir llamadas costosas
-        self._informe_ia_cache: Dict[str, Any] = {}  # {fecha: {texto, timestamp}}
+        # Cache diario del informe IA — ahora en Redis (compartido entre workers)
+        # Se mantiene el dict como fallback local si Redis no está disponible
+        self._informe_ia_cache: Dict[str, Any] = {}  # fallback local
+        try:
+            from infrastructure.cache.redis_client import get_redis_client
+            self._redis = get_redis_client()
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] Redis no disponible para cache de informe IA: {e}")
+            self._redis = None
         
         # El predictions_service puede no estar siempre disponible
         try:
@@ -327,6 +334,23 @@ class ChatbotOrchestratorService:
             "opciones": self._handle_menu,
             "inicio": self._handle_menu,
             "start": self._handle_menu,
+
+            # ═══════════════════════════════════════════════════════════
+            # COSTO UNITARIO, PÉRDIDAS NT, SIMULACIÓN (Fase 7)
+            # ═══════════════════════════════════════════════════════════
+            "cu_actual": self._handle_cu_actual,
+            "costo_unitario": self._handle_cu_actual,
+            "tarifa_energia": self._handle_cu_actual,
+            "cop_kwh": self._handle_cu_actual,
+
+            "perdidas_nt": self._handle_perdidas_nt,
+            "perdidas_no_tecnicas": self._handle_perdidas_nt,
+            "hurto_energia": self._handle_perdidas_nt,
+
+            "simulacion": self._handle_simulacion,
+            "simular": self._handle_simulacion,
+            "escenario": self._handle_simulacion,
+            "que_pasa_si": self._handle_simulacion,
         }
         
         return intent_map.get(intent.lower())
@@ -2105,6 +2129,35 @@ class ChatbotOrchestratorService:
                         'periodo': f"{start_date} a {end_date}"
                     }
             
+            # ¿Pregunta sobre costo unitario? (Fase 7)
+            if any(w in pregunta_lower for w in ['costo unitario', 'cu ', 'cop/kwh', 'tarifa regulada', 'componente_g']):
+                try:
+                    from core.container import container
+                    cu = await asyncio.to_thread(container.get_cu_service().get_cu_current)
+                    if cu:
+                        datos_consultados['costo_unitario'] = {
+                            'cu_total_cop_kwh': round(cu.get('cu_total', 0), 2),
+                            'fecha': str(cu.get('fecha', '')),
+                            'componente_g': round(cu.get('componente_g', 0), 2),
+                            'confianza': cu.get('confianza'),
+                        }
+                except Exception:
+                    pass
+            
+            # ¿Pregunta sobre pérdidas no técnicas? (Fase 7)
+            if any(w in pregunta_lower for w in ['pérdida', 'perdida', 'hurto', 'no técnica', 'no tecnica', 'p_nt', 'pnt']):
+                try:
+                    from core.container import container
+                    stats = await asyncio.to_thread(container.losses_nt_service.get_losses_statistics)
+                    if stats:
+                        datos_consultados['perdidas_nt'] = {
+                            'pct_promedio_nt_30d': round(stats.get('pct_promedio_nt_30d', 0), 2),
+                            'tendencia': stats.get('tendencia_nt', 'N/D'),
+                            'costo_nt_12m_mcop': round(stats.get('costo_nt_12m_mcop', 0), 0),
+                        }
+                except Exception:
+                    pass
+            
             # ¿Pregunta sobre predicciones?
             if any(w in pregunta_lower for w in ['predicción', 'prediccion', 'pronóstico', 'pronostico', 'futuro', 'va a', 'será', 'será', 'espera']):
                 if self.predictions_service:
@@ -2238,7 +2291,214 @@ class ChatbotOrchestratorService:
     # ═══════════════════════════════════════════════════════════
     # HANDLERS ESPECÍFICOS POR SECTOR
     # ═══════════════════════════════════════════════════════════
-    
+
+    # ─── COSTO UNITARIO (Fase 7) ─────────────────────────────
+
+    @handle_service_error
+    async def _handle_cu_actual(
+        self,
+        parameters: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """Handler para intent de Costo Unitario."""
+        data = {}
+        errors = []
+
+        try:
+            from core.container import container
+            cu = await asyncio.to_thread(
+                container.get_cu_service().get_cu_current
+            )
+            if not cu:
+                data['respuesta'] = "No hay datos de CU disponibles en este momento."
+                return data, errors
+
+            cu_total = cu.get('cu_total', 0)
+            g = cu.get('componente_g', 0) or 0
+            d = cu.get('componente_d', 0) or 0
+            c = cu.get('componente_c', 0) or 0
+            t = cu.get('componente_t', 0) or 0
+            p = cu.get('componente_p', 0) or 0
+
+            total_comp = g + d + c + t + p
+            pct_g = (g / total_comp * 100) if total_comp > 0 else 0
+
+            resp = (
+                f"El Costo Unitario actual es "
+                f"**{cu_total:.2f} COP/kWh** "
+                f"(fecha: {cu.get('fecha', 'N/D')}).\n\n"
+                f"El componente de generación representa "
+                f"el {pct_g:.1f}% del total.\n\n"
+                f"**Desglose (COP/kWh):**\n"
+                f"▸ Generación: {g:.2f}\n"
+                f"▸ Distribución: {d:.2f}\n"
+                f"▸ Comercialización: {c:.2f}\n"
+                f"▸ Transmisión: {t:.2f}\n"
+                f"▸ Pérdidas: {p:.2f}"
+            )
+
+            data['respuesta'] = resp
+            data['cu'] = {
+                'cu_total': round(cu_total, 2),
+                'fecha': str(cu.get('fecha', '')),
+                'componentes': {
+                    'g': round(g, 2), 'd': round(d, 2),
+                    'c': round(c, 2), 't': round(t, 2),
+                    'p': round(p, 2),
+                },
+                'confianza': cu.get('confianza'),
+            }
+        except Exception as e:
+            logger.error(f"Error en CU actual: {e}", exc_info=True)
+            data['respuesta'] = "No hay datos de CU disponibles en este momento."
+            errors.append(ErrorDetail(
+                code="CU_ERROR", message="Error al consultar CU"
+            ))
+
+        return data, errors
+
+    # ─── PÉRDIDAS NO TÉCNICAS (Fase 7) ───────────────────────
+
+    @handle_service_error
+    async def _handle_perdidas_nt(
+        self,
+        parameters: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """Handler para intent de Pérdidas No Técnicas."""
+        data = {}
+        errors = []
+
+        try:
+            from core.container import container
+            stats = await asyncio.to_thread(
+                container.losses_nt_service.get_losses_statistics
+            )
+            if not stats:
+                data['respuesta'] = "No hay datos de P_NT disponibles."
+                return data, errors
+
+            pnt_30d = stats.get('pct_promedio_nt_30d', 0)
+            pnt_12m = stats.get('pct_promedio_nt_12m', 0)
+            tendencia = stats.get('tendencia_nt', 'N/D')
+            costo_12m = stats.get('costo_nt_12m_mcop', 0)
+
+            resp = (
+                f"**Pérdidas No Técnicas (P_NT):**\n\n"
+                f"▸ Promedio 30d: **{pnt_30d:.2f}%**\n"
+                f"▸ Promedio 12m: {pnt_12m:.2f}%\n"
+                f"▸ Tendencia: {tendencia}\n"
+                f"▸ Costo estimado 12m: {costo_12m:,.0f} MCOP\n\n"
+                f"_Nota: P_NT estimado por método residuo "
+                f"Gene−DemaReal. Precisión validada: "
+                f"0.000026% sobre 1,985 días._"
+            )
+
+            data['respuesta'] = resp
+            data['pnt'] = {
+                'pct_promedio_nt_30d': round(pnt_30d, 2),
+                'pct_promedio_nt_12m': round(pnt_12m, 2),
+                'tendencia': tendencia,
+                'costo_nt_12m_mcop': round(costo_12m, 0),
+                'total_dias': stats.get('total_dias', 0),
+            }
+        except Exception as e:
+            logger.error(f"Error en P_NT: {e}", exc_info=True)
+            data['respuesta'] = "No hay datos de P_NT disponibles."
+            errors.append(ErrorDetail(
+                code="PNT_ERROR", message="Error al consultar P_NT"
+            ))
+
+        return data, errors
+
+    # ─── SIMULACIÓN CREG (Fase 7) ────────────────────────────
+
+    @handle_service_error
+    async def _handle_simulacion(
+        self,
+        parameters: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """
+        Handler para intent de simulación.
+        Si el mensaje menciona sequía → sequia_moderada
+        Si menciona renovables → expansion_renovables
+        Si menciona pérdidas → reforma_perdidas_reduccion
+        Si no es claro → listar escenarios disponibles
+        """
+        data = {}
+        errors = []
+
+        try:
+            from core.container import container
+            svc = container.simulation_service
+
+            pregunta = parameters.get('pregunta', '').lower()
+
+            # Detectar escenario por keywords
+            escenario_id = None
+            if any(w in pregunta for w in ['sequía', 'sequia', 'niño', 'nino', 'embalse']):
+                escenario_id = 'sequia_moderada'
+            elif any(w in pregunta for w in ['severa', 'crisis', '2022', '2023']):
+                escenario_id = 'sequia_severa'
+            elif any(w in pregunta for w in ['renovable', 'solar', 'eólica', 'eolica']):
+                escenario_id = 'expansion_renovables'
+            elif any(w in pregunta for w in ['pérdida', 'perdida', 'hurto', 'reforma']):
+                escenario_id = 'reforma_perdidas_reduccion'
+
+            if escenario_id:
+                # Ejecutar escenario predefinido
+                presets = svc.get_escenarios_predefinidos()
+                preset = next((p for p in presets if p['id'] == escenario_id), None)
+                if preset:
+                    resultado = await asyncio.to_thread(
+                        svc.simular_escenario,
+                        preset['parametros'],
+                        preset['nombre'],
+                    )
+                    cu_sim = resultado.get('cu_simulado', 0)
+                    delta = resultado.get('delta_pct', 0)
+                    factura = resultado.get('impacto_estrato3', {}).get('factura_sim_cop', 0)
+                    dir_icon = '↑' if delta > 0 else '↓'
+
+                    resp = (
+                        f"**Simulación: {preset['nombre']}**\n\n"
+                        f"▸ CU simulado: **{cu_sim:.2f} COP/kWh** "
+                        f"({dir_icon} {delta:+.1f}%)\n"
+                        f"▸ Factura estrato 3: ${factura:,.0f} COP/mes\n\n"
+                        f"_{preset['descripcion']}_"
+                    )
+                    if resultado.get('advertencias'):
+                        resp += "\n\n⚠️ " + " | ".join(resultado['advertencias'][:2])
+
+                    data['respuesta'] = resp
+                    data['simulacion'] = resultado
+                    return data, errors
+
+            # Si no se detectó → listar escenarios disponibles
+            presets = svc.get_escenarios_predefinidos()
+            lista = "\n".join(
+                f"▸ **{p['nombre']}**: {p['descripcion']}"
+                for p in presets
+            )
+            data['respuesta'] = (
+                f"**Escenarios de simulación disponibles:**\n\n"
+                f"{lista}\n\n"
+                f"_Menciona un escenario específico para ejecutarlo. "
+                f"Ej: \"simular sequía moderada\"_"
+            )
+            data['escenarios_disponibles'] = [
+                {'id': p['id'], 'nombre': p['nombre']}
+                for p in presets
+            ]
+
+        except Exception as e:
+            logger.error(f"Error en simulación: {e}", exc_info=True)
+            data['respuesta'] = "El simulador no está disponible en este momento."
+            errors.append(ErrorDetail(
+                code="SIMULATION_ERROR",
+                message="Error al ejecutar simulación"
+            ))
+
+        return data, errors
+
     @handle_service_error
     async def _handle_generacion_electrica(
         self, 
@@ -3176,6 +3436,36 @@ class ChatbotOrchestratorService:
                 contexto['anomalias'].get('lista', [])
             )
 
+            # (f) Costo Unitario y Pérdidas No Técnicas (Fase 7)
+            try:
+                from core.container import container as _ctnr
+                _cu = await asyncio.to_thread(_ctnr.get_cu_service().get_cu_current)
+                _pnt = await asyncio.to_thread(_ctnr.losses_nt_service.get_losses_statistics)
+                if _cu or _pnt:
+                    contexto['cu_pnt'] = {}
+                    if _cu:
+                        contexto['cu_pnt']['costo_unitario'] = {
+                            'cu_total_cop_kwh': round(_cu.get('cu_total', 0), 2),
+                            'fecha': str(_cu.get('fecha', '')),
+                            'componente_g_pct': round(
+                                (_cu.get('componente_g', 0) /
+                                 max(_cu.get('cu_total', 1), 1)) * 100, 1
+                            ),
+                            'confianza': _cu.get('confianza'),
+                        }
+                    if _pnt:
+                        contexto['cu_pnt']['perdidas_nt'] = {
+                            'pct_promedio_nt_30d': round(_pnt.get('pct_promedio_nt_30d', 0), 2),
+                            'tendencia': _pnt.get('tendencia_nt', 'N/D'),
+                            'costo_nt_12m_mcop': round(_pnt.get('costo_nt_12m_mcop', 0), 0),
+                        }
+                    logger.info(
+                        f"[INFORME] CU/PNT inyectado: "
+                        f"cu={'sí' if _cu else 'no'}, pnt={'sí' if _pnt else 'no'}"
+                    )
+            except Exception as e:
+                logger.warning(f"[INFORME] cu_pnt falló (no crítico): {e}")
+
             logger.info(
                 f"[INFORME_EJECUTIVO_IA] Contexto enriquecido: "
                 f"gen_fuentes={'ok' if 'fuentes' in contexto.get('generacion_por_fuente', {}) else 'no'}, "
@@ -3187,24 +3477,54 @@ class ChatbotOrchestratorService:
 
             # ── 3. Verificar cache diario antes de llamar a la IA ──
             hoy = datetime.utcnow().strftime('%Y-%m-%d')
-            cached = self._informe_ia_cache.get(hoy)
-            if cached and cached.get('texto'):
-                logger.info(
-                    f"[INFORME_IA] Usando cache del día ({len(cached['texto'])} chars, "
-                    f"generado a las {cached.get('hora', '?')})"
-                )
-                informe_texto = cached['texto']
-            else:
+            cache_key = f"informe_ia:{hoy}"
+            informe_texto = None
+            
+            # Intentar leer de Redis primero (compartido entre workers)
+            if self._redis:
+                try:
+                    import json as _json
+                    cached_raw = self._redis.get(cache_key)
+                    if cached_raw:
+                        cached = _json.loads(cached_raw) if isinstance(cached_raw, str) else _json.loads(cached_raw.decode())
+                        if cached and cached.get('texto'):
+                            logger.info(
+                                f"[INFORME_IA] Usando cache Redis del día ({len(cached['texto'])} chars, "
+                                f"generado a las {cached.get('hora', '?')})"
+                            )
+                            informe_texto = cached['texto']
+                except Exception as e:
+                    logger.warning(f"[INFORME_IA] Error leyendo cache Redis: {e}")
+            
+            # Fallback: cache local en memoria
+            if not informe_texto:
+                cached = self._informe_ia_cache.get(hoy)
+                if cached and cached.get('texto'):
+                    logger.info(
+                        f"[INFORME_IA] Usando cache local del día ({len(cached['texto'])} chars, "
+                        f"generado a las {cached.get('hora', '?')})"
+                    )
+                    informe_texto = cached['texto']
+            
+            if not informe_texto:
                 informe_texto = await self._generar_informe_con_ia(contexto)
                 # Post-validar y limpiar narrativa
                 if informe_texto:
                     informe_texto = self._postprocess_informe_ia(informe_texto)
-                # Guardar en cache si fue exitoso
+                # Guardar en cache (Redis + local) si fue exitoso
                 if informe_texto:
-                    self._informe_ia_cache = {hoy: {
+                    cache_value = {
                         'texto': informe_texto,
                         'hora': datetime.utcnow().strftime('%H:%M'),
-                    }}
+                    }
+                    self._informe_ia_cache = {hoy: cache_value}
+                    if self._redis:
+                        try:
+                            import json as _json
+                            self._redis.setex(cache_key, 86400, _json.dumps(cache_value))
+                            logger.info(f"[INFORME_IA] Cache guardado en Redis con TTL 24h")
+                        except Exception as e:
+                            logger.warning(f"[INFORME_IA] Error guardando cache Redis: {e}")
             
             if informe_texto:
                 data['informe'] = informe_texto

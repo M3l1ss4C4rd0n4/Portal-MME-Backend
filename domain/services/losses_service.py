@@ -1,7 +1,10 @@
 from typing import Optional, List, Dict, Any
 import pandas as pd
+import logging
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
 from domain.services.metrics_service import MetricsService
+
+logger = logging.getLogger(__name__)
 
 class LossesService:
     """
@@ -150,3 +153,70 @@ class LossesService:
             import logging
             logging.getLogger(__name__).error(f"❌ Error obteniendo pérdidas: {e}")
             return pd.DataFrame()
+
+    # ================================================================
+    # FASE 3: Métodos para Pérdidas No Técnicas
+    # ================================================================
+
+    def get_losses_detailed(self, fecha_inicio: str, fecha_fin: str) -> pd.DataFrame:
+        """
+        Obtiene datos de losses_detailed (tabla FASE 3).
+
+        Retorna DataFrame con columnas de pérdidas totales, técnicas, NT,
+        costos, confianza, anomalía, etc.
+
+        Si la tabla está vacía para el rango, intenta cálculo on-the-fly
+        usando LossesNTService.get_losses_historico.
+        """
+        try:
+            from domain.services.losses_nt_service import LossesNTService
+            from datetime import date as date_type
+
+            # Convertir a date si son strings
+            if isinstance(fecha_inicio, str):
+                fi = pd.to_datetime(fecha_inicio).date()
+            elif isinstance(fecha_inicio, date_type):
+                fi = fecha_inicio
+            else:
+                fi = pd.to_datetime(str(fecha_inicio)).date()
+
+            if isinstance(fecha_fin, str):
+                ff = pd.to_datetime(fecha_fin).date()
+            elif isinstance(fecha_fin, date_type):
+                ff = fecha_fin
+            else:
+                ff = pd.to_datetime(str(fecha_fin)).date()
+
+            nt_service = LossesNTService()
+            df = nt_service.get_losses_historico(fi, ff)
+
+            if df.empty:
+                logger.warning("⚠️ losses_detailed vacía para %s → %s", fi, ff)
+
+            logger.info("✅ get_losses_detailed: %d filas (%s → %s)", len(df), fi, ff)
+            return df
+
+        except Exception as e:
+            logger.error("❌ Error en get_losses_detailed: %s", e)
+            return pd.DataFrame()
+
+    def get_losses_nt_summary(self) -> dict:
+        """
+        Retorna estadísticas agregadas de pérdidas no técnicas.
+        Delega a LossesNTService.get_losses_statistics().
+
+        Returns:
+            dict con: pct_promedio_nt, pct_promedio_nt_30d, tendencia_nt,
+                     dias_anomalia, costo_nt_historico_mcop, etc.
+        """
+        try:
+            from domain.services.losses_nt_service import LossesNTService
+
+            nt_service = LossesNTService()
+            stats = nt_service.get_losses_statistics()
+            logger.info("✅ get_losses_nt_summary: %s", {k: v for k, v in stats.items() if k != 'error'})
+            return stats
+
+        except Exception as e:
+            logger.error("❌ Error en get_losses_nt_summary: %s", e)
+            return {"error": str(e)}

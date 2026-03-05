@@ -14,6 +14,7 @@ import warnings
 import sys
 import os
 import time
+import logging
 
 # Imports locales para componentes uniformes
 from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
@@ -23,6 +24,7 @@ from core.constants import UIColors as COLORS
 from domain.services.losses_service import LossesService
 
 warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
 
 # Instancia del servicio
 losses_service = LossesService()
@@ -36,6 +38,24 @@ register_page(
 )
 
 LAST_UPDATE = time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+# ================================================================
+# Helper: Semáforo PNT
+# ================================================================
+def _semaforo_pnt(pnt_pct: float) -> tuple:
+    """Retorna (emoji, color, label) según nivel PNT."""
+    if pnt_pct is None:
+        return ("⚪", "secondary", "Sin datos")
+    val = abs(pnt_pct)
+    if pnt_pct < 0:
+        return ("🔵", "info", "Negativo (anomalía datos)")
+    if val < 5:
+        return ("🟢", "success", "Bajo")
+    if val < 10:
+        return ("🟡", "warning", "Moderado")
+    return ("🔴", "danger", "Alto")
+
 
 def layout():
     """Layout de la página de Pérdidas del Sistema"""
@@ -88,11 +108,40 @@ def layout():
             ], id='btn-actualizar-perdidas', color="primary", size="sm"),
         ),
 
+        # ── Tabs: Técnicas (existente) + No Técnicas (FASE 3) ──
+        dcc.Tabs(
+            id='perdidas-tabs',
+            value='tab-tecnicas',
+            children=[
+                dcc.Tab(
+                    label='Pérdidas Técnicas',
+                    value='tab-tecnicas',
+                    className='custom-tab',
+                    selected_className='custom-tab--selected',
+                ),
+                dcc.Tab(
+                    label='Pérdidas No Técnicas (PNT)',
+                    value='tab-nt',
+                    className='custom-tab',
+                    selected_className='custom-tab--selected',
+                ),
+            ],
+            style={'marginBottom': '16px'},
+        ),
+
         dcc.Loading(
             id="loading-perdidas",
             type="dot",
             color="#3b82f6",
             children=html.Div(id='perdidas-container'),
+        ),
+
+        # Container para PNT (Tab 2)
+        dcc.Loading(
+            id="loading-perdidas-nt",
+            type="dot",
+            color="#e74c3c",
+            children=html.Div(id='perdidas-nt-container'),
         ),
     ], className="t-page")
 
@@ -124,11 +173,16 @@ def actualizar_fechas_rango_perdidas(rango):
      Output('store-datos-chatbot-generacion', 'data', allow_duplicate=True)],
     [Input('btn-actualizar-perdidas', 'n_clicks'),
      Input('fecha-filtro-perdidas', 'start_date'),
-     Input('fecha-filtro-perdidas', 'end_date')],
+     Input('fecha-filtro-perdidas', 'end_date'),
+     Input('perdidas-tabs', 'value')],
     prevent_initial_call='initial_duplicate'
 )
-def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
-    """Actualizar análisis de pérdidas de energía"""
+def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin, tab_activo):
+    """Actualizar análisis de pérdidas de energía (Tab 1: Técnicas)"""
+    # Si estamos en la pestaña NT, ocultar este contenedor
+    if tab_activo == 'tab-nt':
+        return html.Div(), dash.no_update
+
     px, go = get_plotly_modules()
     
     try:
@@ -340,3 +394,255 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin):
             html.Hr(),
             html.P("Por favor, intente nuevamente o contacte al administrador.", className="mb-0")
         ], color="danger"), datos_error
+
+
+# ================================================================
+# FASE 3: Callback Tab 2 — Pérdidas No Técnicas
+# ================================================================
+
+@callback(
+    Output('perdidas-nt-container', 'children'),
+    [Input('perdidas-tabs', 'value'),
+     Input('btn-actualizar-perdidas', 'n_clicks'),
+     Input('fecha-filtro-perdidas', 'start_date'),
+     Input('fecha-filtro-perdidas', 'end_date')],
+    prevent_initial_call=True
+)
+def actualizar_perdidas_nt(tab_activo, n_clicks, fecha_inicio, fecha_fin):
+    """Renderiza Tab 2: Pérdidas No Técnicas (PNT) del SIN."""
+    if tab_activo != 'tab-nt':
+        return html.Div()
+
+    px, go = get_plotly_modules()
+
+    try:
+        if not fecha_inicio or not fecha_fin:
+            return dbc.Alert("Seleccione ambas fechas", color="warning")
+
+        fecha_ini = pd.to_datetime(fecha_inicio).strftime('%Y-%m-%d')
+        fecha_f = pd.to_datetime(fecha_fin).strftime('%Y-%m-%d')
+
+        # ── Datos históricos ─────────────────────────────────
+        df = losses_service.get_losses_detailed(fecha_ini, fecha_f)
+        stats = losses_service.get_losses_nt_summary()
+
+        if df.empty and "error" in stats:
+            return dbc.Alert([
+                html.H5("ℹ️ Sin datos de Pérdidas No Técnicas", className="alert-heading"),
+                html.P("La tabla losses_detailed no tiene registros para el período seleccionado."),
+                html.P("Ejecute el backfill o espere a que el cron diario complete la carga."),
+            ], color="info")
+
+        # ── KPIs ─────────────────────────────────────────────
+        pnt_30d = stats.get('pct_promedio_nt_30d', 0) or 0
+        pnt_12m = stats.get('pct_promedio_nt_12m', 0) or 0
+        tendencia = stats.get('tendencia_nt', 'ESTABLE')
+        dias_anom = stats.get('anomalias_30d', 0) or 0
+        costo_12m = stats.get('costo_nt_12m_mcop', 0) or 0
+        total_dias = stats.get('total_dias', 0) or 0
+
+        # Semáforo
+        emoji, sem_color, sem_label = _semaforo_pnt(pnt_30d)
+
+        # Variación de tendencia
+        tend_icon = "fas fa-arrow-down" if tendencia == "MEJORANDO" else (
+            "fas fa-arrow-up" if tendencia == "EMPEORANDO" else "fas fa-minus"
+        )
+        tend_color = "green" if tendencia == "MEJORANDO" else (
+            "red" if tendencia == "EMPEORANDO" else "blue"
+        )
+
+        kpis = crear_kpi_row([
+            {
+                "titulo": f"{emoji} PNT Promedio 30d",
+                "valor": f"{pnt_30d:.2f}",
+                "unidad": "%",
+                "icono": "fas fa-chart-line",
+                "color": "red" if pnt_30d < 0 else ("orange" if pnt_30d > 5 else "green"),
+                "subtexto": f"Semáforo: {sem_label}",
+            },
+            {
+                "titulo": "Tendencia PNT",
+                "valor": tendencia,
+                "unidad": "",
+                "icono": tend_icon,
+                "color": tend_color,
+                "subtexto": f"PNT 12m: {pnt_12m:.2f}%",
+            },
+            {
+                "titulo": "Costo PNT (12m)",
+                "valor": f"{costo_12m:,.0f}",
+                "unidad": "MCOP",
+                "icono": "fas fa-money-bill-wave",
+                "color": "purple",
+                "subtexto": f"Total hist: {stats.get('costo_nt_historico_mcop', 0) or 0:,.0f} MCOP",
+            },
+            {
+                "titulo": "Anomalías (30d)",
+                "valor": str(dias_anom),
+                "unidad": "días",
+                "icono": "fas fa-exclamation-triangle",
+                "color": "orange" if dias_anom > 0 else "green",
+                "subtexto": f"Total serie: {stats.get('dias_anomalia', 0) or 0} / {total_dias}",
+            },
+        ], columnas=4)
+
+        # ── Gráfico 1: Stacked area (Técnicas vs NT) ────────
+        fig_stacked = go.Figure()
+        if not df.empty and 'fecha' in df.columns:
+            fig_stacked.add_trace(go.Scatter(
+                x=df['fecha'],
+                y=df.get('perdidas_tecnicas_pct', pd.Series(dtype=float)),
+                mode='lines',
+                name='Pérdidas Técnicas (%)',
+                line=dict(color='#3498db', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(52, 152, 219, 0.3)',
+                stackgroup='one',
+            ))
+            fig_stacked.add_trace(go.Scatter(
+                x=df['fecha'],
+                y=df.get('perdidas_nt_pct', pd.Series(dtype=float)).clip(lower=0),
+                mode='lines',
+                name='Pérdidas No Técnicas (%)',
+                line=dict(color='#e74c3c', width=2),
+                fill='tonexty',
+                fillcolor='rgba(231, 76, 60, 0.3)',
+                stackgroup='one',
+            ))
+            # Línea total
+            fig_stacked.add_trace(go.Scatter(
+                x=df['fecha'],
+                y=df.get('perdidas_total_pct', pd.Series(dtype=float)),
+                mode='lines',
+                name='Pérdidas Totales (%)',
+                line=dict(color='#2c3e50', width=1.5, dash='dot'),
+            ))
+
+        fig_stacked.update_layout(
+            xaxis_title="Fecha",
+            yaxis_title="Pérdidas (%)",
+            hovermode='x unified',
+            template='plotly_white',
+            font=dict(family='Inter, sans-serif'),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=50, r=20, t=30, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+
+        # ── Gráfico 2: PNT % con umbrales ───────────────────
+        fig_nt = go.Figure()
+        if not df.empty and 'fecha' in df.columns:
+            nt_series = df.get('perdidas_nt_pct', pd.Series(dtype=float))
+            colors = ['#e74c3c' if v < 0 or v > 25 else '#2ecc71' if v < 5 else '#f39c12'
+                       for v in nt_series]
+            fig_nt.add_trace(go.Bar(
+                x=df['fecha'],
+                y=nt_series,
+                name='PNT (%)',
+                marker_color=colors,
+                opacity=0.8,
+            ))
+            # Líneas de umbral
+            fig_nt.add_hline(y=0, line_dash="dash", line_color="gray", annotation_text="0%")
+            fig_nt.add_hline(y=5, line_dash="dash", line_color="#f39c12", annotation_text="5% (moderado)")
+            fig_nt.add_hline(y=10, line_dash="dash", line_color="#e74c3c", annotation_text="10% (alto)")
+
+        fig_nt.update_layout(
+            xaxis_title="Fecha",
+            yaxis_title="PNT (%)",
+            hovermode='x unified',
+            template='plotly_white',
+            font=dict(family='Inter, sans-serif'),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=50, r=20, t=30, b=40),
+            showlegend=False,
+        )
+
+        # ── Tarjeta de Interpretación ────────────────────────
+        avg_nt = stats.get('pct_promedio_nt', 0) or 0
+        avg_tec = stats.get('pct_promedio_tecnicas', 0) or 0
+        avg_total = stats.get('pct_promedio_total', 0) or 0
+
+        interpretacion = dbc.Card([
+            dbc.CardHeader([
+                html.I(className="fas fa-info-circle me-2"),
+                "Interpretación del Análisis PNT"
+            ], style={'fontWeight': '600', 'backgroundColor': '#f8f9fa'}),
+            dbc.CardBody([
+                html.P([
+                    html.Strong("Método: "), "RESIDUO_HÍBRIDO_CREG — ",
+                    "P_total = (Gene − DemaUsuario_est) / Gene, donde ",
+                    "DemaUsuario_est = DemaReal × (1 − SDL_total)"
+                ], style={'fontSize': '0.85rem', 'marginBottom': '8px'}),
+                html.P([
+                    html.Strong("Resultados promedio: "),
+                    f"P_total = {avg_total:.2f}%, P_técnicas = {avg_tec:.2f}%, ",
+                    html.Strong(f"P_NT = {avg_nt:.2f}%"),
+                ], style={'fontSize': '0.85rem', 'marginBottom': '8px'}),
+                html.Hr(),
+                html.P([
+                    html.Strong("Nota metodológica: "),
+                    "Se usa DemaReal (demanda real medida en frontera STN/SDL) con factor "
+                    "de pérdidas SDL total CREG (12%) para estimar energía a nivel de usuario "
+                    "final. P_NT es el residuo entre pérdidas totales estimadas y técnicas "
+                    "(STN medido + distribución CREG 8.5%). Método HOTFIX 4.0 — FASE 4."
+                ], style={'fontSize': '0.8rem', 'color': '#666', 'marginBottom': '8px'}),
+                html.Div([
+                    html.Span(f"{emoji} ", style={'fontSize': '1.5rem'}),
+                    html.Span(f"Nivel actual: {sem_label} — PNT 30d: {pnt_30d:.2f}%",
+                              style={'fontWeight': '600'}),
+                ], style={
+                    'padding': '10px',
+                    'borderRadius': '8px',
+                    'backgroundColor': '#f0f0f0',
+                    'textAlign': 'center',
+                }),
+            ]),
+        ], style={'marginBottom': '16px'})
+
+        # ── Layout final ─────────────────────────────────────
+        contenido = html.Div([
+            kpis,
+
+            html.Div([
+                crear_chart_card_custom(
+                    "Evolución de Pérdidas: Técnicas vs No Técnicas",
+                    dcc.Graph(figure=fig_stacked, config={'displayModeBar': True, 'displaylogo': False}),
+                ),
+            ], style={'marginBottom': '16px'}),
+
+            html.Div([
+                html.Div([
+                    crear_chart_card_custom(
+                        "Pérdidas No Técnicas (%) — Semáforo Diario",
+                        dcc.Graph(figure=fig_nt, config={'displayModeBar': True, 'displaylogo': False}),
+                    ),
+                ], style={'flex': '2'}),
+                html.Div([
+                    interpretacion,
+                ], style={'flex': '1'}),
+            ], className="t-grid t-grid-2"),
+
+            # Enlace a página detallada PNT (FASE 5)
+            html.Div([
+                dbc.Button([
+                    html.I(className="fas fa-external-link-alt me-2"),
+                    "Ver análisis detallado de Pérdidas NT"
+                ], href="/perdidas-nt", color="outline-danger", className="mt-3",
+                style={'fontWeight': '500'}),
+            ], style={'textAlign': 'center', 'marginTop': '8px'}),
+        ])
+
+        return contenido
+
+    except Exception as e:
+        logger.error("Error en actualizar_perdidas_nt: %s", e)
+        return dbc.Alert([
+            html.H5("Error al cargar Pérdidas No Técnicas", className="alert-heading"),
+            html.P(f"Detalle: {str(e)}"),
+            html.Hr(),
+            html.P("Por favor, intente nuevamente o contacte al administrador.", className="mb-0"),
+        ], color="danger")

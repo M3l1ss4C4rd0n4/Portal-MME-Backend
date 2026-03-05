@@ -22,7 +22,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 import logging
 
-from api.dependencies import get_api_key
+from api.dependencies import get_api_key, get_orchestrator_service
 from domain.schemas.orchestrator import (
     OrchestratorRequest,
     OrchestratorResponse,
@@ -296,7 +296,8 @@ limiter = Limiter(key_func=get_remote_address)
 async def chatbot_orchestrator(
     request_data: OrchestratorRequest,
     request: Request,
-    api_key: str = Depends(get_api_key)
+    api_key: str = Depends(get_api_key),
+    orchestrator: ChatbotOrchestratorService = Depends(get_orchestrator_service)
 ) -> OrchestratorResponse:
     """
     Endpoint orquestador para el chatbot
@@ -323,10 +324,7 @@ async def chatbot_orchestrator(
     )
     
     try:
-        # Instanciar el servicio orquestador
-        orchestrator = ChatbotOrchestratorService()
-        
-        # Ejecutar orquestación
+        # Ejecutar orquestación (singleton inyectado via Depends)
         response = await orchestrator.orchestrate(request_data)
         
         # Log del resultado

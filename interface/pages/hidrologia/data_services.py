@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 import traceback
 
 from infrastructure.logging.logger import setup_logger
-from infrastructure.external.xm_service import obtener_datos_inteligente
+from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI
 from domain.services.hydrology_service import HydrologyService
 
 from .utils import (
@@ -84,6 +84,26 @@ def get_aportes_hidricos_por_region(fecha, region):
         return None, None
 
 
+def get_reservas_hidricas_por_region(fecha, region):
+    """
+    Calcula las reservas hídricas filtradas por región hidrológica.
+    Usa calcular_volumen_util_unificado con parámetro de región.
+    
+    Args:
+        fecha: Fecha en formato 'YYYY-MM-DD'
+        region: Nombre de la región hidrológica
+        
+    Returns:
+        tuple: (porcentaje, valor_GWh) o (None, None) si hay error
+    """
+    try:
+        resultado = calcular_volumen_util_unificado(fecha, region=region)
+        if resultado:
+            return resultado['porcentaje'], resultado['volumen_gwh']
+        return None, None
+    except Exception as e:
+        logger.error(f"Error obteniendo reservas hídricas por región '{region}': {e}", exc_info=True)
+        return None, None
 
 
 def get_aportes_hidricos_por_rio(fecha, rio):
@@ -356,7 +376,7 @@ def obtener_datos_embalses_por_region():
             orden_riesgo = {'ALTO': 3, 'MEDIO': 2, 'BAJO': 1}
             
             for _, row in df_region.iterrows():
-                riesgo, color, icono = calcular_semaforo_embalse(row['participacion'], row['volumen_pct'])
+                riesgo, color, icono = calcular_semaforo_embalse_local(row['participacion'], row['volumen_pct'])
                 
                 embalses_lista.append({
                     'codigo': row['codigo'],

@@ -1,7 +1,10 @@
 import dash
 from dash import dcc, html, Input, Output, callback
 import dash_bootstrap_components as dbc
+import logging
 # from interface.components.layout import crear_navbar_horizontal
+
+logger = logging.getLogger(__name__)
 
 # Metadata para Dash Pages (auto-discovery)
 dash.register_page(
@@ -164,6 +167,15 @@ def layout():
                 "pointerEvents": "none"
             }
         ),
+
+        # ── FASE 3: Widget CU actual ────────────────────────
+        html.Div(id="cu-kpi-home", style={
+            "position": "fixed",
+            "top": "85px",
+            "right": "20px",
+            "zIndex": "15",
+            "pointerEvents": "auto",
+        }),
         
         # CAPA 4: Botones interactivos (SOLO hover + tooltip, SIN flotación)
         *[
@@ -517,3 +529,101 @@ def layout():
 )
 def cargar_chat_ia(_):
     return html.Div()
+
+
+# ========================================
+# FASE 3: CU KPI en Home
+# ========================================
+@callback(
+    Output('cu-kpi-home', 'children'),
+    Input('page-background', 'id'),
+)
+def cargar_cu_kpi(_):
+    """
+    Muestra el CU más reciente en un badge flotante en la home.
+    Falla silenciosamente si no hay datos.
+    """
+    try:
+        from domain.services.cu_service import CUService
+        cu_service = CUService()
+        cu = cu_service.get_cu_current()
+
+        if cu is None:
+            return html.Div()  # Sin datos → widget invisible
+
+        cu_total = cu.get("cu_total", 0)
+        fecha_cu = cu.get("fecha", "")
+        confianza = cu.get("confianza", "baja")
+
+        # Color según confianza
+        badge_bg = "#2ecc71" if confianza == "alta" else (
+            "#f39c12" if confianza == "media" else "#e74c3c"
+        )
+
+        # Buscar variación con día anterior
+        variacion_text = ""
+        try:
+            from datetime import timedelta
+            if fecha_cu:
+                from datetime import date as date_type
+                if isinstance(fecha_cu, str):
+                    import datetime as dt_mod
+                    fecha_obj = dt_mod.datetime.strptime(str(fecha_cu), "%Y-%m-%d").date()
+                else:
+                    fecha_obj = fecha_cu
+                cu_prev = cu_service.calculate_cu_for_date(fecha_obj - timedelta(days=1))
+                if cu_prev and cu_prev.get("cu_total"):
+                    diff = cu_total - cu_prev["cu_total"]
+                    pct = (diff / cu_prev["cu_total"]) * 100 if cu_prev["cu_total"] != 0 else 0
+                    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "")
+                    variacion_text = f" {arrow}{pct:+.1f}%"
+        except Exception:
+            pass
+
+        return html.A([
+            html.Div([
+                html.Span("CU Hoy", style={
+                    "fontSize": "0.7rem",
+                    "fontWeight": "600",
+                    "color": "rgba(255,255,255,0.85)",
+                    "display": "block",
+                    "letterSpacing": "0.5px",
+                }),
+                html.Span(f"{cu_total:,.2f}", style={
+                    "fontSize": "1.3rem",
+                    "fontWeight": "bold",
+                    "color": "#FFFFFF",
+                }),
+                html.Span(" COP/kWh", style={
+                    "fontSize": "0.65rem",
+                    "color": "rgba(255,255,255,0.7)",
+                }),
+                html.Span(variacion_text, style={
+                    "fontSize": "0.7rem",
+                    "color": "#FFE082" if variacion_text else "transparent",
+                    "display": "block",
+                }),
+                html.Div(
+                    f"{fecha_cu} — {confianza}",
+                    style={
+                        "fontSize": "0.55rem",
+                        "color": "rgba(255,255,255,0.6)",
+                        "marginTop": "2px",
+                    },
+                ),
+            ], style={
+                "background": f"linear-gradient(135deg, {badge_bg}, #2C3E50)",
+                "padding": "10px 16px",
+                "borderRadius": "12px",
+                "boxShadow": "0 8px 24px rgba(0,0,0,0.3)",
+                "textAlign": "center",
+                "minWidth": "140px",
+                "border": f"2px solid {badge_bg}",
+                "cursor": "pointer",
+                "transition": "all 0.3s ease",
+            }),
+        ], href="/costo-unitario", style={"textDecoration": "none"})
+
+    except Exception as e:
+        logger.debug("CU KPI home no disponible: %s", e)
+        return html.Div()  # Fallo silencioso

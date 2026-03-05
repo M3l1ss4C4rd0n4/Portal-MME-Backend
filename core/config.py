@@ -119,6 +119,80 @@ class Settings(BaseSettings):
         )
     
     # ═══════════════════════════════════════════════════════════
+    # REDIS
+    # ═══════════════════════════════════════════════════════════
+    
+    REDIS_HOST: str = Field(
+        default="localhost",
+        description="Host de Redis"
+    )
+    
+    REDIS_PORT: int = Field(
+        default=6379,
+        description="Puerto de Redis"
+    )
+    
+    REDIS_DB: int = Field(
+        default=0,
+        description="Base de datos Redis para cache general"
+    )
+    
+    REDIS_PASSWORD: str = Field(
+        default="",
+        description="Contraseña de Redis (vacío si no tiene auth)"
+    )
+    
+    @property
+    def REDIS_URL(self) -> str:
+        """URL de conexión Redis"""
+        if self.REDIS_PASSWORD:
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+    
+    # ═══════════════════════════════════════════════════════════
+    # MLFLOW
+    # ═══════════════════════════════════════════════════════════
+    
+    MLFLOW_ADMIN_PASSWORD: str = Field(
+        default="",
+        description="Contraseña de Basic Auth para MLflow (guardada en .env)"
+    )
+    
+    # ═══════════════════════════════════════════════════════════
+    # CARGOS REGULADOS CREG (para cálculo de CU)
+    # ═══════════════════════════════════════════════════════════
+    
+    CARGO_TRANSMISION_COP_KWH: float = Field(
+        default=8.5,
+        description="Cargo transmisión STN regulado CREG 2025 (COP/kWh)"
+    )
+    
+    CARGO_DISTRIBUCION_COP_KWH: float = Field(
+        default=35.0,
+        description="Cargo distribución SDL regulado CREG 2025 (COP/kWh)"
+    )
+    
+    CARGO_COMERCIALIZACION_COP_KWH: float = Field(
+        default=12.0,
+        description="Cargo comercialización regulado CREG 2025 (COP/kWh)"
+    )
+    
+    FACTOR_PERDIDAS_DISTRIBUCION: float = Field(
+        default=0.085,
+        description="Factor de pérdidas TÉCNICAS distribución SDL regulado CREG (~8.5%). "
+                    "Componente técnico solamente. Suma con pérdidas STN reales (~1.7%) "
+                    "para estimar pérdidas técnicas totales."
+    )
+    
+    FACTOR_PERDIDAS_SDL_TOTAL: float = Field(
+        default=0.12,
+        description="Factor de pérdidas TOTALES SDL (técnicas + no técnicas) por CREG "
+                    "promedio nacional (~12%). Incluye pérdidas técnicas de distribución "
+                    "(~8.5%) más pérdidas no técnicas estimadas (~3.5%). Se usa para "
+                    "estimar demanda a nivel de usuario final desde DemaReal (STN boundary)."
+    )
+    
+    # ═══════════════════════════════════════════════════════════
     # APIS EXTERNAS - XM
     # ═══════════════════════════════════════════════════════════
     
@@ -372,7 +446,7 @@ class Settings(BaseSettings):
     )
     
     API_CORS_ORIGINS_STR: str = Field(
-        default="*",
+        default="http://localhost:8050,http://127.0.0.1:8050,https://srvwebprdctrlxm.mme.gov.co",
         description="Orígenes CORS permitidos (separados por comas)",
         alias="API_CORS_ORIGINS"
     )

@@ -7,15 +7,18 @@ para embalses, regiones y aportes.
 """
 
 import pandas as pd
+from datetime import date, datetime, timedelta
 from dash import html, dash_table
 import dash_bootstrap_components as dbc
 
 from infrastructure.logging.logger import setup_logger
+from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI, obtener_datos_desde_bd
 
 from .utils import (
     logger, format_number, format_date,
     calcular_semaforo_embalse, clasificar_riesgo_embalse,
     obtener_estilo_riesgo, obtener_pictograma_riesgo,
+    normalizar_codigo, normalizar_region,
 )
 from .data_services import (
     obtener_datos_embalses_por_region,

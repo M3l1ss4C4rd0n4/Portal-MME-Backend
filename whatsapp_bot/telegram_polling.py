@@ -42,6 +42,29 @@ from telegram.constants import ParseMode
 
 from app.config import settings
 
+# Módulo Subsidios (consultas directas SQL — sin IA)
+from subsidios_handler import (
+    register_subsidios_handlers,
+    get_subsidios_bot_commands,
+    handle_subsidios_callback,
+    handle_subsidios_text,
+    _is_authorized as sub_authorized,
+    _audit        as sub_audit,
+    _user_name    as sub_user_name,
+    _back_kb      as sub_back_kb,
+    _menu_kb      as sub_menu_kb,
+    _safe_send    as sub_safe_send,
+    q_deuda_total,
+    q_deuda_empresa,
+    q_trimestre_pagado,
+    q_resoluciones_anio,
+    q_estado_resoluciones,
+    q_porcentaje_pagado,
+    q_deuda_fondo,
+    q_pagado_anio,
+    q_buscar_empresa,
+)
+
 # ═══════════════════════════════════════════════════════════
 # Logging
 # ═══════════════════════════════════════════════════════════
@@ -62,7 +85,7 @@ logger = logging.getLogger(__name__)
 # Configuración
 # ═══════════════════════════════════════════════════════════
 PORTAL_API_URL = getattr(settings, 'PORTAL_API_URL', 'http://localhost:8000')
-PORTAL_API_KEY = "mme-portal-energetico-2026-secret-key"
+PORTAL_API_KEY = os.environ.get('PORTAL_API_KEY', getattr(settings, 'API_KEYS', ''))
 ORCHESTRATOR_ENDPOINT = f"{PORTAL_API_URL}/api/v1/chatbot/orchestrator"
 
 # Redis para tracking de usuarios de Telegram
@@ -158,7 +181,7 @@ def _r(val, dec=1):
 
 
 def render_menu(data: dict) -> tuple:
-    """Renderiza el menú principal (4 opciones + submenús)"""
+    """Renderiza el menú principal (4 opciones + submenús + subsidios)"""
     bienvenida = data.get("mensaje_bienvenida", "¡Bienvenido! 👋")
     indicadores = data.get("indicadores_clave", [])
     menu_items = data.get("menu_principal", [])
@@ -169,6 +192,10 @@ def render_menu(data: dict) -> tuple:
         for ind in indicadores:
             text += f"• {ind}\n"
 
+    # Nota de subsidios
+    text += "\n📋 *Subsidios:* Consulta la base de subsidios DDE."
+    text += "\n🔒 _Acceso limitado a personal autorizado._"
+
     keyboard = []
     for item in menu_items:
         emoji = item.get("emoji", "")
@@ -177,6 +204,11 @@ def render_menu(data: dict) -> tuple:
         keyboard.append([InlineKeyboardButton(
             f"{emoji} {titulo}", callback_data=f"intent:{item_id}"
         )])
+
+    # Botón de Subsidios al final
+    keyboard.append([InlineKeyboardButton(
+        "📋 Subsidios (acceso restringido)", callback_data="intent:subsidios"
+    )])
 
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -1196,8 +1228,47 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"[CB] {user.id} (@{user.username}): {data}")
 
+    # Módulo Subsidios — callbacks con prefijo "sub:"
+    if data.startswith("sub:"):
+        await handle_subsidios_callback(query, user, chat, data, context)
+        return
+
     if data.startswith("intent:"):
         intent = data.split(":", 1)[1]
+
+        # ── Subsidios: mostrar menú del módulo ──────────────────
+        if intent == "subsidios":
+            if sub_authorized(user.id):
+                sub_audit(user.id, sub_user_name(user), '/subsidios', None)
+                txt = (
+                    "📋 *MÓDULO DE SUBSIDIOS*\n"
+                    "Base de Subsidios DDE — Ministerio de Minas y Energía\n\n"
+                    "Selecciona la consulta que deseas realizar:"
+                )
+                try:
+                    await query.edit_message_text(
+                        txt, parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=sub_menu_kb()
+                    )
+                except Exception:
+                    await sub_safe_send(chat, txt, sub_menu_kb())
+            else:
+                txt = (
+                    "🔒 *Acceso restringido*\n\n"
+                    "El módulo de Subsidios está disponible solo para "
+                    "personal autorizado del Ministerio.\n\n"
+                    "Si necesitas acceso, contacta al administrador."
+                )
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "🔙 Menú principal", callback_data="intent:menu"
+                )]])
+                try:
+                    await query.edit_message_text(
+                        txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb
+                    )
+                except Exception:
+                    await _safe_send(chat, txt, kb)
+            return
 
         # Submenús que no necesitan llamar al orquestador
         if intent == "predicciones_sector":
@@ -1639,6 +1710,66 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     message = update.message.text.strip()
 
+    # ── Fallback router para comandos de subsidios ────────────────────
+    # Si Telegram NO envía la entidad BOT_COMMAND, el CommandHandler no
+    # matchea y el mensaje cae aquí.  Lo enrutamos manualmente.
+    if message.startswith('/'):
+        parts  = message.split(None, 1)
+        cmd    = parts[0][1:].split('@')[0].lower()   # quitar / y @bot
+        arg_str = parts[1].strip() if len(parts) > 1 else None
+
+        _SUB_CMDS = {
+            'subsidios', 'deuda', 'deuda_empresa', 'trimestre_pagado',
+            'resoluciones', 'estado_resoluciones', 'porcentaje_pagado',
+            'deuda_fondo', 'pagado_anio', 'buscar_empresa',
+        }
+
+        if cmd in _SUB_CMDS and sub_authorized(user.id):
+            logger.info(f"[CMD-FALLBACK] {user.id}: /{cmd} {arg_str or ''}")
+            sub_audit(user.id, sub_user_name(user), f'/{cmd}', arg_str)
+            await chat.send_action("typing")
+
+            text = None
+            if cmd == 'subsidios':
+                txt_menu = (
+                    "📋 *MÓDULO DE SUBSIDIOS*\n"
+                    "Base de Subsidios DDE — Ministerio de Minas y Energía\n\n"
+                    "Selecciona la consulta que deseas realizar:"
+                )
+                await sub_safe_send(chat, txt_menu, sub_menu_kb())
+                return
+            elif cmd == 'deuda':
+                text = q_deuda_total()
+            elif cmd == 'deuda_empresa':
+                text = q_deuda_empresa(arg_str)
+            elif cmd == 'trimestre_pagado':
+                text = q_trimestre_pagado(arg_str)
+            elif cmd == 'resoluciones':
+                anio = int(arg_str) if arg_str and arg_str.isdigit() else None
+                text = q_resoluciones_anio(anio)
+            elif cmd == 'estado_resoluciones':
+                text = q_estado_resoluciones()
+            elif cmd == 'porcentaje_pagado':
+                text = q_porcentaje_pagado(arg_str)
+            elif cmd == 'deuda_fondo':
+                text = q_deuda_fondo(arg_str)
+            elif cmd == 'pagado_anio':
+                anio = int(arg_str) if arg_str and arg_str.isdigit() else None
+                text = q_pagado_anio(anio)
+            elif cmd == 'buscar_empresa':
+                if not arg_str:
+                    text = "ℹ️ Uso: `/buscar_empresa nombre`\nEjemplo: `/buscar_empresa electricaribe`"
+                else:
+                    text = q_buscar_empresa(arg_str)
+
+            if text:
+                await sub_safe_send(chat, text, sub_back_kb())
+            return
+
+        # Cualquier otro /comando no-subsidios → ignorar aquí
+        logger.debug(f"[TEXT] Skipping non-subsidios command: {message}")
+        return
+
     logger.info(f"[TEXT] {user.id} (@{user.username}): {message}")
     track_telegram_user(user.id, user.username, user.first_name)
 
@@ -1657,6 +1788,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             context.user_data["awaiting_custom_date"] = True
         return
+
+    # ¿Texto libre que corresponde a subsidios? (BD-based, no depende de memoria)
+    try:
+        handled = await handle_subsidios_text(update, context, message)
+        if handled:
+            return
+    except Exception as e:
+        logger.error(f"[SUBSIDIOS-TEXT] Error: {e}")
 
     # Selección numérica (1-5) → atajos del menú
     if message in ("1", "2", "3", "4", "5"):
@@ -1704,9 +1843,9 @@ def main():
     logger.info("=" * 60)
 
     async def post_init(application):
-        """Registrar comandos visibles en menú de Telegram"""
+        """Registrar comandos visibles en menú de Telegram + descripción"""
         from telegram import BotCommand
-        await application.bot.set_my_commands([
+        base_commands = [
             BotCommand("menu", "Menú principal"),
             BotCommand("estado", "Estado actual del sector eléctrico"),
             BotCommand("predicciones", "Predicciones del sector"),
@@ -1714,8 +1853,34 @@ def main():
             BotCommand("noticias", "Noticias clave del sector"),
             BotCommand("informe", "Informe ejecutivo completo"),
             BotCommand("ayuda", "Ayuda y comandos disponibles"),
-        ])
-        logger.info("✅ Comandos del menú registrados")
+        ]
+        subsidios_commands = get_subsidios_bot_commands()
+        await application.bot.set_my_commands(base_commands + subsidios_commands)
+
+        # Descripción del bot (aparece en "What can this bot do?")
+        descripcion = (
+            "¡Hola! 👋 Soy el asistente del Portal Energético del "
+            "Ministerio de Minas y Energía de Colombia.\n\n"
+            "Puedo informarte sobre los indicadores clave del sector "
+            "energético. También puedes escribirme cualquier pregunta "
+            "en cualquier momento.\n\n"
+            "📊 Indicadores clave:\n"
+            "• ⚡ Generación Total del Sistema (GWh)\n"
+            "• 💲 Precio de Bolsa Nacional (COP/kWh)\n"
+            "• 🔥 Porcentaje de Embalses (%)\n\n"
+            "📋 Subsidios: Consulta la base de subsidios DDE.\n"
+            "🔒 Acceso limitado a personal autorizado."
+        )
+        try:
+            await application.bot.set_my_description(descripcion)
+            await application.bot.set_my_short_description(
+                "Asistente del Portal Energético MME — Indicadores, "
+                "predicciones, anomalías, noticias y subsidios."
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo actualizar descripción del bot: {e}")
+
+        logger.info("✅ Comandos del menú y descripción registrados")
 
     app = Application.builder().token(token).post_init(post_init).build()
 
@@ -1729,6 +1894,9 @@ def main():
     app.add_handler(CommandHandler("informe", cmd_informe))
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
     app.add_handler(CommandHandler("help", cmd_ayuda))
+
+    # Módulo Subsidios
+    register_subsidios_handlers(app)
 
     # Callbacks y texto
     app.add_handler(CallbackQueryHandler(handle_callback))
