@@ -9,7 +9,6 @@ from typing import Optional, List, Dict
 import logging
 
 from infrastructure.database.manager import db_manager
-from core.exceptions import DatabaseError
 from domain.interfaces.repositories import ICommercialRepository
 
 logger = logging.getLogger(__name__)

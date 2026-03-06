@@ -15,7 +15,6 @@ import asyncio
 import logging
 import pytest
 from datetime import date, timedelta
-from pprint import pprint
 
 from domain.services.executive_report_service import ExecutiveReportService
 from domain.services.orchestrator_service import ChatbotOrchestratorService

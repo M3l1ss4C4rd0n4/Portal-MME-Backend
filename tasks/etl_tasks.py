@@ -93,7 +93,6 @@ def fetch_metric_data(self, metric_code: str, start_date: str, end_date: str):
         entity = entity_map.get(metric_code, 'Sistema')
         
         # Descargar datos usando la función correcta del xm_service
-        from datetime import date as date_type
         start_dt = datetime.strptime(start_date, '%Y-%m-%d').date() if isinstance(start_date, str) else start_date
         end_dt = datetime.strptime(end_date, '%Y-%m-%d').date() if isinstance(end_date, str) else end_date
         

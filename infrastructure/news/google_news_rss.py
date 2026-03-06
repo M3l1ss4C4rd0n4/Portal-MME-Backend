@@ -13,7 +13,6 @@ en el sector energético / minero de Colombia.
 
 import logging
 import re
-from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import List, Dict
 from xml.etree import ElementTree

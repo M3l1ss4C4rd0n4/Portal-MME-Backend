@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, Dict
 import pandas as pd
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
 from infrastructure.logging.logger import get_logger

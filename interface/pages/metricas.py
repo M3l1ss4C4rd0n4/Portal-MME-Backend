@@ -22,12 +22,8 @@ import datetime as dt
 import dash_bootstrap_components as dbc
 import pandas as pd
 from datetime import date, timedelta, datetime
-import sys
-import os
 from io import BytesIO
-import base64
 import warnings
-import zipfile
 import numpy as np
 import pandas.api.types
 
@@ -35,19 +31,17 @@ import pandas.api.types
 from domain.services.metrics_service import MetricsService
 
 # Imports locales para componentes uniformes
-from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar
 from interface.components.chart_card import crear_page_header
 from core.constants import UIColors as COLORS
 from infrastructure.logging.logger import setup_logger
 from core.validators import validate_date_range, validate_string
-from core.exceptions import DateRangeError, InvalidParameterError, DataNotFoundError
-from core.config_simem import METRICAS_SIMEM_POR_CATEGORIA, METRICAS_SIMEM_CRITICAS, obtener_listado_simem
+from core.exceptions import DateRangeError, InvalidParameterError
+from core.config_simem import METRICAS_SIMEM_POR_CATEGORIA, obtener_listado_simem
 
 # Inicializar servicio (Singleton-like para uso en módulo)
 metrics_service = MetricsService()
 
 try:
-    from pydataxm.pydatasimem import VariableSIMEM
     PYDATASIMEM_AVAILABLE = True
 except ImportError:
     PYDATASIMEM_AVAILABLE = False

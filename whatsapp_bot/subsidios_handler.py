@@ -16,8 +16,6 @@ Comandos:
   /pagado_anio     → Valor pagado en un año
 """
 import logging
-from datetime import datetime
-from typing import Optional
 
 import psycopg2
 import psycopg2.extras

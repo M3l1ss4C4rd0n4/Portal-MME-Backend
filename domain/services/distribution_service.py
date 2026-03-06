@@ -5,14 +5,14 @@ Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)
 """
 
 import pandas as pd
-from datetime import datetime, date
+from datetime import date
 from typing import Optional, List, Dict
 import logging
 
 from domain.interfaces.repositories import IDistributionRepository
 from infrastructure.database.repositories.distribution_repository import DistributionRepository
 from infrastructure.external.xm_service import XMService
-from core.exceptions import DataNotFoundError, ExternalAPIError
+from core.exceptions import DataNotFoundError
 
 logger = logging.getLogger(__name__)
 

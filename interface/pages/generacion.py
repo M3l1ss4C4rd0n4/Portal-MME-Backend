@@ -1,13 +1,9 @@
 from dash import dcc, html, Input, Output, callback, register_page
-import dash_bootstrap_components as dbc
 from datetime import date, timedelta, datetime
-import pandas as pd
-import plotly.express as px
 
 # Imports locales para componentes uniformes
-from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
-from interface.components.chart_card import crear_chart_card_custom, crear_page_header
+from interface.components.kpi_card import crear_kpi_row
+from interface.components.chart_card import crear_page_header
 from core.constants import UIColors as COLORS
 from domain.services.metrics_service import MetricsService
 

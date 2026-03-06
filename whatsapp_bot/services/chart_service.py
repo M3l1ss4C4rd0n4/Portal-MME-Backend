@@ -4,14 +4,9 @@ Genera gráficos dinámicos para enviar por WhatsApp
 """
 import logging
 import plotly.graph_objects as go
-import plotly.express as px
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Optional
 import pandas as pd
-from io import BytesIO
 import uuid
-import os
-from pathlib import Path
 
 from app.config import settings
 from services.data_service import DataService

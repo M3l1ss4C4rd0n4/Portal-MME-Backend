@@ -4,7 +4,6 @@ Script de inspección senior para validar endpoint orquestador
 Valida disponibilidad, seguridad, contratos y documentación
 """
 import requests
-import json
 import sys
 from datetime import datetime
 

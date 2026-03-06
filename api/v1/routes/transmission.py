@@ -11,7 +11,7 @@ Autor: Arquitectura Dashboard MME
 Fecha: 5 de febrero de 2026
 """
 
-from typing import Optional, List
+from typing import Optional
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from slowapi import Limiter

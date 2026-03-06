@@ -4,7 +4,6 @@ Basado en fórmulas oficiales de XM Sinergox
 """
 
 import pandas as pd
-import numpy as np
 from typing import Optional, Dict, Any
 from infrastructure.logging.logger import get_logger
 

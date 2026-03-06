@@ -5,8 +5,8 @@ Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)
 """
 
 import pandas as pd
-from datetime import datetime, date
-from typing import Optional, List, Dict
+from datetime import date
+from typing import Optional
 import logging
 
 from domain.interfaces.repositories import ICommercialRepository

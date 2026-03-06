@@ -3,7 +3,6 @@ Telegram Handler
 Maneja mensajes entrantes de Telegram y los procesa con el orquestador del bot
 """
 import logging
-from typing import Dict, Optional
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,

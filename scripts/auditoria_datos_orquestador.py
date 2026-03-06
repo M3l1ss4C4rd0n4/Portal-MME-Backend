@@ -11,7 +11,6 @@ Ejecutar: python3 test_auditoria_datos_orquestador.py
 import sys
 import asyncio
 from datetime import datetime, timedelta
-import pandas as pd
 sys.path.insert(0, '.')
 
 from domain.services.orchestrator_service import ChatbotOrchestratorService

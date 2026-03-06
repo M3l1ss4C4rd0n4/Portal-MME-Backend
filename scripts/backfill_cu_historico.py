@@ -17,7 +17,6 @@
 import sys
 import os
 import logging
-from datetime import date
 
 # Asegurar que el directorio raíz del proyecto esté en el path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,7 +34,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from domain.services.cu_service import CUService
 from infrastructure.database.connection import PostgreSQLConnectionManager
 from core.config import get_settings
 

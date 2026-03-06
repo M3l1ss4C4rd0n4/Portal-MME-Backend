@@ -7,7 +7,7 @@ Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)
 import logging
 from typing import Optional, Dict, Any
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from domain.interfaces.repositories import ITransmissionRepository
 from infrastructure.database.repositories.transmission_repository import TransmissionRepository

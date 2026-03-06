@@ -3,9 +3,7 @@ Agente IA para análisis en tiempo real del Dashboard MME
 Usa OpenRouter/Groq con modelos de última generación
 Conecta a PostgreSQL a través de DatabaseManager
 """
-import os
 from openai import OpenAI
-from datetime import datetime
 import json
 from typing import Dict, List, Optional
 from core.config import settings
@@ -41,7 +39,6 @@ class AgentIA:
     def get_db_connection(self):
         """Deprecado: Usar infrastructure.database.manager"""
         # Método mantenido por compatibilidad temporal si es necesario
-        pass
     
     # Tablas permitidas para consultas directas (whitelist anti SQL-injection)
     ALLOWED_TABLES = frozenset({

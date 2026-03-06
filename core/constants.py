@@ -2,7 +2,7 @@
 Constantes del Portal Energético MME
 Valores que no cambian durante la ejecución
 """
-from typing import Dict, List
+from typing import Dict
 
 # ═══════════════════════════════════════════════════════════════
 # INFORMACIÓN DE LA APLICACIÓN

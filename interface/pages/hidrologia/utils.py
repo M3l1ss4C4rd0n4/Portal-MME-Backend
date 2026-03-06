@@ -23,7 +23,6 @@ from infrastructure.external.xm_service import (
     obtener_datos_inteligente,
 )
 from domain.services.hydrology_service import HydrologyService
-from domain.services.geo_service import REGIONES_COORDENADAS
 
 # ---------------------------------------------------------------------------
 # Public API

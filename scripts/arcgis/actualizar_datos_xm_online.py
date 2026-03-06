@@ -28,7 +28,6 @@ import pandas as pd
 from pydataxm.pydataxm import ReadDB
 from arcgis.gis import GIS
 from arcgis.geometry import Point
-from arcgis.features import FeatureLayer, GeoAccessor, GeoSeriesAccessor
 
 # Determinar archivo .env (soporta --env-file para múltiples cuentas)
 _env_file = Path(__file__).parent / '.env'

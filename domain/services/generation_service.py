@@ -12,7 +12,7 @@
 import pandas as pd
 from datetime import date, timedelta, datetime
 import logging
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 from domain.interfaces.repositories import IMetricsRepository
 from infrastructure.database.repositories.metrics_repository import MetricsRepository

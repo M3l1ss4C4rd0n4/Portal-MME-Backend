@@ -5,7 +5,7 @@ Permite conversaciones multi-turno con memoria
 import redis
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List
+from typing import Dict, List
 import logging
 
 from app.config import settings

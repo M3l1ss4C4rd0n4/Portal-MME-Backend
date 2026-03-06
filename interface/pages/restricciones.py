@@ -9,17 +9,13 @@ from dash import dcc, html, Input, Output, callback, register_page
 import dash
 import dash_bootstrap_components as dbc
 import pandas as pd
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 import warnings
-import sys
-import os
 import time
 
 # Imports locales para componentes uniformes
-from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.kpi_card import crear_kpi_row
 from interface.components.chart_card import crear_chart_card_custom, crear_page_header, crear_filter_bar
-from core.constants import UIColors as COLORS
 from domain.services.restrictions_service import RestrictionsService
 
 warnings.filterwarnings("ignore")

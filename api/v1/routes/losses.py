@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from api.dependencies import get_api_key, get_losses_nt_service
+from api.dependencies import get_api_key
 from api.v1.schemas.common import ErrorResponse, MetricPoint
 from api.v1.schemas.losses import (
     LossesResponse,

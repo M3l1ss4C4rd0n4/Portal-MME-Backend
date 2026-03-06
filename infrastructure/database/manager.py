@@ -1,10 +1,6 @@
-import warnings
-import psycopg2
-import psycopg2.extras
 import pandas as pd
 from typing import Optional, Generator, Any, List, Dict
 from contextlib import contextmanager
-from core.config import settings
 from infrastructure.logging.logger import get_logger
 from domain.interfaces.database import IDatabaseManager
 

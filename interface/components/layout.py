@@ -1,8 +1,6 @@
-from dash import html, dash_table
+from dash import html
 import dash_bootstrap_components as dbc
-import plotly.graph_objects as go
-import plotly.express as px
-from core.constants import UIColors as COLORS, MapConfig as MAP_CONFIG
+from core.constants import UIColors as COLORS
 
 def crear_navbar_horizontal():
     """Crea una barra de navegación horizontal"""
@@ -103,7 +101,7 @@ def crear_metrica_moderna(titulo, valor, icono, color):
         ], className="text-center")
     ], className="metric-card animate-fade-in")
 
-from dash import dcc, callback, Input, Output
+from dash import dcc
 from datetime import date, timedelta
 
 def crear_filtro_fechas_compacto(id_prefix="global"):
@@ -130,4 +128,3 @@ def registrar_callback_filtro_fechas(page_name):
     """
     Registra callbacks para el filtro de fechas (función legacy/placeholder).
     """
-    pass

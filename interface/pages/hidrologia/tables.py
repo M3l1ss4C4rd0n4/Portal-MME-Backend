@@ -11,29 +11,20 @@ from datetime import date, datetime, timedelta
 from dash import html, dash_table
 import dash_bootstrap_components as dbc
 
-from infrastructure.logging.logger import setup_logger
 from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI, obtener_datos_desde_bd
 
 from .utils import (
     logger, format_number, format_date,
-    calcular_semaforo_embalse, clasificar_riesgo_embalse,
-    obtener_estilo_riesgo, obtener_pictograma_riesgo,
+    clasificar_riesgo_embalse, obtener_estilo_riesgo,
     normalizar_codigo, normalizar_region,
 )
 from .data_services import (
     obtener_datos_embalses_por_region,
     get_participacion_embalses,
-    get_embalses_completa_para_tabla,
-    get_embalses_data_for_table,
     get_embalses_capacidad,
     get_embalses_by_region,
-    calcular_semaforo_embalse_local,
-    clasificar_riesgo_embalse_local,
-    obtener_estilo_riesgo_local,
-    obtener_pictograma_riesgo_local,
     agregar_columna_riesgo_a_tabla,
     generar_estilos_condicionales_riesgo,
-    get_tabla_con_participacion,
 )
 
 def crear_estilos_condicionales_para_tabla_estatica(start_date=None, end_date=None):

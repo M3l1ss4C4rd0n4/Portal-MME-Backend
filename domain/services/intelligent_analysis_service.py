@@ -11,11 +11,9 @@ Fecha: 9 de febrero de 2026
 
 import asyncio
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Optional
 from datetime import date, datetime, timedelta
 from enum import Enum
-import pandas as pd
-import numpy as np
 
 from domain.services.generation_service import GenerationService
 from domain.services.hydrology_service import HydrologyService
@@ -25,7 +23,6 @@ from domain.services.distribution_service import DistributionService
 from domain.services.commercial_service import CommercialService
 from domain.services.losses_service import LossesService
 from domain.services.restrictions_service import RestrictionsService
-from domain.services.validators import MetricValidators
 
 logger = logging.getLogger(__name__)
 

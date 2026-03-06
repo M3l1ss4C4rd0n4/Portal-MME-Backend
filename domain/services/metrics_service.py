@@ -6,7 +6,6 @@ Implementa Inyección de Dependencias (Arquitectura Limpia - Fase 3)
 
 from typing import Optional, List, Dict, Any
 import pandas as pd
-from datetime import date, datetime
 
 from domain.interfaces.repositories import IMetricsRepository
 from infrastructure.database.repositories.metrics_repository import MetricsRepository

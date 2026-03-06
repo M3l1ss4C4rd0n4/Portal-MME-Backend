@@ -11,12 +11,9 @@ Tests de integración — FASE 7: CU/PNT en Informe, Chatbot, Alertas.
 
 import ast
 import asyncio
-import importlib
-import inspect
 import os
 import sys
 
-import pytest
 
 # Asegurar que el root del proyecto esté en sys.path
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

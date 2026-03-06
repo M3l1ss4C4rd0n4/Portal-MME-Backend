@@ -29,7 +29,6 @@ from pydataxm.pydataxm import ReadDB
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from infrastructure.database.manager import db_manager
-from core.config import settings
 
 # Reglas centralizadas — fuente única de verdad para conversiones y unidades
 from etl.etl_rules import (

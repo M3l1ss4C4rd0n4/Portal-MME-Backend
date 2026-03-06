@@ -10,8 +10,7 @@ Fecha: 2 de marzo de 2026
 
 import pytest
 import pandas as pd
-from datetime import date, datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from api.main import app

@@ -16,7 +16,7 @@
 
 import logging
 import time
-from datetime import datetime, timedelta, date
+from datetime import date
 from typing import Optional, Dict, List
 
 import pandas as pd

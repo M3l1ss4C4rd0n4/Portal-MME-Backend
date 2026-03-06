@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime
 
 def validate_date_range(start_date, end_date):
     """

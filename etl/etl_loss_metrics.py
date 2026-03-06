@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import logging
 import argparse
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import psycopg2
 import psycopg2.extras

@@ -26,17 +26,15 @@ def get_plotly_modules():
     import plotly.graph_objects as go
     return px, go
 
-import dash
 from dash import dcc, html, Input, Output, State, callback, register_page, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
 import numpy as np
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 import logging
 
 from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar
 from interface.components.chart_card import crear_page_header, crear_filter_bar
-from core.constants import UIColors as COLORS
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
 
 logger = logging.getLogger("seguimiento_predicciones")

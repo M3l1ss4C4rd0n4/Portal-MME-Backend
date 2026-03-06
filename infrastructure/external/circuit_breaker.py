@@ -13,8 +13,8 @@ import time
 import threading
 import logging
 from enum import Enum
-from typing import Optional, Callable, Any
-from dataclasses import dataclass, field
+from typing import Optional, Callable
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 

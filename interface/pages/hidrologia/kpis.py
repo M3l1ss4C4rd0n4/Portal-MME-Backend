@@ -8,21 +8,18 @@ Funciones para crear fichas KPI, paneles de control y resúmenes.
 import pandas as pd
 from dash import dcc, html
 import dash_bootstrap_components as dbc
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
-from infrastructure.logging.logger import setup_logger
 from infrastructure.external.xm_service import obtener_datos_inteligente
 
-from interface.components.layout import crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.layout import registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi_row
 from interface.components.chart_card import crear_filter_bar
 from core.constants import UIColors as COLORS
 
 from .utils import (
-    logger, format_number, manejar_error_api,
-    get_reservas_hidricas, get_aportes_hidricos,
-    calcular_volumen_util_unificado,
-    normalizar_codigo, ensure_rio_region_loaded,
+    logger, get_reservas_hidricas, get_aportes_hidricos,
+    ensure_rio_region_loaded,
 )
 from .data_services import (
     get_aportes_hidricos_por_region,

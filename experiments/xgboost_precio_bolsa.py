@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
 import warnings
 warnings.filterwarnings('ignore')

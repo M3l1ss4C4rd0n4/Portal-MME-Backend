@@ -2,7 +2,6 @@
 Configuración centralizada del Portal Energético MME
 Usa Pydantic Settings para validación y gestión de variables de entorno
 """
-import os
 import multiprocessing
 from pathlib import Path
 from typing import Optional, Literal, List

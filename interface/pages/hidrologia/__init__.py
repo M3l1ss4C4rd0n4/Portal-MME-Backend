@@ -20,4 +20,3 @@ __version__ = "2.0.0"
 __author__ = "Equipo Portal Energético MME"
 
 # Re-export layout for the thin wrapper
-from .layout_def import layout

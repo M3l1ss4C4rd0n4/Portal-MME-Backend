@@ -14,7 +14,7 @@ Fecha: 3 de febrero de 2026
 import requests
 import json
 import sys
-from typing import Dict, Any, Optional
+from typing import Optional
 from datetime import datetime, timedelta
 
 

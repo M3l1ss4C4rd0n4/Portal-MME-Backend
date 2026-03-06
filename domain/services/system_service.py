@@ -8,7 +8,7 @@
 """
 
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any
 from core.config import settings
 

@@ -74,7 +74,6 @@ from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
 # Reuse FASE 6 infrastructure
 from model_selection import (
     build_dataset,
-    METRICAS_EXPERIMENT,
     HOLDOUT_DIAS,
     RANDOM_STATE,
     RESULTS_DIR,

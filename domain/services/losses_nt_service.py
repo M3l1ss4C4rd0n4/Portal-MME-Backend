@@ -50,7 +50,6 @@ from typing import Optional, Dict, Any
 import pandas as pd
 
 from core.config import get_settings
-from core.exceptions import DatabaseError
 from infrastructure.database.connection import PostgreSQLConnectionManager
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,5 @@
 import dash
-from dash import dcc, html, Input, Output, callback
-import dash_bootstrap_components as dbc
+from dash import html, Input, Output, callback
 import logging
 # from interface.components.layout import crear_navbar_horizontal
 
@@ -565,7 +564,6 @@ def cargar_cu_kpi(_):
         try:
             from datetime import timedelta
             if fecha_cu:
-                from datetime import date as date_type
                 if isinstance(fecha_cu, str):
                     import datetime as dt_mod
                     fecha_obj = dt_mod.datetime.strptime(str(fecha_cu), "%Y-%m-%d").date()

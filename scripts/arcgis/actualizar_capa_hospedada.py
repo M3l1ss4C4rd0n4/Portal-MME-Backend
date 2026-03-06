@@ -336,7 +336,7 @@ def actualizar_truncate_append(item, csv_path: Path) -> bool:
         RuntimeError ante fallos.
     """
     import pandas as pd
-    from arcgis.features import FeatureLayerCollection, FeatureSet
+    from arcgis.features import FeatureLayerCollection
 
     logger.info("--- Estrategia: TRUNCATE + APPEND ---")
 
@@ -439,7 +439,6 @@ def _append_por_lotes(capa, df, tamano_lote: int = 500):
     Es más lento que append() pero funciona en todas las versiones de Enterprise.
     """
     from arcgis.features import Feature
-    from arcgis.geometry import Point
 
     total = len(df)
     insertados = 0

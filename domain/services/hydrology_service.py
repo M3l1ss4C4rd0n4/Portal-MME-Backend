@@ -1,8 +1,8 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
-from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
 import pandas as pd
 import logging
-from infrastructure.external.xm_service import obtener_datos_inteligente, obtener_datos_desde_bd, get_objetoAPI
+from infrastructure.external.xm_service import obtener_datos_inteligente, obtener_datos_desde_bd
 
 # Instanciar logger del servicio
 logger = logging.getLogger(__name__)

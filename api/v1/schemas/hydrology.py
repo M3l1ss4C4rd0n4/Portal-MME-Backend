@@ -10,7 +10,7 @@ Autor: Arquitectura Dashboard MME
 Fecha: 5 de febrero de 2026
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import date as DateType
 from pydantic import BaseModel, Field
 

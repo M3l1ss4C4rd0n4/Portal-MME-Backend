@@ -24,7 +24,6 @@ from datetime import datetime
 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
 import urllib.request
 import urllib.parse
-import json
 import warnings
 warnings.filterwarnings('ignore')
 

@@ -13,8 +13,7 @@ import pandas as pd
 import traceback
 import logging
 
-from core.constants import UIColors as COLORS
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.kpi_card import crear_kpi_row
 from interface.components.chart_card import (
     crear_chart_card_custom,
     crear_page_header,

@@ -3,7 +3,7 @@ Funciones puras de serialización para el orquestador.
 """
 import numpy as np
 import pandas as pd
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
 def sanitize_numpy_types(obj: Any) -> Any:

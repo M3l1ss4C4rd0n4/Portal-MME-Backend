@@ -22,11 +22,10 @@ from dash import dcc, html, Input, Output, State, callback, dash_table, register
 import dash_bootstrap_components as dbc
 import pandas as pd
 from datetime import datetime, timedelta, date
-import numpy as np
 
 # Importar navbar y componentes de filtro
-from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.layout import registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi_row
 from interface.components.chart_card import crear_chart_card, crear_table_card, crear_page_header, crear_filter_bar
 from domain.services.transmission_service import TransmissionService
 

@@ -16,7 +16,6 @@ Fecha: 19 de febrero de 2026
 import os
 import requests
 import json
-import sys
 from datetime import datetime
 
 API_BASE = os.environ.get("PORTAL_API_URL", "http://127.0.0.1:8000")

@@ -8,7 +8,7 @@ sin acceso real a la base de datos.
 import pytest
 import pandas as pd
 from datetime import date
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 
 class TestDistributionService:

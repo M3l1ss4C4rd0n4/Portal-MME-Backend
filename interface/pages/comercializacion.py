@@ -11,10 +11,8 @@ import pandas as pd
 import traceback
 import logging
 
-from core.constants import UIColors as COLORS
-from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
-from interface.components.chart_card import crear_chart_card, crear_chart_card_custom, crear_page_header, crear_filter_bar
+from interface.components.kpi_card import crear_kpi_row
+from interface.components.chart_card import crear_chart_card, crear_page_header, crear_filter_bar
 from domain.services.commercial_service import CommercialService
 
 def get_plotly_modules():

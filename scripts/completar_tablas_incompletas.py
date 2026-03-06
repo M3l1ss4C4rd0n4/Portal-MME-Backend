@@ -8,8 +8,7 @@ Ejecuta ETL específico para llenar:
 """
 
 import sys
-import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 # Agregar el directorio raíz al path
@@ -18,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from infrastructure.database.manager import db_manager
 from infrastructure.external.xm_service import XMService
 from infrastructure.logging.logger import get_logger
-import pandas as pd
 
 logger = get_logger(__name__)
 

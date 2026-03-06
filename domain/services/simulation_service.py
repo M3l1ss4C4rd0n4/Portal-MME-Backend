@@ -19,7 +19,6 @@
 
 import json
 import logging
-from datetime import date, timedelta
 from typing import Optional
 
 from core.exceptions import DatabaseError

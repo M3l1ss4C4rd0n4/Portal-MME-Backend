@@ -5,7 +5,7 @@ llama a Groq/OpenRouter, cachea en Redis y genera un fallback sin IA.
 import asyncio
 import logging
 import re as _re
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Any, Dict, List, Optional, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail

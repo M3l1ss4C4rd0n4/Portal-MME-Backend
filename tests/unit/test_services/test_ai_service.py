@@ -10,8 +10,7 @@ Fecha: 2 de marzo de 2026
 
 import pytest
 import pandas as pd
-from unittest.mock import Mock, patch, MagicMock
-from typing import List, Dict
+from unittest.mock import patch
 
 # Importar a nivel de módulo para que logger se inicialice con settings reales
 from domain.services.ai_service import AgentIA

@@ -12,7 +12,6 @@ FASE 6 — Motor de Simulación CREG
 """
 
 import json
-import hashlib
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException, Request

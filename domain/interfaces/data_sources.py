@@ -11,7 +11,7 @@
 
 from abc import ABC, abstractmethod
 from typing import Optional, Any
-from datetime import date, datetime
+from datetime import date
 import pandas as pd
 
 
@@ -41,7 +41,6 @@ class IXMDataSource(ABC):
         Returns:
             DataFrame con los datos o None si no hay datos
         """
-        pass
     
     @abstractmethod
     def get_api_object(self) -> Optional[Any]:
@@ -52,7 +51,6 @@ class IXMDataSource(ABC):
         Returns:
             Objeto API (ej: ReadDB de pydataxm) o None si no está disponible
         """
-        pass
     
     @abstractmethod
     def is_available(self) -> bool:
@@ -62,7 +60,6 @@ class IXMDataSource(ABC):
         Returns:
             True si la API está disponible y funcional
         """
-        pass
     
     @abstractmethod
     def fetch_catalog(self, catalog_name: str) -> Optional[pd.DataFrame]:
@@ -75,7 +72,6 @@ class IXMDataSource(ABC):
         Returns:
             DataFrame con el catálogo o None si no está disponible
         """
-        pass
 
 
 class ISIMEMDataSource(ABC):
@@ -95,12 +91,10 @@ class ISIMEMDataSource(ABC):
         Returns:
             DataFrame con líneas de transmisión
         """
-        pass
     
     @abstractmethod
     def is_available(self) -> bool:
         """Verifica si el servicio SIMEM está disponible"""
-        pass
 
 
 class IIDEAMDataSource(ABC):
@@ -132,9 +126,7 @@ class IIDEAMDataSource(ABC):
         Returns:
             DataFrame con [fecha, valor] (resolución diaria) o None
         """
-        pass
 
     @abstractmethod
     def is_available(self) -> bool:
         """Verifica si la API datos.gov.co está disponible"""
-        pass

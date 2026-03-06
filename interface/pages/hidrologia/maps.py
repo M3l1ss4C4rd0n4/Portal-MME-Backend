@@ -5,18 +5,14 @@ Hidrología - Mapas Geográficos
 Funciones para crear mapas de Colombia (embalses por región, choropleth).
 """
 
-import pandas as pd
-import json
 
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
-from infrastructure.logging.logger import setup_logger
-from domain.services.geo_service import REGIONES_COORDENADAS, obtener_coordenadas_region
+from domain.services.geo_service import REGIONES_COORDENADAS
 
 from .utils import (
-    logger, get_plotly_modules, _GEOJSON_CACHE, _cargar_geojson_cache,
-    normalizar_region,
+    logger, _cargar_geojson_cache,
 )
 from .data_services import (
     obtener_datos_embalses_por_region,

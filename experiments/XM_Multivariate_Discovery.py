@@ -33,13 +33,15 @@ Análisis:
 
 # %% ── 1. SETUP & CONEXIÓN ──────────────────────────────────────────
 
-import sys, os, warnings, time
+import os
+import warnings
+import time
 warnings.filterwarnings('ignore')
 
 import numpy as np
 import pandas as pd
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Plotly
 import plotly.graph_objects as go
@@ -50,8 +52,6 @@ pio.templates.default = "plotly_white"
 
 # Stats
 from scipy import stats
-from scipy.cluster.hierarchy import linkage, fcluster
-from scipy.spatial.distance import squareform
 import statsmodels.api as sm
 from statsmodels.tsa.stattools import grangercausalitytests
 from statsmodels.stats.outliers_influence import variance_inflation_factor

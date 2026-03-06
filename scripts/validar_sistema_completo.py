@@ -12,7 +12,7 @@ import os
 import sys
 import pickle
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Colores para output
 GREEN = '\033[92m'

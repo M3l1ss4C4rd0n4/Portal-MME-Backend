@@ -6,7 +6,6 @@ Crea y configura la app con la nueva arquitectura
 import sys
 import io
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 from dash import Dash, html, dcc, page_container
 import dash_bootstrap_components as dbc

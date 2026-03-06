@@ -6,8 +6,7 @@ Estos tests usan mocks y no acceden a la base de datos real.
 
 import pytest
 import pandas as pd
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
+from unittest.mock import Mock
 
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
 

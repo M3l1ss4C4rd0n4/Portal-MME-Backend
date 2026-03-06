@@ -12,7 +12,6 @@ Fecha: 3 de febrero de 2026
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 from pydantic import BaseModel, Field
 import pandas as pd
 

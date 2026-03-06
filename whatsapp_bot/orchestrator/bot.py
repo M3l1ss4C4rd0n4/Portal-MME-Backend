@@ -2,11 +2,8 @@
 Bot Orchestrator - Lógica central del chatbot
 """
 import logging
-import re
 from typing import Dict, Optional
-from datetime import datetime
 
-from app.config import settings
 from app.utils.stats import increment_stat
 from services.data_service import DataService
 from services.ai_integration import AIIntegration

@@ -5,8 +5,7 @@ Verifica las funciones de health check del sistema
 con conexiones a PostgreSQL mockeadas.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 

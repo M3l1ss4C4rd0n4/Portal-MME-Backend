@@ -157,7 +157,6 @@ def send_daily_summary():
         logger.info("📊 Generando resumen diario con datos reales...")
         
         from domain.services.generation_service import GenerationService
-        from domain.services.hydrology_service import HydrologyService
         
         gen_service = GenerationService()
         
@@ -217,8 +216,6 @@ def cleanup_old_data():
     try:
         logger.info("🧹 Limpiando datos antiguos...")
         
-        import os
-        from pathlib import Path
         from datetime import timedelta
         
         # Limpiar imágenes antiguas (>7 días)
@@ -245,7 +242,6 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
     """Registra las alertas enviadas en la tabla alertas_historial"""
     try:
         import psycopg2
-        import json
         conn = psycopg2.connect(
             host='localhost',
             port=5432,

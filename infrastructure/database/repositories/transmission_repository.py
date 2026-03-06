@@ -3,7 +3,7 @@ Repositorio para líneas de transmisión.
 Implementa ITransmissionRepository (Arquitectura Limpia - Inversión de Dependencias)
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional
 import pandas as pd
 from infrastructure.database.repositories.base_repository import BaseRepository
 from domain.interfaces.repositories import ITransmissionRepository

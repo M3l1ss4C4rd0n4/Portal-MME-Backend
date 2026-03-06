@@ -8,18 +8,13 @@ y el servicio de hidrología.
 
 import pandas as pd
 from datetime import date, datetime, timedelta
-import traceback
 
-from infrastructure.logging.logger import setup_logger
 from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI
-from domain.services.hydrology_service import HydrologyService
 
 from .utils import (
     logger, normalizar_codigo, normalizar_region, 
-    get_rio_region_dict, ensure_rio_region_loaded,
-    calcular_semaforo_embalse, clasificar_riesgo_embalse,
+    ensure_rio_region_loaded, clasificar_riesgo_embalse,
     obtener_estilo_riesgo, obtener_pictograma_riesgo,
-    format_number, manejar_error_api,
     calcular_volumen_util_unificado,
 )
 

@@ -7,9 +7,6 @@ from io import StringIO
 import warnings
 import traceback
 import logging
-import sys
-from functools import lru_cache
-import hashlib
 import signal
 from contextlib import contextmanager
 
@@ -18,18 +15,16 @@ logger = logging.getLogger(__name__)
 
 # Use the installed pydataxm package
 try:
-    from pydataxm.pydataxm import ReadDB
     PYDATAXM_AVAILABLE = True
 except ImportError:
     PYDATAXM_AVAILABLE = False
 
 # Imports locales
-from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
-from interface.components.chart_card import crear_chart_card, crear_chart_card_custom, crear_page_header, crear_filter_bar
+from interface.components.layout import registrar_callback_filtro_fechas
+from interface.components.kpi_card import crear_kpi_row
+from interface.components.chart_card import crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
-from infrastructure.external.xm_service import fetch_gene_recurso_chunked
-from infrastructure.external.xm_service import get_objetoAPI, fetch_metric_data, obtener_datos_desde_bd, obtener_datos_inteligente
+from infrastructure.external.xm_service import get_objetoAPI, obtener_datos_inteligente
 from infrastructure.database.manager import db_manager
 # CACHE ELIMINADO - Ahora usamos solo ETL-PostgreSQL
 
@@ -232,7 +227,6 @@ def obtener_generacion_agregada_por_tipo(fecha_inicio, fecha_fin, tipo_fuente='H
 def crear_grafica_temporal_negra(df_generacion, planta_seleccionada=None, tipo_fuente='EOLICA'):
     """Gráfica temporal con línea nacional, barras apiladas y áreas por tipo de fuente"""
     px, go = get_plotly_modules()
-    from plotly.subplots import make_subplots
     
     if df_generacion.empty:
         return go.Figure().add_annotation(
@@ -1342,7 +1336,6 @@ def crear_tabla_resumen_todas_plantas_DISABLED(df, fecha_inicio, fecha_fin):
         )
         
         # Formatear fechas para el encabezado (pueden venir como string o date)
-        from datetime import date as date_type
         if isinstance(fecha_inicio, str):
             fecha_inicio_str = fecha_inicio
         else:

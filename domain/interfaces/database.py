@@ -34,7 +34,6 @@ class IDatabaseManager(ABC):
                 cursor = conn.cursor()
                 cursor.execute("SELECT ...")
         """
-        pass
     
     @abstractmethod
     def query_df(self, query: str, params: Optional[Dict] = None) -> pd.DataFrame:
@@ -48,7 +47,6 @@ class IDatabaseManager(ABC):
         Returns:
             DataFrame con los resultados
         """
-        pass
     
     @abstractmethod
     def execute_non_query(self, query: str, params: Optional[tuple] = None) -> None:
@@ -59,7 +57,6 @@ class IDatabaseManager(ABC):
             query: Sentencia SQL
             params: Parámetros de la sentencia
         """
-        pass
     
     @abstractmethod
     def execute_many(self, query: str, data: List[tuple]) -> int:
@@ -73,7 +70,6 @@ class IDatabaseManager(ABC):
         Returns:
             Número de filas afectadas
         """
-        pass
     
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -86,7 +82,6 @@ class IDatabaseManager(ABC):
         Returns:
             True si la tabla existe
         """
-        pass
     
     @abstractmethod
     def get_table_info(self, table_name: str) -> Optional[Dict[str, Any]]:
@@ -99,7 +94,6 @@ class IDatabaseManager(ABC):
         Returns:
             Diccionario con información de la tabla o None
         """
-        pass
 
 
 class IConnectionManager(ABC):
@@ -120,7 +114,6 @@ class IConnectionManager(ABC):
         Yields:
             Conexión a base de datos
         """
-        pass
     
     @abstractmethod
     def test_connection(self) -> bool:
@@ -130,9 +123,7 @@ class IConnectionManager(ABC):
         Returns:
             True si la conexión es exitosa
         """
-        pass
     
     @abstractmethod
     def close_all(self) -> None:
         """Cierra todas las conexiones del pool"""
-        pass

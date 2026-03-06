@@ -11,12 +11,11 @@ Responsabilidades:
 - Generar resumen general IA con los titulares del día.
 """
 
-import asyncio
 import logging
 import re
 import time
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from infrastructure.news.news_client import NewsClient
 from infrastructure.news.mediastack_client import MediastackClient
 from infrastructure.news.google_news_rss import fetch_google_news_rss

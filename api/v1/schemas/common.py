@@ -11,7 +11,7 @@ Fecha: 3 de febrero de 2026
 """
 
 from typing import Optional, Dict, Any
-from datetime import date as DateType, datetime
+from datetime import date as DateType
 from pydantic import BaseModel, Field
 
 

@@ -7,17 +7,14 @@ para datos hidrológicos.
 """
 
 import pandas as pd
-from datetime import datetime
 
 from dash import dcc, html, dash_table
 import dash_bootstrap_components as dbc
 
-from infrastructure.logging.logger import setup_logger
 from infrastructure.external.xm_service import obtener_datos_inteligente
 
 from .utils import (
-    logger, get_plotly_modules, format_number, format_date,
-    agregar_datos_hidrologia_inteligente,
+    logger, get_plotly_modules,
 )
 
 def create_line_chart(data, rio_name=None, start_date=None, end_date=None):
@@ -469,7 +466,6 @@ def create_total_timeline_chart(data, metric_name, region_filter=None, rio_filte
 # print(f"   La gráfica se mostrará solo con datos reales\n")
     
     # Crear figura base
-    from plotly.subplots import make_subplots
     px, go = get_plotly_modules()
     
     fig = go.Figure()

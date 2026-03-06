@@ -6,7 +6,6 @@ Verifica la lógica de negocio sin acceso real a la base de datos.
 
 import pytest
 import pandas as pd
-from datetime import datetime
 from unittest.mock import Mock, patch
 
 from domain.services.generation_service import GenerationService

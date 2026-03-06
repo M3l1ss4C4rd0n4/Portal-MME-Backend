@@ -7,10 +7,8 @@ _create_error_response y dos utilidades estáticas.
 """
 import asyncio
 import logging
-import numpy as np
-import pandas as pd
-from datetime import datetime, date
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, List
 
 from domain.services.generation_service import GenerationService
 from domain.services.hydrology_service import HydrologyService

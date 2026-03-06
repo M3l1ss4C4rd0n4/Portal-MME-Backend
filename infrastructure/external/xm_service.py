@@ -3,14 +3,10 @@
 IMPORTANTE: Sistema de caché ELIMINADO - Ahora usamos ETL-PostgreSQL para datos históricos.
 La función fetch_metric_data() consulta directamente la API XM cuando es necesario.
 """
-from typing import Optional
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 _objetoAPI = None
 _PYDATAXM_AVAILABLE = None  # Lazy check

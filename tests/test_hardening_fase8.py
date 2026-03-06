@@ -24,7 +24,6 @@ from infrastructure.external.circuit_breaker import (
 
 # Check if dash is available for dashboard tests
 try:
-    import dash
     HAS_DASH = True
 except ImportError:
     HAS_DASH = False

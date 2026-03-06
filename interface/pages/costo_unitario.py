@@ -6,18 +6,15 @@ FASE 5 — TAREA 5.2
 """
 
 import dash
-from dash import html, dcc, callback, Input, Output, State
+from dash import html, dcc, callback, Input, Output
 import dash_bootstrap_components as dbc
 from datetime import date, timedelta
 import pandas as pd
 import traceback
 import logging
 
-from core.constants import UIColors as COLORS
-from interface.components.layout import crear_boton_regresar
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
+from interface.components.kpi_card import crear_kpi_row
 from interface.components.chart_card import (
-    crear_chart_card,
     crear_chart_card_custom,
     crear_page_header,
     crear_filter_bar,

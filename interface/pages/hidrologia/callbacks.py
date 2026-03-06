@@ -6,86 +6,44 @@ Todos los callbacks de Dash para la página de hidrología.
 Se registran automáticamente al importar este módulo.
 """
 
-import json
-import traceback
 import pandas as pd
 from datetime import date, datetime, timedelta
 
 import dash
-from dash import dcc, html, Input, Output, State, callback, dash_table, no_update
-from dash import clientside_callback, ClientsideFunction
+from dash import dcc, html, Input, Output, State, callback, dash_table
 import dash_bootstrap_components as dbc
-import plotly.express as px
 
-from infrastructure.logging.logger import setup_logger
 from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI, obtener_datos_desde_bd
 from domain.services.geo_service import REGIONES_COORDENADAS
 
-from interface.components.layout import (
-    crear_navbar_horizontal, crear_boton_regresar,
-    crear_filtro_fechas_compacto, registrar_callback_filtro_fechas,
-)
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
 from interface.components.chart_card import (
-    crear_chart_card, crear_chart_card_custom,
-    crear_page_header, crear_filter_bar,
+    crear_filter_bar,
 )
 from core.constants import UIColors as COLORS
-from core.validators import validate_date_range, validate_string
-from core.exceptions import DateRangeError, InvalidParameterError, DataNotFoundError
 
 from .utils import (
     logger, get_plotly_modules, format_number, format_date,
-    LAST_UPDATE, API_STATUS,
-    _GEOJSON_CACHE, _cargar_geojson_cache,
     validar_rango_fechas, manejar_error_api,
-    get_reservas_hidricas, get_aportes_hidricos,
-    calcular_volumen_util_unificado,
-    normalizar_codigo, normalizar_region,
-    get_rio_region_dict, ensure_rio_region_loaded,
-    get_region_options, agregar_datos_hidrologia_inteligente,
-    calcular_semaforo_embalse, clasificar_riesgo_embalse,
-    obtener_estilo_riesgo, obtener_pictograma_riesgo,
+    ensure_rio_region_loaded, get_region_options,
+    agregar_datos_hidrologia_inteligente,
 )
 from .data_services import (
-    get_aportes_hidricos_por_region, get_aportes_hidricos_por_rio,
-    get_all_rios_api, get_rio_options,
-    obtener_datos_embalses_por_region, get_participacion_embalses,
-    get_embalses_completa_para_tabla, get_embalses_data_for_table,
-    get_embalses_capacidad, get_embalses_by_region,
-    calcular_semaforo_embalse_local,
-    clasificar_riesgo_embalse_local,
-    obtener_estilo_riesgo_local,
-    obtener_pictograma_riesgo_local,
-    agregar_columna_riesgo_a_tabla,
-    generar_estilos_condicionales_riesgo,
-    get_tabla_con_participacion,
-    get_porcapor_data,
+    get_rio_options, get_participacion_embalses,
+    get_embalses_completa_para_tabla, get_embalses_capacidad,
+    get_embalses_by_region, calcular_semaforo_embalse_local,
 )
 from .tables import (
-    crear_estilos_condicionales_para_tabla_estatica,
-    crear_tabla_embalses_por_region,
     build_embalses_hierarchical_view,
-    crear_tablas_jerarquicas_directas,
     build_hierarchical_table_view,
     get_tabla_regiones_embalses,
-    create_collapsible_regions_table,
-    create_embalse_table_columns,
-    create_initial_embalse_table,
-    create_dynamic_embalse_table,
     create_data_table,
-    create_region_filtered_participacion_table,
-    create_region_filtered_capacidad_table,
 )
 from .charts import (
-    create_line_chart, create_bar_chart,
-    create_total_timeline_chart, create_stats_summary,
+    create_line_chart, create_total_timeline_chart,
 )
-from .maps import crear_mapa_embalses_por_region, crear_mapa_embalses_directo
+from .maps import crear_mapa_embalses_directo
 from .kpis import (
-    crear_fichas_sin_seguras, crear_fichas_temporales, crear_fichas_sin,
     crear_panel_controles, crear_ficha_kpi_inicial,
-    create_latest_value_kpi, create_porcapor_kpi,
 )
 
 @callback(
@@ -2022,7 +1980,6 @@ def show_modal_table(timeline_clickData, is_open, region_data):
             logger.debug(f" Intentando conversiones de fecha...")
             # Intentar convertir la fecha seleccionada a datetime
             try:
-                from datetime import datetime
                 if isinstance(selected_date, str):
                     selected_date_dt = pd.to_datetime(selected_date)
                     logger.debug(f" Fecha convertida a datetime: {selected_date_dt}")
@@ -2039,7 +1996,6 @@ def show_modal_table(timeline_clickData, is_open, region_data):
                     
             except Exception as e:
                 logger.error(f"Error en conversión de fechas: {e}")
-                pass
         
         
         if df_date.empty:

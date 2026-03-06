@@ -11,7 +11,7 @@ Fecha: 9 de febrero de 2026
 
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 from datetime import date, datetime, timedelta
 import pandas as pd
 import numpy as np

@@ -1,7 +1,6 @@
 """
 Configuración centralizada del WhatsApp Bot
 """
-import os
 from pathlib import Path
 from typing import Literal
 from pydantic import Field

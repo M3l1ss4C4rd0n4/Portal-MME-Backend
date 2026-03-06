@@ -29,7 +29,7 @@ from infrastructure.database.repositories.commercial_repository import Commercia
 from infrastructure.database.repositories.distribution_repository import DistributionRepository
 from infrastructure.database.repositories.transmission_repository import TransmissionRepository
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
-from infrastructure.database.manager import DatabaseManager, db_manager
+from infrastructure.database.manager import db_manager
 from infrastructure.external.xm_adapter import XMDataSourceAdapter
 
 # Domain Services

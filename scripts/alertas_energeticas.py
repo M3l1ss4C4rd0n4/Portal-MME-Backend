@@ -19,18 +19,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import psycopg2
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from infrastructure.database.connection import PostgreSQLConnectionManager
 import json
 
 # Sistema de notificaciones: usar notification_service (producción)
 # sistema_notificaciones.py fue retirado (legacy Gmail/WhatsApp)
 try:
-    from domain.services.notification_service import NotificationService as _NS
+    pass
 
     class NotificationService:
         """Adapter stub — redirige al servicio de producción."""
-        pass
 
     def notificar_alerta(alerta, enviar_email=True, enviar_whatsapp=True, solo_criticas=True):
         """Stub que reemplaza al legacy sistema_notificaciones.notificar_alerta.

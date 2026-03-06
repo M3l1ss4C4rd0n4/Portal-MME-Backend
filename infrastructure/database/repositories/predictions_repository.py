@@ -3,8 +3,7 @@ Repositorio para predicciones de machine learning.
 Implementa IPredictionsRepository (Arquitectura Limpia - Inversión de Dependencias)
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import date
+from typing import Optional, List
 import pandas as pd
 import logging
 from infrastructure.database.repositories.base_repository import BaseRepository

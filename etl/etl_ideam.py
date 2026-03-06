@@ -33,7 +33,6 @@ from datetime import datetime, timedelta, date
 
 from infrastructure.database.manager import db_manager
 from infrastructure.external.ideam_service import (
-    IDEAM_DATASETS,
     ESTACIONES_EOLICA,
     ESTACIONES_SOLAR,
     ESTACIONES_HIDRO,

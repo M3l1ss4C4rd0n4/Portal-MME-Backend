@@ -28,7 +28,6 @@ import traceback
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pandas as pd
-import numpy as np
 
 # ═══════════════════════════════════════════════════════════════
 # Importar funciones del ETL actual y de las reglas centralizadas
@@ -37,10 +36,8 @@ import numpy as np
 from etl.etl_todas_metricas_xm import detectar_conversion, convertir_unidades
 from etl.etl_rules import (
     get_all_rules,
-    get_conversion_type,
     apply_conversion,
     ConversionType,
-    MetricRule,
 )
 
 # ═══════════════════════════════════════════════════════════════

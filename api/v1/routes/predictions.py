@@ -21,7 +21,7 @@ import time
 import hashlib
 import logging
 from typing import Optional, Literal, List
-from datetime import date, datetime
+from datetime import datetime
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 from slowapi import Limiter

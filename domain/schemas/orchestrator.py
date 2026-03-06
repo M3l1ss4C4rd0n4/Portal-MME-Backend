@@ -234,7 +234,6 @@ class OrchestratorResponse(BaseModel):
 
 class IntentParameters(BaseModel):
     """Base class para parámetros de intents"""
-    pass
 
 
 class GeneracionElectricaParams(IntentParameters):

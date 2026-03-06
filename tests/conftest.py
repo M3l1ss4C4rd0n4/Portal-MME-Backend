@@ -6,9 +6,8 @@ Este archivo define fixtures reutilizables para todos los tests.
 
 import pytest
 import pandas as pd
-from datetime import datetime, timedelta
-from unittest.mock import Mock, MagicMock
-from typing import Generator
+from datetime import datetime
+from unittest.mock import Mock
 
 # ==================== DATABASE FIXTURES ====================
 

@@ -10,7 +10,6 @@ from dash import dcc, html, Input, Output, State, callback, register_page, dash_
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import pandas as pd
-import numpy as np
 from datetime import date, timedelta, datetime
 from io import StringIO
 import warnings
@@ -18,16 +17,14 @@ import traceback
 
 # Use the installed pydataxm package
 try:
-    from pydataxm.pydataxm import ReadDB
     PYDATAXM_AVAILABLE = True
 except ImportError:
     PYDATAXM_AVAILABLE = False
     print("⚠️ pydataxm no está disponible. Algunos datos pueden no cargarse correctamente.")
 
 # Imports locales
-from interface.components.layout import crear_navbar_horizontal, crear_filtro_fechas_compacto, registrar_callback_filtro_fechas, crear_boton_regresar
-from interface.components.kpi_card import crear_kpi, crear_kpi_row
-from interface.components.chart_card import crear_chart_card, crear_chart_card_custom, crear_table_card, crear_page_header, crear_filter_bar
+from interface.components.kpi_card import crear_kpi_row
+from interface.components.chart_card import crear_chart_card, crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
 from domain.services.distribution_service import DistributionService
 from infrastructure.database.manager import DatabaseManager

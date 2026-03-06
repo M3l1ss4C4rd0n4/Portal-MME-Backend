@@ -12,7 +12,6 @@ Fecha: 9 de febrero de 2026
 import requests
 import json
 from datetime import date, timedelta
-from pprint import pprint
 
 # Configuración
 API_URL = "http://localhost:8000/api/v1/chatbot/orchestrator"
