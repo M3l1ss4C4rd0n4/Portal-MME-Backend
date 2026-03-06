@@ -12,9 +12,12 @@ bind = "127.0.0.1:8050"
 backlog = 2048
 
 # Worker processes
-workers = multiprocessing.cpu_count() * 2 + 1
+# Dash es stateful — demasiados workers causan pérdida de contexto
+# y saturan PostgreSQL sin connection pooling.
+# Con 8 vCPU: 5 workers es el balance óptimo para Dash.
+workers = 5
 worker_class = "gthread"
-threads = 4
+threads = 2
 worker_connections = 1000
 timeout = 120
 max_requests = 1000

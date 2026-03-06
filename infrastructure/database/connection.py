@@ -1,68 +1,108 @@
 """
 Gestión de conexiones a base de datos PostgreSQL
 Capa Infrastructure - Database
+
+Pool de conexiones centralizado (ThreadedConnectionPool).
+Tanto PostgreSQLConnectionManager como DatabaseManager (legacy)
+comparten este pool para evitar abrir/cerrar conexiones por operación.
 """
 
+import atexit
+import threading
 import psycopg2
+import psycopg2.pool
 import psycopg2.extras
 from contextlib import contextmanager
 from typing import Generator
 
 # Importar settings
 from core.config import settings
+from infrastructure.logging.logger import get_logger
+
+logger = get_logger(__name__)
+
+# ──────────────────────────────────────────────────────────
+# Pool centralizado (singleton thread-safe)
+# ──────────────────────────────────────────────────────────
+_pool_lock = threading.Lock()
+_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+
+
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    """Obtiene o crea el pool de conexiones (lazy, thread-safe)."""
+    global _pool
+    if _pool is None or _pool.closed:
+        with _pool_lock:
+            if _pool is None or _pool.closed:
+                conn_params = {
+                    'host': settings.POSTGRES_HOST,
+                    'port': settings.POSTGRES_PORT,
+                    'database': settings.POSTGRES_DB,
+                    'user': settings.POSTGRES_USER,
+                    'connect_timeout': 10,
+                    'options': '-c statement_timeout=30000',
+                }
+                if settings.POSTGRES_PASSWORD:
+                    conn_params['password'] = settings.POSTGRES_PASSWORD
+
+                _pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=2,
+                    maxconn=20,
+                    **conn_params,
+                )
+                logger.info(
+                    "Pool PostgreSQL creado (min=2, max=20)"
+                )
+    return _pool
+
+
+def close_pool() -> None:
+    """Cierra el pool de conexiones (llamado al apagar)."""
+    global _pool
+    if _pool is not None and not _pool.closed:
+        _pool.closeall()
+        logger.info("Pool PostgreSQL cerrado")
+        _pool = None
+
+
+atexit.register(close_pool)
 
 
 class PostgreSQLConnectionManager:
-    """Gestor de conexiones PostgreSQL"""
-    
-    def __init__(self):
-        self.host = settings.POSTGRES_HOST
-        self.port = settings.POSTGRES_PORT
-        self.database = settings.POSTGRES_DB
-        self.user = settings.POSTGRES_USER
-        self.password = settings.POSTGRES_PASSWORD
-    
+    """Gestor de conexiones PostgreSQL basado en pool."""
+
     @contextmanager
     def get_connection(self, use_dict_cursor: bool = False) -> Generator[psycopg2.extensions.connection, None, None]:
         """
-        Context manager para conexión PostgreSQL
-        
+        Context manager para conexión PostgreSQL desde el pool.
+
         Args:
-            use_dict_cursor: Si True, usa RealDictCursor. Si False (default), usa cursor normal para pandas.
-        
+            use_dict_cursor: Si True, usa RealDictCursor.
+
         Yields:
-            psycopg2.connection: Conexión activa
+            psycopg2.connection: Conexión activa (devuelta al pool al salir).
         """
-        conn = None
+        pool = _get_pool()
+        conn = pool.getconn()
         try:
-            # Construir parámetros de conexión
-            conn_params = {
-                'host': self.host,
-                'port': self.port,
-                'database': self.database,
-                'user': self.user,
-                'connect_timeout': 10,
-                'options': '-c statement_timeout=30000',  # 30s max query
-            }
-            
-            # Agregar cursor_factory solo si se solicita explícitamente
             if use_dict_cursor:
-                conn_params['cursor_factory'] = psycopg2.extras.RealDictCursor
-            
-            # Solo agregar password si no está vacío
-            if self.password:
-                conn_params['password'] = self.password
-            
-            conn = psycopg2.connect(**conn_params)
+                conn.cursor_factory = psycopg2.extras.RealDictCursor
+            else:
+                conn.cursor_factory = psycopg2.extensions.cursor
+
             conn.autocommit = False
             yield conn
         except psycopg2.Error as e:
-            if conn:
+            if conn and not conn.closed:
                 conn.rollback()
             raise RuntimeError(f"Error de conexión PostgreSQL: {e}")
         finally:
-            if conn:
-                conn.close()
+            if conn and not conn.closed:
+                try:
+                    conn.reset()
+                except Exception:
+                    pass
+            pool.putconn(conn)
 
 
 # Instancia global

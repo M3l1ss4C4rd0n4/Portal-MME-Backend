@@ -23,42 +23,34 @@ class DatabaseManager(IDatabaseManager):
     Singleton para manejo de conexiones a base de datos PostgreSQL.
     Implementa IDatabaseManager para cumplir con arquitectura limpia.
 
-    .. note:: Ruta de conexión legada
-        Este manager es utilizado por servicios y repositorios que
-        requieren ``execute_query``/``execute_dataframe`` directamente.
-        Los repositorios nuevos deben extender ``BaseRepository``
-        (que usa ``PostgreSQLConnectionManager`` de ``connection.py``).
-        Ambas rutas apuntan al mismo servidor PostgreSQL con las mismas
-        credenciales de ``core.config.settings``.
+    Usa el pool centralizado de connection.py para evitar
+    abrir/cerrar conexiones por cada operación.
     """
     
     def __init__(self):
-        pass  # No se necesita configuración especial
+        pass  # Pool se inicializa lazy en connection._get_pool()
 
     @contextmanager
     def get_connection(self) -> Generator[Any, None, None]:
-        """Context manager para obtener conexión segura a PostgreSQL."""
-        conn = None
+        """Context manager para obtener conexión desde el pool."""
+        from infrastructure.database.connection import _get_pool
+        pool = _get_pool()
+        conn = pool.getconn()
         try:
-            conn = psycopg2.connect(
-                host=settings.POSTGRES_HOST,
-                port=settings.POSTGRES_PORT,
-                database=settings.POSTGRES_DB,
-                user=settings.POSTGRES_USER,
-                password=settings.POSTGRES_PASSWORD,
-                connect_timeout=10,
-                options='-c statement_timeout=30000',  # 30s max query
-            )
             conn.autocommit = False
             yield conn
         except Exception as e:
             logger.error(f"Error de conexión a PostgreSQL: {e}")
-            if conn:
+            if conn and not conn.closed:
                 conn.rollback()
             raise
         finally:
-            if conn:
-                conn.close()
+            if conn and not conn.closed:
+                try:
+                    conn.reset()
+                except Exception:
+                    pass
+            pool.putconn(conn)
 
     def query_df(self, query: str, params: Optional[dict] = None) -> pd.DataFrame:
         """Ejecuta query y retorna Pandas DataFrame."""
