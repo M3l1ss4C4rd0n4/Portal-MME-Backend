@@ -26,7 +26,7 @@ from api.v1.schemas.generation import (
     GenerationResourcesResponse,
     GenerationMixResponse
 )
-from domain.services.generation_service import GenerationService
+from core.container import get_generation_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -67,7 +67,7 @@ async def get_generation_system(
 ) -> GenerationSystemResponse:
     """Obtiene generación total del sistema"""
     try:
-        service = GenerationService()
+        service = get_generation_service()
         
         # Fechas por defecto: últimos 30 días
         if not end_date:
@@ -157,7 +157,7 @@ async def get_generation_by_source(
 ) -> GenerationBySourceResponse:
     """Obtiene generación por tipo de fuente"""
     try:
-        service = GenerationService()
+        service = get_generation_service()
         
         # Fechas por defecto
         if not end_date:
@@ -243,7 +243,7 @@ async def get_generation_resources(
 ) -> GenerationResourcesResponse:
     """Obtiene listado de recursos generadores"""
     try:
-        service = GenerationService()
+        service = get_generation_service()
         
         df = service.get_resources_by_type(source_type)
         
@@ -304,7 +304,7 @@ async def get_generation_mix(
 ) -> GenerationMixResponse:
     """Obtiene mix energético por fecha"""
     try:
-        service = GenerationService()
+        service = get_generation_service()
         
         # Fecha por defecto: ayer (datos más recientes completos)
         if not target_date:

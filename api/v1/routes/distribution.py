@@ -22,7 +22,7 @@ from api.v1.schemas.distribution import (
     DistributionDataResponse,
     DistributionOperatorsResponse
 )
-from domain.services.distribution_service import DistributionService
+from core.container import get_distribution_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -55,7 +55,7 @@ async def get_distribution_data(
 ) -> DistributionDataResponse:
     """Obtiene datos de distribución"""
     try:
-        service = DistributionService()
+        service = get_distribution_service()
         
         if not end_date:
             end_date = date.today()
@@ -125,7 +125,7 @@ async def get_distribution_operators(
 ) -> DistributionOperatorsResponse:
     """Obtiene listado de operadores"""
     try:
-        service = DistributionService()
+        service = get_distribution_service()
         
         df = service.get_operators()
         

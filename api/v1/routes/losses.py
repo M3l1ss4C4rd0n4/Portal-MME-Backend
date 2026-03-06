@@ -27,7 +27,7 @@ from api.v1.schemas.losses import (
     LossesDetailedRecord,
     LossesNTSummaryResponse,
 )
-from domain.services.losses_service import LossesService
+from core.container import get_losses_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -67,7 +67,7 @@ async def get_losses_data(
 ) -> LossesResponse:
     """Obtiene datos de pérdidas"""
     try:
-        service = LossesService()
+        service = get_losses_service()
         
         if not end_date:
             end_date = date.today()
@@ -160,7 +160,7 @@ async def get_losses_detailed(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        service = LossesService()
+        service = get_losses_service()
         df = service.get_losses_detailed(start_date, end_date)
 
         if df.empty:
@@ -234,7 +234,7 @@ async def get_losses_nt_summary(
 ) -> LossesNTSummaryResponse:
     """Obtiene resumen estadístico de pérdidas no técnicas."""
     try:
-        service = LossesService()
+        service = get_losses_service()
         stats = service.get_losses_nt_summary()
 
         if "error" in stats:

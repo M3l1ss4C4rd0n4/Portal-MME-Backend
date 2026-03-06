@@ -118,6 +118,7 @@ class Settings(BaseSettings):
         default="http://portalenergetico.minenergia.gov.co",
         description="Portal Dashboard URL"
     )
+    PORTAL_API_KEY: str = Field(default="", description="Portal Energético API Key for chatbot orchestrator")
     
     # ═══════════════════════════════════════════════════════════
     # Application Settings

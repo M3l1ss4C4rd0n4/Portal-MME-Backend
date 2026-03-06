@@ -63,8 +63,8 @@ class DistributionService:
                     dias_desde_ultimo = (fecha_actual - fecha_max).days
                     if dias_desde_ultimo > 30:
                         advertencias.append(f"⚠️ Último dato: {dias_desde_ultimo} días atrás")
-                except:
-                   pass
+                except Exception:
+                    pass
                 return " | ".join(advertencias) if advertencias else ""
             
             agentes_estadisticas['advertencia'] = agentes_estadisticas.apply(generar_advertencia, axis=1)

@@ -101,7 +101,7 @@ async def handle_whatsapp_webhook(request: Request, signature: str = None) -> di
                     to=message_data['from_number'],
                     body="❌ Lo siento, hubo un error procesando tu mensaje. Por favor intenta nuevamente."
                 )
-        except:
+        except Exception:
             pass
         
         raise HTTPException(status_code=500, detail=str(e))

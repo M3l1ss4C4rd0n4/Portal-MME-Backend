@@ -111,6 +111,7 @@ async def get_metric_series(
         # Obtener datos usando el servicio de dominio
         df = service.get_metric_series_hybrid(
             metric_id=metric_id,
+            entity=entity,
             start_date=start_str,
             end_date=end_str
         )

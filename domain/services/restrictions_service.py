@@ -166,7 +166,7 @@ class RestrictionsService:
                                 temp_df['costo_mcop'] = merged['Value']  # Ya en Millones COP
                             else:
                                 temp_df['costo_mcop'] = None
-                        except:
+                        except Exception:
                             temp_df['costo_mcop'] = None
                         
                         resultados.append(temp_df)

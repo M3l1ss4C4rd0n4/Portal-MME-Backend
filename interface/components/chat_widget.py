@@ -508,7 +508,7 @@ def obtener_estado_api():
     try:
         agente = get_agente()
         return agente is not None
-    except:
+    except Exception:
         return False
 
 def obtener_estadisticas_ia():
@@ -520,5 +520,5 @@ def obtener_estadisticas_ia():
             'modelo': agente.modelo,
             'base_url': 'https://openrouter.ai/api/v1'
         }
-    except:
+    except Exception:
         return None

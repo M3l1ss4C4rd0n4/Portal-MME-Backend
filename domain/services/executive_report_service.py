@@ -769,7 +769,7 @@ class ExecutiveReportService:
                     )
                     if reserva_pct:
                         reservas_ano1.append(reserva_pct)
-                except:
+                except Exception:
                     pass
             
             # Recolectar datos de reservas para el año 2
@@ -784,7 +784,7 @@ class ExecutiveReportService:
                     )
                     if reserva_pct:
                         reservas_ano2.append(reserva_pct)
-                except:
+                except Exception:
                     pass
             
             if not reservas_ano1 or not reservas_ano2:

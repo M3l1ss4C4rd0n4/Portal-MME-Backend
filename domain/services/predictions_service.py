@@ -1,32 +1,10 @@
 """
-Servicio de dominio para predicciones
+Servicio de dominio para predicciones.
+Re-exporta PredictionsService desde predictions_service_extended para unificar
+la implementación. El stub original está consolidado en el módulo extendido.
 """
 
-from typing import Optional
-import pandas as pd
+# Re-export: un único PredictionsService canónico en todo el codebase
+from domain.services.predictions_service_extended import PredictionsService  # noqa: F401
 
-from infrastructure.database.repositories.predictions_repository import PredictionsRepository
-
-
-class PredictionsService:
-    """Servicio de predicciones"""
-    
-    def __init__(self, repo: Optional[PredictionsRepository] = None):
-        self.repo = repo or PredictionsRepository()
-    
-    def get_latest_prediction_date(self) -> Optional[str]:
-        """Fecha más reciente de predicciones"""
-        return self.repo.get_latest_prediction_date()
-    
-    def count_predictions(self) -> int:
-        """Total de predicciones"""
-        return self.repo.count_predictions()
-    
-    def get_predictions(
-        self,
-        metric_id: str,
-        start_date: str,
-        end_date: Optional[str] = None
-    ) -> pd.DataFrame:
-        """Obtiene predicciones para una fuente"""
-        return self.repo.get_predictions(metric_id, start_date, end_date)
+__all__ = ["PredictionsService"]

@@ -19,7 +19,7 @@ from slowapi.util import get_remote_address
 from api.dependencies import get_api_key
 from api.v1.schemas.common import ErrorResponse, MetricPoint
 from api.v1.schemas.restrictions import RestrictionsResponse
-from domain.services.restrictions_service import RestrictionsService
+from core.container import get_restrictions_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -60,7 +60,7 @@ async def get_restrictions_data(
 ) -> RestrictionsResponse:
     """Obtiene datos de restricciones"""
     try:
-        service = RestrictionsService()
+        service = get_restrictions_service()
         
         if not end_date:
             end_date = date.today()

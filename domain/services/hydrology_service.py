@@ -255,20 +255,40 @@ class HydrologyService:
             if df is None or df.empty:
                 # Fallback: agregar por ríos si es Sistema
                 if reservoir == 'Sistema':
-                    df, _ = obtener_datos_desde_bd('AporEner', 'Rio', start_str, end_str)
+                    from infrastructure.database.repositories.metrics_repository import MetricsRepository
+                    repo = MetricsRepository()
+                    df = repo.get_metric_data_by_entity(
+                        metric_id='AporEner',
+                        entity='Rio',
+                        start_date=start_str,
+                        end_date=end_str
+                    )
                     if df is not None and not df.empty:
-                        # Agrupar por fecha
-                        df = df.groupby('fecha').agg({'valor': 'sum'}).reset_index()
+                        # Agrupar todos los ríos por fecha (columnas: fecha, valor_gwh)
+                        df = df.groupby('fecha').agg({'valor_gwh': 'sum'}).reset_index()
             
             if df is None or df.empty:
                 logger.warning(f"⚠️ Sin datos de aportes para {reservoir}")
                 return pd.DataFrame()
             
-            # Asegurar que tenga las columnas correctas
+            # Normalizar columnas a 'fecha' y 'valor' sin importar el origen
+            # obtener_datos_inteligente devuelve 'Date'/'Value'
+            # obtener_datos_desde_bd puede devolver 'fecha'/'valor_gwh'
+            col_map = {}
+            if 'Date' in df.columns:
+                col_map['Date'] = 'fecha'
+            if 'Value' in df.columns:
+                col_map['Value'] = 'valor'
+            if 'valor_gwh' in df.columns and 'valor' not in df.columns:
+                col_map['valor_gwh'] = 'valor'
+            if col_map:
+                df = df.rename(columns=col_map)
+            
             if 'fecha' in df.columns and 'valor' in df.columns:
                 return df[['fecha', 'valor']]
             
-            return df
+            logger.error(f"❌ DataFrame sin columnas esperadas. Columnas: {list(df.columns)}")
+            return pd.DataFrame()
             
         except Exception as e:
             logger.error(f"❌ Error obteniendo aportes diarios: {e}")

@@ -24,7 +24,7 @@ from api.v1.schemas.transmission import (
     TransmissionFlowsResponse,
     TransmissionInternationalResponse
 )
-from domain.services.transmission_service import TransmissionService
+from core.container import get_transmission_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -61,7 +61,7 @@ async def get_transmission_lines(
 ) -> TransmissionLinesResponse:
     """Obtiene catálogo de líneas de transmisión"""
     try:
-        service = TransmissionService()
+        service = get_transmission_service()
         
         df = service.get_lineas_transmision()
         
@@ -167,7 +167,7 @@ async def get_transmission_international(
 ) -> TransmissionInternationalResponse:
     """Obtiene intercambios internacionales"""
     try:
-        service = TransmissionService()
+        service = get_transmission_service()
         
         if not end_date:
             end_date = date.today()

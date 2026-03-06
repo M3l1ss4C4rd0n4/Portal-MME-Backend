@@ -85,7 +85,11 @@ logger = logging.getLogger(__name__)
 # Configuración
 # ═══════════════════════════════════════════════════════════
 PORTAL_API_URL = getattr(settings, 'PORTAL_API_URL', 'http://localhost:8000')
-PORTAL_API_KEY = os.environ.get('PORTAL_API_KEY', getattr(settings, 'API_KEYS', ''))
+PORTAL_API_KEY = (
+    getattr(settings, 'PORTAL_API_KEY', '')
+    or os.environ.get('PORTAL_API_KEY', '')
+    or os.environ.get('API_KEY', '')
+)
 ORCHESTRATOR_ENDPOINT = f"{PORTAL_API_URL}/api/v1/chatbot/orchestrator"
 
 # Redis para tracking de usuarios de Telegram

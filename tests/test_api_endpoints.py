@@ -79,10 +79,10 @@ class TestRootAndHealth:
 class TestGenerationEndpoints:
     """Tests para /v1/generation/"""
 
-    @patch("api.v1.routes.generation.GenerationService")
-    def test_get_generation_system(self, MockService, client, sample_generation_df):
+    @patch("api.v1.routes.generation.get_generation_service")
+    def test_get_generation_system(self, MockGetSvc, client, sample_generation_df):
         """GET /v1/generation/system devuelve datos de generación"""
-        mock_svc = MockService.return_value
+        mock_svc = MockGetSvc.return_value
         mock_svc.get_daily_generation_system.return_value = sample_generation_df
 
         response = client.get(
@@ -92,8 +92,8 @@ class TestGenerationEndpoints:
         # Puede ser 200 o 401 si API key no se desactiva bien; verificamos no 500
         assert response.status_code != 500
 
-    @patch("api.v1.routes.generation.GenerationService")
-    def test_generation_invalid_date_range(self, MockService, client):
+    @patch("api.v1.routes.generation.get_generation_service")
+    def test_generation_invalid_date_range(self, MockGetSvc, client):
         """GET /v1/generation/system con start > end da 400"""
         response = client.get(
             "/v1/generation/system",
@@ -111,10 +111,10 @@ class TestGenerationEndpoints:
 class TestHydrologyEndpoints:
     """Tests para /v1/hydrology/"""
 
-    @patch("api.v1.routes.hydrology.HydrologyService")
-    def test_get_aportes(self, MockService, client, sample_hydrology_df):
+    @patch("api.v1.routes.hydrology.get_hydrology_service")
+    def test_get_aportes(self, MockGetSvc, client, sample_hydrology_df):
         """GET /v1/hydrology/aportes devuelve datos de aportes"""
-        mock_svc = MockService.return_value
+        mock_svc = MockGetSvc.return_value
         mock_svc.get_aportes_diarios.return_value = sample_hydrology_df
 
         response = client.get(
@@ -220,10 +220,10 @@ class TestRateLimiting:
 class TestTransmissionEndpoints:
     """Tests para /v1/transmission/"""
 
-    @patch("api.v1.routes.transmission.TransmissionService")
-    def test_transmission_endpoint_responds(self, MockService, client):
+    @patch("api.v1.routes.transmission.get_transmission_service")
+    def test_transmission_endpoint_responds(self, MockGetSvc, client):
         """GET /v1/transmission/ responde"""
-        mock_svc = MockService.return_value
+        mock_svc = MockGetSvc.return_value
         mock_svc.get_transmission_lines.return_value = pd.DataFrame({
             "linea": ["L001"], "tension_kv": [500], "longitud_km": [150.5]
         })

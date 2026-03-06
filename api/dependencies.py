@@ -117,7 +117,7 @@ def get_metrics_service(
             return service.list_metrics()
         ```
     """
-    return MetricsService(repo=metrics_repo)
+    return MetricsService(repository=metrics_repo)
 
 
 def get_predictions_service(

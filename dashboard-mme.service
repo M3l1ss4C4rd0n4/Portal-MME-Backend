@@ -7,8 +7,8 @@ Type=notify
 User=admonctrlxm
 Group=admonctrlxm
 WorkingDirectory=/home/admonctrlxm/server
-Environment="PATH=/home/admonctrlxm/.local/bin:/usr/bin"
-ExecStart=/home/admonctrlxm/.local/bin/gunicorn -c gunicorn_config.py app:server
+Environment="PATH=/home/admonctrlxm/server/venv/bin:/home/admonctrlxm/.local/bin:/usr/bin"
+ExecStart=/home/admonctrlxm/server/venv/bin/gunicorn -c gunicorn_config.py app:server
 ExecReload=/bin/kill -s HUP $MAINPID
 ExecStop=/bin/kill -s TERM $MAINPID
 KillMode=mixed

@@ -25,6 +25,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 from core.config import settings
+from core.constants import APP_VERSION
 from api.v1 import api_router_v1
 
 # Configurar logging
@@ -93,7 +94,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Portal Energético MME - API",
     description="API RESTful para acceso a datos del sector energético colombiano",
-    version="1.0.0",
+    version=APP_VERSION,
     docs_url=None,  # Deshabilitamos el automático para usar uno personalizado
     redoc_url=None,  # Deshabilitamos el automático para usar uno personalizado
     openapi_url="/openapi.json",
@@ -232,7 +233,7 @@ async def root(request: Request) -> Dict[str, Any]:
     """
     return {
         "service": "Portal Energético MME - API",
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "status": "operational",
         "documentation": "/api/docs",
         "endpoints": {
@@ -435,7 +436,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
         "status": overall,
         "timestamp": datetime.now().isoformat(),
         "environment": settings.DASH_ENV,
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "services": checks,
     }
     

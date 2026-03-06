@@ -171,7 +171,7 @@ def q_deuda_total() -> str:
             fondo,
             CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
             SUM(saldo_pendiente) as deuda,
-            COUNT(*) as resoluciones
+            COUNT(DISTINCT no_resolucion) as resoluciones
         FROM subsidios_pagos
         WHERE estado_pago = 'Pendiente'
         GROUP BY fondo, CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END
@@ -235,7 +235,7 @@ def q_deuda_empresa(nombre: str = None) -> str:
             SELECT nombre_prestador, fondo,
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
                    SUM(saldo_pendiente) as deuda,
-                   COUNT(*) as resoluciones,
+                   COUNT(DISTINCT no_resolucion) as resoluciones,
                    MIN(concepto_trimestre) as trim_desde,
                    MAX(concepto_trimestre) as trim_hasta
             FROM subsidios_pagos
@@ -295,7 +295,7 @@ def q_deuda_empresa(nombre: str = None) -> str:
             SELECT nombre_prestador, fondo,
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
                    SUM(saldo_pendiente) as deuda,
-                   COUNT(*) as resoluciones,
+                   COUNT(DISTINCT no_resolucion) as resoluciones,
                    MIN(concepto_trimestre) as trim_desde,
                    MAX(concepto_trimestre) as trim_hasta
             FROM subsidios_pagos
@@ -339,7 +339,8 @@ def q_trimestre_pagado(nombre: str = None) -> str:
         rows = _query("""
             SELECT fondo,
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
-                   concepto_trimestre, estado_pago, COUNT(*) as n
+                   concepto_trimestre, estado_pago,
+                   COUNT(DISTINCT no_resolucion) as n
             FROM subsidios_pagos
             WHERE LOWER(nombre_prestador) LIKE %s
                OR LOWER(REPLACE(REPLACE(nombre_prestador, '-', ''), '.', '')) LIKE %s
@@ -375,9 +376,9 @@ def q_trimestre_pagado(nombre: str = None) -> str:
             SELECT fondo,
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
                    concepto_trimestre,
-                   SUM(CASE WHEN estado_pago = 'Pagado' THEN 1 ELSE 0 END) as pagadas,
-                   SUM(CASE WHEN estado_pago = 'Pendiente' THEN 1 ELSE 0 END) as pendientes,
-                   COUNT(*) as total
+                   COUNT(DISTINCT CASE WHEN estado_pago = 'Pagado' THEN no_resolucion END) as pagadas,
+                   COUNT(DISTINCT CASE WHEN estado_pago = 'Pendiente' THEN no_resolucion END) as pendientes,
+                   COUNT(DISTINCT no_resolucion) as total
             FROM subsidios_pagos
             GROUP BY fondo, CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END,
                      concepto_trimestre
@@ -469,7 +470,7 @@ def q_estado_resoluciones() -> str:
     # Resumen general
     resumen = _query("""
         SELECT estado_pago,
-               COUNT(*) as filas,
+               COUNT(DISTINCT no_resolucion) as resoluciones,
                SUM(valor_resolucion) as valor_res,
                SUM(valor_pagado) as valor_pag,
                SUM(saldo_pendiente) as saldo
@@ -478,22 +479,22 @@ def q_estado_resoluciones() -> str:
         ORDER BY estado_pago
     """)
 
-    total_filas = sum(r['filas'] for r in resumen)
+    total_res = sum(r['resoluciones'] for r in resumen)
     pagado_data = next((r for r in resumen if r['estado_pago'] == 'Pagado'), None)
     pendiente_data = next((r for r in resumen if r['estado_pago'] == 'Pendiente'), None)
 
-    n_pagado = pagado_data['filas'] if pagado_data else 0
+    n_pagado = pagado_data['resoluciones'] if pagado_data else 0
     v_pagado = pagado_data['valor_pag'] if pagado_data else 0
-    n_pendiente = pendiente_data['filas'] if pendiente_data else 0
+    n_pendiente = pendiente_data['resoluciones'] if pendiente_data else 0
     v_pendiente = pendiente_data['saldo'] if pendiente_data else 0
 
-    pct_pagado = (n_pagado / total_filas * 100) if total_filas else 0
-    pct_pendiente = (n_pendiente / total_filas * 100) if total_filas else 0
+    pct_pagado = (n_pagado / total_res * 100) if total_res else 0
+    pct_pendiente = (n_pendiente / total_res * 100) if total_res else 0
 
     lines = [
         f"📊 *ESTADO DE RESOLUCIONES*",
         f"📅 Corte: {fecha_str} | Periodo: {periodo_min} → {periodo_max}\n",
-        f"De {total_filas:,} resoluciones registradas:\n",
+        f"De {total_res:,} resoluciones únicas registradas:\n",
         f"✅ *Pagadas:* {n_pagado:,} ({pct_pagado:.1f}%)",
         f"   Total pagado: {_fmt_money(v_pagado)}\n",
         f"⏳ *Pendientes:* {n_pendiente:,} ({pct_pendiente:.1f}%)",
@@ -508,7 +509,7 @@ def q_estado_resoluciones() -> str:
             estado_pago,
             SUM(saldo_pendiente) as deuda,
             SUM(valor_pagado) as pagado,
-            COUNT(*) as n,
+            COUNT(DISTINCT no_resolucion) as n,
             MIN(concepto_trimestre) as desde,
             MAX(concepto_trimestre) as hasta
         FROM subsidios_pagos
@@ -667,7 +668,7 @@ def q_deuda_fondo(nombre: str = None) -> str:
             SELECT fondo,
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
                    SUM(saldo_pendiente) as deuda,
-                   COUNT(*) as n
+                   COUNT(DISTINCT no_resolucion) as n
             FROM subsidios_pagos
             WHERE estado_pago = 'Pendiente'
               AND LOWER(nombre_prestador) LIKE %s
@@ -709,7 +710,7 @@ def q_deuda_fondo(nombre: str = None) -> str:
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
                    SUM(saldo_pendiente) as deuda,
                    COUNT(DISTINCT nombre_prestador) as empresas,
-                   COUNT(*) as resoluciones
+                   COUNT(DISTINCT no_resolucion) as resoluciones
             FROM subsidios_pagos
             WHERE estado_pago = 'Pendiente'
             GROUP BY fondo, CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END
@@ -763,7 +764,7 @@ def q_pagado_anio(anio: int = None) -> str:
             SELECT fondo,
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
                    SUM(valor_pagado) as pagado,
-                   COUNT(*) as n,
+                   COUNT(DISTINCT no_resolucion) as n,
                    MIN(concepto_trimestre) as desde,
                    MAX(concepto_trimestre) as hasta
             FROM subsidios_pagos
@@ -808,7 +809,7 @@ def q_pagado_anio(anio: int = None) -> str:
         rows = _query("""
             SELECT anio,
                    SUM(valor_pagado) as pagado,
-                   COUNT(*) as n,
+                   COUNT(DISTINCT no_resolucion) as n,
                    COUNT(DISTINCT fondo) as fondos
             FROM subsidios_pagos
             WHERE estado_pago = 'Pagado'
@@ -825,7 +826,7 @@ def q_pagado_anio(anio: int = None) -> str:
             SELECT fondo,
                    CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
                    SUM(valor_pagado) as pagado,
-                   COUNT(*) as n
+                   COUNT(DISTINCT no_resolucion) as n
             FROM subsidios_pagos
             WHERE estado_pago = 'Pagado'
             GROUP BY fondo, CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END
@@ -850,7 +851,7 @@ def q_buscar_empresa(nombre: str) -> str:
     rows = _query("""
         SELECT nombre_prestador, fondo,
                CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END as area,
-               COUNT(*) as registros,
+               COUNT(DISTINCT no_resolucion) as registros,
                SUM(valor_resolucion) as total_res,
                SUM(saldo_pendiente) as deuda,
                MIN(concepto_trimestre) as desde,
@@ -875,7 +876,7 @@ def q_buscar_empresa(nombre: str) -> str:
             total_reg = sum(x['registros'] for x in rows if x['nombre_prestador'] == current)
             total_val = sum(x['total_res'] for x in rows if x['nombre_prestador'] == current)
             lines.append(f"*{current}*")
-            lines.append(f"  {total_reg} registros | Total: {_fmt_money(total_val)}")
+            lines.append(f"  {total_reg} resoluciones | Total: {_fmt_money(total_val)}")
         emoji = "🔌" if r['area'] == "SIN" else "🏝️" if r['area'] == "ZNI" else "📌"
         periodo = f"{r['desde']}" if r['desde'] == r['hasta'] else f"{r['desde']} → {r['hasta']}"
         deuda_txt = f" | Deuda: {_fmt_money(r['deuda'])}" if r['deuda'] > 0 else ""

@@ -206,7 +206,96 @@ class DependencyContainer:
             self._simulation_service = SimulationService()
             logger.debug("SimulationService creado (singleton)")
         return self._simulation_service
-    
+
+    # ============================================================================
+    # SERVICIOS ADICIONALES - Lazy singletons
+    # ============================================================================
+
+    @property
+    def hydrology_service(self):
+        """Obtiene HydrologyService como singleton lazy."""
+        if not hasattr(self, '_hydrology_service') or self._hydrology_service is None:
+            from domain.services.hydrology_service import HydrologyService
+            self._hydrology_service = HydrologyService()
+            logger.debug("HydrologyService creado (singleton)")
+        return self._hydrology_service
+
+    @property
+    def agent_ia(self):
+        """Obtiene AgentIA como singleton lazy."""
+        if not hasattr(self, '_agent_ia') or self._agent_ia is None:
+            from domain.services.ai_service import AgentIA
+            self._agent_ia = AgentIA()
+            logger.debug("AgentIA creado (singleton)")
+        return self._agent_ia
+
+    @property
+    def news_service(self):
+        """Obtiene NewsService como singleton lazy."""
+        if not hasattr(self, '_news_service') or self._news_service is None:
+            from domain.services.news_service import NewsService
+            from core.config import settings as _s
+            self._news_service = NewsService(api_key=_s.GNEWS_API_KEY or None)
+            logger.debug("NewsService creado (singleton)")
+        return self._news_service
+
+    @property
+    def restrictions_service(self):
+        """Obtiene RestrictionsService como singleton lazy."""
+        if not hasattr(self, '_restrictions_service') or self._restrictions_service is None:
+            from domain.services.restrictions_service import RestrictionsService
+            self._restrictions_service = RestrictionsService(repo=self.get_metrics_repository())
+            logger.debug("RestrictionsService creado (singleton)")
+        return self._restrictions_service
+
+    @property
+    def losses_service(self):
+        """Obtiene LossesService como singleton lazy."""
+        if not hasattr(self, '_losses_service') or self._losses_service is None:
+            from domain.services.losses_service import LossesService
+            self._losses_service = LossesService(repo=self.get_metrics_repository())
+            logger.debug("LossesService creado (singleton)")
+        return self._losses_service
+
+    @property
+    def indicators_service(self):
+        """Obtiene IndicatorsService como singleton lazy."""
+        if not hasattr(self, '_indicators_service') or self._indicators_service is None:
+            from domain.services.indicators_service import IndicatorsService
+            self._indicators_service = IndicatorsService()
+            logger.debug("IndicatorsService creado (singleton)")
+        return self._indicators_service
+
+    @property
+    def executive_report_service(self):
+        """Obtiene ExecutiveReportService como singleton lazy."""
+        if not hasattr(self, '_executive_report_service') or self._executive_report_service is None:
+            from domain.services.executive_report_service import ExecutiveReportService
+            self._executive_report_service = ExecutiveReportService()
+            logger.debug("ExecutiveReportService creado (singleton)")
+        return self._executive_report_service
+
+    @property
+    def intelligent_analysis_service(self):
+        """Obtiene IntelligentAnalysisService como singleton lazy."""
+        if not hasattr(self, '_intelligent_analysis_service') or self._intelligent_analysis_service is None:
+            from domain.services.intelligent_analysis_service import IntelligentAnalysisService
+            self._intelligent_analysis_service = IntelligentAnalysisService()
+            logger.debug("IntelligentAnalysisService creado (singleton)")
+        return self._intelligent_analysis_service
+
+    @property
+    def predictions_extended_service(self):
+        """Obtiene PredictionsService (extended/ML) como singleton lazy."""
+        if not hasattr(self, '_predictions_extended_service') or self._predictions_extended_service is None:
+            from domain.services.predictions_service_extended import PredictionsService
+            self._predictions_extended_service = PredictionsService(
+                repo=self.get_predictions_repository(),
+                metrics_repo=self.get_metrics_repository(),
+            )
+            logger.debug("PredictionsService (extended) creado (singleton)")
+        return self._predictions_extended_service
+
     # ============================================================================
     # ORCHESTRATOR SERVICE - Singleton pesado (4.197 líneas, 7 sub-servicios)
     # ============================================================================
@@ -265,6 +354,15 @@ class DependencyContainer:
         self._cu_service = None
         self._losses_nt_service = None
         self._simulation_service = None
+        self._hydrology_service = None
+        self._agent_ia = None
+        self._news_service = None
+        self._restrictions_service = None
+        self._losses_service = None
+        self._indicators_service = None
+        self._executive_report_service = None
+        self._intelligent_analysis_service = None
+        self._predictions_extended_service = None
         logger.debug("DependencyContainer reseteado")
 
 
@@ -318,3 +416,48 @@ def get_losses_nt_service():
 def get_simulation_service():
     """Función de conveniencia para obtener SimulationService."""
     return container.simulation_service
+
+
+def get_hydrology_service():
+    """Función de conveniencia para obtener HydrologyService."""
+    return container.hydrology_service
+
+
+def get_agent_ia():
+    """Función de conveniencia para obtener AgentIA."""
+    return container.agent_ia
+
+
+def get_news_service():
+    """Función de conveniencia para obtener NewsService."""
+    return container.news_service
+
+
+def get_restrictions_service():
+    """Función de conveniencia para obtener RestrictionsService."""
+    return container.restrictions_service
+
+
+def get_losses_service():
+    """Función de conveniencia para obtener LossesService."""
+    return container.losses_service
+
+
+def get_indicators_service():
+    """Función de conveniencia para obtener IndicatorsService."""
+    return container.indicators_service
+
+
+def get_executive_report_service():
+    """Función de conveniencia para obtener ExecutiveReportService."""
+    return container.executive_report_service
+
+
+def get_intelligent_analysis_service():
+    """Función de conveniencia para obtener IntelligentAnalysisService."""
+    return container.intelligent_analysis_service
+
+
+def get_predictions_extended_service():
+    """Función de conveniencia para obtener PredictionsService (extended/ML)."""
+    return container.predictions_extended_service

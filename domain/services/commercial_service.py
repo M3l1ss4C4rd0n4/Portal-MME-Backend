@@ -42,7 +42,7 @@ class CommercialService:
             if min_date and max_date:
                 return pd.to_datetime(min_date).date(), pd.to_datetime(max_date).date()
             return date.today() - pd.Timedelta(days=365), date.today()
-        except:
+        except Exception:
             return date.today() - pd.Timedelta(days=365), date.today()
 
     def get_stock_price(self, start_date: date, end_date: date) -> pd.DataFrame:

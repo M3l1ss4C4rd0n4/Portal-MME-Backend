@@ -19,7 +19,7 @@ from slowapi.util import get_remote_address
 from api.dependencies import get_api_key
 from api.v1.schemas.common import ErrorResponse, MetricPoint
 from api.v1.schemas.commercial import CommercialPricesResponse
-from domain.services.commercial_service import CommercialService
+from core.container import get_commercial_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -52,7 +52,7 @@ async def get_commercial_prices(
 ) -> CommercialPricesResponse:
     """Obtiene precios comerciales"""
     try:
-        service = CommercialService()
+        service = get_commercial_service()
         
         if not end_date:
             end_date = date.today()

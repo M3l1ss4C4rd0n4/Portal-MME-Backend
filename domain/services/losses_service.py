@@ -143,7 +143,7 @@ class LossesService:
                     resultado['porcentaje'] = merged['porcentaje']
                 else:
                     resultado['porcentaje'] = None
-            except:
+            except Exception:
                 resultado['porcentaje'] = None
             
             logger.info(f"✅ {len(resultado)} registros de pérdidas obtenidos")

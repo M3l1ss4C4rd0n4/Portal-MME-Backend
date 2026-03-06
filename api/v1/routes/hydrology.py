@@ -25,7 +25,7 @@ from api.v1.schemas.hydrology import (
     HydrologyReservoirsResponse,
     HydrologyEnergyResponse
 )
-from domain.services.hydrology_service import HydrologyService
+from core.container import get_hydrology_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -62,7 +62,7 @@ async def get_hydrology_aportes(
 ) -> HydrologyAportesResponse:
     """Obtiene aportes hídricos"""
     try:
-        service = HydrologyService()
+        service = get_hydrology_service()
         
         if not end_date:
             end_date = date.today()
@@ -128,7 +128,7 @@ async def get_hydrology_reservoirs(
 ) -> HydrologyReservoirsResponse:
     """Obtiene listado de embalses"""
     try:
-        service = HydrologyService()
+        service = get_hydrology_service()
         
         df = service.get_embalses()
         
@@ -187,7 +187,7 @@ async def get_hydrology_energy(
 ) -> HydrologyEnergyResponse:
     """Obtiene energía embalsada"""
     try:
-        service = HydrologyService()
+        service = get_hydrology_service()
         
         if not end_date:
             end_date = date.today()

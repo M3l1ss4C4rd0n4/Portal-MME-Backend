@@ -20,7 +20,7 @@ from slowapi.util import get_remote_address
 from api.dependencies import get_api_key
 from api.v1.schemas.common import ErrorResponse, MetricPoint
 from api.v1.schemas.system import DemandResponse, PricesResponse
-from domain.services.metrics_service import MetricsService
+from core.container import get_metrics_service
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -52,7 +52,7 @@ async def get_system_demand(
 ) -> DemandResponse:
     """Obtiene demanda real del sistema"""
     try:
-        service = MetricsService()
+        service = get_metrics_service()
         
         if not end_date:
             end_date = date.today()
@@ -126,7 +126,7 @@ async def get_system_prices(
 ) -> PricesResponse:
     """Obtiene precios de bolsa"""
     try:
-        service = MetricsService()
+        service = get_metrics_service()
         
         if not end_date:
             end_date = date.today()

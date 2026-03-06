@@ -10,6 +10,7 @@ from datetime import date, datetime
 
 from domain.interfaces.repositories import IMetricsRepository
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
+from infrastructure.cache.redis_client import redis_get_json, redis_set_json
 from infrastructure.logging.logger import get_logger
 
 logger = get_logger(__name__)
@@ -99,7 +100,15 @@ class MetricsService:
         """
         Obtiene metadatos de todas las métricas disponibles desde PostgreSQL.
         Retorna DataFrame con columnas compatibles: MetricId, MetricName, Entity
+        Cacheado en Redis 1h — los datos solo cambian cuando corre el ETL.
         """
+        _CACHE_KEY = "metrics:metadata:v1"
+        _CACHE_TTL = 3600  # 1 hora
+
+        cached = redis_get_json(_CACHE_KEY)
+        if cached is not None:
+            return pd.DataFrame(cached)
+
         # Consultar métricas únicas en la base de datos
         query = """
             SELECT DISTINCT 
@@ -113,6 +122,8 @@ class MetricsService:
         """
         try:
             df = self.repo.execute_dataframe(query)
+            if not df.empty:
+                redis_set_json(_CACHE_KEY, df.to_dict(orient="records"), ttl=_CACHE_TTL)
             return df
         except Exception as e:
             logger.error(f"Error obteniendo metadata de métricas: {e}")

@@ -388,6 +388,8 @@ def main():
     parser.add_argument('--hoja', type=str, default='todas',
                         choices=['todas', 'pagos', 'empresas', 'mapa'],
                         help='Hoja a importar')
+    parser.add_argument('--reload', action='store_true',
+                        help='Truncar subsidios_pagos antes de importar (carga completa)')
     args = parser.parse_args()
 
     xlsx_path = Path(args.archivo)
@@ -404,6 +406,12 @@ def main():
     conn = get_connection()
     try:
         ensure_schema(conn)
+
+        if args.reload and args.hoja in ('todas', 'pagos'):
+            with conn.cursor() as cur:
+                cur.execute("TRUNCATE TABLE subsidios_pagos RESTART IDENTITY")
+            conn.commit()
+            logger.info("🗑️  subsidios_pagos truncado para recarga completa")
 
         if args.hoja in ('todas', 'pagos'):
             importar_pagos(xlsx_path, conn)

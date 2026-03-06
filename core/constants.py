@@ -9,7 +9,7 @@ from typing import Dict, List
 # ═══════════════════════════════════════════════════════════════
 
 APP_NAME = "Portal Energético MME"
-APP_VERSION = "2.0.0"
+APP_VERSION = "1.0.0"
 APP_DESCRIPTION = "Dashboard de análisis del sector energético colombiano"
 APP_AUTHOR = "Ministerio de Minas y Energía"
 
