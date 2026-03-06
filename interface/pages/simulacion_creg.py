@@ -599,11 +599,12 @@ def update_badges(pb, fp, rest, trans, com):
     return pb_text, fp_text, cr_text, tr_text, tc_text
 
 
-# 3. Botón Simular → resultado + habilitar Guardar
+# 3. Botón Simular → resultado + habilitar Guardar + auto-persistir
 @callback(
     Output('sim-output', 'children'),
     Output('sim-resultado-store', 'data'),
     Output('sim-btn-save', 'disabled'),
+    Output('sim-historial', 'children', allow_duplicate=True),
     Input('sim-btn-run', 'n_clicks'),
     State('sim-precio-bolsa', 'value'),
     State('sim-factor-perdidas', 'value'),
@@ -614,9 +615,9 @@ def update_badges(pb, fp, rest, trans, com):
     prevent_initial_call=True,
 )
 def run_simulation(n_clicks, pb, fp, rest, trans, com, nombre):
-    """Ejecuta la simulación y renderiza resultados."""
+    """Ejecuta la simulación, la persiste automáticamente y renderiza resultados."""
     if not n_clicks:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     try:
         from core.container import container
@@ -643,14 +644,27 @@ def run_simulation(n_clicks, pb, fp, rest, trans, com, nombre):
             nombre=nombre or "Escenario personalizado",
         )
 
-        return _render_resultado(resultado), resultado, False
+        # Auto-persistir en simulation_results cada vez que se simula
+        try:
+            svc.guardar_simulacion(
+                nombre=nombre or "Escenario personalizado",
+                parametros=params,
+                resultado=resultado,
+                tipo=resultado.get('tipo_escenario', 'PERSONALIZADO'),
+            )
+            historial_actualizado = _render_historial(svc.get_historial(limite=10))
+        except Exception as e_save:
+            logger.warning(f"No se pudo auto-guardar simulación: {e_save}")
+            historial_actualizado = no_update
+
+        return _render_resultado(resultado), resultado, False, historial_actualizado
 
     except Exception as e:
         logger.error(f"Error en simulación dashboard: {e}\n{traceback.format_exc()}")
         return dbc.Alert(
             f"Error en simulación: {str(e)}",
             color='danger',
-        ), no_update, True
+        ), no_update, True, no_update
 
 
 # 4. Botón Guardar → persistir + historial
