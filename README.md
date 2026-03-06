@@ -1,7 +1,7 @@
 # Portal Energético Colombia — Dashboard MME
 
 > **Sistema Integral de Monitoreo y Análisis del Sector Energético Colombiano**  
-> **Versión 6.1 — Arquitectura Hexagonal + IA + Bots + API REST + ML (Marzo 2026)**
+> **Versión 1.0.0 — Arquitectura Hexagonal + IA + Bots + API REST + ML (Marzo 2026)**
 
 Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine Learning**, **Bots multicanal (Telegram + WhatsApp)**, **API REST pública**, **Noticias del sector**, **ETL automatizado** y **publicación ArcGIS** para análisis en tiempo real del Sistema Interconectado Nacional (SIN).
 
@@ -15,46 +15,50 @@ Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine 
 
 ---
 
-## Estado Actual del Sistema (2 Marzo 2026)
+## Estado Actual del Sistema (5 Marzo 2026)
 
 ### Plataforma
 
 | Componente | Detalle |
 |-----------|--------|
-| **Servidor** | `portalenergetico.minenergia.gov.co` (172.17.0.46) |
-| **Dashboard** | Dash/Plotly — 12 tableros activos, port 8050 |
-| **API REST** | FastAPI — 29 endpoints (12 routers), port 8000 |
+| **Servidor** | Srvwebprdctrlxm (Azure VM, Ubuntu) |
+| **Dashboard** | Dash 2.17.1 / Plotly 5.17.0 — 14 tableros activos, port 8050 |
+| **API REST** | FastAPI 0.128.2 — 21+ endpoints (14 routers), port 8000 |
 | **Bot Telegram** | Polling mode, inline keyboards, informes ejecutivos |
 | **Bot WhatsApp** | FastAPI + whatsapp-web.js, port 8001 (experimental) |
 | **MLflow** | Tracking server, port 5000 |
+| **Celery** | 2 workers + Beat + Flower (:5555) |
 
-### Base de Datos PostgreSQL
+### Base de Datos PostgreSQL 16
 
-| Tabla | Filas | Descripción |
-|-------|-------|-------------|
-| `metrics` | 13,545,680 | Métricas diarias del SIN |
-| `metrics_hourly` | 50,127,023 | Datos horarios |
-| `lineas_transmision` | 42,106 | Infraestructura de transmisión |
-| `catalogos` | 2,264 | Catálogos XM |
-| `predictions` | 1,170 | Predicciones ML activas |
-| `alertas_historial` | Activa | Historial de alertas |
-| `telegram_users` | Activa | Usuarios del bot |
-| **Total** | **~63.7M** | Cobertura: 2020-01-01 → presente |
+| Tabla | Tamaño | Filas | Rango |
+|-------|--------|-------|-------|
+| `metrics_hourly` | 12 GB | 50,127,023 | 2020-01-01 → 2026-02-04 |
+| `metrics` | 2,845 MB | 13,775,431 | 2020-01-01 → 2026-03-04 |
+| `lineas_transmision` | 16 MB | — | — |
+| `subsidios_pagos` | 7 MB | 12,920 | — |
+| `commercial_metrics` | 1.9 MB | 11,470 | 2020-01-01 → 2026-02-27 |
+| `restriction_metrics` | 1.6 MB | 6,640 | 2020-02-06 → 2026-02-27 |
+| `cu_daily` | 1.1 MB | 2,214 | 2020-02-06 → 2026-02-27 |
+| `predictions` | 928 KB | 1,170 | 2026-02-24 → 2026-05-28 |
+| `losses_detailed` | 848 KB | 2,214 | 2020-02-06 → 2026-02-27 |
+| **Total** | **~15 GB** | **~64M** | Cobertura: 2020-01-01 → presente |
 
 ### Métricas del Código
 
 | Métrica | Valor |
 |---------|-------|
-| Archivos Python | ~130 |
-| Líneas de código Python | ~55,000 |
-| Servicios de dominio | 24 |
-| Repositorios | 5 |
-| Endpoints API | 29 |
-| Callbacks Dash | ~60 |
-| Tests | 128 (85 pasando) |
-| Cron jobs activos | 10 + 4 Celery Beat |
-| Tablas PostgreSQL | 8 principales |
-| Espacio código neto | ~19 MB |
+| Archivos totales | 579 |
+| Archivos Python | 234 |
+| Líneas de código Python | 86,312 |
+| Servicios de dominio | 26 |
+| Repositorios | 6 |
+| Endpoints API | 21+ |
+| Páginas Dashboard | 14 |
+| Tests | 150 pasando (0 fallas) |
+| Cron jobs activos | 8 cron + 4 Celery Beat |
+| Tablas PostgreSQL | 21 |
+| Tamaño del proyecto | 705 MB (sin venv/git) |
 
 ---
 
@@ -145,20 +149,24 @@ server/
 
 ## Tableros del Dashboard
 
-| # | Ruta | Descripción | Métricas |
-|---|------|-------------|----------|
-| 1 | `/` | Portada interactiva | Navegación al sistema energético |
-| 2 | `/generacion` | Generación SIN | Reservas %, Aportes GWh, Generación GWh |
-| 3 | `/generacion/fuentes` | Por fuente energética | Mix hidráulica/térmica/solar/eólica + predicciones ML |
-| 4 | `/generacion/hidraulica/hidrologia` | Hidrología | Embalses, aportes por río, semáforo de riesgo, mapa Colombia |
-| 5 | `/transmision` | Transmisión | Capacidad STN MW, líneas, disponibilidad % |
-| 6 | `/distribucion` | Distribución | Demanda comercial/regulada/no regulada GWh |
-| 7 | `/comercializacion` | Comercialización | Precio Bolsa/Escasez/Oferta $/kWh |
-| 8 | `/perdidas` | Pérdidas | STN/STR/SDL/Totales % |
-| 9 | `/restricciones` | Restricciones | Generación GWh, voltaje, AGC, costo $ |
-| 10 | `/metricas` | Explorador universal | 120+ métricas XM/SIMEM con export xlsx/csv/pdf |
-| 11 | `/metricas-piloto` | Piloto KPIs | 4 métricas con comparación predicciones |
-| 12 | `/seguimiento-predicciones` | Monitoreo ML | MAPE/RMSE/MAE/R² por modelo |
+| # | Ruta | Descripción | Estado |
+|---|------|-------------|--------|
+| # | Ruta | Descripción | Estado |
+|---|------|-------------|--------|
+| 1 | `/` | Portada interactiva | ✅ 200 |
+| 2 | `/generacion` | Generación SIN | ✅ 200 |
+| 3 | `/generacion-fuentes` | Por fuente energética | ✅ 200 |
+| 4 | `/hidrologia` | Hidrología | ✅ 200 |
+| 5 | `/transmision` | Transmisión | ✅ 200 |
+| 6 | `/distribucion` | Distribución | ✅ 200 |
+| 7 | `/comercializacion` | Comercialización | ✅ 200 |
+| 8 | `/perdidas` | Pérdidas técnicas | ✅ 200 |
+| 9 | `/perdidas-nt` | Pérdidas no técnicas | ✅ 200 |
+| 10 | `/costo-unitario` | Costo unitario (CU) | ✅ 200 |
+| 11 | `/simulacion` | Simulación CREG | ✅ 200 |
+| 12 | `/restricciones` | Restricciones | ✅ 200 |
+| 13 | `/metricas` | Explorador universal | ✅ 200 |
+| 14 | `/seguimiento-predicciones` | Monitoreo ML | ✅ 200 |
 
 ---
 
@@ -303,17 +311,17 @@ uvicorn whatsapp_bot.app.main:app --host 0.0.0.0 --port 8001
 
 | Capa | Tecnologías |
 |------|-------------|
-| Dashboard | Dash 2.17, Plotly 5.17, Flask, Bootstrap |
-| API | FastAPI 0.109, Pydantic 2.5, slowapi, Redis |
-| Base de datos | PostgreSQL 16+, psycopg2-binary |
-| ML | Prophet, statsmodels, scikit-learn, XGBoost, LightGBM, NeuralForecast |
+| Dashboard | Dash 2.17.1, Plotly 5.17.0, Flask 3.0.0, DBC 1.5.0 |
+| API | FastAPI 0.128.2, Pydantic 2.5, slowapi 0.1.9, Redis 5.0.8 |
+| Base de datos | PostgreSQL 16, psycopg2-binary 2.9.11 |
+| ML | Prophet 1.1.5, statsmodels, scikit-learn, XGBoost, LightGBM |
 | IA | Groq (Llama 3.3 70B), OpenRouter, openai SDK |
 | Bots | python-telegram-bot, Twilio, whatsapp-web.js (Node.js) |
 | Noticias | GNews, Mediastack, Google News RSS (httpx async) |
-| ETL | pydataxm, pydatasimem, ArcGIS Python API |
-| Servidor | Gunicorn, Uvicorn, Nginx, systemd, Celery + Redis |
+| ETL | pydataxm 0.7.1, Celery 5.6.2, ArcGIS Python API |
+| Servidor | Gunicorn 23.0.0, Uvicorn 0.34.0, Nginx, systemd |
 | PDF | WeasyPrint |
-| Monitoreo | Prometheus, psutil, logrotate |
+| Monitoreo | Prometheus, psutil, logrotate, MLflow 2.21.3 |
 
 ---
 
@@ -321,7 +329,7 @@ uvicorn whatsapp_bot.app.main:app --host 0.0.0.0 --port 8001
 
 | Documento | Contenido |
 |-----------|-----------|
-| [Informe Arquitectura Completa v3](docs/informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-02.md) | Auditoría file-by-file: 10 secciones, flujo datos, deuda técnica, evaluación API |
+| [Informe Arquitectura Completa v4](docs/informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-05.md) | Inspección completa: 12 secciones, inventario BD, deuda técnica, seguridad |
 | [Documentación Técnica Orquestador](docs/DOCUMENTACION_TECNICA_ORQUESTADOR.md) | 20+ intents, timeout, flujo completo |
 | [Guía de Uso del API](docs/GUIA_USO_API.md) | Endpoints, autenticación, ejemplos |
 | [Endpoint Orchestrator](docs/ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md) | Integración para Oscar (WhatsApp) |
@@ -358,4 +366,5 @@ kill -HUP $(pgrep -f "gunicorn.*8000" | head -1)
 Propiedad del **Ministerio de Minas y Energía de Colombia**.
 
 **Repositorio:** https://github.com/MelissaCardona2003/Dashboard_Multipage_MME  
-**Última actualización:** 2 de marzo de 2026
+**Última actualización:** 5 de marzo de 2026  
+**Tag:** v1.0.0
