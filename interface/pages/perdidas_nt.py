@@ -6,7 +6,7 @@ FASE 5 — TAREA 5.3
 """
 
 import dash
-from dash import html, dcc, callback, Input, Output
+from dash import html, dcc, dash_table, callback, Input, Output
 import dash_bootstrap_components as dbc
 from datetime import date, timedelta
 import pandas as pd
@@ -128,6 +128,12 @@ def layout(**kwargs):
                 dcc.Tab(
                     label="Análisis Histórico",
                     value="tab-historico",
+                    className="custom-tab",
+                    selected_className="custom-tab--selected",
+                ),
+                dcc.Tab(
+                    label="🔍 Detección IA",
+                    value="tab-anomalias",
                     className="custom-tab",
                     selected_className="custom-tab--selected",
                 ),
@@ -267,9 +273,15 @@ def actualizar_store_pnt(_n, fecha_inicio_str, fecha_fin_str):
 def renderizar_tab_pnt(store_data, tab_activo):
     px, go = get_plotly_modules()
 
-    # ═══ TAB 2: Metodología (ESTÁTICO) ═══════════════════════
+    # ═══ TAB: Metodología (ESTÁTICO) ═══════════════════════
     if tab_activo == "tab-metodologia":
         return _crear_tab_metodologia()
+
+    # ═══ TAB: Detección IA ═══════════════════════════════════
+    if tab_activo == "tab-anomalias":
+        fi = pd.to_datetime(store_data["fecha_inicio"]).date() if store_data else date(2020, 1, 1)
+        ff = pd.to_datetime(store_data["fecha_fin"]).date() if store_data else date.today()
+        return _crear_tab_anomalias(fi, ff)
 
     # ═══ TAB 1: Análisis Histórico ═══════════════════════════
     if not store_data:
@@ -812,4 +824,129 @@ def _crear_tab_metodologia():
             ], href="/perdidas", color="light", className="mt-3",
             style={'border': '2px solid #dee2e6', 'fontWeight': '500'}),
         ]),
+    ])
+
+
+def _crear_tab_anomalias(fecha_inicio: date, fecha_fin: date):
+    """Tab Detección IA — Isolation Forest sobre pérdidas no técnicas."""
+    px, go = get_plotly_modules()
+    svc = LossesNTService()
+
+    df = svc.detect_anomalies_isolation_forest(fecha_inicio, fecha_fin)
+
+    if df.empty:
+        return dbc.Alert(
+            "No hay suficientes datos para ejecutar Isolation Forest (mínimo 12 registros).",
+            color="warning",
+        )
+
+    n_anomalias = int((df["anomaly"] == -1).sum())
+    n_criticos = int((df["severidad"] == "CRITICO").sum())
+    n_alertas = int((df["severidad"] == "ALERTA").sum())
+
+    peor_idx = df["anomaly_score"].idxmin()
+    fecha_peor = str(df.loc[peor_idx, "fecha"])[:10]
+    score_peor = float(df.loc[peor_idx, "anomaly_score"])
+
+    # ── Gráfico: serie con puntos coloreados ──────────────────────────
+    color_map = {"NORMAL": "#2ecc71", "ALERTA": "#f39c12", "CRITICO": "#e74c3c"}
+
+    fig = go.Figure()
+    for sev, color in color_map.items():
+        mask = df["severidad"] == sev
+        sub = df[mask]
+        fig.add_trace(go.Scatter(
+            x=sub["fecha"],
+            y=sub["pnt_pct"],
+            mode="markers",
+            name=sev,
+            marker=dict(color=color, size=6 if sev == "NORMAL" else 10),
+            hovertemplate="<b>%{x}</b><br>PNT: %{y:.2f}%<extra></extra>",
+        ))
+    fig.update_layout(
+        title="Pérdidas No Técnicas — Detección de Anomalías (Isolation Forest)",
+        xaxis_title="Fecha",
+        yaxis_title="PNT (%)",
+        height=400,
+        legend=dict(orientation="h", y=-0.2),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+
+    # ── Tabla de anomalías (solo las detectadas) ──────────────────────
+    df_anomalias = (
+        df[df["anomaly"] == -1]
+        .sort_values("anomaly_score")
+        .head(20)
+        .copy()
+    )
+    df_anomalias["fecha"] = df_anomalias["fecha"].astype(str).str[:10]
+    df_anomalias["pnt_pct"] = df_anomalias["pnt_pct"].round(3)
+    df_anomalias["anomaly_score"] = df_anomalias["anomaly_score"].round(4)
+
+    # ── Texto interpretativo ──────────────────────────────────────────
+    min_fecha = str(df["fecha"].min())[:10]
+    max_fecha = str(df["fecha"].max())[:10]
+    texto = (
+        f"El algoritmo Isolation Forest analizó {len(df):,} registros entre "
+        f"{min_fecha} y {max_fecha}. Detectó {n_anomalias} períodos con comportamiento "
+        f"inusual ({n_criticos} críticos, {n_alertas} en alerta). "
+        f"El período más anómalo fue {fecha_peor} (score: {score_peor:.4f}). "
+        f"Contaminación configurada: 10% — aprox. 1 de cada 10 registros se espera anómalo."
+    )
+
+    return html.Div([
+        # KPIs
+        dbc.Row([
+            dbc.Col(dbc.Card([
+                dbc.CardBody([
+                    html.H4(str(n_anomalias), className="text-danger fw-bold"),
+                    html.P("Anomalías detectadas", className="text-muted small mb-0"),
+                    html.Small("períodos con comportamiento inusual"),
+                ])
+            ], className="text-center shadow-sm")),
+            dbc.Col(dbc.Card([
+                dbc.CardBody([
+                    html.H4(str(n_criticos), className="text-danger fw-bold"),
+                    html.P("Períodos CRÍTICOS", className="text-muted small mb-0"),
+                    html.Small(f"score < -0.15"),
+                ])
+            ], className="text-center shadow-sm")),
+            dbc.Col(dbc.Card([
+                dbc.CardBody([
+                    html.H4(fecha_peor, className="fw-bold"),
+                    html.P("Período más anómalo", className="text-muted small mb-0"),
+                    html.Small(f"Score: {score_peor:.4f}"),
+                ])
+            ], className="text-center shadow-sm")),
+        ], className="mb-4 g-3"),
+
+        # Gráfico
+        dcc.Graph(figure=fig, id="grafico-anomalias-if", config={"displayModeBar": False}),
+
+        # Tabla
+        html.H6("Top anomalías detectadas", className="mt-4 mb-2"),
+        dash_table.DataTable(
+            id="tabla-anomalias-if",
+            data=df_anomalias.to_dict("records"),
+            columns=[
+                {"name": "Fecha", "id": "fecha"},
+                {"name": "PNT (%)", "id": "pnt_pct"},
+                {"name": "Score", "id": "anomaly_score"},
+                {"name": "Severidad", "id": "severidad"},
+            ],
+            style_table={"overflowX": "auto"},
+            style_cell={"textAlign": "center", "fontSize": "13px", "padding": "6px"},
+            style_header={"backgroundColor": "#f8f9fa", "fontWeight": "bold"},
+            style_data_conditional=[
+                {"if": {"filter_query": '{severidad} = "CRITICO"'},
+                 "backgroundColor": "#ffcccc", "color": "#c0392b"},
+                {"if": {"filter_query": '{severidad} = "ALERTA"'},
+                 "backgroundColor": "#fff3cc", "color": "#856404"},
+            ],
+            page_size=10,
+        ),
+
+        # Texto interpretativo
+        html.P(texto, className="mt-4 text-muted fst-italic small"),
     ])

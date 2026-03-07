@@ -667,6 +667,88 @@ class LossesNTService:
             return {"error": str(exc)}
 
     # ================================================================
+    # OE3: Detección de anomalías con Isolation Forest
+    # ================================================================
+
+    def _get_series_pnt(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """
+        Retorna DataFrame con columnas fecha, pnt_pct desde losses_detailed.
+        Excluye filas con pnt_pct nulo o negativo anómalo (< -5).
+        """
+        try:
+            with self._db.get_connection() as conn:
+                query = """
+                    SELECT fecha,
+                           CAST(perdidas_no_tecnicas_pct AS FLOAT) AS pnt_pct
+                    FROM losses_detailed
+                    WHERE fecha BETWEEN %s AND %s
+                      AND perdidas_no_tecnicas_pct IS NOT NULL
+                      AND perdidas_no_tecnicas_pct > -5
+                    ORDER BY fecha
+                """
+                df = pd.read_sql(query, conn, params=[start_date, end_date])
+                conn.commit()
+            return df
+        except Exception as exc:
+            logger.error("%s Error _get_series_pnt: %s", _PREFIX, exc)
+            return pd.DataFrame()
+
+    def detect_anomalies_isolation_forest(
+        self,
+        start_date: date,
+        end_date: date,
+        contamination: float = 0.1,
+    ) -> pd.DataFrame:
+        """
+        Detecta períodos anómalos en pérdidas no técnicas usando Isolation Forest.
+
+        Features usadas:
+          - pnt_pct: porcentaje de pérdidas no técnicas
+          - variacion_diaria: cambio respecto al día anterior
+          - promedio_movil_30d: tendencia de corto plazo
+
+        Retorna DataFrame con:
+          fecha, pnt_pct, anomaly (-1=anomalía, 1=normal),
+          anomaly_score (más negativo = más anómalo),
+          severidad (NORMAL / ALERTA / CRITICO)
+        """
+        from sklearn.ensemble import IsolationForest
+        import numpy as np
+
+        df = self._get_series_pnt(start_date, end_date)
+        if df.empty or len(df) < 12:
+            logger.warning("%s Datos insuficientes para Isolation Forest (%d filas)", _PREFIX, len(df))
+            return pd.DataFrame()
+
+        df = df.sort_values("fecha").copy()
+        df["variacion_diaria"] = df["pnt_pct"].pct_change().fillna(0).clip(-5, 5)
+        df["promedio_movil_30d"] = df["pnt_pct"].rolling(window=30, min_periods=1).mean()
+
+        features = ["pnt_pct", "variacion_diaria", "promedio_movil_30d"]
+        X = df[features].values
+
+        iso = IsolationForest(
+            contamination=contamination,
+            random_state=42,
+            n_estimators=100,
+        )
+        df["anomaly"] = iso.fit_predict(X)
+        df["anomaly_score"] = iso.score_samples(X)
+
+        # Umbrales relativos al dataset real (percentiles del score)
+        # Isolation Forest: scores más negativos = más anómalos
+        threshold_critico = float(df["anomaly_score"].quantile(0.05))   # peor 5%
+        threshold_alerta  = float(df["anomaly_score"].quantile(0.15))   # peor 5-15%
+
+        def _severidad(row):
+            if row["anomaly"] == 1:
+                return "NORMAL"
+            return "CRITICO" if row["anomaly_score"] <= threshold_critico else "ALERTA"
+
+        df["severidad"] = df.apply(_severidad, axis=1)
+        return df[["fecha", "pnt_pct", "anomaly", "anomaly_score", "severidad"]]
+
+    # ================================================================
     # HELPERS
     # ================================================================
 
