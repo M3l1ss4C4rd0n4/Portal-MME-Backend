@@ -56,6 +56,7 @@ def crear_header_restaurado():
                 dbc.NavLink("Pérdidas NT", href="/perdidas-nt", id="nav-link-perdidas-nt", style=nav_link_style),
                 dbc.NavLink("Restricciones", href="/restricciones", id="nav-link-restricciones", style=nav_link_style),
                 dbc.NavLink("Métricas", href="/metricas", id="nav-link-metricas", style=nav_link_style),
+                dbc.NavLink("💡 Inversiones", href="/inversiones", id="nav-link-inversiones", style=nav_link_style),
             ],
             brand=brand_component,
             brand_href="/",
