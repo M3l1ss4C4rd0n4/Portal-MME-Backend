@@ -234,10 +234,27 @@ def layout():
                     ),
                 ], style={'display': 'inline-block', 'marginRight': '20px'}),
                 html.Div([
-                    dbc.Button(
-                        [html.I(className="fas fa-chart-line me-1"), "Analizar"],
-                        id='btn-analizar-metrica',
-                        color="primary",
+                    html.Label("HORIZONTE:", style={'fontSize': '0.7rem', 'fontWeight': '600', 'marginBottom': '2px'}),
+                    dcc.RadioItems(
+                        id='horizonte-selector',
+                        options=[
+                            {'label': '30 días', 'value': 30},
+                            {'label': '90 días', 'value': 90},
+                            {'label': '📅 365 días', 'value': 365},
+                        ],
+                        value=90,
+                        inline=True,
+                        style={'fontSize': '0.85rem'},
+                        inputStyle={'marginRight': '4px'},
+                        labelStyle={'marginRight': '14px'},
+                    ),
+                    html.Small(
+                        "⚠️ >90 días = EXPERIMENTAL",
+                        id='horizonte-aviso',
+                        style={'color': '#888', 'display': 'none'},
+                    ),
+                ], style={'display': 'inline-block', 'marginRight': '20px', 'verticalAlign': 'top', 'paddingTop': '2px'}),
+                html.Div([
                         size="sm",
                         className="mt-3"
                     ),
@@ -299,6 +316,15 @@ def layout():
 # ═══════════════════════════════════════════════════════════════════════════════
 # CALLBACKS
 # ═══════════════════════════════════════════════════════════════════════════════
+# ── CALLBACK 0: Mostrar/ocultar aviso EXPERIMENTAL según horizonte ──
+@callback(
+    Output('horizonte-aviso', 'style'),
+    Input('horizonte-selector', 'value'),
+)
+def toggle_horizonte_aviso(horizonte):
+    if horizonte and horizonte > 90:
+        return {'color': '#e67e22', 'fontWeight': '600', 'display': 'block'}
+    return {'display': 'none'}
 
 # ── CALLBACK 1: Cargar resumen ejecutivo + tabla maestra al entrar ──
 @callback(
@@ -466,10 +492,11 @@ def cargar_resumen_inicial(_):
      Output('grafica-error-diario', 'children')],
     Input('btn-analizar-metrica', 'n_clicks'),
     [State('dd-metrica-seguimiento', 'value'),
-     State('dd-periodo-seguimiento', 'value')],
+     State('dd-periodo-seguimiento', 'value'),
+     State('horizonte-selector', 'value')],
     prevent_initial_call=True,
 )
-def analizar_metrica_detallada(n_clicks, fuente, periodo_dias):
+def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
     """Genera análisis completo: predicho vs real, error diario, tabla día a día."""
     px, go = get_plotly_modules()
     
@@ -482,8 +509,12 @@ def analizar_metrica_detallada(n_clicks, fuente, periodo_dias):
     unidad = cfg.get('unidad', '')
     color_metrica = COLORES_METRICAS.get(fuente, '#3498db')
     
-    # 1. Cargar predicciones
+    # 1. Cargar predicciones (filtrar por horizonte seleccionado)
     df_pred = cargar_predicciones_metrica(fuente)
+    if not df_pred.empty and horizonte_dias and 'horizonte_dias' in df_pred.columns:
+        mask = df_pred['horizonte_dias'] == horizonte_dias
+        if mask.any():
+            df_pred = df_pred[mask]
     if df_pred.empty:
         alerta = dbc.Alert(f"No hay predicciones para {label}.", color="warning")
         return alerta, "", "", ""

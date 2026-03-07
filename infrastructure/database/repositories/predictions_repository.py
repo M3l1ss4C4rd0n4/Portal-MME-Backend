@@ -65,14 +65,16 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
         
         query = """
             INSERT INTO predictions 
-            (fuente, modelo, fecha_prediccion, valor_gwh_predicho, intervalo_inferior, intervalo_superior, fecha_actualizacion)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            (fuente, modelo, fecha_prediccion, valor_gwh_predicho, intervalo_inferior, intervalo_superior, horizonte_dias, confianza, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (fuente, modelo, fecha_prediccion) 
             DO UPDATE SET 
                 valor_gwh_predicho = EXCLUDED.valor_gwh_predicho,
                 intervalo_inferior = EXCLUDED.intervalo_inferior,
                 intervalo_superior = EXCLUDED.intervalo_superior,
-                fecha_actualizacion = NOW()
+                horizonte_dias = EXCLUDED.horizonte_dias,
+                confianza = EXCLUDED.confianza,
+                updated_at = NOW()
         """
         
         try:
@@ -84,7 +86,10 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
                     row.get('fecha_prediccion', row.get('fecha')),
                     row.get('valor_gwh_predicho', row.get('yhat')),
                     row.get('intervalo_inferior', row.get('yhat_lower')),
-                    row.get('intervalo_superior', row.get('yhat_upper'))
+                    row.get('intervalo_superior', row.get('yhat_upper')),
+                    row.get('horizonte_dias', None),
+                    # Prefer numeric 'confianza'; string 'clasificacion_confianza' is API-only
+                    row.get('confianza', None),
                 ))
             
             inserted = 0

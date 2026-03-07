@@ -18,6 +18,7 @@ Actualizado: FASE 19 (1 marzo 2026) — Redis caching
 
 import json
 import time
+import asyncio
 import hashlib
 import logging
 from typing import Optional, Literal, List
@@ -495,3 +496,51 @@ async def cache_flush(
         return {"status": "flushed", "deleted": deleted}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@router.post(
+    "/generate-long-term",
+    response_model=dict,
+    summary="Genera predicciones de largo plazo (91–365 días)",
+    description=(
+        "Genera predicciones Prophet hasta 365 días para todas las fuentes. "
+        "Predicciones >90 días clasificadas como EXPERIMENTAL. "
+        "Proceso síncrono — puede tardar 3-8 minutos."
+    ),
+)
+async def generate_long_term(
+    horizonte_dias: int = Query(default=365, ge=91, le=365, description="Días a predecir (91–365)"),
+    fuentes: Optional[List[str]] = Query(default=None, description="Fuentes a generar (None = todas)"),
+    api_key: str = Depends(get_api_key),
+) -> dict:
+    """Genera y persiste predicciones de largo plazo con Prophet."""
+    loop = asyncio.get_event_loop()
+    svc = PredictionsService()
+
+    resumen = await loop.run_in_executor(
+        None,
+        lambda: svc.save_long_term_predictions(
+            fuentes=fuentes,
+            horizonte_dias=horizonte_dias,
+        )
+    )
+
+    total = sum(resumen.values())
+    fuentes_ok = [f for f, n in resumen.items() if n > 0]
+    fuentes_fail = [f for f, n in resumen.items() if n == 0]
+
+    return {
+        'message': f'{total} predicciones {horizonte_dias}d generadas',
+        'horizonte_dias': horizonte_dias,
+        'clasificacion': 'EXPERIMENTAL' if horizonte_dias > 90 else 'MODERADA',
+        'advertencia': (
+            'Predicciones >90 días tienen mayor incertidumbre. '
+            'Usar solo para planificación estratégica, '
+            'no para operaciones del día siguiente.'
+        ),
+        'resumen_por_fuente': resumen,
+        'fuentes_exitosas': len(fuentes_ok),
+        'fuentes_fallidas': len(fuentes_fail),
+        'fuentes_fallidas_lista': fuentes_fail,
+        'generado_en': datetime.now().isoformat(),
+    }
