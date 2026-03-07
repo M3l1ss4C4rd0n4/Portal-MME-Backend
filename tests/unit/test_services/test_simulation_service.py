@@ -103,3 +103,38 @@ def test_escenarios_predefinidos_ejecutan():
         assert resultado['cu_simulado'] > 0, (
             f"Escenario {preset['id']}: cu_simulado={resultado['cu_simulado']}"
         )
+
+
+# ─── 7-10. Nuevos escenarios OE6 completo ──────────────────
+def test_all_7_escenarios_existen():
+    svc = _get_svc()
+    presets = svc.get_escenarios_predefinidos()
+    ids = {e['id'] for e in presets}
+    expected = {
+        'sequia_moderada', 'sequia_severa',
+        'reforma_perdidas_reduccion', 'expansion_renovables',
+        'antifraude_agresivo', 'combinado', 'apagon_regional',
+    }
+    assert expected.issubset(ids), f"Faltan: {expected - ids}"
+
+
+def test_combinado_reduce_cu_vs_sequia_moderada():
+    svc = _get_svc()
+    preset_map = {e['id']: e for e in svc.get_escenarios_predefinidos()}
+    r_sequia = svc.simular_escenario(preset_map['sequia_moderada']['parametros'])
+    r_combinado = svc.simular_escenario(preset_map['combinado']['parametros'])
+    assert r_combinado['cu_simulado'] < r_sequia['cu_simulado']
+
+
+def test_apagon_aumenta_cu_mas_50pct():
+    svc = _get_svc()
+    preset_map = {e['id']: e for e in svc.get_escenarios_predefinidos()}
+    r = svc.simular_escenario(preset_map['apagon_regional']['parametros'])
+    assert r['delta_pct'] > 50.0, f"Apagón debe subir CU >50%, got {r['delta_pct']:.1f}%"
+
+
+def test_monte_carlo_combinado_p10_le_p50_le_p90():
+    svc = _get_svc()
+    r = svc.run_monte_carlo('combinado', n_simulations=100)
+    assert r['cu_p10'] <= r['cu_p50'] <= r['cu_p90']
+    assert r['reduccion_cu_p50'] > 0, "Escenario combinado debe reducir vs base"

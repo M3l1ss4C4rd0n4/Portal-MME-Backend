@@ -398,6 +398,66 @@ class SimulationService:
                     'renovables no convencionales a 2027.'
                 ),
             },
+            {
+                'id': 'antifraude_agresivo',
+                'nombre': 'Programa Antifraude Agresivo (AMI)',
+                'descripcion': (
+                    'Implementación de medidores inteligentes AMI en zonas de '
+                    'alta incidencia + operativos de normalización SSPD. '
+                    'Reducción pérdidas reconocidas: 8.5% → 7.2% (−15% PNT).'
+                ),
+                'tipo': 'REFORMA_TARIFA',
+                'parametros': {
+                    'factor_perdidas': 0.072,
+                },
+                'contexto_historico': (
+                    'Colombia pierde ~COP 2.8B/año por pérdidas NT '
+                    '(CREG Concepto 2921/2025). Reducción del 15% viable '
+                    'en 18 meses según experiencias EPM/ENEL.'
+                ),
+            },
+            {
+                'id': 'combinado',
+                'nombre': 'Renovables + Antifraude (Escenario Óptimo)',
+                'descripcion': (
+                    'Combinación de expansión renovable (500 MW solar Costa '
+                    'Atlántica + 300 MW eólica La Guajira) con programa '
+                    'antifraude que reduce pérdidas en 10%. Política pública '
+                    'más probable 2026-2030 (UPME/SSPD-MME).'
+                ),
+                'tipo': 'INVERSION',
+                'parametros': {
+                    'precio_bolsa_factor': 0.88,
+                    'factor_perdidas': 0.077,
+                    'demanda_factor': 1.02,
+                },
+                'contexto_historico': (
+                    'Meta UPME: 4.5 GW renovables a 2027. CREG ha priorizado '
+                    'reducción de pérdidas como mecanismo de reducción '
+                    'tarifaria para estratos 1-3.'
+                ),
+            },
+            {
+                'id': 'apagon_regional',
+                'nombre': 'Apagón Regional (Escenario Extremo)',
+                'descripcion': (
+                    'Crisis hídrica severa (embalses < 20% útil) combinada '
+                    'con pico de pérdidas y restricciones de transmisión en '
+                    'zona Caribe. Escenario de riesgo sistémico.'
+                ),
+                'tipo': 'SEQUIA',
+                'parametros': {
+                    'precio_bolsa_factor': 2.80,
+                    'demanda_factor': 0.92,
+                    'cargo_restricciones_kw': 45.0,
+                    'factor_perdidas': 0.092,
+                },
+                'contexto_historico': (
+                    'Crisis hídrica 2015-2016: embalses al 19%, precio bolsa '
+                    'superó $1,200 COP/kWh. UPME clasifica este riesgo como '
+                    '"alto" si no se diversifica la matriz antes de 2028.'
+                ),
+            },
         ]
 
     # ════════════════════════════════════════════════════════════

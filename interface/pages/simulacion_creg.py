@@ -82,6 +82,27 @@ PRESETS = {
         'tasa_transmision': 1.0,
         'tasa_comercializacion': 1.0,
     },
+    'antifraude_agresivo': {
+        'precio_bolsa_factor': 1.0,
+        'factor_perdidas': 0.072,
+        'cargo_restricciones_kw': 0.0,
+        'tasa_transmision': 1.0,
+        'tasa_comercializacion': 1.0,
+    },
+    'combinado': {
+        'precio_bolsa_factor': 0.88,
+        'factor_perdidas': 0.077,
+        'cargo_restricciones_kw': 0.0,
+        'tasa_transmision': 1.0,
+        'tasa_comercializacion': 1.0,
+    },
+    'apagon_regional': {
+        'precio_bolsa_factor': 2.80,
+        'factor_perdidas': 0.092,
+        'cargo_restricciones_kw': 45.0,
+        'tasa_transmision': 1.0,
+        'tasa_comercializacion': 1.0,
+    },
 }
 
 
@@ -407,6 +428,12 @@ def layout(**kwargs):
                                  'value': 'reforma_perdidas_reduccion'},
                                 {'label': '☀️ Expansión renovables 2GW',
                                  'value': 'expansion_renovables'},
+                                {'label': '🛡️ Antifraude Agresivo (AMI)',
+                                 'value': 'antifraude_agresivo'},
+                                {'label': '⚡ Combinado Óptimo (Renovables+Antifraude)',
+                                 'value': 'combinado'},
+                                {'label': '⚠️ Apagón Regional (Extremo)',
+                                 'value': 'apagon_regional'},
                             ],
                             value='',
                             clearable=False,
