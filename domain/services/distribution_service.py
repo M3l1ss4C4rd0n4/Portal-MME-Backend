@@ -399,3 +399,80 @@ class DistributionService:
         except Exception as e:
             logger.error(f"❌ Error obteniendo operadores: {e}")
             return pd.DataFrame()
+
+    def get_demanda_por_departamento(self) -> pd.DataFrame:
+        """
+        Estimación de demanda eléctrica por departamento.
+        Base: demanda nacional real de BD (fallback: 185 GWh/día).
+        Factores de distribución: UPME Balance Energético 2023.
+        """
+        demanda_nacional_gwh = 185.0
+        try:
+            from infrastructure.database.connection import PostgreSQLConnectionManager
+            cm = PostgreSQLConnectionManager()
+            with cm.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT round(avg(valor_gwh)::numeric, 2)
+                    FROM metrics
+                    WHERE metrica IN ('Demanda', 'DemandaTotal', 'DEMANDA', 'DDA')
+                      AND fecha >= current_date - interval '30 days'
+                """)
+                r = cur.fetchone()
+                if r and r[0]:
+                    demanda_nacional_gwh = float(r[0])
+        except Exception as e:
+            logger.warning(f"[DIST] Error leyendo demanda BD: {e}")
+
+        PESOS_UPME = {
+            'Bogotá D.C.':        ('11', 0.220),
+            'Antioquia':          ('05', 0.185),
+            'Valle del Cauca':    ('76', 0.125),
+            'Atlántico':          ('08', 0.068),
+            'Bolívar':            ('13', 0.048),
+            'Santander':          ('68', 0.045),
+            'Cundinamarca':       ('25', 0.043),
+            'Córdoba':            ('23', 0.030),
+            'Meta':               ('50', 0.028),
+            'Nariño':             ('52', 0.022),
+            'Tolima':             ('73', 0.020),
+            'Huila':              ('41', 0.018),
+            'Boyacá':             ('15', 0.017),
+            'Caldas':             ('17', 0.015),
+            'Risaralda':          ('66', 0.014),
+            'Norte de Santander': ('54', 0.013),
+            'Cesar':              ('20', 0.011),
+            'Magdalena':          ('47', 0.010),
+            'Cauca':              ('19', 0.009),
+            'La Guajira':         ('44', 0.007),
+            'Casanare':           ('85', 0.007),
+            'Sucre':              ('70', 0.006),
+            'Quindío':            ('63', 0.006),
+            'Chocó':              ('27', 0.004),
+            'Arauca':             ('81', 0.003),
+            'Caquetá':            ('18', 0.003),
+            'Putumayo':           ('86', 0.002),
+            'Vichada':            ('99', 0.001),
+            'Amazonas':           ('91', 0.001),
+            'Guainía':            ('94', 0.001),
+            'Guaviare':           ('95', 0.001),
+            'Vaupés':             ('97', 0.001),
+            'San Andrés':         ('88', 0.001),
+        }
+
+        rows = []
+        for dept, (codigo, peso) in PESOS_UPME.items():
+            demanda_dept = round(demanda_nacional_gwh * peso, 3)
+            rows.append({
+                'departamento': dept,
+                'codigo_dpto': codigo,
+                'demanda_gwh_dia': demanda_dept,
+                'demanda_gwh_anual': round(demanda_dept * 365, 1),
+                'participacion_pct': round(peso * 100, 2),
+                'categoria': (
+                    'ALTA' if peso >= 0.10
+                    else 'MEDIA' if peso >= 0.02
+                    else 'BAJA'
+                ),
+            })
+        return pd.DataFrame(rows).sort_values('demanda_gwh_dia', ascending=False)

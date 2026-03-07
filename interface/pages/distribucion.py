@@ -528,6 +528,95 @@ def crear_tabla_demanda_no_atendida(df_dna, page_current=0, page_size=10):
     else:
         return html.Div([tabla, total_row])
 
+# ==================== MAPA DEPARTAMENTAL ====================
+
+def _crear_mapa_distribucion():
+    """Choropleth de demanda eléctrica por departamento. Pesos UPME 2023."""
+    import json
+    import os
+    px, go = get_plotly_modules()
+    try:
+        df = _service.get_demanda_por_departamento()
+        geojson_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "assets",
+            "departamentos_colombia.geojson",
+        )
+        with open(geojson_path, encoding="utf-8") as f:
+            geojson = json.load(f)
+
+        fig = px.choropleth(
+            df,
+            geojson=geojson,
+            locations="codigo_dpto",
+            featureidkey="properties.DPTO",
+            color="demanda_gwh_dia",
+            color_continuous_scale="Blues",
+            labels={
+                "demanda_gwh_dia": "Demanda (GWh/día)",
+                "participacion_pct": "Participación (%)",
+            },
+            hover_name="departamento",
+            hover_data={
+                "participacion_pct": True,
+                "demanda_gwh_anual": True,
+                "codigo_dpto": False,
+            },
+            title="Distribución de Demanda Eléctrica — Colombia",
+        )
+        fig.update_geos(fitbounds="locations", visible=False)
+        fig.update_layout(
+            height=550,
+            margin=dict(l=0, r=0, t=50, b=0),
+            coloraxis_colorbar=dict(title="GWh/día", thickness=15),
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Inter, sans-serif", size=12),
+        )
+
+        top5 = df.head(5)[["departamento", "demanda_gwh_dia", "categoria"]]
+        rows_top5 = [
+            html.Tr([html.Td(r["departamento"]),
+                     html.Td(f"{r['demanda_gwh_dia']:.1f} GWh/día"),
+                     html.Td(r["categoria"])])
+            for _, r in top5.iterrows()
+        ]
+
+        return html.Div([
+            dbc.Alert([
+                html.I(className="fas fa-circle-info me-2"),
+                "Estimación basada en factores de participación UPME Balance Energético 2023 "
+                "aplicados a la demanda nacional calculada de la BD. "
+                "No representa medición directa por departamento.",
+            ], color="info", className="mb-3 small"),
+            dbc.Row([
+                dbc.Col(
+                    dcc.Graph(figure=fig, config={"displayModeBar": False}),
+                    md=8,
+                ),
+                dbc.Col([
+                    html.H6("🔵 Top 5 Mayor Demanda", className="mb-2 fw-bold"),
+                    dbc.Table(
+                        [html.Thead(html.Tr([
+                            html.Th("Departamento"),
+                            html.Th("Demanda"),
+                            html.Th("Categoría"),
+                        ])),
+                         html.Tbody(rows_top5)],
+                        bordered=True, hover=True, size="sm",
+                    ),
+                    html.Small(
+                        "Fuente: UPME Balance Energético 2023. "
+                        "Demanda base calculada de BD (30d avg).",
+                        className="text-muted fst-italic d-block mt-2",
+                        style={"fontSize": "0.75rem"},
+                    ),
+                ], md=4),
+            ]),
+        ])
+    except Exception as e:
+        logger.error("Error mapa departamental distribución: %s", e, exc_info=True)
+        return dbc.Alert(f"Error cargando mapa: {e}", color="danger")
+
+
 # ==================== LAYOUT ====================
 
 def layout(**kwargs):
@@ -700,6 +789,13 @@ def layout(**kwargs):
                 ),
             ], style={'flex': '2'}),
         ], style={'display': 'flex', 'gap': '12px', 'marginBottom': '12px'}),
+
+        # Mapa departamental de demanda
+        html.Div([
+            html.H5("🗺️ Demanda Eléctrica por Departamento",
+                    className="mb-3 text-secondary fw-semibold"),
+            _crear_mapa_distribucion(),
+        ], style={'marginBottom': '12px'}),
 
         # Stores & Modal
         dcc.Store(id='store-datos-distribucion'),

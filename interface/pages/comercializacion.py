@@ -270,6 +270,90 @@ def crear_tabla_horaria_unificada(datos_metricas, valores_diarios, fecha_selecci
         dbc.Col(tabla_metricas, md=5)
     ])
 
+# ==================== MAPA DEPARTAMENTAL ====================
+
+def _crear_mapa_comercializacion():
+    """Choropleth de usuarios del servicio eléctrico por departamento. SUI 2023."""
+    import json
+    import os
+    px, go = get_plotly_modules()
+    try:
+        df = _service.get_usuarios_por_departamento()
+        geojson_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "assets",
+            "departamentos_colombia.geojson",
+        )
+        with open(geojson_path, encoding="utf-8") as f:
+            geojson = json.load(f)
+
+        fig = px.choropleth(
+            df,
+            geojson=geojson,
+            locations="codigo_dpto",
+            featureidkey="properties.DPTO",
+            color="usuarios_miles",
+            color_continuous_scale="Greens",
+            labels={"usuarios_miles": "Usuarios (miles)"},
+            hover_name="departamento",
+            hover_data={
+                "participacion_pct": True,
+                "cobertura_est": True,
+                "codigo_dpto": False,
+            },
+            title="Usuarios del Servicio Eléctrico — Colombia",
+        )
+        fig.update_geos(fitbounds="locations", visible=False)
+        fig.update_layout(
+            height=550,
+            margin=dict(l=0, r=0, t=50, b=0),
+            coloraxis_colorbar=dict(title="Miles", thickness=15),
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Inter, sans-serif", size=12),
+        )
+
+        top5 = df.head(5)[["departamento", "usuarios_miles", "cobertura_est"]]
+        rows_top5 = [
+            html.Tr([html.Td(r["departamento"]),
+                     html.Td(f"{r['usuarios_miles']:,} mil"),
+                     html.Td(r["cobertura_est"])])
+            for _, r in top5.iterrows()
+        ]
+
+        return html.Div([
+            dbc.Alert([
+                html.I(className="fas fa-circle-info me-2"),
+                "Fuente: SUI 2023. Total Colombia: ~16.8 millones de usuarios. "
+                "Distribución estimada por departamento según datos administrativos SUI.",
+            ], color="info", className="mb-3 small"),
+            dbc.Row([
+                dbc.Col(
+                    dcc.Graph(figure=fig, config={"displayModeBar": False}),
+                    md=8,
+                ),
+                dbc.Col([
+                    html.H6("🟢 Top 5 Mayor Cobertura", className="mb-2 fw-bold"),
+                    dbc.Table(
+                        [html.Thead(html.Tr([
+                            html.Th("Departamento"),
+                            html.Th("Usuarios"),
+                            html.Th("Cobertura"),
+                        ])),
+                         html.Tbody(rows_top5)],
+                        bordered=True, hover=True, size="sm",
+                    ),
+                    html.Small(
+                        "Fuente: SUI 2023. Total Colombia: ~16.8M usuarios.",
+                        className="text-muted fst-italic d-block mt-2",
+                        style={"fontSize": "0.75rem"},
+                    ),
+                ], md=4),
+            ]),
+        ])
+    except Exception as e:
+        logger.error("Error mapa departamental comercialización: %s", e, exc_info=True)
+        return dbc.Alert(f"Error cargando mapa: {e}", color="danger")
+
+
 # ==================== LAYOUT ====================
 
 def layout(**kwargs):
@@ -429,6 +513,13 @@ def layout(**kwargs):
                 dbc.Button("Cerrar", id='modal-cerrar-spread', className="ms-auto")
             )
         ], id='modal-info-spread', size='lg', is_open=False),
+
+        # Mapa departamental de usuarios
+        html.Div([
+            html.H5("🗺️ Usuarios del Servicio Eléctrico por Departamento",
+                    className="mb-3 text-secondary fw-semibold mt-4"),
+            _crear_mapa_comercializacion(),
+        ]),
     ], className="t-page")
 
 # ==================== CALLBACKS ====================

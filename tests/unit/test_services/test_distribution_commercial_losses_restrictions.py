@@ -260,3 +260,46 @@ class TestRestrictionsService:
             end_date="2026-01-31",
         )
         assert isinstance(result, pd.DataFrame)
+
+
+class TestRegionalMaps:
+    """Tests para métodos de mapas departamentales (OE1)."""
+
+    def test_distribucion_departamentos_33(self):
+        """get_demanda_por_departamento retorna 33 dptos con columnas requeridas."""
+        from domain.services.distribution_service import DistributionService
+        df = DistributionService().get_demanda_por_departamento()
+        assert len(df) >= 30
+        assert "codigo_dpto" in df.columns
+        assert "demanda_gwh_dia" in df.columns
+        assert df["participacion_pct"].sum() == pytest.approx(100, abs=2)
+
+    def test_distribucion_bogota_top_demanda(self):
+        """Bogotá D.C. debe ser el departamento con mayor demanda."""
+        from domain.services.distribution_service import DistributionService
+        df = DistributionService().get_demanda_por_departamento()
+        assert df.iloc[0]["departamento"] == "Bogotá D.C."
+
+    def test_comercializacion_usuarios_totales(self):
+        """get_usuarios_por_departamento retorna 33 dptos en rango SUI 2023."""
+        from domain.services.commercial_service import CommercialService
+        df = CommercialService().get_usuarios_por_departamento()
+        assert len(df) >= 30
+        assert "usuarios_miles" in df.columns
+        total = df["usuarios_miles"].sum()
+        assert 14_000 < total < 18_000  # ~15-16M usuarios Colombia
+
+    def test_comercializacion_bogota_top_usuarios(self):
+        """Bogotá D.C. debe ser el departamento con más usuarios."""
+        from domain.services.commercial_service import CommercialService
+        df = CommercialService().get_usuarios_por_departamento()
+        assert df.iloc[0]["departamento"] == "Bogotá D.C."
+
+    def test_distribucion_codigos_dpto_formato(self):
+        """Códigos DANE deben ser strings de 2 dígitos."""
+        from domain.services.distribution_service import DistributionService
+        df = DistributionService().get_demanda_por_departamento()
+        # Bogotá → '11', Antioquia → '05'
+        codigos = set(df["codigo_dpto"].tolist())
+        assert "11" in codigos
+        assert "05" in codigos
