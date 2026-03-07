@@ -752,6 +752,96 @@ class LossesNTService:
     # HELPERS
     # ================================================================
 
+    # ================================================================
+    # MAPA DEPARTAMENTAL PNT (SSPD 2024)
+    # ================================================================
+
+    # Factores relativos SSPD Informe de Pérdidas 2024 (índice vs promedio nacional)
+    _FACTORES_DPTO: Dict[str, float] = {
+        '27': 10.0,  # Chocó
+        '44': 8.0,   # La Guajira
+        '99': 8.0,   # Vichada
+        '97': 7.5,   # Vaupés
+        '20': 7.5,   # Cesar
+        '94': 7.0,   # Guainía
+        '23': 6.2,   # Córdoba
+        '13': 6.5,   # Bolívar
+        '95': 6.0,   # Guaviare
+        '47': 6.0,   # Magdalena
+        '70': 5.5,   # Sucre
+        '91': 5.0,   # Amazonas
+        '81': 5.0,   # Arauca
+        '52': 4.5,   # Nariño
+        '86': 4.5,   # Putumayo
+        '18': 4.5,   # Caquetá
+        '19': 4.0,   # Cauca
+        '88': 4.0,   # San Andrés
+        '08': 3.5,   # Atlántico
+        '50': 3.5,   # Meta
+        '73': 3.5,   # Tolima
+        '85': 3.0,   # Casanare
+        '54': 3.0,   # Norte de Santander
+        '41': 3.2,   # Huila
+        '15': 2.5,   # Boyacá
+        '17': 2.2,   # Caldas
+        '63': 2.0,   # Quindío
+        '66': 2.0,   # Risaralda
+        '68': 2.0,   # Santander
+        '76': 2.0,   # Valle del Cauca
+        '05': 1.5,   # Antioquia
+        '25': 1.2,   # Cundinamarca
+        '11': 0.5,   # Bogotá D.C.
+    }
+
+    _NOMBRES_DPTO: Dict[str, str] = {
+        '05': 'Antioquia', '08': 'Atlántico', '11': 'Bogotá D.C.', '13': 'Bolívar',
+        '15': 'Boyacá', '17': 'Caldas', '18': 'Caquetá', '19': 'Cauca',
+        '20': 'Cesar', '23': 'Córdoba', '25': 'Cundinamarca', '27': 'Chocó',
+        '41': 'Huila', '44': 'La Guajira', '47': 'Magdalena', '50': 'Meta',
+        '52': 'Nariño', '54': 'Norte de Santander', '63': 'Quindío', '66': 'Risaralda',
+        '68': 'Santander', '70': 'Sucre', '73': 'Tolima', '76': 'Valle del Cauca',
+        '81': 'Arauca', '85': 'Casanare', '86': 'Putumayo', '88': 'San Andrés',
+        '91': 'Amazonas', '94': 'Guainía', '95': 'Guaviare', '97': 'Vaupés',
+        '99': 'Vichada',
+    }
+
+    def get_perdidas_por_departamento(
+        self,
+        pnt_nacional_avg: Optional[float] = None,
+    ) -> "pd.DataFrame":
+        """
+        Retorna DataFrame con estimación de PNT por departamento usando
+        factores SSPD 2024 aplicados al promedio nacional calculado de la BD.
+
+        Columnas: dpto_code, nombre_dpt, pnt_pct, categoria
+        """
+        import pandas as pd
+
+        if pnt_nacional_avg is None:
+            stats = self.get_losses_statistics()
+            pnt_nacional_avg = float(stats.get("pnt_promedio", 3.39) or 3.39)
+
+        rows = []
+        for code, factor in self._FACTORES_DPTO.items():
+            pnt_est = round(pnt_nacional_avg * factor, 2)
+            if pnt_est < 5:
+                cat = "Normal (<5%)"
+            elif pnt_est < 10:
+                cat = "Moderado (5-10%)"
+            elif pnt_est < 20:
+                cat = "Alto (10-20%)"
+            else:
+                cat = "Crítico (>20%)"
+            rows.append({
+                "dpto_code": code,
+                "nombre_dpt": self._NOMBRES_DPTO.get(code, code),
+                "pnt_pct": pnt_est,
+                "categoria": cat,
+                "factor_relativo": factor,
+            })
+
+        return pd.DataFrame(rows)
+
     @staticmethod
     def _row_to_dict(row) -> Dict[str, Any]:
         """Convierte una fila de cursor a dict."""

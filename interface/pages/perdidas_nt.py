@@ -143,6 +143,12 @@ def layout(**kwargs):
                     className="custom-tab",
                     selected_className="custom-tab--selected",
                 ),
+                dcc.Tab(
+                    label="🗺️ Mapa Departamental",
+                    value="tab-mapa",
+                    className="custom-tab",
+                    selected_className="custom-tab--selected",
+                ),
             ],
             style={"marginBottom": "16px"},
         ),
@@ -276,6 +282,10 @@ def renderizar_tab_pnt(store_data, tab_activo):
     # ═══ TAB: Metodología (ESTÁTICO) ═══════════════════════
     if tab_activo == "tab-metodologia":
         return _crear_tab_metodologia()
+
+    # ═══ TAB: Mapa Departamental (SSPD 2024) ════════════════
+    if tab_activo == "tab-mapa":
+        return _crear_tab_mapa()
 
     # ═══ TAB: Detección IA ═══════════════════════════════════
     if tab_activo == "tab-anomalias":
@@ -950,3 +960,119 @@ def _crear_tab_anomalias(fecha_inicio: date, fecha_fin: date):
         # Texto interpretativo
         html.P(texto, className="mt-4 text-muted fst-italic small"),
     ])
+
+
+# ═══════════════════════════════════════════════════════════════
+# TAB: MAPA DEPARTAMENTAL SSPD 2024
+# ═══════════════════════════════════════════════════════════════
+
+def _crear_tab_mapa():
+    """
+    Choropleth de PNT estimado por departamento usando factores SSPD 2024
+    aplicados al promedio nacional de la BD.
+    """
+    import json
+    import os
+    px, go = get_plotly_modules()
+
+    try:
+        df_dpto = _losses_service.get_perdidas_por_departamento()
+
+        geojson_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "assets",
+            "departamentos_colombia.geojson",
+        )
+        with open(geojson_path, encoding="utf-8") as f:
+            geojson = json.load(f)
+
+        fig = px.choropleth(
+            df_dpto,
+            geojson=geojson,
+            locations="dpto_code",
+            featureidkey="properties.DPTO",
+            color="pnt_pct",
+            hover_name="nombre_dpt",
+            hover_data={
+                "pnt_pct": ":.2f",
+                "categoria": True,
+                "factor_relativo": ":.1f",
+                "dpto_code": False,
+            },
+            color_continuous_scale=[
+                [0.0,  "#28a745"],   # verde (< 5%)
+                [0.15, "#ffc107"],   # amarillo (~5%)
+                [0.30, "#fd7e14"],   # naranja (~10%)
+                [1.0,  "#dc3545"],   # rojo (>20%)
+            ],
+            range_color=[0, df_dpto["pnt_pct"].max() * 1.05],
+            labels={"pnt_pct": "PNT estimada (%)"},
+            title="Estimación PNT por Departamento — Referencia SSPD 2024",
+        )
+        fig.update_geos(
+            fitbounds="locations",
+            visible=False,
+        )
+        fig.update_layout(
+            height=620,
+            margin=dict(l=0, r=0, t=55, b=0),
+            coloraxis_colorbar=dict(
+                title="PNT (%)",
+                tickformat=".1f",
+                len=0.7,
+            ),
+            font=dict(family="Inter, sans-serif", size=12),
+        )
+
+        # Top 5 críticos
+        top5 = df_dpto.nlargest(5, "pnt_pct")[["nombre_dpt", "pnt_pct", "categoria"]]
+        rows_top5 = [
+            html.Tr([
+                html.Td(r["nombre_dpt"]),
+                html.Td(f"{r['pnt_pct']:.2f}%"),
+                html.Td(r["categoria"]),
+            ])
+            for _, r in top5.iterrows()
+        ]
+
+        return html.Div([
+            dbc.Alert([
+                html.I(className="fas fa-circle-info me-2"),
+                "Estimación basada en factores relativos SSPD Informe de Pérdidas 2024 "
+                "aplicados al promedio nacional calculado de la BD. No representa datos "
+                "de medición directa por departamento.",
+            ], color="info", className="mb-3 small"),
+
+            dbc.Row([
+                dbc.Col(
+                    dcc.Graph(figure=fig, config={"displayModeBar": False}),
+                    md=8,
+                ),
+                dbc.Col([
+                    html.H6("🔴 Top 5 Departamentos Críticos", className="mb-2 fw-bold"),
+                    dbc.Table(
+                        [
+                            html.Thead(html.Tr([
+                                html.Th("Departamento"),
+                                html.Th("PNT est. (%)"),
+                                html.Th("Categoría"),
+                            ])),
+                            html.Tbody(rows_top5),
+                        ],
+                        bordered=True, hover=True, size="sm", className="mb-3",
+                    ),
+                    dbc.Alert([
+                        html.Strong("Factores de riesgo estructural: "),
+                        html.Ul([
+                            html.Li("Baja cobertura de medida inteligente (AMI)"),
+                            html.Li("Alta informalidad en conexiones (hurto de energía)"),
+                            html.Li("Dificultad de acceso geográfico para inspecciones"),
+                            html.Li("Rezago en infraestructura de distribución"),
+                        ], className="mb-0 ps-3"),
+                    ], color="warning", className="small"),
+                ], md=4),
+            ]),
+        ])
+
+    except Exception as e:
+        logger.error("Error mapa departamental PNT: %s", e, exc_info=True)
+        return dbc.Alert(f"Error cargando mapa: {e}", color="danger")
