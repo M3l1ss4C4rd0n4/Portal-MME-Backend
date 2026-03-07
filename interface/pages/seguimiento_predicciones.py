@@ -254,11 +254,6 @@ def layout():
                         style={'color': '#888', 'display': 'none'},
                     ),
                 ], style={'display': 'inline-block', 'marginRight': '20px', 'verticalAlign': 'top', 'paddingTop': '2px'}),
-                html.Div([
-                        size="sm",
-                        className="mt-3"
-                    ),
-                ], style={'display': 'inline-block'}),
             ),
             
             # ── SECCIÓN 4: KPI CARDS DE LA MÉTRICA SELECCIONADA ──

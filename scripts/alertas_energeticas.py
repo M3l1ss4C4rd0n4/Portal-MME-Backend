@@ -101,15 +101,15 @@ class SistemaAlertasEnergeticas:
         
     def _get_connection(self):
         """Obtiene conexión a PostgreSQL"""
-        manager = PostgreSQLConnectionManager()
+        from core.config import settings
         conn_params = {
-            'host': manager.host,
-            'port': manager.port,
-            'database': manager.database,
-            'user': manager.user
+            'host': settings.POSTGRES_HOST,
+            'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB,
+            'user': settings.POSTGRES_USER,
         }
-        if manager.password:
-            conn_params['password'] = manager.password
+        if settings.POSTGRES_PASSWORD:
+            conn_params['password'] = settings.POSTGRES_PASSWORD
         return psycopg2.connect(**conn_params)
     
     def cargar_predicciones(self, fuente, dias=30):

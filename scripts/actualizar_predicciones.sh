@@ -64,17 +64,16 @@ log "   → Verificando conexión a PostgreSQL..."
 if ! $VENV_PYTHON -c "
 import sys
 sys.path.insert(0, '$SCRIPT_DIR')
-from infrastructure.database.connection import PostgreSQLConnectionManager
-manager = PostgreSQLConnectionManager()
+from core.config import settings
 import psycopg2
 conn_params = {
-    'host': manager.host,
-    'port': manager.port,
-    'database': manager.database,
-    'user': manager.user
+    'host': settings.POSTGRES_HOST,
+    'port': settings.POSTGRES_PORT,
+    'database': settings.POSTGRES_DB,
+    'user': settings.POSTGRES_USER,
 }
-if manager.password:
-    conn_params['password'] = manager.password
+if settings.POSTGRES_PASSWORD:
+    conn_params['password'] = settings.POSTGRES_PASSWORD
 conn = psycopg2.connect(**conn_params)
 conn.close()
 print('✅ Conexión exitosa')
@@ -332,17 +331,16 @@ TOTAL_PREDICCIONES=$($VENV_PYTHON -c "
 import sys
 sys.path.insert(0, '$SCRIPT_DIR')
 import psycopg2
-from infrastructure.database.connection import PostgreSQLConnectionManager
+from core.config import settings
 
-manager = PostgreSQLConnectionManager()
 conn_params = {
-    'host': manager.host,
-    'port': manager.port,
-    'database': manager.database,
-    'user': manager.user
+    'host': settings.POSTGRES_HOST,
+    'port': settings.POSTGRES_PORT,
+    'database': settings.POSTGRES_DB,
+    'user': settings.POSTGRES_USER,
 }
-if manager.password:
-    conn_params['password'] = manager.password
+if settings.POSTGRES_PASSWORD:
+    conn_params['password'] = settings.POSTGRES_PASSWORD
 
 conn = psycopg2.connect(**conn_params)
 cur = conn.cursor()

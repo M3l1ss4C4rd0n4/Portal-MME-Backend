@@ -103,14 +103,14 @@ def fetch_metric_data(self, metric_code: str, start_date: str, end_date: str):
             return {"status": "no_data", "metric": metric_code}
         
         # Guardar en PostgreSQL
-        manager = PostgreSQLConnectionManager()
+        from core.config import settings
         import psycopg2
         conn_params = {
-            'host': manager.host, 'port': manager.port,
-            'database': manager.database, 'user': manager.user
+            'host': settings.POSTGRES_HOST, 'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB, 'user': settings.POSTGRES_USER
         }
-        if manager.password:
-            conn_params['password'] = manager.password
+        if settings.POSTGRES_PASSWORD:
+            conn_params['password'] = settings.POSTGRES_PASSWORD
         conn = psycopg2.connect(**conn_params)
         
         cur = conn.cursor()

@@ -44,17 +44,16 @@ CONFIANZA_SIN_VALIDACION = 0.50
 
 def get_postgres_connection():
     """Obtiene conexión a PostgreSQL usando el connection manager del sistema"""
-    from infrastructure.database.connection import PostgreSQLConnectionManager
-    manager = PostgreSQLConnectionManager()
+    from core.config import settings
     # Crear conexión sin context manager para pandas
     conn_params = {
-        'host': manager.host,
-        'port': manager.port,
-        'database': manager.database,
-        'user': manager.user
+        'host': settings.POSTGRES_HOST,
+        'port': settings.POSTGRES_PORT,
+        'database': settings.POSTGRES_DB,
+        'user': settings.POSTGRES_USER,
     }
-    if manager.password:
-        conn_params['password'] = manager.password
+    if settings.POSTGRES_PASSWORD:
+        conn_params['password'] = settings.POSTGRES_PASSWORD
     return psycopg2.connect(**conn_params)
 
 

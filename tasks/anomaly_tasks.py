@@ -97,19 +97,18 @@ def _broadcast_alert_via_bot(message: str, severity: str = "ALERT") -> dict:
 def _registrar_alerta_bd(alertas: list, enviados: int):
     """Registra las alertas enviadas en la tabla alertas_historial"""
     try:
-        from infrastructure.database.connection import PostgreSQLConnectionManager
+        from core.config import settings
         import psycopg2
         import json
 
-        manager = PostgreSQLConnectionManager()
         conn_params = {
-            'host': manager.host,
-            'port': manager.port,
-            'database': manager.database,
-            'user': manager.user
+            'host': settings.POSTGRES_HOST,
+            'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB,
+            'user': settings.POSTGRES_USER
         }
-        if manager.password:
-            conn_params['password'] = manager.password
+        if settings.POSTGRES_PASSWORD:
+            conn_params['password'] = settings.POSTGRES_PASSWORD
         conn = psycopg2.connect(**conn_params)
         cur = conn.cursor()
 
@@ -151,16 +150,15 @@ def _check_stale_data():
     """
     stale_alerts = []
     try:
-        from infrastructure.database.connection import PostgreSQLConnectionManager
+        from core.config import settings
         import psycopg2
 
-        manager = PostgreSQLConnectionManager()
         conn_params = {
-            'host': manager.host, 'port': manager.port,
-            'database': manager.database, 'user': manager.user
+            'host': settings.POSTGRES_HOST, 'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB, 'user': settings.POSTGRES_USER
         }
-        if manager.password:
-            conn_params['password'] = manager.password
+        if settings.POSTGRES_PASSWORD:
+            conn_params['password'] = settings.POSTGRES_PASSWORD
         conn = psycopg2.connect(**conn_params)
         cur = conn.cursor()
 
@@ -221,16 +219,15 @@ def _alerta_ya_notificada(titulo: str, horas: int = ALERT_COOLDOWN_HOURS) -> boo
     dentro de las últimas `horas` horas, para evitar spam.
     """
     try:
-        from infrastructure.database.connection import PostgreSQLConnectionManager
+        from core.config import settings
         import psycopg2
 
-        manager = PostgreSQLConnectionManager()
         conn_params = {
-            'host': manager.host, 'port': manager.port,
-            'database': manager.database, 'user': manager.user
+            'host': settings.POSTGRES_HOST, 'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB, 'user': settings.POSTGRES_USER
         }
-        if manager.password:
-            conn_params['password'] = manager.password
+        if settings.POSTGRES_PASSWORD:
+            conn_params['password'] = settings.POSTGRES_PASSWORD
         conn = psycopg2.connect(**conn_params)
         cur = conn.cursor()
         cur.execute(
