@@ -560,6 +560,78 @@ class SimulationService:
             logger.warning(f"{_LOG} Error generando serie simulada: {e}")
             return []
 
+    # ════════════════════════════════════════════════════════════
+    # MONTE CARLO
+    # ════════════════════════════════════════════════════════════
+
+    def run_monte_carlo(
+        self,
+        escenario: str,
+        n_simulations: int = 500,
+        seed: int = 42,
+    ) -> dict:
+        """
+        Ejecuta N simulaciones Monte Carlo variando los factores del escenario
+        con distribución triangular (±15%).
+
+        Retorna:
+          escenario, n_simulations, cu_base,
+          cu_p10, cu_p50, cu_p90, cu_mean, cu_std,
+          reduccion_cu_p50 (% vs base), histogram_data
+        """
+        import numpy as np
+
+        rng = np.random.default_rng(seed)
+
+        # Factores base del escenario
+        presets = {e["id"]: e for e in self.get_escenarios_predefinidos()}
+        if escenario in presets:
+            base_params = presets[escenario]["parametros"].copy()
+        else:
+            base_params = {
+                "precio_bolsa_factor": 1.0,
+                "factor_perdidas": 0.085,
+            }
+
+        cu_base = self._get_cu_base_dinamico()
+        if cu_base is None:
+            cu_base = CU_BASE_DEFAULT
+
+        resultados_cu = []
+        for _ in range(n_simulations):
+            params_sim = {}
+            for nombre, valor_central in base_params.items():
+                if valor_central == 0.0:
+                    # Escalar con epsilon para evitar degenerate triangular
+                    params_sim[nombre] = 0.0
+                else:
+                    lo = valor_central * 0.85
+                    hi = valor_central * 1.15
+                    # Asegurar orden correcto (p.ej. factores negativos)
+                    if lo > hi:
+                        lo, hi = hi, lo
+                    params_sim[nombre] = float(
+                        rng.triangular(lo, valor_central, hi)
+                    )
+            cu_sim = self._calcular_cu_simulado(params_sim, cu_base)["cu_simulado"]
+            resultados_cu.append(cu_sim)
+
+        arr = np.array(resultados_cu)
+        cu_p50 = float(np.percentile(arr, 50))
+
+        return {
+            "escenario": escenario,
+            "n_simulations": n_simulations,
+            "cu_base": round(cu_base, 4),
+            "cu_p10": round(float(np.percentile(arr, 10)), 4),
+            "cu_p50": round(cu_p50, 4),
+            "cu_p90": round(float(np.percentile(arr, 90)), 4),
+            "cu_mean": round(float(arr.mean()), 4),
+            "cu_std": round(float(arr.std()), 4),
+            "reduccion_cu_p50": round((cu_base - cu_p50) / cu_base * 100, 2),
+            "histogram_data": arr.tolist(),
+        }
+
     def get_baseline_info(self) -> dict:
         """
         Retorna información del baseline actual para el endpoint /baseline.

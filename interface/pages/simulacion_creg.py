@@ -530,6 +530,42 @@ def layout(**kwargs):
             ], md=8),
         ], className='g-3'),
 
+        # ── MONTE CARLO ──────────────────────────────────────
+        html.Hr(className='my-4'),
+        html.H5("📊 Análisis de Incertidumbre (Monte Carlo)",
+                className='fw-bold'),
+        html.P(
+            "Modela la variabilidad natural de los factores del escenario "
+            "seleccionado con distribución triangular ±15%.",
+            className='text-muted small',
+        ),
+        dbc.Row([
+            dbc.Col([
+                dbc.RadioItems(
+                    id='mc-n-simulations',
+                    options=[
+                        {'label': '100 simulaciones (rápido)', 'value': 100},
+                        {'label': '500 simulaciones (balanceado)', 'value': 500},
+                        {'label': '1000 simulaciones (preciso)', 'value': 1000},
+                    ],
+                    value=500,
+                    inline=True,
+                    className='mb-2',
+                ),
+                dbc.Button(
+                    '🎲 Ejecutar Monte Carlo',
+                    id='btn-monte-carlo',
+                    color='primary',
+                    outline=True,
+                    size='sm',
+                ),
+            ], md=8),
+        ], className='mb-3'),
+        html.Div(id='mc-kpis'),
+        dcc.Graph(id='mc-histogram', style={'display': 'none'}),
+        html.P(id='mc-interpretacion',
+               className='text-muted fst-italic small mt-2'),
+
         html.Hr(className='my-4'),
         html.H6("📋 Historial de Simulaciones Guardadas", className='fw-bold'),
         html.Div(id='sim-historial'),
@@ -791,3 +827,117 @@ def _render_historial(items: list):
         size='sm',
         className='mt-2',
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# CALLBACK: Monte Carlo
+# ═══════════════════════════════════════════════════════════════
+@callback(
+    Output('mc-kpis', 'children'),
+    Output('mc-histogram', 'figure'),
+    Output('mc-histogram', 'style'),
+    Output('mc-interpretacion', 'children'),
+    Input('btn-monte-carlo', 'n_clicks'),
+    State('mc-n-simulations', 'value'),
+    State('sim-preset', 'value'),
+    prevent_initial_call=True,
+)
+def run_monte_carlo_callback(n_clicks, n_simulations, preset_id):
+    """Ejecuta Monte Carlo sobre el escenario preset seleccionado."""
+    if not n_clicks:
+        return no_update, no_update, {'display': 'none'}, ''
+
+    escenario = preset_id if preset_id else 'expansion_renovables'
+    try:
+        svc = container.simulation_service
+        result = svc.run_monte_carlo(
+            escenario=escenario,
+            n_simulations=n_simulations,
+        )
+    except Exception as e:
+        logger.error(f"Monte Carlo error: {e}")
+        return (
+            dbc.Alert(f"Error ejecutando Monte Carlo: {e}", color='danger'),
+            {},
+            {'display': 'none'},
+            '',
+        )
+
+    p10 = result['cu_p10']
+    p50 = result['cu_p50']
+    p90 = result['cu_p90']
+    cu_base = result['cu_base']
+    reduccion = result['reduccion_cu_p50']
+    nombre_esc = escenario.replace('_', ' ').title()
+
+    # KPIs
+    kpis = dbc.Row([
+        dbc.Col(dbc.Card(dbc.CardBody([
+            html.P("P10 (optimista)", className='text-muted small mb-1'),
+            html.H5(f"{p10:.1f}", className='text-success fw-bold mb-0'),
+            html.Small("COP/kWh"),
+        ]), className='text-center shadow-sm'), md=3),
+        dbc.Col(dbc.Card(dbc.CardBody([
+            html.P("P50 (más probable)", className='text-muted small mb-1'),
+            html.H5(f"{p50:.1f}", className='text-primary fw-bold mb-0'),
+            html.Small("COP/kWh"),
+        ]), className='text-center shadow-sm'), md=3),
+        dbc.Col(dbc.Card(dbc.CardBody([
+            html.P("P90 (pesimista)", className='text-muted small mb-1'),
+            html.H5(f"{p90:.1f}", className='text-danger fw-bold mb-0'),
+            html.Small("COP/kWh"),
+        ]), className='text-center shadow-sm'), md=3),
+        dbc.Col(dbc.Card(dbc.CardBody([
+            html.P("Reducción P50 vs base", className='text-muted small mb-1'),
+            html.H5(
+                f"{reduccion:+.1f}%",
+                className=f"fw-bold mb-0 {'text-success' if reduccion < 0 else 'text-danger'}",
+            ),
+            html.Small(f"Base: {cu_base:.1f} COP/kWh"),
+        ]), className='text-center shadow-sm'), md=3),
+    ], className='g-2 mb-3')
+
+    # Histograma
+    import plotly.graph_objects as go
+    hist_data = result['histogram_data']
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=hist_data,
+        nbinsx=30,
+        name='Distribución CU',
+        marker_color='#4C8BF5',
+        opacity=0.75,
+    ))
+    for val, label, color in [
+        (p10, 'P10', '#2A9D8F'),
+        (p50, 'P50', '#264653'),
+        (p90, 'P90', '#E63946'),
+    ]:
+        fig.add_vline(
+            x=val, line_dash='dash', line_color=color,
+            annotation_text=f'{label}: {val:.1f}',
+            annotation_position='top',
+        )
+    fig.update_layout(
+        title=f'Monte Carlo — {nombre_esc} ({n_simulations} simulaciones)',
+        xaxis_title='CU Simulado (COP/kWh)',
+        yaxis_title='Frecuencia',
+        template='plotly_white',
+        height=320,
+        margin={'t': 50, 'b': 40, 'l': 50, 'r': 20},
+        showlegend=False,
+    )
+
+    # Texto interpretativo
+    rango_80 = f"{p10:.1f} – {p90:.1f}"
+    dir_txt = "reducción" if reduccion < 0 else "incremento"
+    abs_red = abs(reduccion)
+    texto = (
+        f"Con {n_simulations} simulaciones sobre el escenario «{nombre_esc}», "
+        f"hay un 80% de probabilidad de que el CU esté entre {rango_80} COP/kWh. "
+        f"El valor más probable (P50) es {p50:.1f} COP/kWh, "
+        f"lo que representa una {dir_txt} estimada de {abs_red:.1f}% "
+        f"respecto al CU base actual de {cu_base:.1f} COP/kWh."
+    )
+
+    return kpis, fig, {'display': 'block'}, texto
