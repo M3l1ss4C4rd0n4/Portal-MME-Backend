@@ -34,6 +34,7 @@ from api.v1.routes import (
     whatsapp_alerts,
     cu,
     simulation,
+    reports,
 )
 
 # Router principal de v1
@@ -137,6 +138,13 @@ api_router_v1.include_router(
     simulation.router,
     prefix="/simulation",
     tags=["🔬 Simulación CREG"]
+)
+
+# 15. Informes ejecutivos PDF
+api_router_v1.include_router(
+    reports.router,
+    prefix="/reports",
+    tags=["📄 Informes PDF"]
 )
 
 __all__ = ["api_router_v1"]
