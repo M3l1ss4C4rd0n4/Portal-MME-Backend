@@ -46,6 +46,31 @@ GEN_SOLAR_MWH_POR_MW = 1_800     # Factor capacidad ~20.5% × 8760h
 GEN_EOLICA_MWH_POR_MW = 3_500    # Factor capacidad ~40% × 8760h
 GEN_TOTAL_SISTEMA_MWH_ANUAL = 80_000_000  # ~80 TWh SIN 2024
 
+# ── Constantes financieras Colombia ──────────────────────────────────────────
+CAPEX_USD_POR_MW = {
+    "solar_fv":      850_000,   # USD/MW instalado Colombia 2024 (UPME)
+    "eolica":      1_100_000,   # USD/MW La Guajira 2024
+    "hidro_pequena": 2_200_000, # USD/MW filo de agua
+}
+OPEX_PORCENTAJE_CAPEX = {
+    "solar_fv":      0.015,  # 1.5% CAPEX/año
+    "eolica":        0.020,  # 2.0% CAPEX/año
+    "hidro_pequena": 0.025,  # 2.5% CAPEX/año
+}
+FACTOR_CAPACIDAD = {
+    "solar_fv":      0.20,   # ~20% Costa Atlántica (IDEAM)
+    "eolica":        0.45,   # ~45% La Guajira (IDEAM)
+    "hidro_pequena": 0.40,   # ~40% filo de agua
+}
+FACTOR_CO2_COLOMBIANO = 0.126       # tCO2/MWh (IDEAM 2023)
+EMPLEOS_POR_MW = {
+    "solar_fv":      5.2,    # empleos directos/MW instalado
+    "eolica":        3.8,
+    "hidro_pequena": 8.5,
+}
+PRECIO_CARBONO_USD_TON = 15.0       # mercado colombiano de carbono
+TRM_REF_COP_USD = 4_200             # TRM referencia
+
 
 class InvestmentService:
     """Servicio para propuestas de inversión en energías renovables."""
@@ -110,4 +135,70 @@ class InvestmentService:
             "ahorro_estimado_cop_kwh": round(
                 reduccion_cu_pct / 100 * 250, 1
             ),
+        }
+
+    def calculate_financial_analysis(
+        self,
+        tecnologia: str,
+        mw: float,
+        vida_util_años: int = 25,
+        tasa_descuento: float = 0.10,
+        precio_energia_usd_mwh: float = 55.0,
+    ) -> dict:
+        """
+        Calcula análisis financiero completo para un proyecto de energía
+        renovable en Colombia.
+
+        Retorna TIR, VAN, Payback, CO2 evitado y empleos generados.
+        Fuentes: UPME 2024, IDEAM 2023, mercado carbono Colombia.
+        """
+        from scipy.optimize import brentq
+
+        capex = CAPEX_USD_POR_MW[tecnologia] * mw
+        opex_anual = capex * OPEX_PORCENTAJE_CAPEX[tecnologia]
+        gen_anual_mwh = mw * 8760 * FACTOR_CAPACIDAD[tecnologia]
+
+        ingresos_energia = gen_anual_mwh * precio_energia_usd_mwh
+        co2_ton_anual = gen_anual_mwh * FACTOR_CO2_COLOMBIANO
+        ingresos_carbono = co2_ton_anual * PRECIO_CARBONO_USD_TON
+        ingresos_total = ingresos_energia + ingresos_carbono
+        flujo_neto = ingresos_total - opex_anual
+
+        # Flujos de caja: año 0 = -CAPEX, años 1-N = flujo_neto
+        flujos = [-capex] + [flujo_neto] * vida_util_años
+
+        def npv(r: float) -> float:
+            return sum(f / (1 + r) ** t for t, f in enumerate(flujos))
+
+        van = npv(tasa_descuento)
+
+        try:
+            tir = brentq(npv, 0.001, 0.999)
+        except Exception:
+            tir = flujo_neto / capex if capex > 0 else 0.0
+
+        payback = capex / flujo_neto if flujo_neto > 0 else 99.0
+
+        empleos_directos = int(EMPLEOS_POR_MW[tecnologia] * mw)
+
+        return {
+            "tecnologia": tecnologia,
+            "mw": mw,
+            "capex_total_usd": round(capex, 0),
+            "capex_total_cop": round(capex * TRM_REF_COP_USD, 0),
+            "opex_anual_usd": round(opex_anual, 0),
+            "generacion_anual_mwh": round(gen_anual_mwh, 0),
+            "ingresos_anuales_usd": round(ingresos_total, 0),
+            "flujo_neto_anual_usd": round(flujo_neto, 0),
+            "van_usd": round(van, 0),
+            "tir_pct": round(tir * 100, 2),
+            "payback_años": round(payback, 1),
+            "co2_evitado_ton_anual": round(co2_ton_anual, 0),
+            "co2_evitado_total": round(co2_ton_anual * vida_util_años, 0),
+            "ingresos_carbono_usd_anual": round(ingresos_carbono, 0),
+            "empleos_directos": empleos_directos,
+            "empleos_indirectos": int(empleos_directos * 2.5),
+            "empleos_total": int(empleos_directos * 3.5),
+            "vida_util_años": vida_util_años,
+            "tasa_descuento_pct": tasa_descuento * 100,
         }
