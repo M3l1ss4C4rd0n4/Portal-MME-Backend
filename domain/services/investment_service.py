@@ -75,6 +75,40 @@ TRM_REF_COP_USD = 4_200             # TRM referencia
 class InvestmentService:
     """Servicio para propuestas de inversión en energías renovables."""
 
+    def _get_parametros_reales(self) -> dict:
+        """
+        Lee de BD el CU promedio y la generación total del SIN (últimos 30/365d).
+        Si la BD no está disponible devuelve los valores de referencia hardcodeados.
+        Fuentes BD: cu_daily.cu_total, metrics(Gene/Sistema).
+        """
+        try:
+            from infrastructure.database.connection import PostgreSQLConnectionManager
+            cm = PostgreSQLConnectionManager()
+            with cm.get_connection() as conn:
+                cur = conn.cursor()
+
+                # CU promedio últimos 30 días (COP/kWh)
+                cur.execute(
+                    "SELECT avg(cu_total) FROM cu_daily "
+                    "WHERE fecha >= current_date - interval '30 days'"
+                )
+                cu_row = cur.fetchone()
+                cu_real = float(cu_row[0]) if cu_row and cu_row[0] else 250.0
+
+                # Generación total SIN últimos 365 días (MWh)
+                cur.execute(
+                    "SELECT sum(valor_gwh) * 1000 FROM metrics "
+                    "WHERE metrica = 'Gene' AND entidad = 'Sistema' "
+                    "AND fecha >= current_date - interval '365 days'"
+                )
+                gen_row = cur.fetchone()
+                gen_mwh = float(gen_row[0]) if gen_row and gen_row[0] else 80_000_000.0
+
+                return {"cu_cop_kwh": cu_real, "gen_total_mwh": gen_mwh}
+        except Exception:
+            # Fallback silencioso — nunca romper el dashboard
+            return {"cu_cop_kwh": 250.0, "gen_total_mwh": 80_000_000.0}
+
     def get_benchmarks(self) -> list[dict]:
         """
         Retorna lista de dicts flat para usar en dash_table.DataTable.
@@ -111,19 +145,23 @@ class InvestmentService:
         Metodología:
           - 1 MW solar en Colombia ≈ 1,800 MWh/año (factor cap. 20.5%)
           - 1 MW eólico en La Guajira ≈ 3,500 MWh/año (factor cap. 40%)
-          - Generación total SIN ≈ 80 TWh/año (XM 2024)
+          - Generación total SIN: leída de BD (metrics Gene/Sistema 365d)
           - Factor conservador 0.6: no toda la oferta desplaza térmica
-          - CU de referencia ≈ 250 COP/kWh (XM promedio reciente)
+          - CU de referencia: leído de BD (cu_daily promedio 30d)
 
         Returns:
             mw_total, generacion_adicional_gwh, reduccion_cu_pct,
-            ahorro_estimado_cop_kwh
+            ahorro_estimado_cop_kwh, cu_referencia_cop_kwh
         """
+        params = self._get_parametros_reales()
+        cu_ref = params["cu_cop_kwh"]
+        gen_total_mwh = params["gen_total_mwh"]
+
         gen_adicional_mwh = (
             mw_solar * GEN_SOLAR_MWH_POR_MW
             + mw_eolica * GEN_EOLICA_MWH_POR_MW
         )
-        pct_del_sistema = gen_adicional_mwh / GEN_TOTAL_SISTEMA_MWH_ANUAL
+        pct_del_sistema = gen_adicional_mwh / gen_total_mwh
         reduccion_cu_pct = pct_del_sistema * 0.6 * 100
 
         return {
@@ -132,9 +170,9 @@ class InvestmentService:
             "mw_eolica": mw_eolica,
             "generacion_adicional_gwh": round(gen_adicional_mwh / 1_000, 1),
             "reduccion_cu_pct": round(reduccion_cu_pct, 2),
-            "ahorro_estimado_cop_kwh": round(
-                reduccion_cu_pct / 100 * 250, 1
-            ),
+            "ahorro_estimado_cop_kwh": round(reduccion_cu_pct / 100 * cu_ref, 1),
+            "cu_referencia_cop_kwh": round(cu_ref, 2),
+            "gen_total_sin_gwh": round(gen_total_mwh / 1_000, 0),
         }
 
     def calculate_financial_analysis(

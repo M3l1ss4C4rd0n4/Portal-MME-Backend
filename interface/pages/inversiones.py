@@ -252,6 +252,8 @@ def calcular_impacto(mw_solar, mw_eolica):
     ahorro = result["ahorro_estimado_cop_kwh"]
     gen = result["generacion_adicional_gwh"]
     mw_total = result["mw_total"]
+    cu_ref = result.get("cu_referencia_cop_kwh", 250.0)
+    gen_sin = result.get("gen_total_sin_gwh", 80_000)
 
     color = "success" if reduccion > 0 else "secondary"
 
@@ -290,7 +292,13 @@ def calcular_impacto(mw_solar, mw_eolica):
                 f"generaría {gen:,.1f} GWh/año adicionales, "
                 f"reduciendo el CU estimado en {reduccion:.2f}% "
                 f"(≈ {ahorro:.1f} COP/kWh de ahorro al usuario final).",
-                className="text-muted small fst-italic mb-0",
+                className="text-muted small fst-italic mb-1",
+            ),
+            html.Small(
+                f"📊 Calculado con datos reales: CU={cu_ref:.1f} COP/kWh (BD, 30d) · "
+                f"SIN={gen_sin:,.0f} GWh/año (BD, 365d)",
+                className="text-secondary",
+                style={"fontSize": "0.75rem"},
             ),
         ]),
     ], color=color, outline=True)
