@@ -86,7 +86,7 @@ async def send_alert_to_whatsapp(
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as e:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
     
     message = body.get('message', body.get('mensaje', ''))
@@ -185,7 +185,7 @@ async def check_whatsapp_bot_status(
                 users_response = await client.get(bot_users_url)
             if users_response.status_code == 200:
                 users_info = users_response.json()
-        except Exception:
+        except Exception as e:
             pass
         
         return {

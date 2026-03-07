@@ -174,7 +174,7 @@ class InvestmentService:
 
         try:
             tir = brentq(npv, 0.001, 0.999)
-        except Exception:
+        except Exception as e:
             tir = flujo_neto / capex if capex > 0 else 0.0
 
         payback = capex / flujo_neto if flujo_neto > 0 else 99.0

@@ -421,7 +421,7 @@ def crear_grafica_torta_fuentes(df_por_fuente, fecha_seleccionada, grouping_col,
     else:
         try:
             palette = px.colors.qualitative.Plotly
-        except Exception:
+        except Exception as e:
             palette = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692']
         generacion_por_categoria = df_torta.sort_values('Generacion_GWh', ascending=False)
         categorias = generacion_por_categoria[grouping_col].tolist()
@@ -793,7 +793,7 @@ def crear_fichas_generacion_xm():
                 if s.lower() == 'nan' or s.strip() == '':
                     return '—'
                 return s
-            except Exception:
+            except Exception as e:
                 return '—'
 
         valor_total = _fmt(gen_total)

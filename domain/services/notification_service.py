@@ -43,7 +43,8 @@ def _pg_params() -> dict:
         if mgr.password:
             params['password'] = mgr.password
         return params
-    except Exception:
+    except Exception as e:
+        logger.warning("Error leyendo config DB para notificaciones: %s", e)
         # Fallback directo
         return {
             'host': os.getenv('POSTGRES_HOST', 'localhost'),
@@ -73,10 +74,8 @@ def _get_telegram_token() -> str:
                 for line in f:
                     if line.strip().startswith('TELEGRAM_BOT_TOKEN='):
                         return line.strip().split('=', 1)[1].strip()
-    except Exception:
-        pass
-    return ''
-
+    except Exception as e:
+        logger.debug("Error leyendo token Telegram del .env: %s", e)
 
 # ─────────────────── Telegram ───────────────────
 
@@ -139,7 +138,7 @@ def broadcast_telegram(
                     # Log detallado del error
                     try:
                         err_body = resp.json().get('description', resp.text[:200])
-                    except Exception:
+                    except Exception as e:
                         err_body = resp.text[:200]
                     logger.warning(
                         f"Telegram sendMessage {chat_id}: {resp.status_code} → {err_body}"

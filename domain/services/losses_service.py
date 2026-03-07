@@ -143,10 +143,8 @@ class LossesService:
                     resultado['porcentaje'] = merged['porcentaje']
                 else:
                     resultado['porcentaje'] = None
-            except Exception:
-                resultado['porcentaje'] = None
-            
-            logger.info(f"✅ {len(resultado)} registros de pérdidas obtenidos")
+            except Exception as e:
+                logger.warning("Error calculando porcentaje de pérdidas: %s", e)
             return resultado
             
         except Exception as e:

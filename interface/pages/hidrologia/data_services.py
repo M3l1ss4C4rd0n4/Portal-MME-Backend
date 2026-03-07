@@ -149,7 +149,7 @@ def get_all_rios_api():
             return rios
         else:
             return []
-    except Exception:
+    except Exception as e:
         return []
 
 

@@ -16,7 +16,7 @@ def validate_date_range(start_date, end_date):
             end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
             
         return start_date <= end_date
-    except Exception:
+    except Exception as e:
         return False
 
 def validate_string(s, min_length=1, max_length=None):

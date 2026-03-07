@@ -219,7 +219,7 @@ class HydrologyService:
                 data, _ = obtener_datos_inteligente(metrica, entidad, start, end)
                 if data is not None and not data.empty:
                     return data
-            except Exception:
+            except Exception as e:
                 continue
         return None
 

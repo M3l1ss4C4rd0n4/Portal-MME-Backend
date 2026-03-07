@@ -104,7 +104,7 @@ def format_date(date_value):
         try:
             dt_value = pd.to_datetime(date_value)
             return dt_value.strftime('%Y-%m-%d')
-        except Exception:
+        except Exception as e:
             return date_value
     elif hasattr(date_value, 'strftime'):
         return date_value.strftime('%Y-%m-%d')

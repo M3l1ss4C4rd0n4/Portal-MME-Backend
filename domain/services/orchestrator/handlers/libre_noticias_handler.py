@@ -140,7 +140,7 @@ class LibreNoticiasHandlerMixin:
                             'componente_g': round(cu.get('componente_g', 0), 2),
                             'confianza': cu.get('confianza'),
                         }
-                except Exception:
+                except Exception as e:
                     pass
 
             # ¿Pregunta sobre pérdidas no técnicas?
@@ -156,7 +156,7 @@ class LibreNoticiasHandlerMixin:
                             'tendencia': stats.get('tendencia_nt', 'N/D'),
                             'costo_nt_12m_mcop': round(stats.get('costo_nt_12m_mcop', 0), 0),
                         }
-                except Exception:
+                except Exception as e:
                     pass
 
             # ¿Pregunta sobre predicciones?

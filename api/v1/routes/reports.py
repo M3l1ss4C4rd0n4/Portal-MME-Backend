@@ -143,7 +143,7 @@ def _generate_pdf_sync(fecha: date) -> bytes:
     # Limpiar archivo temporal
     try:
         os.remove(pdf_path)
-    except Exception:
+    except Exception as e:
         pass
 
     return pdf_bytes

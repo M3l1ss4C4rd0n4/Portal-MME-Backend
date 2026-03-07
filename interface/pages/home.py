@@ -575,7 +575,7 @@ def cargar_cu_kpi(_):
                     pct = (diff / cu_prev["cu_total"]) * 100 if cu_prev["cu_total"] != 0 else 0
                     arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "")
                     variacion_text = f" {arrow}{pct:+.1f}%"
-        except Exception:
+        except Exception as e:
             pass
 
         return html.A([

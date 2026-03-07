@@ -799,7 +799,7 @@ def load_historial(_):
         from core.container import container
         svc = container.simulation_service
         return _render_historial(svc.get_historial(limite=10))
-    except Exception:
+    except Exception as e:
         return html.Small("Sin historial disponible.", className='text-muted')
 
 

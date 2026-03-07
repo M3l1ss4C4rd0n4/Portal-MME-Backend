@@ -715,7 +715,7 @@ def _load_logo_b64() -> str:
     try:
         with open(_LOGO_PATH, 'rb') as f:
             return base64.b64encode(f.read()).decode('utf-8')
-    except Exception:
+    except Exception as e:
         return ''
 
 
@@ -782,7 +782,7 @@ def _format_fecha_larga(fecha_str: str = '') -> str:
         else:
             dt = datetime.now()
         return f'{dt.day} de {meses[dt.month]} de {dt.year}'
-    except Exception:
+    except Exception as e:
         return datetime.now().strftime('%Y-%m-%d')
 
 

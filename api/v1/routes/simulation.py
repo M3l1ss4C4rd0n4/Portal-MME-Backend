@@ -73,8 +73,8 @@ def _cache_get(key: str) -> Optional[dict]:
         data = r.get(key)
         if data:
             return json.loads(data)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Sim cache get error: %s", e)
     return None
 
 
@@ -84,8 +84,8 @@ def _cache_set(key: str, data: dict, ttl: int = 3600):
         return
     try:
         r.setex(key, ttl, json.dumps(data, default=str))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Sim cache set error: %s", e)
 
 
 # ─── POST /run — Simulación personalizada ────────────────────────────────────

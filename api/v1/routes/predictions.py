@@ -308,7 +308,7 @@ async def train_model(
                 if all_keys:
                     deleted = r.delete(*all_keys)
                     logger.info(f"🗑️ Cache invalidated after train: {deleted} keys for {metric_id}")
-            except Exception:
+            except Exception as e:
                 pass  # Cache invalidation is best-effort
         
         return {

@@ -81,8 +81,8 @@ def _cache_get(key: str) -> Optional[dict]:
         cached = r.get(key)
         if cached:
             return json.loads(cached)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Cache get error: %s", e)
     return None
 
 
@@ -93,7 +93,8 @@ def _cache_set(key: str, data: dict, ttl: int = CACHE_TTL_FORECAST) -> bool:
     try:
         r.setex(key, ttl, json.dumps(data, default=str))
         return True
-    except Exception:
+    except Exception as e:
+        logger.debug("Cache set error: %s", e)
         return False
 
 

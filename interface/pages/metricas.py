@@ -324,7 +324,7 @@ def obtener_info_metrica_completa(metric_id):
                     metric_description=first_record.get('MetricDescription', ''),
                     metric_units=first_record.get('MetricUnits', 'N/A')
                 )
-    except Exception:
+    except Exception as e:
         pass
     
     # Fallback para casos excepcionales

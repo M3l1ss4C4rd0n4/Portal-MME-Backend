@@ -309,7 +309,7 @@ def validate_metric_df(
             futuras = (fechas > pd.Timestamp.now() + pd.Timedelta(days=2)).sum()
             if futuras > 0:
                 issues.append(f"ERROR FECHA: '{metric_id}' tiene {futuras} registros con fecha futura.")
-        except Exception:
+        except Exception as e:
             pass
 
     return issues

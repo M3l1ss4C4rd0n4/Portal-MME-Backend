@@ -418,7 +418,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
             }
         else:
             checks["predictions"] = {"status": "unknown"}
-    except Exception:
+    except Exception as e:
         checks["predictions"] = {"status": "not_available"}
     
     # ── Overall ──
