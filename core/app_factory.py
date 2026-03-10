@@ -102,11 +102,12 @@ def _register_layout(app):
         dcc.Location(id="url", refresh=False),
         dcc.Store(id='store-datos-chatbot-generacion', data={}),
         dcc.Store(id='error-log-store', data=None),
+        dcc.Store(id='theme-store', storage_type='local', data='light'),
         
-        # Contenedor principal con padding superior para compensar el header fijo
+        # Contenedor principal — navbar sticky, sin paddingTop fijo
         html.Div([
             page_container,
-        ], style={"paddingTop": "85px"}),
+        ]),
         
         # ✨ Chat Widget
         crear_componente_chat()
@@ -115,12 +116,50 @@ def _register_layout(app):
 
 def _register_callbacks(app):
     """Registra callbacks globales"""
-    from dash import Input, Output
+    from dash import Input, Output, clientside_callback
+
+    # Fase F: toggle dark/light — aplica data-bs-theme al elemento raíz
+    clientside_callback(
+        """
+        function(theme) {
+            var t = theme || 'light';
+            document.documentElement.setAttribute('data-bs-theme', t);
+            document.documentElement.setAttribute('data-theme', t);
+            return theme;
+        }
+        """,
+        Output('theme-store', 'data'),
+        Input('theme-store', 'data'),
+    )
+
+    # Fase F: Switch en header actualiza el Store
+    clientside_callback(
+        """
+        function(checked) {
+            var t = checked ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-bs-theme', t);
+            document.documentElement.setAttribute('data-theme', t);
+            return t;
+        }
+        """,
+        Output('theme-store', 'data', allow_duplicate=True),
+        Input('theme-switch', 'value'),
+        prevent_initial_call=True,
+    )
+
+    # BUG 3: Toggler mobile para el nuevo dbc.Navbar
+    @app.callback(
+        Output('navbar-collapse', 'is_open'),
+        Input('navbar-toggler', 'n_clicks'),
+        prevent_initial_call=True,
+    )
+    def toggle_navbar(n_clicks):
+        return bool(n_clicks % 2)
 
     NAV_NAMES = [
         'inicio', 'generacion', 'transmision', 'distribucion',
         'comercializacion', 'perdidas', 'costo-unitario', 'simulacion-creg',
-        'perdidas-nt', 'restricciones', 'metricas'
+        'perdidas-nt', 'restricciones', 'metricas', 'seguimiento-predicciones'
     ]
 
     @app.callback(
@@ -165,7 +204,8 @@ def _register_callbacks(app):
             'simulacion-creg': lambda p: p.startswith('/simulacion-creg'),
             'perdidas-nt': lambda p: p.startswith('/perdidas-nt'),
             'restricciones': lambda p: p.startswith('/restricciones'),
-            'metricas': lambda p: p.startswith('/metricas')
+            'metricas': lambda p: p.startswith('/metricas'),
+            'seguimiento-predicciones': lambda p: p.startswith('/seguimiento-predicciones'),
         }
 
         styles = []
@@ -254,3 +294,7 @@ def create_app() -> Dash:
     _register_callbacks(app)
 
     return app
+
+
+# Alias para compatibilidad con tests y código externo
+create_dash_app = create_app

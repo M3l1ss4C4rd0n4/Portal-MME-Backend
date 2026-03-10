@@ -5,7 +5,9 @@ def get_plotly_modules():
     import plotly.graph_objects as go
     return px, go
 
-from dash import dcc, html, Input, Output, callback, register_page
+from dash import dcc, html, Input, Output, State, callback, register_page
+import logging
+logger = logging.getLogger(__name__)
 import dash
 import dash_bootstrap_components as dbc
 import pandas as pd
@@ -82,6 +84,10 @@ def layout():
             dbc.Button([
                 html.I(className="fas fa-search me-1"), "Actualizar"
             ], id='btn-actualizar-restricciones', color="primary", size="sm"),
+            dbc.Button([
+                html.I(className="fas fa-file-excel me-1"), "Excel"
+            ], id='btn-excel-restricciones', color="success", size="sm", outline=True),
+            dcc.Download(id='download-excel-restricciones'),
         ),
 
         dcc.Loading(
@@ -376,3 +382,41 @@ def actualizar_restricciones(n_clicks, fecha_inicio, fecha_fin):
             html.Hr(),
             html.P("Por favor, intente nuevamente o contacte al administrador.", className="mb-0")
         ], color="danger"), datos_error
+
+# Fase G — Excel export
+@callback(
+    Output('download-excel-restricciones', 'data'),
+    Input('btn-excel-restricciones', 'n_clicks'),
+    [State('fecha-filtro-restricciones', 'start_date'),
+     State('fecha-filtro-restricciones', 'end_date')],
+    prevent_initial_call=True,
+)
+def exportar_excel_restricciones(n_clicks, fecha_inicio, fecha_fin):
+    import io
+    try:
+        if not fecha_inicio or not fecha_fin:
+            return dash.no_update
+        fi = pd.to_datetime(fecha_inicio).strftime('%Y-%m-%d')
+        ff = pd.to_datetime(fecha_fin).strftime('%Y-%m-%d')
+        data = restrictions_service.get_restrictions_analysis(fi, ff)
+
+        def to_df(x):
+            if x is None: return pd.DataFrame()
+            if isinstance(x, list): return pd.DataFrame(x)
+            return x if isinstance(x, pd.DataFrame) else pd.DataFrame()
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            sheets = {
+                'Restricciones_Aliviadas': to_df(data.get('RestAliv') if isinstance(data, dict) else None),
+                'Restricciones_Sin_Alivio': to_df(data.get('RestSinAliv') if isinstance(data, dict) else None),
+                'Respuesta_Comercial_AGC': to_df(data.get('RespComerAGC') if isinstance(data, dict) else None),
+            }
+            for sheet, df in sheets.items():
+                if not df.empty:
+                    df.to_excel(writer, sheet_name=sheet, index=False)
+        buf.seek(0)
+        return dcc.send_bytes(buf.read(), f"restricciones_{fi}_al_{ff}.xlsx")
+    except Exception as e:
+        logger.error("Error Excel restricciones: %s", e)
+        return dash.no_update

@@ -1,4 +1,4 @@
-from dash import dcc, html, Input, Output, State, callback, register_page, dash_table
+from dash import dcc, html, Input, Output, State, callback, register_page, dash_table, no_update
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import pandas as pd
@@ -1633,6 +1633,11 @@ def layout():
                 id="btn-actualizar-fuentes",
                 className="t-btn-filter",
             ),
+            dbc.Button(
+                [html.I(className="fas fa-file-excel me-1"), "Excel"],
+                id="btn-excel-generacion", color="success", size="sm", outline=True,
+            ),
+            dcc.Download(id="download-excel-generacion"),
         ),
         
         # DEBUG: Div para verificar clics en botón
@@ -2924,16 +2929,18 @@ def generar_predicciones(n_clicks, active_tab, horizonte_meses, fuentes_seleccio
         horizonte_dias_calculado = horizonte_meses * 30  # Aproximación simple
         fecha_limite = datetime.now().date() + timedelta(days=horizonte_dias_calculado)
         
-        # Cargar predicciones de la BD (todas tienen horizonte_dias=90)
-        # No filtrar por horizonte, solo limitar por número de días necesarios
+        # Cargar predicciones de la BD: solo horizonte_dias=90 (ENSEMBLE/LGBM)
+        # Usar DISTINCT ON para evitar duplicados cuando hay múltiples modelos por (fuente, fecha)
         query = """
-        SELECT fecha_prediccion, fuente, valor_gwh_predicho, 
+        SELECT DISTINCT ON (fuente, fecha_prediccion)
+               fecha_prediccion, fuente, valor_gwh_predicho, 
                intervalo_inferior, intervalo_superior, modelo, horizonte_dias
         FROM predictions
         WHERE fuente IN ({})
           AND fecha_prediccion <= %s
           AND fecha_prediccion >= CURRENT_DATE
-        ORDER BY fecha_prediccion, fuente
+          AND horizonte_dias = 90
+        ORDER BY fuente, fecha_prediccion, fecha_generacion DESC NULLS LAST
         """.format(','.join(['%s' for _ in fuentes_seleccionadas]))
         
         params = fuentes_seleccionadas + [fecha_limite]
@@ -3197,23 +3204,34 @@ def mostrar_validacion_prediccion(clickData):
         fecha_str = fecha_dt.strftime('%Y-%m-%d')
         fecha_display = fecha_dt.strftime('%d de %B de %Y')
         
+        # Unidades por fuente de generación
+        UNIDAD_POR_FUENTE = {
+            'Hidráulica': 'GWh/día',
+            'Térmica':    'GWh/día',
+            'Solar':      'GWh/día',
+            'Eólica':     'GWh/día',
+            'Biomasa':    'GWh/día',
+        }
+        
         # ==================================================================
-        # 1. OBTENER PREDICCIONES PARA ESA FECHA
+        # 1. OBTENER PREDICCIONES PARA ESA FECHA (una fila por fuente)
         # ==================================================================
         query_pred = """
-        SELECT fuente, valor_gwh_predicho, intervalo_inferior, intervalo_superior
+        SELECT DISTINCT ON (fuente)
+               fuente, valor_gwh_predicho, intervalo_inferior, intervalo_superior
         FROM predictions
         WHERE DATE(fecha_prediccion) = %s
-        ORDER BY 
-            CASE fuente
-                WHEN 'Hidráulica' THEN 1
-                WHEN 'Térmica' THEN 2
-                WHEN 'Solar' THEN 3
-                WHEN 'Eólica' THEN 4
-                WHEN 'Biomasa' THEN 5
-            END
+          AND fuente IN ('Hidráulica', 'Térmica', 'Solar', 'Eólica', 'Biomasa')
+          AND horizonte_dias = 90
+        ORDER BY fuente, fecha_generacion DESC NULLS LAST
         """
         df_pred = db_manager.query_df(query_pred, params=[fecha_str])
+        
+        # Ordenar manualmente después del DISTINCT ON
+        orden_fuentes = {'Hidráulica': 1, 'Térmica': 2, 'Solar': 3, 'Eólica': 4, 'Biomasa': 5}
+        if not df_pred.empty:
+            df_pred['_orden'] = df_pred['fuente'].map(lambda f: orden_fuentes.get(f, 9))
+            df_pred = df_pred.sort_values('_orden').drop(columns=['_orden'])
         
         if df_pred.empty:
             return (True, 
@@ -3309,11 +3327,12 @@ def mostrar_validacion_prediccion(clickData):
             diff = row['diferencia']
             error = row['error_pct']
             en_int = row['en_intervalo']
+            unidad_fuente = UNIDAD_POR_FUENTE.get(fuente, 'GWh/día')
             
             # Columnas base
             fila = [
                 html.Td(fuente, style={'fontWeight': 'bold'}),
-                html.Td(f"{pred:.2f} GWh", style={'textAlign': 'center'}),
+                html.Td(f"{pred:.2f} {unidad_fuente}", style={'textAlign': 'center'}),
             ]
             
             if hay_datos_reales and real is not None and not pd.isna(real):
@@ -3321,8 +3340,8 @@ def mostrar_validacion_prediccion(clickData):
                 color_error = '#22c55e' if error < 5 else ('#f59e0b' if error < 10 else '#ef4444')
                 
                 fila.extend([
-                    html.Td(f"{real:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold'}),
-                    html.Td(f"{diff:+.2f} GWh", style={'textAlign': 'center', 'color': '#3b82f6'}),
+                    html.Td(f"{real:.2f} {unidad_fuente}", style={'textAlign': 'center', 'fontWeight': 'bold'}),
+                    html.Td(f"{diff:+.2f} {unidad_fuente}", style={'textAlign': 'center', 'color': '#3b82f6'}),
                     html.Td(f"{error:.1f}%", style={'textAlign': 'center', 'fontWeight': 'bold', 'color': color_error})
                 ])
             else:
@@ -3344,15 +3363,15 @@ def mostrar_validacion_prediccion(clickData):
             
             fila_total = html.Tr([
                 html.Td("TOTAL", style={'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
-                html.Td(f"{total_pred:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
-                html.Td(f"{total_real:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
-                html.Td(f"{total_diff:+.2f} GWh", style={'textAlign': 'center', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6', 'color': '#3b82f6'}),
+                html.Td(f"{total_pred:.2f} GWh/día", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td(f"{total_real:.2f} GWh/día", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td(f"{total_diff:+.2f} GWh/día", style={'textAlign': 'center', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6', 'color': '#3b82f6'}),
                 html.Td(f"{total_error:.1f}%", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6', 'color': color_total})
             ])
         else:
             fila_total = html.Tr([
                 html.Td("TOTAL", style={'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
-                html.Td(f"{total_pred:.2f} GWh", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
+                html.Td(f"{total_pred:.2f} GWh/día", style={'textAlign': 'center', 'fontWeight': 'bold', 'fontSize': '1.1rem', 'backgroundColor': '#f3f4f6'}),
                 html.Td("—", style={'textAlign': 'center', 'backgroundColor': '#f3f4f6', 'color': '#999'}),
                 html.Td("—", style={'textAlign': 'center', 'backgroundColor': '#f3f4f6', 'color': '#999'}),
                 html.Td("—", style={'textAlign': 'center', 'backgroundColor': '#f3f4f6', 'color': '#999'})
@@ -3398,3 +3417,28 @@ def mostrar_validacion_prediccion(clickData):
         return (True,
                "Error",
                dbc.Alert(f"Error al cargar datos: {str(e)}", color="danger"))
+
+# Fase G — Excel export (desde Store, sin re-consultar)
+@callback(
+    Output('download-excel-generacion', 'data'),
+    Input('btn-excel-generacion', 'n_clicks'),
+    State('store-datos-fuentes', 'data'),
+    prevent_initial_call=True,
+)
+def exportar_excel_generacion(n_clicks, store_data):
+    import io
+    from io import StringIO
+    try:
+        if not store_data:
+            return no_update
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            json_fuentes = store_data.get('df_por_fuente') if isinstance(store_data, dict) else None
+            if json_fuentes:
+                df = pd.read_json(StringIO(json_fuentes), orient='split')
+                df.to_excel(writer, sheet_name='Generacion_Por_Fuente', index=False)
+        buf.seek(0)
+        return dcc.send_bytes(buf.read(), "generacion_fuentes.xlsx")
+    except Exception as e:
+        logger.error("Error Excel generacion: %s", e)
+        return no_update

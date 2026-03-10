@@ -21,7 +21,10 @@ def get_plotly_modules():
 from dash import dcc, html, Input, Output, State, callback, dash_table, register_page
 import dash_bootstrap_components as dbc
 import pandas as pd
+import logging
 from datetime import datetime, timedelta, date
+
+logger = logging.getLogger(__name__)
 
 # Importar navbar y componentes de filtro
 from interface.components.layout import registrar_callback_filtro_fechas
@@ -252,7 +255,7 @@ def crear_grafica_criticidad_vs_antiguedad(df_lineas):
         df_cat = df_plot[df_plot['Categoria'] == categoria]
         
         if len(df_cat) > 0:
-            fig.add_trace(go.Scatter(
+            fig.add_trace(go.Scattergl(
                 x=df_cat['Antiguedad'],
                 y=df_cat['Part_%'],
                 mode='markers',
@@ -373,7 +376,7 @@ def crear_grafica_antiguedad_decadas(df_lineas):
         textposition='outside'
     ))
     
-    fig.add_trace(go.Scatter(
+    fig.add_trace(go.Scattergl(
         name='Longitud Total (km)',
         x=decadas['DecadaStr'],
         y=decadas['Longitud_km'],
@@ -480,7 +483,11 @@ def layout():
                 id="btn-actualizar-transmision", 
                 color="primary",
                 size="sm",
-                className="ms-auto")
+                className="ms-auto"),
+                dbc.Button([
+                    html.I(className="fas fa-file-excel me-1"), "Excel"
+                ], id="btn-excel-transmision", color="success", size="sm", outline=True),
+                dcc.Download(id="download-excel-transmision"),
             ),
             
             # KPIs
@@ -685,3 +692,26 @@ def actualizar_tablero_transmision(trigger_data, n_clicks, fecha_inicio, fecha_f
         mensaje_error = html.Div(f"Error: {str(e)}", className="alert alert-danger")
         datos_error = {'pagina': 'transmision', 'error': str(e)}
         return mensaje_error, go.Figure(), go.Figure(), go.Figure(), html.Div(), datos_error
+
+
+# Fase G — Excel export
+@callback(
+    Output('download-excel-transmision', 'data'),
+    Input('btn-excel-transmision', 'n_clicks'),
+    prevent_initial_call=True,
+)
+def exportar_excel_transmision(n_clicks):
+    import io
+    try:
+        df = cargar_datos_lineas()
+        if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+            return dash.no_update
+        df = pd.DataFrame(df) if not isinstance(df, pd.DataFrame) else df
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Lineas_STN', index=False)
+        buf.seek(0)
+        return dcc.send_bytes(buf.read(), "transmision_lineas_stn.xlsx")
+    except Exception as e:
+        logger.error("Error Excel transmision: %s", e)
+        return dash.no_update

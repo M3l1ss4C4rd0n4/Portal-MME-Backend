@@ -1,76 +1,103 @@
-from dash import html, dcc
+from dash import html, dcc, clientside_callback, Input, Output
 import dash_bootstrap_components as dbc
+
 
 def crear_header_restaurado():
     """
-    Encabezado global Portal Energético MME — estilo Tabler-MME.
-    
-    Características:
-    - Logo oficial del Ministerio
-    - Navegación con estados activos (callback en app_factory)
-    - Estilo corporativo integrado con el design system Tabler-MME
+    Encabezado global Portal Energético MME — BUG 3 fix.
+
+    Cambios:
+    - dbc.Navbar (en lugar de NavbarSimple) para control total del layout
+    - sticky="top" (en lugar de fixed) — no requiere paddingTop en el contenedor
+    - Altura compacta 42px
+    - Logo 28px
+    - NavbarToggler para móvil
     """
-
-    nav_link_style = {
-        "color": "rgba(255,255,255,0.85)",
-        "fontWeight": "500",
-        "fontSize": "13px",
-        "padding": "6px 14px",
-        "borderRadius": "6px",
-        "transition": "all 0.2s ease",
-        "letterSpacing": "-0.2px",
-    }
-
-    brand_component = html.Div([
-        html.Img(
-            src="/assets/images/logo-minenergia.png",
-            height="44px",
-            className="d-inline-block align-top me-3",
-            style={"filter": "brightness(1.05)"}
-        ),
-        html.Div([
-            html.Span("Portal Energético", style={
-                "fontSize": "15px", "fontWeight": "700", "color": "#fff",
-                "letterSpacing": "-0.3px", "lineHeight": "1.2", "display": "block"
-            }),
-            html.Span("Ministerio de Minas y Energía", style={
-                "fontSize": "11px", "color": "rgba(255,255,255,0.6)",
-                "fontWeight": "400", "display": "block"
-            })
-        ], className="d-flex flex-column justify-content-center")
-    ], className="d-flex align-items-center")
 
     return html.Div([
         dcc.Location(id="url-navbar", refresh=False),
 
-        dbc.NavbarSimple(
-            children=[
-                dbc.NavLink("Inicio", href="/", id="nav-link-inicio", style=nav_link_style),
-                dbc.NavLink("Generación", href="/generacion", id="nav-link-generacion", style=nav_link_style),
-                dbc.NavLink("Transmisión", href="/transmision", id="nav-link-transmision", style=nav_link_style),
-                dbc.NavLink("Distribución", href="/distribucion", id="nav-link-distribucion", style=nav_link_style),
-                dbc.NavLink("Comercialización", href="/comercializacion", id="nav-link-comercializacion", style=nav_link_style),
-                dbc.NavLink("Pérdidas", href="/perdidas", id="nav-link-perdidas", style=nav_link_style),
-                dbc.NavLink("Costo Unitario", href="/costo-unitario", id="nav-link-costo-unitario", style=nav_link_style),
-                dbc.NavLink("Simulación", href="/simulacion-creg", id="nav-link-simulacion-creg", style=nav_link_style),
-                dbc.NavLink("Pérdidas NT", href="/perdidas-nt", id="nav-link-perdidas-nt", style=nav_link_style),
-                dbc.NavLink("Restricciones", href="/restricciones", id="nav-link-restricciones", style=nav_link_style),
-                dbc.NavLink("Métricas", href="/metricas", id="nav-link-metricas", style=nav_link_style),
-                dbc.NavLink("💡 Inversiones", href="/inversiones", id="nav-link-inversiones", style=nav_link_style),
-            ],
-            brand=brand_component,
-            brand_href="/",
-            color="#1e3a8a",
+        dbc.Navbar(
+            dbc.Container(
+                [
+                    # ── Logo (izquierda, sin texto) ──
+                    dbc.NavbarBrand(
+                        html.Img(
+                            src="/assets/images/logo-minenergia.png",
+                            height="34px",
+                            style={
+                                "verticalAlign": "middle",
+                                "filter": "brightness(1.15)",
+                            },
+                        ),
+                        href="https://portalenergetico.minenergia.gov.co/",
+                        target="_blank",
+                        title="Portal Energético MME",
+                        style={"padding": "0", "marginRight": "16px"},
+                    ),
+
+                    # ── Toggler móvil ──
+                    dbc.NavbarToggler(id="navbar-toggler", n_clicks=0),
+
+                    # ── Links de navegación (derecha) ──
+                    dbc.Collapse(
+                        dbc.Nav(
+                            [
+                                dbc.NavItem(dbc.NavLink("Inicio", href="/", id="nav-link-inicio", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Generación", href="/generacion", id="nav-link-generacion", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Transmisión", href="/transmision", id="nav-link-transmision", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Distribución", href="/distribucion", id="nav-link-distribucion", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Comercialización", href="/comercializacion", id="nav-link-comercializacion", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Pérdidas", href="/perdidas", id="nav-link-perdidas", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Restricciones", href="/restricciones", id="nav-link-restricciones", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Costo Unitario", href="/costo-unitario", id="nav-link-costo-unitario", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Simulación", href="/simulacion-creg", id="nav-link-simulacion-creg", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Pérdidas NT", href="/perdidas-nt", id="nav-link-perdidas-nt", active="exact")),
+                                dbc.NavItem(dbc.NavLink("💡 Inversiones", href="/inversiones", id="nav-link-inversiones", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Predicciones", href="/seguimiento-predicciones", id="nav-link-seguimiento-predicciones", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Métricas", href="/metricas", id="nav-link-metricas", active="exact")),
+                                # Toggle claro/oscuro
+                                dbc.NavItem(
+                                    html.Div([
+                                        html.Span("☀", style={"fontSize": "11px", "color": "rgba(255,255,255,0.7)", "marginRight": "3px"}),
+                                        dbc.Switch(
+                                            id="theme-switch",
+                                            value=False,
+                                            persistence=True,
+                                            persistence_type="local",
+                                            className="d-inline-block align-middle",
+                                            style={"marginBottom": "0", "verticalAlign": "middle"},
+                                        ),
+                                        html.Span("🌙", style={"fontSize": "11px", "color": "rgba(255,255,255,0.7)", "marginLeft": "3px"}),
+                                    ], className="d-flex align-items-center ms-2", style={"gap": "2px"}),
+                                ),
+                            ],
+                            navbar=True,
+                            className="ms-auto",
+                        ),
+                        id="navbar-collapse",
+                        navbar=True,
+                        is_open=False,
+                    ),
+                ],
+                fluid=True,
+                style={"padding": "0 12px"},
+            ),
+            color="dark",
             dark=True,
-            fluid=True,
-            fixed="top",
+            sticky="top",
             className="t-global-navbar",
             style={
+                "height": "42px",
+                "minHeight": "42px",
+                "padding": "0",
+                "zIndex": "1030",
+                "boxShadow": "0 1px 3px rgba(0,0,0,0.3)",
                 "background": "linear-gradient(90deg, #1e3a8a 0%, #152e6b 100%)",
                 "borderBottom": "2px solid rgba(245,158,11,0.7)",
-                "padding": "4px 0",
-                "zIndex": "1030",
                 "fontFamily": "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
-            }
-        )
+                "flexWrap": "nowrap",
+                "whiteSpace": "nowrap",
+            },
+        ),
     ])

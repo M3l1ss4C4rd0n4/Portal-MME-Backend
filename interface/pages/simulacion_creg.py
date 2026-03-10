@@ -386,7 +386,7 @@ def layout(**kwargs):
     return html.Div([
         crear_page_header(
             titulo="Simulación CREG",
-            subtitulo="Motor de Simulación Paramétrica",
+            breadcrumb="Inicio / Simulación CREG — Motor de Simulación Paramétrica",
             icono="fas fa-flask",
         ),
 
@@ -544,6 +544,11 @@ def layout(**kwargs):
                             ), width=3),
                         ]),
                         html.Div(id='sim-save-status', className='mt-2'),
+                        dbc.Button(
+                            [html.I(className="fas fa-file-excel me-1"), "Exportar Excel"],
+                            id='btn-excel-simulacion', color="success", size="sm",
+                            outline=True, className='w-100 mt-2',
+                        ),
                     ]),
                 ], className='shadow-sm h-100'),
             ], md=4),
@@ -599,6 +604,7 @@ def layout(**kwargs):
 
         # Stores
         dcc.Store(id='sim-resultado-store'),
+        dcc.Download(id='download-excel-simulacion'),
     ], className='container-fluid px-4 py-3')
 
 
@@ -876,6 +882,7 @@ def run_monte_carlo_callback(n_clicks, n_simulations, preset_id):
 
     escenario = preset_id if preset_id else 'expansion_renovables'
     try:
+        from core.container import container
         svc = container.simulation_service
         result = svc.run_monte_carlo(
             escenario=escenario,
@@ -968,3 +975,37 @@ def run_monte_carlo_callback(n_clicks, n_simulations, preset_id):
     )
 
     return kpis, fig, {'display': 'block'}, texto
+
+
+# Fase G — Excel export (desde Store del resultado)
+@callback(
+    Output('download-excel-simulacion', 'data'),
+    Input('btn-excel-simulacion', 'n_clicks'),
+    State('sim-resultado-store', 'data'),
+    prevent_initial_call=True,
+)
+def exportar_excel_simulacion(n_clicks, resultado):
+    import io
+    import pandas as pd
+    try:
+        if not resultado:
+            return no_update
+        # Aplanar el resultado en filas key-value y por componente
+        rows = []
+        for k, v in resultado.items():
+            if not isinstance(v, (dict, list)):
+                rows.append({'Parametro': k, 'Valor': v})
+        df_resumen = pd.DataFrame(rows)
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            df_resumen.to_excel(writer, sheet_name='Resultado_Simulacion', index=False)
+            # Si hay desglose por componente
+            componentes = resultado.get('desglose_componentes') or resultado.get('componentes')
+            if isinstance(componentes, dict):
+                pd.DataFrame([componentes]).to_excel(writer, sheet_name='Componentes', index=False)
+        buf.seek(0)
+        return dcc.send_bytes(buf.read(), "simulacion_creg.xlsx")
+    except Exception as e:
+        logger.error("Error Excel simulacion: %s", e)
+        return no_update
