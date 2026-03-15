@@ -26,15 +26,17 @@ def get_plotly_modules():
     import plotly.graph_objects as go
     return px, go
 
-from dash import dcc, html, Input, Output, State, callback, register_page, dash_table
+from dash import dcc, html, Input, Output, State, callback, register_page, dash_table, ALL, ctx
+from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
+import dash_ag_grid as dag
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import logging
 
-from interface.components.layout import crear_navbar_horizontal, crear_boton_regresar
-from interface.components.chart_card import crear_page_header, crear_filter_bar
+from interface.components.chart_card import crear_page_header, crear_filter_bar, crear_chart_card_custom
+from interface.components.kpi_card import crear_kpi_row
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
 
 logger = logging.getLogger("seguimiento_predicciones")
@@ -59,17 +61,38 @@ register_page(
 FUENTES_MAPPING = {
     'GENE_TOTAL':       {'metrica': 'Gene',            'agg': 'SUM', 'entidad': 'Sistema', 'unidad': 'GWh',  'label': 'Generación Total'},
     'DEMANDA':          {'metrica': 'DemaReal',         'agg': 'SUM', 'prefer_sistema': True, 'unidad': 'GWh', 'label': 'Demanda Real'},
-    'PRECIO_BOLSA':     {'metrica': 'PrecBolsNaci',     'agg': 'AVG', 'entidad': 'Sistema', 'unidad': '$/kWh', 'label': 'Precio de Bolsa'},
-    'PRECIO_ESCASEZ':   {'metrica': 'PrecEsca',         'agg': 'AVG', 'unidad': '$/kWh', 'label': 'Precio de Escasez'},
+    'PRECIO_BOLSA':     {'metrica': 'PrecBolsNaci',     'agg': 'AVG', 'entidad': 'Sistema', 'unidad': 'COP/kWh', 'label': 'Precio de Bolsa'},
+    'PRECIO_ESCASEZ':   {'metrica': 'PrecEsca',         'agg': 'AVG', 'unidad': 'COP/kWh', 'label': 'Precio de Escasez'},
     'APORTES_HIDRICOS': {'metrica': 'AporEner',          'agg': 'SUM', 'unidad': 'GWh', 'label': 'Aportes Hídricos'},
     'EMBALSES':         {'metrica': 'CapaUtilDiarEner',  'agg': 'SUM', 'entidad': 'Sistema', 'unidad': 'GWh', 'label': 'Embalses (Cap. Útil)'},
     'EMBALSES_PCT':     {'metrica': 'PorcVoluUtilDiar',  'agg': 'AVG', 'entidad': 'Sistema', 'escala': 100, 'unidad': '%', 'label': 'Embalses (%)'},
     'PERDIDAS':         {'metrica': 'PerdidasEner',      'agg': 'SUM', 'prefer_sistema': True, 'unidad': 'GWh', 'label': 'Pérdidas'},
-    'Hidráulica':       {'tipo_catalogo': 'HIDRAULICA', 'unidad': 'GWh', 'label': 'Gen. Hidráulica'},
-    'Térmica':          {'tipo_catalogo': 'TERMICA',    'unidad': 'GWh', 'label': 'Gen. Térmica'},
-    'Eólica':           {'tipo_catalogo': 'EOLICA',     'unidad': 'GWh', 'label': 'Gen. Eólica'},
-    'Solar':            {'tipo_catalogo': 'SOLAR',      'unidad': 'GWh', 'label': 'Gen. Solar'},
-    'Biomasa':          {'tipo_catalogo': 'COGENERADOR','unidad': 'GWh', 'label': 'Gen. Biomasa'},
+    'CU_DIARIO':        {'unidad': 'COP/kWh', 'label': 'Costo Unitario Diario'},
+    'PERDIDAS_TOTALES': {'metrica': 'PerdidasEner',      'agg': 'SUM', 'unidad': 'GWh', 'label': 'Pérdidas Totales'},
+    'Hidráulica':       {'tipo_catalogo': 'HIDRAULICA', 'unidad': 'GWh/día', 'label': 'Gen. Hidráulica'},
+    'Térmica':          {'tipo_catalogo': 'TERMICA',    'unidad': 'GWh/día', 'label': 'Gen. Térmica'},
+    'Eólica':           {'tipo_catalogo': 'EOLICA',     'unidad': 'GWh/día', 'label': 'Gen. Eólica'},
+    'Solar':            {'tipo_catalogo': 'SOLAR',      'unidad': 'GWh/día', 'label': 'Gen. Solar'},
+    'Biomasa':          {'tipo_catalogo': 'COGENERADOR','unidad': 'GWh/día', 'label': 'Gen. Biomasa'},
+}
+
+# Metadatos visuales por fuente (icono, color, nombre completo del modelo, features)
+FUENTES_META = {
+    'EMBALSES':         {'icono': '🏞️', 'color': '#1abc9c', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'EMBALSES_PCT':     {'icono': '💧', 'color': '#16a085', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'PRECIO_ESCASEZ':   {'icono': '⚡', 'color': '#e67e22', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'GENE_TOTAL':       {'icono': '⚡', 'color': '#2ecc71', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'DEMANDA':          {'icono': '📊', 'color': '#e74c3c', 'modelo_real': 'LightGBM 4.6.0 — Horizonte Dual (corto+largo)', 'features': 'Lags 1/7d, festivos Colombia (Ley 51+Emiliani), día semana'},
+    'Hidráulica':       {'icono': '💧', 'color': '#2980b9', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'Biomasa':          {'icono': '🌿', 'color': '#8e44ad', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'PERDIDAS':         {'icono': '📉', 'color': '#95a5a6', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'Térmica':          {'icono': '🔥', 'color': '#e74c3c', 'modelo_real': 'LightGBM 4.6.0 — Directo con lags', 'features': 'Lags 1/7/14d, temperatura, precio bolsa histórico'},
+    'PRECIO_BOLSA':     {'icono': '💰', 'color': '#f39c12', 'modelo_real': 'RandomForest 300 árboles (sklearn 1.4)', 'features': 'Embalses %, Demanda GWh, Aportes hídricos, rolling mean 7d'},
+    'Solar':            {'icono': '☀️', 'color': '#f1c40f', 'modelo_real': 'LightGBM 4.6.0 + NASA POWER CERES satélite', 'features': 'Irradiancia NASA POWER (Costa Caribe, La Guajira), lags 7/14d'},
+    'APORTES_HIDRICOS': {'icono': '🌊', 'color': '#3498db', 'modelo_real': 'LightGBM 4.6.0 + NASA POWER precipitación', 'features': 'Precipitación NASA POWER 9 cuencas, embalses, lags 7d'},
+    'Eólica':           {'icono': '💨', 'color': '#27ae60', 'modelo_real': 'LightGBM 4.6.0 + IDEAM velocidad viento', 'features': 'Vel. viento IDEAM La Guajira, lags 7/14d, calendario'},
+    'CU_DIARIO':        {'icono': '🏷️', 'color': '#8e44ad', 'modelo_real': 'Serie histórica + regresores de precio', 'features': 'EMBALSES_PCT, PRECIO_BOLSA, DEMANDA'},
+    'PERDIDAS_TOTALES': {'icono': '📉', 'color': '#7f8c8d', 'modelo_real': 'Prophet 1.1.5 + SARIMA', 'features': 'Serie histórica 2020-2026'},
 }
 
 # Colores para métricas
@@ -77,6 +100,7 @@ COLORES_METRICAS = {
     'DEMANDA': '#e74c3c',       'GENE_TOTAL': '#2ecc71',    'PRECIO_BOLSA': '#f39c12',
     'PRECIO_ESCASEZ': '#e67e22', 'APORTES_HIDRICOS': '#3498db', 'EMBALSES': '#1abc9c',
     'EMBALSES_PCT': '#16a085',   'PERDIDAS': '#95a5a6',
+    'CU_DIARIO': '#8e44ad',      'PERDIDAS_TOTALES': '#7f8c8d',
     'Hidráulica': '#2980b9',     'Térmica': '#e74c3c',
     'Eólica': '#27ae60',         'Solar': '#f1c40f',         'Biomasa': '#8e44ad',
 }
@@ -133,7 +157,9 @@ def cargar_reales_metrica(fuente, fecha_desde, fecha_hasta):
                 cfg['tipo_catalogo'], fecha_desde, fecha_hasta
             )
         else:
-            metrica = cfg['metrica']
+            metrica = cfg.get('metrica')
+            if not metrica:
+                return pd.DataFrame()
             agg_fn = cfg.get('agg', 'SUM')
             entidad = cfg.get('entidad')
             prefer_sistema = cfg.get('prefer_sistema', False)
@@ -170,142 +196,138 @@ def cargar_quality_history():
 # LAYOUT
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPERS DE COMPONENTES UI
+# ══════════════════════════════════════════════════════════════════════════════
+
+_BADGE_TO_KPI_COLOR = {
+    'success': 'green', 'info': 'cyan', 'warning': 'orange',
+    'danger': 'red', 'secondary': 'blue', 'primary': 'blue',
+}
+
 def layout():
-    """Layout dinámico — se ejecuta cada vez que se accede a la página."""
-    
+    """Layout dinámico — panel izquierdo de métricas + panel derecho de detalle."""
     return html.Div([
-        crear_navbar_horizontal(),
-        
-        # Container principal
-        dbc.Container([
-            # Header
-            crear_page_header(
-                titulo="Seguimiento de Predicciones ML",
-                icono="fas fa-crosshairs",
-                breadcrumb="Inicio / Seguimiento Predicciones",
-                fecha=datetime.now().strftime("%d/%m/%Y %H:%M"),
-            ),
-            crear_boton_regresar(),
-            
-            # ── SECCIÓN 1: RESUMEN EJECUTIVO (KPIs globales) ──
-            html.Div(id='seccion-resumen-ejecutivo'),
-            
-            # ── SECCIÓN 2: TABLA MAESTRA DE MÉTRICAS ──
-            html.H4([
-                html.I(className="fas fa-table me-2"),
-                "Inventario de Predicciones Activas"
-            ], className="mt-4 mb-3", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            dcc.Loading(
-                html.Div(id='tabla-resumen-predicciones'),
-                type="circle"
-            ),
-            
-            # ── SECCIÓN 3: SELECTOR DE MÉTRICA PARA ANÁLISIS DETALLADO ──
-            html.Hr(className="my-4"),
-            html.H4([
-                html.I(className="fas fa-search-plus me-2"),
-                "Análisis Detallado por Métrica"
-            ], className="mb-3", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            
-            crear_filter_bar(
-                html.Div([
-                    html.Label("MÉTRICA:", style={'fontSize': '0.7rem', 'fontWeight': '600', 'marginBottom': '2px'}),
-                    dcc.Dropdown(
-                        id='dd-metrica-seguimiento',
-                        options=[],  # Se llena en callback
-                        placeholder="Seleccionar métrica...",
-                        style={'width': '280px', 'fontSize': '0.85rem'}
+        crear_page_header(
+            titulo="Seguimiento de Predicciones ML",
+            icono="fas fa-crosshairs",
+            breadcrumb="Inicio / Seguimiento Predicciones",
+            fecha=datetime.now().strftime("%d/%m/%Y %H:%M"),
+        ),
+
+        # KPIs ejecutivos globales
+        dcc.Loading(html.Div(id='seccion-resumen-ejecutivo'), type='circle'),
+
+        # ── Panel principal: lista izquierda + detalle derecha ──
+        dbc.Row([
+            # ── COLUMNA IZQ — Filtros + lista de métricas ──
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.Div([
+                            html.I(className='fas fa-filter me-2'),
+                            html.Span("Parámetros de análisis",
+                                      className='fw-bold small'),
+                        ], className='mb-3'),
+                        html.Label("PERIODO DE COMPARACIÓN",
+                                   className='text-muted fw-semibold mb-1',
+                                   style={'fontSize': '0.68rem',
+                                          'letterSpacing': '0.05em'}),
+                        dcc.Dropdown(
+                            id='dd-periodo-seguimiento',
+                            options=[
+                                {'label': 'Últimos 7 días',   'value': 7},
+                                {'label': 'Últimos 15 días',  'value': 15},
+                                {'label': 'Últimos 30 días',  'value': 30},
+                                {'label': 'Últimos 60 días',  'value': 60},
+                                {'label': 'Todo el horizonte', 'value': 0},
+                            ],
+                            value=30,
+                            clearable=False,
+                            className='mb-3',
+                            style={'fontSize': '0.85rem'},
+                        ),
+                        html.Label("HORIZONTE DE PREDICCIÓN",
+                                   className='text-muted fw-semibold mb-1',
+                                   style={'fontSize': '0.68rem',
+                                          'letterSpacing': '0.05em'}),
+                        dcc.RadioItems(
+                            id='horizonte-selector',
+                            options=[
+                                {'label': '30 días',      'value': 30},
+                                {'label': '90 días',      'value': 90},
+                                {'label': '365 días ⚗️', 'value': 365},
+                            ],
+                            value=90,
+                            inline=True,
+                            style={'fontSize': '0.82rem'},
+                            inputStyle={'marginRight': '4px'},
+                            labelStyle={'marginRight': '12px'},
+                        ),
+                        html.Small(
+                            "⚠️ 365d = EXPERIMENTAL",
+                            id='horizonte-aviso',
+                            style={'color': '#e67e22', 'display': 'none',
+                                   'fontWeight': '600'},
+                        ),
+                    ], style={'backgroundColor': '#f8f9fa',
+                               'borderBottom': '1px solid #e9ecef'}),
+                    dbc.CardBody(
+                        dcc.Loading(
+                            html.Div(id='lista-metricas-izq'),
+                            type='dot',
+                        ),
+                        style={
+                            'overflowY': 'auto',
+                            'maxHeight': 'calc(100vh - 380px)',
+                            'padding': '0.5rem',
+                            'minHeight': '300px',
+                        },
                     ),
-                ], style={'display': 'inline-block', 'marginRight': '20px'}),
-                html.Div([
-                    html.Label("PERIODO:", style={'fontSize': '0.7rem', 'fontWeight': '600', 'marginBottom': '2px'}),
-                    dcc.Dropdown(
-                        id='dd-periodo-seguimiento',
-                        options=[
-                            {'label': 'Últimos 7 días', 'value': 7},
-                            {'label': 'Últimos 15 días', 'value': 15},
-                            {'label': 'Últimos 30 días', 'value': 30},
-                            {'label': 'Últimos 60 días', 'value': 60},
-                            {'label': 'Todo el horizonte', 'value': 0},
-                        ],
-                        value=30,
-                        clearable=False,
-                        style={'width': '200px', 'fontSize': '0.85rem'}
-                    ),
-                ], style={'display': 'inline-block', 'marginRight': '20px'}),
-                html.Div([
-                    html.Label("HORIZONTE:", style={'fontSize': '0.7rem', 'fontWeight': '600', 'marginBottom': '2px'}),
-                    dcc.RadioItems(
-                        id='horizonte-selector',
-                        options=[
-                            {'label': '30 días', 'value': 30},
-                            {'label': '90 días', 'value': 90},
-                            {'label': '📅 365 días', 'value': 365},
-                        ],
-                        value=90,
-                        inline=True,
-                        style={'fontSize': '0.85rem'},
-                        inputStyle={'marginRight': '4px'},
-                        labelStyle={'marginRight': '14px'},
-                    ),
-                    html.Small(
-                        "⚠️ >90 días = EXPERIMENTAL",
-                        id='horizonte-aviso',
-                        style={'color': '#888', 'display': 'none'},
-                    ),
-                ], style={'display': 'inline-block', 'marginRight': '20px', 'verticalAlign': 'top', 'paddingTop': '2px'}),
-            ),
-            
-            # ── SECCIÓN 4: KPI CARDS DE LA MÉTRICA SELECCIONADA ──
-            dcc.Loading(
-                html.Div(id='kpis-metrica-detalle'),
-                type="circle"
-            ),
-            
-            # ── SECCIÓN 5: GRÁFICA PREDICHO VS REAL ──
-            dcc.Loading(
-                html.Div(id='grafica-predicho-vs-real'),
-                type="circle"
-            ),
-            
-            # ── SECCIÓN 6: TABLA DÍA A DÍA ──
-            dcc.Loading(
-                html.Div(id='tabla-dia-a-dia'),
-                type="circle"
-            ),
-            
-            # ── SECCIÓN 7: GRÁFICA DE ERROR DIARIO ──
-            dcc.Loading(
-                html.Div(id='grafica-error-diario'),
-                type="circle"
-            ),
-            
-            # ── SECCIÓN 8: HISTORIAL DE CALIDAD EX-POST ──
-            html.Hr(className="my-4"),
-            html.H4([
-                html.I(className="fas fa-history me-2"),
-                "Historial de Evaluaciones Ex-Post"
-            ], className="mb-3", style={'color': '#2c3e50', 'fontWeight': '600'}),
-            dcc.Loading(
-                html.Div(id='tabla-quality-history'),
-                type="circle"
-            ),
-            
-            # Footer
-            html.Div(
-                html.Small(
-                    "Datos procesados por el sistema predictivo ML del Portal Energético MME. "
-                    "Predicciones actualizadas semanalmente (dom 2:00 AM).",
-                    className="text-muted"
+                ], className='shadow-sm',
+                   style={'position': 'sticky', 'top': '52px'}),
+            ], md=4),
+
+            # ── COLUMNA DER — Detalle de la métrica seleccionada ──
+            dbc.Col([
+                html.Div(
+                    id='panel-detalle-derecha',
+                    children=html.Div([
+                        html.I(className='fas fa-hand-point-left fa-2x text-muted mb-3 d-block'),
+                        html.P(
+                            "Selecciona una métrica a la izquierda "
+                            "para ver el análisis detallado.",
+                            className='text-muted fst-italic',
+                        ),
+                    ], className='text-center mt-5 pt-4'),
                 ),
-                className="text-center my-4"
-            ),
-            
-        ], fluid=True, className="px-4 pb-5"),
-        
-        # Store para datos intermedios
+            ], md=8),
+        ], className='g-3 mt-2'),
+
+        # ── Historial de evaluaciones Ex-Post ──
+        html.Hr(className='mt-4 mb-3'),
+        html.Div([
+            html.I(className="fas fa-history me-2", style={'color': '#3498db'}),
+            html.Span("Historial de Evaluaciones Ex-Post",
+                      style={'fontWeight': '700', 'fontSize': '1.05rem',
+                             'color': '#2c3e50'}),
+        ], className="mb-3 pb-2", style={'borderBottom': '2px solid #e9ecef'}),
+        dcc.Loading(html.Div(id='tabla-quality-history'), type="circle"),
+
+        html.Div(
+            html.Small([
+                html.I(className="fas fa-brain me-1 text-muted"),
+                "Predicciones actualizadas semanalmente (domingos 2:00 AM). "
+                "Modelos: Prophet, LightGBM, RandomForest, SARIMA.",
+            ], className="text-muted fst-italic"),
+            className="text-center my-4"
+        ),
+
+        # Stores
         dcc.Store(id='store-resumen-predicciones'),
-    ])
+        dcc.Store(id='store-metrica-seleccionada'),
+    ], className='container-fluid px-4 py-3')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -321,22 +343,21 @@ def toggle_horizonte_aviso(horizonte):
         return {'color': '#e67e22', 'fontWeight': '600', 'display': 'block'}
     return {'display': 'none'}
 
-# ── CALLBACK 1: Cargar resumen ejecutivo + tabla maestra al entrar ──
+# ── CALLBACK 1: Cargar lista de métricas y KPIs ejecutivos al entrar ──
 @callback(
     [Output('seccion-resumen-ejecutivo', 'children'),
-     Output('tabla-resumen-predicciones', 'children'),
-     Output('dd-metrica-seguimiento', 'options'),
+     Output('lista-metricas-izq', 'children'),
      Output('store-resumen-predicciones', 'data')],
-    Input('dd-metrica-seguimiento', 'id'),  # Trigger al cargar la página
+    Input('dd-periodo-seguimiento', 'id'),  # Trigger al cargar la página
 )
 def cargar_resumen_inicial(_):
-    """Carga resumen ejecutivo y tabla maestra al abrir la página."""
+    """Carga KPIs ejecutivos y lista compacta de métricas al abrir la página."""
     px, go = get_plotly_modules()
     
     df = cargar_resumen_predicciones()
     if df.empty:
         alerta = dbc.Alert("⚠️ No hay predicciones en la base de datos.", color="warning")
-        return alerta, alerta, [], None
+        return alerta, alerta, None
     
     # ── KPIs EJECUTIVOS ──
     total_metricas = df['fuente'].nunique()
@@ -348,162 +369,158 @@ def cargar_resumen_inicial(_):
     # Métrica mejor y peor
     best_row = df.loc[df['mape_entrenamiento'].idxmin()]
     worst_row = df.loc[df['mape_entrenamiento'].idxmax()]
-    
-    resumen_kpis = dbc.Row([
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-layer-group", style={'fontSize': '1.5rem', 'color': '#3498db'}),
-                html.Div([
-                    html.Span("Métricas Activas", style={'fontSize': '0.7rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{total_metricas}", style={'fontSize': '2rem', 'fontWeight': '700', 'color': '#2c3e50'}),
-                ], className="ms-3")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm h-100"), md=2),
-        
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-brain", style={'fontSize': '1.5rem', 'color': '#9b59b6'}),
-                html.Div([
-                    html.Span("Modelos ML", style={'fontSize': '0.7rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{total_modelos}", style={'fontSize': '2rem', 'fontWeight': '700', 'color': '#2c3e50'}),
-                ], className="ms-3")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm h-100"), md=2),
-        
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-calendar-check", style={'fontSize': '1.5rem', 'color': '#2ecc71'}),
-                html.Div([
-                    html.Span("Predicciones Totales", style={'fontSize': '0.7rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{total_predicciones:,}", style={'fontSize': '2rem', 'fontWeight': '700', 'color': '#2c3e50'}),
-                ], className="ms-3")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm h-100"), md=2),
-        
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-bullseye", style={'fontSize': '1.5rem', 'color': '#e74c3c' if calidad_color == 'danger' else '#2ecc71'}),
-                html.Div([
-                    html.Span("MAPE Promedio", style={'fontSize': '0.7rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{mape_promedio*100:.1f}%", style={'fontSize': '2rem', 'fontWeight': '700', 'color': '#2c3e50'}),
-                    dbc.Badge(calidad_label, color=calidad_color, className="ms-1", style={'fontSize': '0.6rem'}),
-                ], className="ms-3")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm h-100"), md=2),
-        
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-trophy", style={'fontSize': '1.5rem', 'color': '#f1c40f'}),
-                html.Div([
-                    html.Span("Mejor Métrica", style={'fontSize': '0.7rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{best_row['fuente']}", style={'fontSize': '1rem', 'fontWeight': '700', 'color': '#27ae60'}),
-                    html.Small(f" MAPE {float(best_row['mape_entrenamiento'])*100:.1f}%", style={'color': '#888'}),
-                ], className="ms-3")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm h-100"), md=2),
-        
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-exclamation-triangle", style={'fontSize': '1.5rem', 'color': '#e74c3c'}),
-                html.Div([
-                    html.Span("Mayor Error", style={'fontSize': '0.7rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{worst_row['fuente']}", style={'fontSize': '1rem', 'fontWeight': '700', 'color': '#e74c3c'}),
-                    html.Small(f" MAPE {float(worst_row['mape_entrenamiento'])*100:.1f}%", style={'color': '#888'}),
-                ], className="ms-3")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm h-100"), md=2),
-    ], className="mb-4 g-2")
-    
-    # ── TABLA MAESTRA ──
-    # Preparar datos para la tabla
-    tabla_data = []
-    for _, row in df.iterrows():
-        mape_val = float(row['mape_entrenamiento']) if pd.notna(row['mape_entrenamiento']) else None
-        calidad, color = clasificar_mape(mape_val)
-        cfg = FUENTES_MAPPING.get(row['fuente'], {})
-        tabla_data.append({
-            'Métrica': cfg.get('label', row['fuente']),
-            'Código': row['fuente'],
-            'Modelo': row['modelo'],
-            'Horizonte': f"{row['dias_predichos']} días",
-            'Desde': str(row['fecha_inicio']),
-            'Hasta': str(row['fecha_fin']),
-            'MAPE (%)': f"{mape_val*100:.2f}%" if mape_val else "N/A",
-            'RMSE': f"{float(row['rmse_entrenamiento']):.2f}" if pd.notna(row['rmse_entrenamiento']) else "N/A",
-            'Confianza': f"{float(row['confianza'])*100:.0f}%" if pd.notna(row['confianza']) else "95%",
-            'Calidad': calidad,
-            'Unidad': cfg.get('unidad', ''),
-            'Últ. Actualización': str(row['ultima_generacion'])[:16] if pd.notna(row['ultima_generacion']) else "",
-        })
-    
-    df_tabla = pd.DataFrame(tabla_data)
-    
-    tabla = dash_table.DataTable(
-        data=df_tabla.to_dict('records'),
-        columns=[{'name': c, 'id': c} for c in df_tabla.columns],
-        style_table={'overflowX': 'auto'},
-        style_header={
-            'backgroundColor': '#2c3e50', 'color': 'white', 'fontWeight': '600',
-            'fontSize': '0.75rem', 'textAlign': 'center', 'padding': '8px',
+    best_mape = float(best_row['mape_entrenamiento'])
+    worst_mape = float(worst_row['mape_entrenamiento'])
+
+    resumen_kpis = crear_kpi_row([
+        {
+            'titulo': 'Métricas Activas',
+            'valor': str(total_metricas),
+            'unidad': '',
+            'icono': 'fas fa-database',
+            'color': 'blue',
         },
-        style_cell={
-            'fontSize': '0.8rem', 'textAlign': 'center', 'padding': '6px 10px',
-            'whiteSpace': 'normal', 'minWidth': '80px',
+        {
+            'titulo': 'Modelos ML',
+            'valor': str(total_modelos),
+            'unidad': '',
+            'icono': 'fas fa-brain',
+            'color': 'cyan',
         },
-        style_data_conditional=[
-            {'if': {'filter_query': '{Calidad} = "Excelente"', 'column_id': 'Calidad'},
-             'backgroundColor': '#d4edda', 'color': '#155724', 'fontWeight': '600'},
-            {'if': {'filter_query': '{Calidad} = "Bueno"', 'column_id': 'Calidad'},
-             'backgroundColor': '#d1ecf1', 'color': '#0c5460', 'fontWeight': '600'},
-            {'if': {'filter_query': '{Calidad} = "Aceptable"', 'column_id': 'Calidad'},
-             'backgroundColor': '#fff3cd', 'color': '#856404', 'fontWeight': '600'},
-            {'if': {'filter_query': '{Calidad} = "Deficiente"', 'column_id': 'Calidad'},
-             'backgroundColor': '#f8d7da', 'color': '#721c24', 'fontWeight': '600'},
-            # Highlight MAPE column
-            {'if': {'column_id': 'MAPE (%)'},
-             'fontWeight': '700'},
-        ],
-        sort_action='native',
-        filter_action='native',
-        page_size=15,
-        style_as_list_view=True,
+        {
+            'titulo': 'Predicciones',
+            'valor': f'{total_predicciones:,}',
+            'unidad': '',
+            'icono': 'fas fa-chart-bar',
+            'color': 'green',
+        },
+        {
+            'titulo': 'MAPE Promedio',
+            'valor': f'{mape_promedio*100:.1f}',
+            'unidad': '%',
+            'icono': 'fas fa-bullseye',
+            'color': 'orange',
+            'subtexto': calidad_label,
+        },
+        {
+            'titulo': 'Mejor Métrica',
+            'valor': best_row['fuente'],
+            'unidad': '',
+            'icono': 'fas fa-trophy',
+            'color': 'green',
+            'subtexto': f'MAPE {best_mape*100:.1f}%',
+        },
+        {
+            'titulo': 'Mayor Error',
+            'valor': worst_row['fuente'],
+            'unidad': '',
+            'icono': 'fas fa-triangle-exclamation',
+            'color': 'red',
+            'subtexto': f'MAPE {worst_mape*100:.1f}%',
+        },
+    ])
+
+    # ── LISTA COMPACTA PARA PANEL IZQUIERDO ──
+    # Deduplicar por fuente: preferir el horizonte 90d; si no existe, el menor MAPE
+    df_izq = (
+        df.sort_values('mape_entrenamiento', na_position='last')
+          .drop_duplicates(subset=['fuente'], keep='first')
+          .reset_index(drop=True)
     )
-    
-    # ── DROPDOWN OPTIONS ──
-    options = [
-        {'label': f"{FUENTES_MAPPING.get(row['fuente'], {}).get('label', row['fuente'])} ({row['modelo']})",
-         'value': row['fuente']}
-        for _, row in df.iterrows()
-    ]
-    
-    return resumen_kpis, tabla, options, df.to_dict('records')
+    tarjetas_izq = []
+    for _, row in df_izq.iterrows():
+        fuente = row['fuente']
+        cfg_izq = FUENTES_MAPPING.get(fuente, {})
+        meta_izq = FUENTES_META.get(fuente, {})
+        mape_v = float(row['mape_entrenamiento']) if pd.notna(row['mape_entrenamiento']) else None
+        calidad_izq, badge_izq = clasificar_mape(mape_v)
+        color_borde_izq = meta_izq.get('color', '#3498db')
+        icono_izq = meta_izq.get('icono', '📊')
+        mape_txt_izq = f"{mape_v*100:.1f}%" if mape_v else "N/A"
+        mape_color_izq = ('#e74c3c' if (mape_v or 0) > 0.1
+                          else '#f39c12' if (mape_v or 0) > 0.05
+                          else '#27ae60')
+        tarjetas_izq.append(
+            html.Div(
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Span(f"{icono_izq} ", style={'fontSize': '1rem'}),
+                            html.Span(
+                                cfg_izq.get('label', fuente),
+                                className='fw-bold',
+                                style={'fontSize': '0.88rem', 'color': '#2c3e50'},
+                            ),
+                            dbc.Badge(
+                                calidad_izq, color=badge_izq,
+                                style={'fontSize': '0.58rem', 'float': 'right'},
+                            ),
+                        ], className='d-flex align-items-center justify-content-between mb-1'),
+                        html.Div([
+                            html.Span("MAPE ", className='text-muted',
+                                      style={'fontSize': '0.7rem'}),
+                            html.Span(mape_txt_izq, className='fw-bold',
+                                      style={'fontSize': '0.75rem',
+                                             'color': mape_color_izq}),
+                            html.Span(
+                                f"  ·  {row['dias_predichos']}d"
+                                f" · {cfg_izq.get('unidad', '')}",
+                                className='text-muted',
+                                style={'fontSize': '0.68rem'},
+                            ),
+                        ]),
+                    ], style={'padding': '0.5rem 0.75rem'}),
+                ], className='shadow-sm', style={
+                    'borderLeft': f"4px solid {color_borde_izq}",
+                    'borderRadius': '6px',
+                }),
+                id={'type': 'card-metrica', 'fuente': fuente},
+                n_clicks=0,
+                className='mb-2',
+                style={'cursor': 'pointer'},
+            )
+        )
+    lista_izq = (html.Div(tarjetas_izq) if tarjetas_izq
+                 else dbc.Alert("Sin métricas disponibles.", color="warning"))
+
+    return resumen_kpis, lista_izq, df.to_dict('records')
 
 
-# ── CALLBACK 2: Análisis detallado de métrica seleccionada ──
+# ── CALLBACK: Seleccionar métrica desde tarjeta izquierda ──
 @callback(
-    [Output('kpis-metrica-detalle', 'children'),
-     Output('grafica-predicho-vs-real', 'children'),
-     Output('tabla-dia-a-dia', 'children'),
-     Output('grafica-error-diario', 'children')],
-    Input('btn-analizar-metrica', 'n_clicks'),
-    [State('dd-metrica-seguimiento', 'value'),
-     State('dd-periodo-seguimiento', 'value'),
-     State('horizonte-selector', 'value')],
+    Output('store-metrica-seleccionada', 'data'),
+    Input({'type': 'card-metrica', 'fuente': ALL}, 'n_clicks'),
     prevent_initial_call=True,
 )
-def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
+def seleccionar_metrica(n_clicks_list):
+    if not any(n or 0 for n in n_clicks_list):
+        raise PreventUpdate
+    triggered = ctx.triggered_id
+    if triggered and isinstance(triggered, dict):
+        return triggered.get('fuente')
+    raise PreventUpdate
+
+
+# ── CALLBACK 2: Mostrar detalle cuando se selecciona métrica o cambian filtros ──
+@callback(
+    Output('panel-detalle-derecha', 'children'),
+    Input('store-metrica-seleccionada', 'data'),
+    Input('dd-periodo-seguimiento', 'value'),
+    Input('horizonte-selector', 'value'),
+    prevent_initial_call=True,
+)
+def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
     """Genera análisis completo: predicho vs real, error diario, tabla día a día."""
     px, go = get_plotly_modules()
-    
+
     if not fuente:
-        alerta = dbc.Alert("Selecciona una métrica del dropdown.", color="info")
-        return alerta, "", "", ""
-    
+        raise PreventUpdate
+
     cfg = FUENTES_MAPPING.get(fuente, {})
     label = cfg.get('label', fuente)
     unidad = cfg.get('unidad', '')
     color_metrica = COLORES_METRICAS.get(fuente, '#3498db')
-    
+
     # 1. Cargar predicciones (filtrar por horizonte seleccionado)
     df_pred = cargar_predicciones_metrica(fuente)
     if not df_pred.empty and horizonte_dias and 'horizonte_dias' in df_pred.columns:
@@ -512,7 +529,7 @@ def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
             df_pred = df_pred[mask]
     if df_pred.empty:
         alerta = dbc.Alert(f"No hay predicciones para {label}.", color="warning")
-        return alerta, "", "", ""
+        return html.Div(alerta)
     
     modelo = df_pred['modelo'].iloc[0]
     mape_train = df_pred['mape_train'].iloc[0]
@@ -576,86 +593,51 @@ def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
         calidad_ep, color_ep = "Sin datos reales aún", "secondary"
         dentro_ic = None
     
-    kpis = dbc.Row([
-        # Modelo
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-robot", style={'fontSize': '1.3rem', 'color': '#9b59b6'}),
-                html.Div([
-                    html.Span("Modelo", style={'fontSize': '0.65rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(modelo, style={'fontSize': '0.85rem', 'fontWeight': '700'}),
-                ], className="ms-2")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm"), md=2),
-        
-        # MAPE Entrenamiento
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-graduation-cap", style={'fontSize': '1.3rem', 'color': '#3498db'}),
-                html.Div([
-                    html.Span("MAPE Train", style={'fontSize': '0.65rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{float(mape_train)*100:.2f}%" if mape_train else "N/A",
-                             style={'fontSize': '1.4rem', 'fontWeight': '700'}),
-                ], className="ms-2")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm"), md=2),
-        
-        # MAPE Ex-Post
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-check-double", style={'fontSize': '1.3rem', 
-                        'color': '#27ae60' if color_ep == 'success' else '#e74c3c'}),
-                html.Div([
-                    html.Span("MAPE Ex-Post", style={'fontSize': '0.65rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{mape_expost*100:.2f}%" if mape_expost is not None else "—",
-                             style={'fontSize': '1.4rem', 'fontWeight': '700'}),
-                    dbc.Badge(calidad_ep, color=color_ep, className="ms-1", style={'fontSize': '0.55rem'}),
-                ], className="ms-2")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm"), md=2),
-        
-        # RMSE Ex-Post
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-ruler", style={'fontSize': '1.3rem', 'color': '#e67e22'}),
-                html.Div([
-                    html.Span("RMSE Ex-Post", style={'fontSize': '0.65rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(f"{rmse_expost:.2f} {unidad}" if rmse_expost is not None else "—",
-                             style={'fontSize': '1.2rem', 'fontWeight': '700'}),
-                ], className="ms-2")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm"), md=2),
-        
-        # Bias (sesgo)
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-balance-scale", style={'fontSize': '1.3rem', 'color': '#1abc9c'}),
-                html.Div([
-                    html.Span("Sesgo (Bias)", style={'fontSize': '0.65rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(
-                        f"{'+'if bias and bias > 0 else ''}{bias:.2f}" if bias is not None else "—",
-                        style={'fontSize': '1.2rem', 'fontWeight': '700',
-                               'color': '#e74c3c' if bias and abs(bias) > 5 else '#27ae60'}
-                    ),
-                ], className="ms-2")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm"), md=2),
-        
-        # Dentro del IC
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div([
-                html.I(className="fas fa-shield-alt", style={'fontSize': '1.3rem', 'color': '#2980b9'}),
-                html.Div([
-                    html.Span("Dentro IC 95%", style={'fontSize': '0.65rem', 'color': '#888', 'display': 'block'}),
-                    html.Span(
-                        f"{dentro_ic:.0f}%" if dentro_ic is not None else "—",
-                        style={'fontSize': '1.4rem', 'fontWeight': '700',
-                               'color': '#27ae60' if dentro_ic and dentro_ic >= 90 else '#e74c3c'}
-                    ),
-                ], className="ms-2")
-            ], style={'display': 'flex', 'alignItems': 'center'})
-        ]), className="shadow-sm"), md=2),
-    ], className="mb-3 g-2")
+    kpis = crear_kpi_row([
+            {
+                'titulo': 'Modelo ML',
+                'valor': modelo,
+                'unidad': '',
+                'icono': 'fas fa-robot',
+                'color': 'purple',
+            },
+            {
+                'titulo': 'MAPE Entren.',
+                'valor': f"{float(mape_train)*100:.2f}" if mape_train else "N/A",
+                'unidad': '%',
+                'icono': 'fas fa-graduation-cap',
+                'color': 'blue',
+            },
+            {
+                'titulo': 'MAPE Ex-Post',
+                'valor': f"{mape_expost*100:.2f}" if mape_expost is not None else "—",
+                'unidad': '%' if mape_expost is not None else '',
+                'icono': 'fas fa-check-double',
+                'color': _BADGE_TO_KPI_COLOR.get(color_ep, 'blue'),
+                'subtexto': calidad_ep,
+            },
+            {
+                'titulo': 'RMSE Ex-Post',
+                'valor': f"{rmse_expost:.2f}" if rmse_expost is not None else "—",
+                'unidad': unidad if rmse_expost is not None else '',
+                'icono': 'fas fa-ruler',
+                'color': 'orange',
+            },
+            {
+                'titulo': 'Sesgo (Bias)',
+                'valor': (f"{'+'if bias > 0 else ''}{bias:.2f}") if bias is not None else "—",
+                'unidad': '',
+                'icono': 'fas fa-balance-scale',
+                'color': 'red' if bias is not None and abs(bias) > 5 else 'green',
+            },
+            {
+                'titulo': 'Dentro IC 95%',
+                'valor': f"{dentro_ic:.0f}" if dentro_ic is not None else "—",
+                'unidad': '%' if dentro_ic is not None else '',
+                'icono': 'fas fa-shield-alt',
+                'color': 'green' if dentro_ic is not None and dentro_ic >= 90 else 'red',
+            },
+        ])
     
     # ═══ GRÁFICA PREDICHO VS REAL ═══
     fig = go.Figure()
@@ -717,9 +699,10 @@ def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
         margin=dict(l=60, r=30, t=60, b=40),
     )
     
-    grafica_pred_vs_real = dbc.Card(
-        dbc.CardBody(dcc.Graph(figure=fig, config={'displayModeBar': True})),
-        className="shadow-sm mb-3"
+    grafica_pred_vs_real = crear_chart_card_custom(
+        titulo=f"Predicción vs Realidad — {label}",
+        subtitulo=f"Modelo: {modelo} · Horizonte {horizonte_dias} días",
+        children=dcc.Graph(figure=fig, config={'displayModeBar': True}),
     )
     
     # ═══ TABLA DÍA A DÍA ═══
@@ -754,41 +737,35 @@ def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
     
     df_tabla_dia = pd.DataFrame(tabla_records)
     
-    tabla_dia = dbc.Card(
-        dbc.CardBody([
-            html.H6([
-                html.I(className="fas fa-list-ol me-2"),
-                f"Detalle día a día — {label}",
-                dbc.Badge(f"{dias_con_real}/{dias_total} días con dato real", color="info", className="ms-2"),
-            ], className="mb-3"),
-            dash_table.DataTable(
-                data=df_tabla_dia.to_dict('records'),
-                columns=[{'name': c, 'id': c} for c in df_tabla_dia.columns],
-                style_table={'overflowX': 'auto', 'maxHeight': '400px', 'overflowY': 'auto'},
-                style_header={
-                    'backgroundColor': '#34495e', 'color': 'white', 'fontWeight': '600',
-                    'fontSize': '0.7rem', 'textAlign': 'center', 'padding': '6px',
-                },
-                style_cell={
-                    'fontSize': '0.75rem', 'textAlign': 'center', 'padding': '4px 8px',
-                    'whiteSpace': 'nowrap',
-                },
-                style_data_conditional=[
-                    {'if': {'filter_query': '{Dentro IC} = "NO"', 'column_id': 'Dentro IC'},
-                     'backgroundColor': '#f8d7da', 'color': '#721c24', 'fontWeight': '700'},
-                    {'if': {'filter_query': '{Dentro IC} = "SI"', 'column_id': 'Dentro IC'},
-                     'backgroundColor': '#d4edda', 'color': '#155724', 'fontWeight': '700'},
-                    {'if': {'filter_query': '{Estado} contains "Futuro"'},
-                     'backgroundColor': '#f0f0f0', 'fontStyle': 'italic'},
-                ],
-                sort_action='native',
-                filter_action='native',
-                page_size=20,
-                export_format='csv',
-                export_headers='display',
-            ),
-        ]),
-        className="shadow-sm mb-3"
+    tabla_dia = crear_chart_card_custom(
+        titulo=f"Detalle día a día — {label}",
+        subtitulo=f"{dias_con_real} de {dias_total} días con dato real disponible",
+        children=dash_table.DataTable(
+            data=df_tabla_dia.to_dict('records'),  # type: ignore[arg-type]
+            columns=[{'name': c, 'id': c} for c in df_tabla_dia.columns],
+            style_table={'overflowX': 'auto', 'maxHeight': '400px', 'overflowY': 'auto'},
+            style_header={
+                'backgroundColor': '#34495e', 'color': 'white', 'fontWeight': '600',
+                'fontSize': '0.7rem', 'textAlign': 'center', 'padding': '6px',
+            },
+            style_cell={
+                'fontSize': '0.75rem', 'textAlign': 'center', 'padding': '4px 8px',
+                'whiteSpace': 'nowrap',
+            },
+            style_data_conditional=[  # type: ignore[arg-type]
+                {'if': {'filter_query': '{Dentro IC} = "NO"', 'column_id': 'Dentro IC'},
+                 'backgroundColor': '#f8d7da', 'color': '#721c24', 'fontWeight': '700'},
+                {'if': {'filter_query': '{Dentro IC} = "SI"', 'column_id': 'Dentro IC'},
+                 'backgroundColor': '#d4edda', 'color': '#155724', 'fontWeight': '700'},
+                {'if': {'filter_query': '{Estado} contains "Futuro"'},
+                 'backgroundColor': '#f0f0f0', 'fontStyle': 'italic'},
+            ],
+            sort_action='native',
+            filter_action='native',
+            page_size=20,
+            export_format='csv',
+            export_headers='display',
+        ),
     )
     
     # ═══ GRÁFICA ERROR DIARIO ═══
@@ -827,9 +804,10 @@ def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
             showlegend=False,
         )
         
-        grafica_err = dbc.Card(
-            dbc.CardBody(dcc.Graph(figure=fig_err, config={'displayModeBar': True})),
-            className="shadow-sm mb-3"
+        grafica_err = crear_chart_card_custom(
+            titulo=f'Error Porcentual Diario — {label}',
+            subtitulo='Verde ≤5% Excelente · Naranja ≤15% Aceptable · Rojo >15% Deficiente',
+            children=dcc.Graph(figure=fig_err, config={'displayModeBar': True}),
         )
     else:
         grafica_err = dbc.Alert(
@@ -838,13 +816,13 @@ def analizar_metrica_detallada(n_clicks, fuente, periodo_dias, horizonte_dias):
             color="info", className="mt-2"
         )
     
-    return kpis, grafica_pred_vs_real, tabla_dia, grafica_err
+    return html.Div([kpis, grafica_pred_vs_real, tabla_dia, grafica_err])
 
 
 # ── CALLBACK 3: Historial de calidad ex-post ──
 @callback(
     Output('tabla-quality-history', 'children'),
-    Input('dd-metrica-seguimiento', 'id'),  # Trigger al cargar
+    Input('tabla-quality-history', 'id'),  # Trigger al cargar
 )
 def cargar_historial_calidad(_):
     """Carga tabla con historial de evaluaciones de calidad."""
@@ -891,33 +869,54 @@ def cargar_historial_calidad(_):
     
     df_hist = pd.DataFrame(records)
     
-    return dash_table.DataTable(
-        data=df_hist.to_dict('records'),
-        columns=[{'name': c, 'id': c} for c in df_hist.columns],
-        style_table={'overflowX': 'auto'},
-        style_header={
-            'backgroundColor': '#2c3e50', 'color': 'white', 'fontWeight': '600',
-            'fontSize': '0.75rem', 'textAlign': 'center', 'padding': '8px',
-        },
-        style_cell={
-            'fontSize': '0.78rem', 'textAlign': 'center', 'padding': '5px 10px',
-            'whiteSpace': 'normal',
-        },
-        style_data_conditional=[
-            {'if': {'filter_query': '{Calidad} = "Excelente"', 'column_id': 'Calidad'},
-             'backgroundColor': '#d4edda', 'color': '#155724', 'fontWeight': '600'},
-            {'if': {'filter_query': '{Calidad} = "Bueno"', 'column_id': 'Calidad'},
-             'backgroundColor': '#d1ecf1', 'color': '#0c5460', 'fontWeight': '600'},
-            {'if': {'filter_query': '{Calidad} = "Aceptable"', 'column_id': 'Calidad'},
-             'backgroundColor': '#fff3cd', 'color': '#856404', 'fontWeight': '600'},
-            {'if': {'filter_query': '{Calidad} = "Deficiente"', 'column_id': 'Calidad'},
-             'backgroundColor': '#f8d7da', 'color': '#721c24', 'fontWeight': '600'},
-            {'if': {'filter_query': '{Drift} contains "⚠️"', 'column_id': 'Drift'},
-             'backgroundColor': '#f8d7da', 'color': '#721c24', 'fontWeight': '700'},
+    # Rediseño ex-post: AG Grid con filtrado, orden y cellStyle condicional
+    ag_theme = "ag-theme-alpine-dark"
+
+    return dag.AgGrid(
+        id="tabla-historial-expost",
+        rowData=df_hist.to_dict("records"),
+        columnDefs=[
+            {"field": "Métrica", "headerName": "MÉTRICA", "width": 130, "pinned": "left"},
+            {"field": "Modelo", "headerName": "MODELO", "width": 140},
+            {"field": "Evaluación", "headerName": "EVALUACIÓN", "width": 130},
+            {
+                "field": "MAPE Ex-Post", "headerName": "MAPE EX-POST", "width": 120,
+                "cellStyle": {
+                    "function": (
+                        "parseFloat(params.value) > 10 ? "
+                        "{'color': 'var(--bs-danger)', 'fontWeight': '700'} : "
+                        "{'color': 'var(--bs-success)', 'fontWeight': '700'}"
+                    )
+                },
+            },
+            {"field": "MAPE Train", "headerName": "MAPE TRAIN", "width": 110},
+            {
+                "field": "Drift", "headerName": "DRIFT", "width": 90,
+                "cellStyle": {
+                    "function": (
+                        "params.value && params.value.includes('⚠️') ? "
+                        "{'backgroundColor': 'rgba(255,193,7,0.15)', 'fontWeight': '700'} : {}"
+                    )
+                },
+            },
+            {"field": "Calidad", "headerName": "CALIDAD", "width": 100},
+            {"field": "Notas", "headerName": "NOTAS", "flex": 1, "wrapText": True, "autoHeight": True},
         ],
-        sort_action='native',
-        filter_action='native',
-        page_size=20,
-        export_format='csv',
-        export_headers='display',
+        defaultColDef={
+            "sortable": True,
+            "filter": True,
+            "resizable": True,
+            "cellStyle": {"fontSize": "11px"},
+            "headerClass": "ag-header-compact",
+        },
+        dashGridOptions={
+            "pagination": True,
+            "paginationPageSize": 15,
+            "rowHeight": 36,
+            "headerHeight": 32,
+            "animateRows": True,
+            "suppressMovableColumns": True,
+        },
+        style={"height": "450px"},
+        className=ag_theme,
     )

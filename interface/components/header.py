@@ -1,61 +1,75 @@
-from dash import html, dcc, clientside_callback, Input, Output
+from dash import html, dcc, clientside_callback, Input, Output, State
 import dash_bootstrap_components as dbc
 
+_GOVCO_GOLD = "#F5A623"
+_NAVY       = "#1e3a8a"
+_NAVY_DARK  = "#152e6b"
 
 def crear_header_restaurado():
     """
-    Encabezado global Portal Energético MME — BUG 3 fix.
-
-    Cambios:
-    - dbc.Navbar (en lugar de NavbarSimple) para control total del layout
-    - sticky="top" (en lugar de fixed) — no requiere paddingTop en el contenedor
-    - Altura compacta 42px
-    - Logo 28px
-    - NavbarToggler para móvil
+    Header con navegación, toggle de tema e iconos de alta calidad.
     """
-
     return html.Div([
         dcc.Location(id="url-navbar", refresh=False),
 
+        # ── Navbar principal ──────────────────────────────────────────────
         dbc.Navbar(
             dbc.Container(
                 [
-                    # ── Logo (izquierda, sin texto) ──
+                    # ── Toggler móvil ──────────────────────────────────────
+                    dbc.NavbarToggler(id="navbar-toggler", n_clicks=0),
+
+                    # ── Logo MME ─────────────────────────────────────────
                     dbc.NavbarBrand(
                         html.Img(
                             src="/assets/images/logo-minenergia.png",
-                            height="34px",
                             style={
-                                "verticalAlign": "middle",
-                                "filter": "brightness(1.15)",
+                                "height": "78px",
+                                "width": "auto",
+                                "display": "block",
+                                "filter": "drop-shadow(0 1px 4px rgba(0,0,0,0.5))",
                             },
                         ),
-                        href="https://portalenergetico.minenergia.gov.co/",
-                        target="_blank",
-                        title="Portal Energético MME",
-                        style={"padding": "0", "marginRight": "16px"},
+                        href="/",
+                        style={"padding": "4px 0", "marginLeft": "28px", "marginRight": "20px"},
                     ),
 
-                    # ── Toggler móvil ──
-                    dbc.NavbarToggler(id="navbar-toggler", n_clicks=0),
-
-                    # ── Links de navegación (derecha) ──
+                    # ── Links de navegación ────────────────────────────────
                     dbc.Collapse(
                         dbc.Nav(
                             [
-                                dbc.NavItem(dbc.NavLink("Inicio", href="/", id="nav-link-inicio", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Generación", href="/generacion", id="nav-link-generacion", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Transmisión", href="/transmision", id="nav-link-transmision", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Distribución", href="/distribucion", id="nav-link-distribucion", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Comercialización", href="/comercializacion", id="nav-link-comercializacion", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Pérdidas", href="/perdidas", id="nav-link-perdidas", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Restricciones", href="/restricciones", id="nav-link-restricciones", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Costo Unitario", href="/costo-unitario", id="nav-link-costo-unitario", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Simulación", href="/simulacion-creg", id="nav-link-simulacion-creg", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Pérdidas NT", href="/perdidas-nt", id="nav-link-perdidas-nt", active="exact")),
-                                dbc.NavItem(dbc.NavLink("💡 Inversiones", href="/inversiones", id="nav-link-inversiones", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Predicciones", href="/seguimiento-predicciones", id="nav-link-seguimiento-predicciones", active="exact")),
-                                dbc.NavItem(dbc.NavLink("Métricas", href="/metricas", id="nav-link-metricas", active="exact")),
+                                dbc.NavItem(dbc.NavLink("Inicio",            href="/",                             id="nav-link-inicio",                        active="exact")),
+                                dbc.NavItem(dbc.NavLink("Generación",        href="/generacion",                   id="nav-link-generacion",                    active="exact")),
+                                dbc.NavItem(dbc.NavLink("Transmisión",       href="/transmision",                  id="nav-link-transmision",                   active="exact")),
+                                dbc.NavItem(dbc.NavLink("Distribución",      href="/distribucion",                 id="nav-link-distribucion",                  active="exact")),
+                                dbc.NavItem(dbc.NavLink("Comercialización",  href="/comercializacion",             id="nav-link-comercializacion",              active="exact")),
+                                dbc.NavItem(dbc.NavLink("Pérdidas",          href="/perdidas",                     id="nav-link-perdidas",                      active="exact")),
+                                dbc.NavItem(dbc.NavLink("Pérdidas NT",       href="/perdidas-nt",                  id="nav-link-perdidas-nt",                   active="exact")),
+                                dbc.NavItem(dbc.NavLink("Restricciones",     href="/restricciones",                id="nav-link-restricciones",                 active="exact")),
+                                dbc.NavItem(dbc.NavLink("Costo Unitario",    href="/costo-unitario",               id="nav-link-costo-unitario",                active="partial")),
+                                dbc.NavItem(dbc.NavLink("CU Usuario",        href="/costo-usuario-final",          id="nav-link-cu-usuario",                    active="partial")),
+                                dbc.NavItem(dbc.NavLink("Predicciones",      href="/seguimiento-predicciones",     id="nav-link-seguimiento-predicciones",      active="exact")),
+                                
+                                # Icono de Inversiones (Font Awesome)
+                                dbc.NavItem(
+                                    dbc.NavLink(
+                                        [html.I(className="fa-solid fa-lightbulb me-2"), "Inversiones"], 
+                                        href="/inversiones", 
+                                        id="nav-link-inversiones", 
+                                        active="exact"
+                                    )
+                                ),
+                                
+                                # Icono de Base de Datos (Font Awesome)
+                                dbc.NavItem(
+                                    dbc.NavLink(
+                                        [html.I(className="fa-solid fa-database me-2"), "Base de Datos"], 
+                                        href="/metricas", 
+                                        id="nav-link-metricas", 
+                                        active="exact"
+                                    )
+                                ),
+
                                 # Toggle claro/oscuro
                                 dbc.NavItem(
                                     html.Div([
@@ -81,23 +95,38 @@ def crear_header_restaurado():
                     ),
                 ],
                 fluid=True,
-                style={"padding": "0 12px"},
+                style={"padding": "0 16px"},
             ),
             color="dark",
             dark=True,
             sticky="top",
             className="t-global-navbar",
             style={
-                "height": "42px",
-                "minHeight": "42px",
+                "height": "80px",
+                "minHeight": "80px",
                 "padding": "0",
                 "zIndex": "1030",
-                "boxShadow": "0 1px 3px rgba(0,0,0,0.3)",
-                "background": "linear-gradient(90deg, #1e3a8a 0%, #152e6b 100%)",
-                "borderBottom": "2px solid rgba(245,158,11,0.7)",
+                "boxShadow": "0 2px 6px rgba(0,0,0,0.35)",
+                "background": f"linear-gradient(90deg, {_NAVY} 0%, {_NAVY_DARK} 100%)",
+                "borderBottom": f"3px solid {_GOVCO_GOLD}",
                 "fontFamily": "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
                 "flexWrap": "nowrap",
                 "whiteSpace": "nowrap",
             },
         ),
     ])
+
+# ── Callback para el Toggler (Menú móvil) ──────────────────────────
+clientside_callback(
+    """
+    function(n_clicks, is_open) {
+        if (n_clicks) {
+            return !is_open;
+        }
+        return is_open;
+    }
+    """,
+    Output("navbar-collapse", "is_open"),
+    [Input("navbar-toggler", "n_clicks")],
+    [State("navbar-collapse", "is_open")],
+)

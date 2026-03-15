@@ -19,7 +19,6 @@ from datetime import datetime, date, timedelta
 
 from infrastructure.logging.logger import setup_logger
 from infrastructure.external.xm_service import (
-    get_objetoAPI,
     obtener_datos_inteligente,
 )
 from domain.services.hydrology_service import HydrologyService
@@ -112,17 +111,9 @@ def format_date(date_value):
         return date_value
 
 # ---------------------------------------------------------------------------
-# API XM – inicialización perezosa
+# API XM – estado fijo (pydataxm no disponible en este servidor)
 # ---------------------------------------------------------------------------
-API_STATUS = None
-
-_temp_api = get_objetoAPI()
-if _temp_api is not None:
-    logger.info("✅ API XM inicializada correctamente (lazy)")
-    API_STATUS = {'status': 'online', 'message': 'API XM funcionando correctamente'}
-else:
-    API_STATUS = {'status': 'offline', 'message': 'pydataxm no está disponible'}
-    logger.warning("⚠️ API XM no disponible (pydataxm no está disponible)")
+API_STATUS = {'status': 'offline', 'message': 'pydataxm no está disponible'}
 
 # ---------------------------------------------------------------------------
 # GeoJSON cache (archivos estáticos – se cargan una sola vez)
@@ -340,6 +331,8 @@ def get_rio_region_dict():
         today = datetime.now().strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         df, warning = obtener_datos_inteligente('ListadoRios', 'Sistema', yesterday, today)
+        if df is None or df.empty:
+            return {}
         if 'Values_Name' in df.columns and 'Values_HydroRegion' in df.columns:
             df['Values_Name'] = normalizar_codigo(df['Values_Name'])
             df['Values_HydroRegion'] = normalizar_region(df['Values_HydroRegion'])
@@ -428,7 +421,7 @@ def agregar_datos_hidrologia_inteligente(df_hidrologia, dias_periodo):
     columnas_grupo = ['Periodo']
     if 'Name' in df_hidrologia.columns:
         columnas_grupo.append('Name')
-    if 'Region' in df_hidrologia.columns:
+    if 'Region' in df_hidrologia.columns and df_hidrologia['Region'].notna().any():
         columnas_grupo.append('Region')
 
     # Agrupar y promediar valores

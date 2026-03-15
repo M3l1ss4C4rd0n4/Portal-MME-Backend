@@ -62,8 +62,11 @@ MODELO_VERSION_DUAL = 'DUAL_HORIZON_v1.0'
 MODELO_VERSION_RF = 'RANDOMFOREST_v1.0'
 MODELO_VERSION_LGBM_DIRECTO = 'LGBM_DIRECTO_v1.0'
 MODELO_VERSION_LGBM_TERMICA = 'LGBM_DIRECTO_TERMICA_v1.0'
-MODELO_VERSION_LGBM_SOLAR = 'LGBM_DIRECTO_SOLAR_v1.0'
+MODELO_VERSION_LGBM_SOLAR = 'LGBM_SOLAR_NASA_v2.0'  # FASE 18b: IrrGlobal→NASA_IrrGlobal (discontinuado dic-16)
 MODELO_VERSION_LGBM_EOLICA = 'LGBM_DIRECTO_EOLICA_v1.0'
+MODELO_VERSION_STACKING_EOLICA = 'STACKING_EOLICA_v1.0'  # FASE 22
+MODELO_VERSION_LGBM_APORTES_NASA = 'LGBM_APORTES_NASA_v1.0'  # FASE 22 — NASA POWER hidroeléctrica
+MODELO_VERSION_LGBM_PRECIO = 'LGBM_PRECIO_v1.0'  # FASE 23 — LightGBM directo PRECIO_BOLSA
 HOLDOUT_DUAL = 30            # Días de holdout para validación dual
 
 # Métricas elegibles para horizonte dual (FASE 6+7 demostró ventaja)
@@ -154,6 +157,72 @@ PRECIO_BOLSA_RF_CONFIG = {
     },
 }
 
+# ── FASE 23: Config LightGBM Directo para PRECIO_BOLSA ──
+# Reemplaza RandomForest (FASE 10, 14.67% MAPE) con LightGBM usando los mismos
+# 6 regresores BD + rolling stats + calendario (predicción directa, sin lags recursivos).
+# Holdout: 90 días genuinos (vs 30d del RF) para evaluar horizonte real de producción.
+PRECIO_BOLSA_LGBM_CONFIG = {
+    'metrica_bd': 'PrecBolsNaci',
+    'agg': 'AVG',
+    'entidad_filtro': 'Sistema',
+    'prefer_sistema': False,
+    'ventana_meses': 15,          # Misma ventana que RF (precio cayó ~800→100, solo historia reciente)
+    'piso': 86.0,                 # Mínimo histórico $/kWh
+    'unidad': '$/kWh',
+    'regresores_bd': {
+        'embalses_pct': {
+            'metrica_bd': 'PorcVoluUtilDiar',
+            'entidad': 'Sistema',
+            'agg': 'AVG',
+            'escala': 100,
+        },
+        'demanda_gwh': {
+            'metrica_bd': 'DemaReal',
+            'prefer_sistema': True,
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'aportes_gwh': {
+            'metrica_bd': 'AporEner',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'gene_hidraulica': {
+            'metrica_bd': 'Gene',
+            'tipo_catalogo': 'HIDRAULICA',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'embalses_vertim': {
+            'metrica_bd': 'VertEner',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'embalses_turbinado': {
+            'metrica_bd': 'VolTurbMasa',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+    },
+    'usar_calendario': True,
+    'lgbm_params': {
+        # Parámetros conservadores para dataset pequeño (~430 obs con ventana 15m)
+        # Más regularización que APORTES (que tiene ~2260 obs) para evitar overfitting
+        'n_estimators': 600,
+        'max_depth': 5,           # Más conservador que RF max_depth=12
+        'num_leaves': 20,         # 2^5 = 32 → num_leaves=20 es conservador
+        'learning_rate': 0.05,
+        'min_child_samples': 10,  # Con ~430 obs, no bajar de 10
+        'subsample': 0.8,
+        'colsample_bytree': 0.7,
+        'reg_alpha': 0.5,         # L1 más fuerte para dataset pequeño
+        'reg_lambda': 2.0,        # L2 más fuerte
+        'random_state': 42,
+        'n_jobs': -1,
+        'verbose': -1,
+    },
+}
+
 CALENDAR_COLS_DUAL = ['es_festivo', 'dow_lun', 'dow_mar', 'dow_mie',
                       'dow_jue', 'dow_vie', 'dow_sab']
 
@@ -222,6 +291,83 @@ APORTES_HIDRICOS_LGBM_CONFIG = {
         'subsample': 0.8,
         'colsample_bytree': 0.8,
         'min_child_weight': 5,
+        'reg_alpha': 0.1,
+        'reg_lambda': 1.0,
+        'random_state': 42,
+        'n_jobs': -1,
+        'verbose': -1,
+    },
+}
+
+# ── FASE 22: Config LightGBM APORTES_HIDRICOS + NASA POWER precipitación ──
+# Experimento FASE 21 (hidro_lgbm_nasa.py) demostró 12.08% MAPE offline
+# con features de precipitación NASA POWER para 4 cuencas hidrológicas:
+#   MAGDALENA_ALTO, CAUCA_MEDIO, SANTANDER_CUENCA, PACIFICO_CUENCA
+# Top features: nasa_magdalena_roll90 (gain=43), nasa_santander_lag60 (29),
+#               nasa_santander_lag90 (27), nasa_pacifico_lag14 (27), nasa_pacifico_roll90 (26)
+# También incorpora CAUCA y BETANIA (rank #4 y #6 del experimento).
+# Target: bajar de 16.52% → < 13% y sistema de 7.6% → < 7.2%.
+APORTES_HIDRICOS_LGBM_NASA_CONFIG = {
+    'metrica_bd': 'AporEner',
+    'agg': 'SUM',
+    'entidad_filtro': None,
+    'prefer_sistema': False,
+    'ventana_meses': None,
+    'piso': 0.0,
+    'unidad': 'GWh',
+    'regresores_bd': {
+        'embalses_pct': {
+            'metrica_bd': 'PorcVoluUtilDiar',
+            'entidad': 'Sistema',
+            'agg': 'AVG',
+            'escala': 100,
+        },
+        'demanda_gwh': {
+            'metrica_bd': 'DemaReal',
+            'prefer_sistema': True,
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'apor_rio_sogamoso': {
+            'metrica_bd': 'AporEner',
+            'recurso': 'SOGAMOSO',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'apor_rio_bogota': {
+            'metrica_bd': 'AporEner',
+            'recurso': 'BOGOTA N.R.',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'embalses_vertim': {
+            'metrica_bd': 'VertEner',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'apor_rio_ituango': {
+            'metrica_bd': 'AporEner',
+            'recurso': 'ITUANGO',
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'ideam_precipitacion': {
+            'metrica_bd': 'IDEAM_Precipitacion',
+            'recurso': 'CUENCAS_HIDRO',
+            'agg': 'AVG',
+            'escala': 1,
+        },
+    },
+    'usar_calendario': True,
+    # Hiperparámetros calibrados en experimento FASE 21 (12.08% MAPE)
+    'lgbm_params': {
+        'n_estimators': 700,        # 1000 con early-stop → ~700 efectivos
+        'max_depth': 6,
+        'num_leaves': 63,           # Experimento: num_leaves=63 + max_depth=6
+        'learning_rate': 0.03,      # Más lento que base (0.05) para mejor generalización
+        'min_child_samples': 20,    # min_child_samples (experimento) en vez de min_child_weight
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
         'reg_alpha': 0.1,
         'reg_lambda': 1.0,
         'random_state': 42,
@@ -330,14 +476,30 @@ SOLAR_LGBM_CONFIG = {
             'agg': 'SUM',
             'escala': 1,
         },
-        'irradiancia_global': {
-            'metrica_bd': 'IrrGlobal',
-            'agg': 'AVG',              # Promedio diario entre ~12 plantas
+        # ── FASE 18b: IrrGlobal + TempAmbSolar discontinuados en dic-16 ──
+        # Reemplazados por NASA POWER satelital (disponible hasta hoy)
+        'nasa_irr_caribe': {
+            'metrica_bd': 'NASA_IrrGlobal',
+            'agg': 'AVG',
+            'recurso': 'COSTA_CARIBE',
             'escala': 1,
         },
-        'temp_ambiente_solar': {
-            'metrica_bd': 'TempAmbSolar',
-            'agg': 'AVG',              # °C promedio diario
+        'nasa_irr_guajira': {
+            'metrica_bd': 'NASA_IrrGlobal',
+            'agg': 'AVG',
+            'recurso': 'LA_GUAJIRA',
+            'escala': 1,
+        },
+        'nasa_temp_caribe': {
+            'metrica_bd': 'NASA_Temp2M',
+            'agg': 'AVG',
+            'recurso': 'COSTA_CARIBE',
+            'escala': 1,
+        },
+        'nasa_temp_guajira': {
+            'metrica_bd': 'NASA_Temp2M',
+            'agg': 'AVG',
+            'recurso': 'LA_GUAJIRA',
             'escala': 1,
         },
         'dispo_declarada_solar': {
@@ -877,11 +1039,11 @@ def mlflow_log_production_run(metrica, predictor, config, modelo_version,
                     if 'LGBMRegressor' in modelo_class:
                         import mlflow.lightgbm
                         mlflow.lightgbm.log_model(modelo, artifact_path='model',
-                                                   input_example=None)
+                                                   input_example=None)  # type: ignore[arg-type]
                     elif 'RandomForest' in modelo_class:
                         import mlflow.sklearn
                         mlflow.sklearn.log_model(modelo, artifact_path='model',
-                                                  input_example=None)
+                                                  input_example=None)  # type: ignore[arg-type]
                     else:
                         # Fallback: pickle genérico
                         import pickle
@@ -927,7 +1089,7 @@ class PredictorMetricaSectorial:
         self.metricas = {}
         # FASE 3: soporte para regresores Prophet
         self.regresores_nombres = []        # nombres de columnas regresoras en df_prophet
-        self.regresores_completo = None    # DataFrame fecha→valor para todo el rango (hist+futuro)
+        self.regresores_completo: pd.DataFrame | None = None    # DataFrame fecha→valor para todo el rango (hist+futuro)
         # FASE 4.3: Ajuste adaptativo basado en quality_history ex-post
         self._adjust_weights_from_history()
 
@@ -1017,9 +1179,9 @@ class PredictorMetricaSectorial:
         
         modelo = Prophet(
             growth=growth,
-            yearly_seasonality=has_yearly,
-            weekly_seasonality=True,
-            daily_seasonality=False,
+            yearly_seasonality=has_yearly,  # type: ignore[arg-type]
+            weekly_seasonality=True,  # type: ignore[arg-type]
+            daily_seasonality=False,  # type: ignore[arg-type]
             interval_width=CONFIANZA,
             changepoint_prior_scale=0.05,
             seasonality_prior_scale=10.0,
@@ -1030,7 +1192,7 @@ class PredictorMetricaSectorial:
         # FASE 3: registrar regresores en el modelo
         for reg in self.regresores_nombres:
             if reg in df_prophet.columns:
-                modelo.add_regressor(reg, standardize=True)
+                modelo.add_regressor(reg, standardize=True)  # type: ignore[arg-type]
         
         import logging
         logging.getLogger('prophet').setLevel(logging.ERROR)
@@ -1038,6 +1200,7 @@ class PredictorMetricaSectorial:
         
         modelo.fit(df_prophet)
         self.modelo_prophet = modelo
+        
         print(f"    ✓ Prophet entrenado", flush=True)
         return modelo
     
@@ -1095,9 +1258,9 @@ class PredictorMetricaSectorial:
         
         modelo_p_temp = Prophet(
             growth=growth_holdout,
-            yearly_seasonality=has_yearly_holdout,
-            weekly_seasonality=True,
-            daily_seasonality=False,
+            yearly_seasonality=has_yearly_holdout,  # type: ignore[arg-type]
+            weekly_seasonality=True,  # type: ignore[arg-type]
+            daily_seasonality=False,  # type: ignore[arg-type]
             interval_width=CONFIANZA,
             changepoint_prior_scale=0.05,
             seasonality_prior_scale=10.0,
@@ -1108,7 +1271,7 @@ class PredictorMetricaSectorial:
         # FASE 3: registrar regresores en holdout Prophet
         for reg in self.regresores_nombres:
             if reg in df_train_p.columns:
-                modelo_p_temp.add_regressor(reg, standardize=True)
+                modelo_p_temp.add_regressor(reg, standardize=True)  # type: ignore[arg-type]
         
         modelo_p_temp.fit(df_train_p)
         
@@ -1144,8 +1307,8 @@ class PredictorMetricaSectorial:
             if pred_sarima_val is not None:
                 # MAPE REAL
                 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
-                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)
-                mape_sarima = mean_absolute_percentage_error(y_real, pred_sarima_val)
+                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
+                mape_sarima = mean_absolute_percentage_error(y_real, pred_sarima_val)  # type: ignore[arg-type]
                 
                 # Pesos inversamente proporcionales al error
                 total_error = mape_prophet + mape_sarima
@@ -1161,11 +1324,11 @@ class PredictorMetricaSectorial:
                 self.pesos['sarima'] /= suma
                 
                 # MAPE ensemble real
-                pred_ensemble_val = self.pesos['prophet'] * pred_prophet_val + self.pesos['sarima'] * pred_sarima_val
-                mape_ensemble = mean_absolute_percentage_error(y_real, pred_ensemble_val)
+                pred_ensemble_val = self.pesos['prophet'] * pred_prophet_val + self.pesos['sarima'] * pred_sarima_val  # type: ignore[operator]
+                mape_ensemble = mean_absolute_percentage_error(y_real, pred_ensemble_val)  # type: ignore[arg-type]
                 
                 # FASE 7B: Calcular RMSE
-                rmse_ensemble = np.sqrt(mean_squared_error(y_real, pred_ensemble_val))
+                rmse_ensemble = np.sqrt(mean_squared_error(y_real, pred_ensemble_val))  # type: ignore[arg-type]
                 
                 self.metricas = {
                     'mape_ensemble': mape_ensemble,
@@ -1182,8 +1345,8 @@ class PredictorMetricaSectorial:
             else:
                 # SARIMA holdout falló, usar solo Prophet
                 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
-                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)
-                rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))
+                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
+                rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))  # type: ignore[arg-type]
                 self.pesos = {'prophet': 1.0, 'sarima': 0.0}
                 self.metricas = {
                     'mape_ensemble': mape_prophet,
@@ -1195,8 +1358,8 @@ class PredictorMetricaSectorial:
                 print(f"    ✓ MAPE Prophet (solo, SARIMA holdout falló): {mape_prophet:.2%}", flush=True)
         else:
             from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
-            mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)
-            rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))
+            mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
+            rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))  # type: ignore[arg-type]
             self.pesos = {'prophet': 1.0, 'sarima': 0.0}
             self.metricas = {
                 'mape_ensemble': mape_prophet,
@@ -1211,6 +1374,7 @@ class PredictorMetricaSectorial:
         print(f"  → Generando predicciones {horizonte_dias} días...", flush=True)
         
         # Prophet
+        assert self.modelo_prophet is not None
         future = self.modelo_prophet.make_future_dataframe(periods=horizonte_dias, freq='D')
         
         # FASE 3: añadir regresores al DataFrame futuro
@@ -1234,15 +1398,15 @@ class PredictorMetricaSectorial:
                 
                 # Ensemble ponderado
                 predicciones_ensemble = (
-                    self.pesos['prophet'] * pred_prophet['yhat'].values +
+                    self.pesos['prophet'] * pred_prophet['yhat'].values +  # type: ignore[operator]
                     self.pesos['sarima'] * pred_sarima
                 )
                 intervalo_inferior = (
-                    self.pesos['prophet'] * pred_prophet['yhat_lower'].values +
+                    self.pesos['prophet'] * pred_prophet['yhat_lower'].values +  # type: ignore[operator]
                     self.pesos['sarima'] * sarima_lower
                 )
                 intervalo_superior = (
-                    self.pesos['prophet'] * pred_prophet['yhat_upper'].values +
+                    self.pesos['prophet'] * pred_prophet['yhat_upper'].values +  # type: ignore[operator]
                     self.pesos['sarima'] * sarima_upper
                 )
             except Exception:
@@ -1256,15 +1420,15 @@ class PredictorMetricaSectorial:
         
         # CLAMP: Para métricas que no pueden ser negativas (demanda, generación, embalses, etc.)
         if not allow_negative:
-            predicciones_ensemble = np.maximum(predicciones_ensemble, 0.0)
-            intervalo_inferior = np.maximum(intervalo_inferior, 0.0)
-            intervalo_superior = np.maximum(intervalo_superior, 0.0)
+            predicciones_ensemble = np.maximum(predicciones_ensemble, 0.0)  # type: ignore[call-overload,arg-type]
+            intervalo_inferior = np.maximum(intervalo_inferior, 0.0)  # type: ignore[call-overload,arg-type]
+            intervalo_superior = np.maximum(intervalo_superior, 0.0)  # type: ignore[call-overload,arg-type]
         
         # Piso histórico configurable (ej: precio de bolsa nunca < 86 $/kWh)
         piso = self.config.get('piso_historico', 0.0)
         if piso > 0:
-            predicciones_ensemble = np.maximum(predicciones_ensemble, piso)
-            intervalo_inferior = np.maximum(intervalo_inferior, piso)
+            predicciones_ensemble = np.maximum(predicciones_ensemble, piso)  # type: ignore[call-overload,arg-type]
+            intervalo_inferior = np.maximum(intervalo_inferior, piso)  # type: ignore[call-overload,arg-type]
         
         # Crear DataFrame
         fechas_prediccion = pred_prophet['ds'].values
@@ -1689,7 +1853,7 @@ def preparar_regresores(config, df_target, predicciones_memoria):
 
         # Construir df_completo para calendario (para holdout y predicción)
         df_cal_completo = df_cal[cal_cols].copy()
-        df_cal_completo.index = df_cal_completo.index.normalize()
+        df_cal_completo.index = df_cal_completo.index.normalize()  # type: ignore[attr-defined]
         df_completo_parts.append(df_cal_completo)
 
         n_festivos = int(df_target_out['es_festivo'].sum()) if 'es_festivo' in cal_cols else 0
@@ -2048,8 +2212,8 @@ class PredictorHorizonteDual:
     
     def entrenar_tcn(self, df_train):
         """Entrena TCN via neuralforecast para predicciones de largo plazo (8-90d)."""
-        from neuralforecast import NeuralForecast
-        from neuralforecast.models import TCN
+        from neuralforecast import NeuralForecast  # type: ignore[import]
+        from neuralforecast.models import TCN  # type: ignore[import]
         
         print(f"  → Entrenando TCN para {self.nombre} (horizonte largo)...", flush=True)
         
@@ -2090,7 +2254,7 @@ class PredictorHorizonteDual:
             accelerator='cpu',
         )
         if exog_cols:
-            model_kwargs['futr_exog_list'] = exog_cols
+            model_kwargs['futr_exog_list'] = exog_cols  # type: ignore[assignment]
         
         model = TCN(**model_kwargs)
         nf = NeuralForecast(models=[model], freq='D')
@@ -2166,7 +2330,7 @@ class PredictorHorizonteDual:
             X = pd.DataFrame([row_features])[feature_cols]
             
             # Predecir
-            pred = float(self.modelo_lgb.predict(X)[0])
+            pred = float(self.modelo_lgb.predict(X)[0])  # type: ignore[union-attr,index,arg-type]
             pred = max(pred, piso)
             predicciones.append(pred)
         
@@ -2203,7 +2367,7 @@ class PredictorHorizonteDual:
             
             predict_kwargs['futr_df'] = futr_df
         
-        pred = self.nf_tcn.predict(**predict_kwargs)
+        pred = self.nf_tcn.predict(**predict_kwargs)  # type: ignore[union-attr]
         y_pred = pred['TCN'].values.astype(np.float64)
         y_pred = np.maximum(y_pred, piso)
         
@@ -2254,7 +2418,7 @@ class PredictorHorizonteDual:
         y_real_short = y_test[:dias_short]
         pred_lgb_arr = np.maximum(np.array(pred_lgb[:dias_short]), self.config.get('piso', 0))
         
-        mape_short = mean_absolute_percentage_error(y_real_short, pred_lgb_arr)
+        mape_short = mean_absolute_percentage_error(y_real_short, pred_lgb_arr)  # type: ignore[arg-type]
         
         # 6. Validate TCN (days 8-30 of holdout)
         if HOLDOUT_DUAL > HORIZONTE_CORTO:
@@ -2266,8 +2430,8 @@ class PredictorHorizonteDual:
             
             if n_long > 0:
                 pred_tcn_long = np.maximum(pred_tcn_long[:n_long], self.config.get('piso', 0))
-                mape_long = mean_absolute_percentage_error(
-                    y_real_long[:n_long], pred_tcn_long
+                mape_long = mean_absolute_percentage_error(  # type: ignore[arg-type]
+                    y_real_long[:n_long], pred_tcn_long  # type: ignore[arg-type]
                 )
             else:
                 mape_long = None
@@ -2275,11 +2439,13 @@ class PredictorHorizonteDual:
             mape_long = None
         
         # 7. Combined MAPE (weighted by number of days)
-        pred_combined = np.concatenate([pred_lgb_arr, pred_tcn_long]) \
+        pred_combined = (  # type: ignore[possibly-undefined]
+            np.concatenate([pred_lgb_arr, pred_tcn_long])  # type: ignore[possibly-undefined]
             if mape_long is not None else pred_lgb_arr
+        )
         y_combined = y_test[:len(pred_combined)]
-        mape_combined = mean_absolute_percentage_error(y_combined, pred_combined)
-        rmse_combined = np.sqrt(mean_squared_error(y_combined, pred_combined))
+        mape_combined = mean_absolute_percentage_error(y_combined, pred_combined)  # type: ignore[arg-type]
+        rmse_combined = np.sqrt(mean_squared_error(y_combined, pred_combined))  # type: ignore[arg-type]
         
         self.metricas = {
             'mape_short': float(mape_short),
@@ -2306,8 +2472,8 @@ class PredictorHorizonteDual:
     
     def _entrenar_tcn_holdout(self, df_train, horizonte):
         """Entrena TCN con horizonte = holdout para validación."""
-        from neuralforecast import NeuralForecast
-        from neuralforecast.models import TCN
+        from neuralforecast import NeuralForecast  # type: ignore[import]
+        from neuralforecast.models import TCN  # type: ignore[import]
         
         exog_cols = [c for c in CALENDAR_COLS_DUAL if c in df_train.columns]
         
@@ -2341,7 +2507,7 @@ class PredictorHorizonteDual:
             accelerator='cpu',
         )
         if exog_cols:
-            model_kwargs['futr_exog_list'] = exog_cols
+            model_kwargs['futr_exog_list'] = exog_cols  # type: ignore[assignment]
         
         model = TCN(**model_kwargs)
         self._nf_holdout = NeuralForecast(models=[model], freq='D')
@@ -2388,6 +2554,7 @@ class PredictorHorizonteDual:
             horizonte_dias = HORIZONTE_DIAS
         
         df = self.df_dataset
+        assert df is not None
         feature_cols = self.feature_cols
         piso = self.config.get('piso', 0.0)
         
@@ -2401,9 +2568,9 @@ class PredictorHorizonteDual:
         preds_lgb = np.array(preds_lgb)
         
         # Intervalos LightGBM: basados en residuos del train set
-        X_all = df[feature_cols]
-        y_all = df['valor']
-        residuos = np.abs(y_all.values - self.modelo_lgb.predict(X_all))
+        X_all = df[feature_cols]  # type: ignore[index]
+        y_all = df['valor']  # type: ignore[index]
+        residuos = np.abs(y_all.values - self.modelo_lgb.predict(X_all))  # type: ignore[union-attr]
         std_residuos = np.std(residuos)
         
         # Incertidumbre crece con el horizonte (factor lineal)
@@ -2505,6 +2672,148 @@ class PredictorHorizonteDual:
               f"(LightGBM: {dias_lgb}, TCN: {len(preds_tcn_used)})")
         
         return df_pred
+
+
+# =============================================================================
+# FASE 21 — OPTUNA: BÚSQUEDA BAYESIANA DE HIPERPARÁMETROS
+# =============================================================================
+# Optuna v4.2.1 ya instalado. Funciones standalone reutilizables por cualquier
+# predictor (LightGBM y RandomForest). Usa TimeSeriesSplit para preservar
+# el orden temporal y evitar data leakage en la búsqueda de hiperparámetros.
+#
+# Activar con: python ... --lgbm_solar --optuna
+#              python ... --lgbm_eolica --optuna
+#              python ... --rf_precio --optuna
+# =============================================================================
+
+def _optuna_tune_lgbm(
+    X_train: 'pd.DataFrame',
+    y_train: 'pd.Series',
+    piso: float = 0.0,
+    n_trials: int = 30,
+    n_splits: int = 3,
+) -> dict:
+    """
+    FASE 21 — Búsqueda bayesiana de hiperparámetros LightGBM con Optuna TPE.
+
+    Usa TimeSeriesSplit (expanding window) para preservar orden temporal.
+    n_trials=30: ~30-60s con LightGBM en CPU.
+
+    Returns:
+        dict con mejores hiperparámetros (listo para LGBMRegressor(**params))
+    """
+    import optuna
+    from lightgbm import LGBMRegressor
+    from sklearn.model_selection import TimeSeriesSplit
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    n = len(X_train)
+    test_size = max(30, n // (n_splits + 2))
+
+    def objective(trial: 'optuna.Trial') -> float:
+        params = {
+            'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
+            'max_depth': trial.suggest_int('max_depth', 3, 10),
+            'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.15, log=True),
+            'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+            'min_child_weight': trial.suggest_int('min_child_weight', 1, 30),
+            'reg_alpha': trial.suggest_float('reg_alpha', 1e-5, 5.0, log=True),
+            'reg_lambda': trial.suggest_float('reg_lambda', 1e-5, 5.0, log=True),
+            'random_state': 42,
+            'n_jobs': -1,
+            'verbose': -1,
+        }
+        tscv = TimeSeriesSplit(n_splits=n_splits, test_size=test_size)
+        mapes = []
+        for train_idx, val_idx in tscv.split(X_train):
+            X_t = X_train.iloc[train_idx]
+            y_t = y_train.iloc[train_idx]
+            X_v = X_train.iloc[val_idx]
+            y_v = y_train.iloc[val_idx]
+            m = LGBMRegressor(**params)
+            m.fit(X_t, y_t)
+            pred = np.maximum(m.predict(X_v), piso)
+            mapes.append(mean_absolute_percentage_error(y_v, pred))
+        return float(np.mean(mapes))
+
+    print(f"  🔍 Optuna LightGBM: {n_trials} trials × {n_splits}-fold TS-CV "
+          f"(test_size={test_size}d)...")
+    study = optuna.create_study(
+        direction='minimize',
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    best = dict(study.best_params)
+    best.update({'random_state': 42, 'n_jobs': -1, 'verbose': -1})
+    print(f"  ✓ Mejor MAPE CV: {study.best_value:.2%} | "
+          f"n_est={best['n_estimators']}, depth={best['max_depth']}, "
+          f"lr={best['learning_rate']:.4f}")
+    return best
+
+
+def _optuna_tune_rf(
+    X_train: 'pd.DataFrame',
+    y_train: 'pd.Series',
+    piso: float = 0.0,
+    n_trials: int = 20,
+    n_splits: int = 3,
+) -> dict:
+    """
+    FASE 21 — Búsqueda bayesiana de hiperparámetros RandomForest con Optuna TPE.
+
+    n_trials=20: ~60-90s con RF en CPU.
+
+    Returns:
+        dict con mejores hiperparámetros (listo para RandomForestRegressor(**params))
+    """
+    import optuna
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.model_selection import TimeSeriesSplit
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    n = len(X_train)
+    test_size = max(30, n // (n_splits + 2))
+
+    def objective(trial: 'optuna.Trial') -> float:
+        params = {
+            'n_estimators': trial.suggest_int('n_estimators', 100, 600),
+            'max_depth': trial.suggest_int('max_depth', 4, 20),
+            'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 20),
+            'max_features': trial.suggest_categorical('max_features', ['sqrt', 'log2', 0.5]),
+            'random_state': 42,
+            'n_jobs': -1,
+        }
+        tscv = TimeSeriesSplit(n_splits=n_splits, test_size=test_size)
+        mapes = []
+        for train_idx, val_idx in tscv.split(X_train):
+            X_t = X_train.iloc[train_idx]
+            y_t = y_train.iloc[train_idx]
+            X_v = X_train.iloc[val_idx]
+            y_v = y_train.iloc[val_idx]
+            m = RandomForestRegressor(**params)
+            m.fit(X_t, y_t)
+            pred = np.maximum(m.predict(X_v), piso)
+            mapes.append(mean_absolute_percentage_error(y_v, pred))
+        return float(np.mean(mapes))
+
+    print(f"  🔍 Optuna RandomForest: {n_trials} trials × {n_splits}-fold TS-CV "
+          f"(test_size={test_size}d)...")
+    study = optuna.create_study(
+        direction='minimize',
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    best = dict(study.best_params)
+    best.update({'random_state': 42, 'n_jobs': -1})
+    print(f"  ✓ Mejor MAPE CV: {study.best_value:.2%} | "
+          f"n_est={best['n_estimators']}, depth={best['max_depth']}, "
+          f"leaf={best['min_samples_leaf']}")
+    return best
 
 
 # =============================================================================
@@ -2687,9 +2996,9 @@ class PredictorRandomForest:
         df['rolling_max_30d'] = df['valor'].rolling(30, min_periods=1).max()
 
         # 4. Temporal features (always known for future dates)
-        df['mes'] = df.index.month
-        df['dia_del_anio'] = df.index.dayofyear
-        df['semana_del_anio'] = df.index.isocalendar().week.astype(int)
+        df['mes'] = df.index.month  # type: ignore[attr-defined]
+        df['dia_del_anio'] = df.index.dayofyear  # type: ignore[attr-defined]
+        df['semana_del_anio'] = df.index.isocalendar().week.astype(int)  # type: ignore[attr-defined]
 
         # 5. Calendario
         if cfg.get('usar_calendario', True):
@@ -2740,6 +3049,18 @@ class PredictorRandomForest:
         y_train = df_train['valor']
 
         params = self.config.get('rf_params', {})
+
+        # FASE 21 — Optuna: optimización bayesiana de hiperparámetros
+        if self.config.get('usar_optuna', False):
+            import time as _time
+            t_opt = _time.time()
+            piso_opt = self.config.get('piso', 0.0)
+            n_trials = self.config.get('optuna_n_trials', 20)
+            best = _optuna_tune_rf(X_train, y_train, piso=piso_opt, n_trials=n_trials)
+            # Merge: keep non-tuned keys (random_state, n_jobs), override tuned ones
+            params = {**params, **best}
+            print(f"  ⏱️  Optuna completado en {_time.time() - t_opt:.0f}s")
+
         modelo = RandomForestRegressor(
             n_estimators=params.get('n_estimators', 300),
             max_depth=params.get('max_depth', 12),
@@ -2766,10 +3087,10 @@ class PredictorRandomForest:
         X_test = df_test[feature_cols]
         y_pred = modelo.predict(X_test)
         piso = self.config.get('piso', 0.0)
-        y_pred = np.maximum(y_pred, piso)
+        y_pred = np.maximum(y_pred, piso)  # type: ignore[call-overload,arg-type]
 
-        mape = mean_absolute_percentage_error(y_test, y_pred)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        mape = mean_absolute_percentage_error(y_test, y_pred)  # type: ignore[arg-type]
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))  # type: ignore[arg-type]
 
         self.metricas = {
             'mape': float(mape),
@@ -2815,6 +3136,7 @@ class PredictorRandomForest:
             self.construir_dataset()
 
         df = self.df_dataset
+        assert df is not None
         feature_cols = self.feature_cols
         n = len(df)
 
@@ -2865,10 +3187,10 @@ class PredictorRandomForest:
             modelo.fit(X_train, y_train)
 
             y_pred = modelo.predict(X_test)
-            y_pred = np.maximum(y_pred, piso)
+            y_pred = np.maximum(y_pred, piso)  # type: ignore[call-overload,arg-type]
 
-            mape_fold = mean_absolute_percentage_error(y_test, y_pred)
-            rmse_fold = np.sqrt(mean_squared_error(y_test, y_pred))
+            mape_fold = mean_absolute_percentage_error(y_test, y_pred)  # type: ignore[arg-type]
+            rmse_fold = np.sqrt(mean_squared_error(y_test, y_pred))  # type: ignore[arg-type]
 
             fold_info = {
                 'fold': i + 1,
@@ -2974,11 +3296,13 @@ class PredictorRandomForest:
             horizonte_dias = HORIZONTE_DIAS
 
         df = self.df_dataset
+        assert df is not None
         feature_cols = self.feature_cols
         piso = self.config.get('piso', 0.0)
 
         print(f"  → Generando predicciones RF ({horizonte_dias} días, directa)...", flush=True)
 
+        assert self.modelo is not None
         ultimo_dia = df.index[-1]
         fechas = pd.date_range(start=ultimo_dia + pd.Timedelta(days=1),
                                periods=horizonte_dias, freq='D')
@@ -3041,6 +3365,82 @@ class PredictorRandomForest:
               f"rango [{preds.min():.2f}, {preds.max():.2f}] {self.config.get('unidad', '')}")
 
         return df_pred
+
+
+# =============================================================================
+# FASE 22 — HELPER: CARGA FEATURES NASA POWER PRECIPITACIÓN (HIDROELÉCTRICA)
+# =============================================================================
+
+def cargar_nasa_hidro_features(fecha_inicio: str = '2020-01-01') -> 'pd.DataFrame':
+    """
+    Carga y preprocesa features NASA POWER de precipitación para el modelo
+    APORTES_HIDRICOS (FASE 22).
+
+    Realiza un PIVOT de los 4 recursos de cuencas hidrológicas en la tabla
+    metrics (metrica='NASA_Precipitacion', entidad='NASA_POWER') y computa
+    los 5 features del top-25 del experimento FASE 21:
+
+      1. nasa_magdalena_roll90  — rolling 90d MAGDALENA_ALTO  (gain=43, rank #5)
+      2. nasa_santander_lag60   — lag 60d  SANTANDER_CUENCA  (gain=29, rank #11)
+      3. nasa_santander_lag90   — lag 90d  SANTANDER_CUENCA  (gain=27, rank #12)
+      4. nasa_pacifico_lag14    — lag 14d  PACIFICO_CUENCA   (gain=27, rank #13)
+      5. nasa_pacifico_roll90   — rolling 90d PACIFICO_CUENCA (gain=26, rank #15)
+
+    Los lags/rolling se computan con .shift() para evitar data leakage:
+      - lag N: feature en día T = valor en T-N (completamente en el pasado)
+      - roll W: feature en día T = media(T-W … T-1) (también en el pasado)
+
+    Returns:
+        DataFrame indexado por fecha con las 5 columnas de features NASA.
+    """
+    conn = get_postgres_connection()
+    query = """
+    SELECT
+        fecha::date AS fecha,
+        AVG(CASE WHEN recurso = 'MAGDALENA_ALTO'   THEN valor_gwh END) AS nasa_prec_magdalena,
+        AVG(CASE WHEN recurso = 'CAUCA_MEDIO'      THEN valor_gwh END) AS nasa_prec_cauca,
+        AVG(CASE WHEN recurso = 'SANTANDER_CUENCA' THEN valor_gwh END) AS nasa_prec_santander,
+        AVG(CASE WHEN recurso = 'PACIFICO_CUENCA'  THEN valor_gwh END) AS nasa_prec_pacifico
+    FROM metrics
+    WHERE metrica = 'NASA_Precipitacion'
+      AND entidad  = 'NASA_POWER'
+      AND fecha   >= %s
+    GROUP BY fecha::date
+    ORDER BY fecha
+    """
+    df = pd.read_sql_query(query, conn, params=(fecha_inicio,))
+    conn.close()
+
+    df['fecha'] = pd.to_datetime(df['fecha'])
+    df = df.sort_values('fecha').set_index('fecha')
+
+    # Interpolar gaps breves en la serie raw (máx 3d, preserva tendencia)
+    for col in ['nasa_prec_magdalena', 'nasa_prec_cauca',
+                'nasa_prec_santander', 'nasa_prec_pacifico']:
+        df[col] = df[col].interpolate(method='time', limit=3)
+
+    # ── Top-5 features del experimento FASE 21 ──
+    # rolling(W).mean().shift(1): la media de W días termina en T-1 (no leakage)
+    df['nasa_magdalena_roll90'] = df['nasa_prec_magdalena'].rolling(90, min_periods=30).mean().shift(1)
+    df['nasa_pacifico_roll90']  = df['nasa_prec_pacifico'].rolling(90,  min_periods=30).mean().shift(1)
+    # lag N: valor exacto de N días atrás
+    df['nasa_santander_lag60']  = df['nasa_prec_santander'].shift(60)
+    df['nasa_santander_lag90']  = df['nasa_prec_santander'].shift(90)
+    df['nasa_pacifico_lag14']   = df['nasa_prec_pacifico'].shift(14)
+
+    feature_cols = [
+        'nasa_magdalena_roll90',
+        'nasa_santander_lag60',
+        'nasa_santander_lag90',
+        'nasa_pacifico_lag14',
+        'nasa_pacifico_roll90',
+    ]
+    df_out = df[feature_cols].copy()
+    print(f"  NASA features: {len(df_out)} fechas, "
+          f"NaN por cuenca = [mag={df_out['nasa_magdalena_roll90'].isna().sum()}, "
+          f"san60={df_out['nasa_santander_lag60'].isna().sum()}, "
+          f"pac14={df_out['nasa_pacifico_lag14'].isna().sum()}]")
+    return df_out
 
 
 # =============================================================================
@@ -3226,6 +3626,19 @@ class PredictorLGBMDirecto:
             self._reg_series[reg_nombre] = df_reg.copy()
             print(f"  Regresor BD: {reg_nombre} ({len(df_reg)} rows)")
 
+        # 2b. FASE 18b — Lags de features NASA irradiancia/temperatura
+        #     Disponible en predicción: lag7+ es histórico real (sin recurrir a futuros)
+        nasa_base_cols = [c for c in df.columns
+                          if c.startswith(('nasa_irr_', 'nasa_temp_'))
+                          and '_lag' not in c and '_roll' not in c]
+        for _nc in nasa_base_cols:
+            df[f'{_nc}_lag7']  = df[_nc].shift(7)
+            df[f'{_nc}_lag14'] = df[_nc].shift(14)
+            df[f'{_nc}_roll7'] = df[_nc].shift(1).rolling(7, min_periods=3).mean()
+        if nasa_base_cols:
+            print(f"  NASA lags generados: {len(nasa_base_cols)*3} features "
+                  f"(lag7/lag14/roll7 para {nasa_base_cols})")
+
         # 3. Rolling statistics del target
         df['rolling_mean_7d'] = df['valor'].rolling(7, min_periods=1).mean()
         df['rolling_std_7d'] = df['valor'].rolling(7, min_periods=1).std().fillna(0)
@@ -3235,19 +3648,22 @@ class PredictorLGBMDirecto:
         df['rolling_max_30d'] = df['valor'].rolling(30, min_periods=1).max()
 
         # 4. Temporal features
-        df['mes'] = df.index.month
-        df['dia_del_anio'] = df.index.dayofyear
-        df['semana_del_anio'] = df.index.isocalendar().week.astype(int)
+        df['mes'] = df.index.month  # type: ignore[attr-defined]
+        df['dia_del_anio'] = df.index.dayofyear  # type: ignore[attr-defined]
+        df['semana_del_anio'] = df.index.isocalendar().week.astype(int)  # type: ignore[attr-defined]
 
         # 5. Estación hidrológica Colombia (fuerte señal para aportes)
         #    Temporada lluvias: abr-may (primera) y oct-nov (segunda)
         #    Temporada seca: dic-mar y jun-sep
-        mes = df.index.month
+        mes = df.index.month  # type: ignore[attr-defined]
         df['es_temporada_lluvias'] = ((mes >= 4) & (mes <= 5) | (mes >= 10) & (mes <= 11)).astype(int)
         df['es_temporada_seca'] = ((mes <= 3) | (mes >= 6) & (mes <= 9) & ~((mes >= 10) & (mes <= 11))).astype(int)
         # Seno/coseno para capturar periodicidad anual continua
         df['sin_anual'] = np.sin(2 * np.pi * df['dia_del_anio'] / 365.25)
         df['cos_anual'] = np.cos(2 * np.pi * df['dia_del_anio'] / 365.25)
+        # FASE 22: cyclic day-of-week (captura patrón semanal de carga/generación)
+        df['sin_dds'] = np.sin(2 * np.pi * df.index.dayofweek / 7)  # type: ignore[attr-defined]
+        df['cos_dds'] = np.cos(2 * np.pi * df.index.dayofweek / 7)  # type: ignore[attr-defined]
 
         # 6. Calendario
         if cfg.get('usar_calendario', True):
@@ -3310,6 +3726,16 @@ class PredictorLGBMDirecto:
         y_train = df_train['valor']
 
         params = self.config.get('lgbm_params', {})
+
+        # FASE 21 — Optuna: optimización bayesiana de hiperparámetros
+        if self.config.get('usar_optuna', False):
+            import time as _time
+            t_opt = _time.time()
+            piso_opt = self.config.get('piso', 0.0)
+            n_trials = self.config.get('optuna_n_trials', 30)
+            params = _optuna_tune_lgbm(X_train, y_train, piso=piso_opt, n_trials=n_trials)
+            print(f"  ⏱️  Optuna completado en {_time.time() - t_opt:.0f}s")
+
         modelo = LGBMRegressor(**params)
         modelo.fit(X_train, y_train)
         self.modelo = modelo
@@ -3330,10 +3756,10 @@ class PredictorLGBMDirecto:
         X_test = df_test[feature_cols]
         y_pred = modelo.predict(X_test)
         piso = self.config.get('piso', 0.0)
-        y_pred = np.maximum(y_pred, piso)
+        y_pred = np.maximum(y_pred, piso)  # type: ignore[call-overload,arg-type]
 
-        mape = mean_absolute_percentage_error(y_test, y_pred)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        mape = mean_absolute_percentage_error(y_test, y_pred)  # type: ignore[arg-type]
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))  # type: ignore[arg-type]
 
         self.metricas = {
             'mape': float(mape),
@@ -3383,6 +3809,7 @@ class PredictorLGBMDirecto:
             self.construir_dataset()
 
         df = self.df_dataset
+        assert df is not None
         feature_cols = self.feature_cols
         n = len(df)
 
@@ -3427,10 +3854,10 @@ class PredictorLGBMDirecto:
             modelo.fit(X_train, y_train)
 
             y_pred = modelo.predict(X_test)
-            y_pred = np.maximum(y_pred, piso)
+            y_pred = np.maximum(y_pred, piso)  # type: ignore[call-overload,arg-type]
 
-            mape_fold = mean_absolute_percentage_error(y_test, y_pred)
-            rmse_fold = np.sqrt(mean_squared_error(y_test, y_pred))
+            mape_fold = mean_absolute_percentage_error(y_test, y_pred)  # type: ignore[arg-type]
+            rmse_fold = np.sqrt(mean_squared_error(y_test, y_pred))  # type: ignore[arg-type]
 
             fold_info = {
                 'fold': i + 1,
@@ -3535,11 +3962,13 @@ class PredictorLGBMDirecto:
             horizonte_dias = HORIZONTE_DIAS
 
         df = self.df_dataset
+        assert df is not None
         feature_cols = self.feature_cols
         piso = self.config.get('piso', 0.0)
 
         print(f"  → Generando predicciones LGBM ({horizonte_dias} días, directa)...", flush=True)
 
+        assert self.modelo is not None
         ultimo_dia = df.index[-1]
         fechas = pd.date_range(start=ultimo_dia + pd.Timedelta(days=1),
                                periods=horizonte_dias, freq='D')
@@ -3568,6 +3997,9 @@ class PredictorLGBMDirecto:
         df_futuro['es_temporada_seca'] = ((mes_futuro <= 3) | (mes_futuro >= 6) & (mes_futuro <= 9) & ~((mes_futuro >= 10) & (mes_futuro <= 11))).astype(int)
         df_futuro['sin_anual'] = np.sin(2 * np.pi * df_futuro['dia_del_anio'] / 365.25)
         df_futuro['cos_anual'] = np.cos(2 * np.pi * df_futuro['dia_del_anio'] / 365.25)
+        # FASE 22: cyclic day-of-week para fechas futuras
+        df_futuro['sin_dds'] = np.sin(2 * np.pi * fechas.dayofweek / 7)
+        df_futuro['cos_dds'] = np.cos(2 * np.pi * fechas.dayofweek / 7)
 
         # 5. Calendario
         if self.config.get('usar_calendario', True):
@@ -3581,12 +4013,12 @@ class PredictorLGBMDirecto:
 
         X_futuro = df_futuro[feature_cols]
         preds = self.modelo.predict(X_futuro)
-        preds = np.maximum(preds, piso)
+        preds = np.maximum(preds, piso)  # type: ignore[call-overload,arg-type]
 
         # Intervalos basados en residuos del train set
         X_all = df[feature_cols]
         y_all = df['valor']
-        residuos = np.abs(y_all.values - self.modelo.predict(X_all))
+        residuos = np.abs(y_all.values - self.modelo.predict(X_all))  # type: ignore[operator,arg-type]
         std_residuos = np.std(residuos)
 
         # Incertidumbre crece con horizonte
@@ -3606,6 +4038,409 @@ class PredictorLGBMDirecto:
 
         print(f"    ✓ {len(df_pred)} predicciones LGBM, "
               f"rango [{preds.min():.2f}, {preds.max():.2f}] {self.config.get('unidad', '')}")
+
+        return df_pred
+
+
+# =============================================================================
+# FASE 22 — PREDICTOR LGBM APORTES_HIDRICOS + NASA POWER PRECIPITACIÓN
+# =============================================================================
+
+class PredictorLGBMDirectoNASA(PredictorLGBMDirecto):
+    """
+    FASE 22 — Predictor LightGBM con features NASA POWER para APORTES_HIDRICOS.
+
+    Extiende PredictorLGBMDirecto añadiendo las 5 features de precipitación
+    NASA POWER de mayor importancia (top-25 del experimento FASE 21):
+      - nasa_magdalena_roll90, nasa_santander_lag60/90, nasa_pacifico_lag14/roll90
+
+    Resultado experimento: 12.08% MAPE (-4.44pp vs base 16.52%)
+    Target producción: < 13% MAPE
+
+    Tratamiento de features NASA en predicción futura:
+      Las features son lags/rolling de ≥14 días, por lo que los valores
+      para fechas futuras hasta +14d se pueden calcular parcialmente con
+      datos históricos. Para todo el horizonte se congela el último valor
+      conocido (conservador y consistente con la estrategia de regresores BD).
+    """
+
+    def __init__(self, nombre: str, config: dict):
+        super().__init__(nombre, config)
+        self._nasa_features: 'pd.DataFrame | None' = None
+
+    def construir_dataset(self):
+        """Construye dataset base + añade las 5 features NASA POWER."""
+        # 1. Dataset base (regresores BD + rolling + calendario)
+        df, feature_cols = super().construir_dataset()
+
+        # 2. Features NASA POWER
+        cfg = self.config
+        from dateutil.relativedelta import relativedelta
+        ventana = cfg.get('ventana_meses')
+        if ventana:
+            fecha_inicio_nasa = (datetime.now() - relativedelta(months=ventana)).strftime('%Y-%m-%d')
+        else:
+            fecha_inicio_nasa = '2020-01-01'
+
+        print(f"  → Cargando features NASA POWER precipitación (FASE 22)...")
+        df_nasa = cargar_nasa_hidro_features(fecha_inicio_nasa)
+        self._nasa_features = df_nasa  # guardar para extrapolación en predecir()
+
+        nasa_cols = list(df_nasa.columns)
+
+        # 3. Join al dataset por índice de fecha
+        df = df.join(df_nasa, how='left')
+
+        # 4. Las features NASA son lags ≥14d — LightGBM maneja NaN nativo
+        #    Solo reportar cobertura, no hacer ffill/bfill (preserva semántica de lag)
+        for col in nasa_cols:
+            n_nan = df[col].isna().sum()
+            if n_nan > 0:
+                print(f"    NASA {col}: {n_nan} NaN (warmup de lag/rolling — LightGBM nativo)")
+
+        feature_cols = [c for c in df.columns if c != 'valor']
+        print(f"  Dataset NASA final: {len(df)} × {len(feature_cols)+1} "
+              f"(+{len(nasa_cols)} features NASA)")
+        print(f"  Features NASA: {nasa_cols}")
+
+        self.df_dataset = df
+        self.feature_cols = feature_cols
+        return df, feature_cols
+
+    def predecir(self, horizonte_dias=None):
+        """
+        Predice usando LGBM con features NASA.
+
+        Para fechas futuras, las features de precipitación se congelan en el
+        último valor conocido de la serie histórica (estrategia conservadora
+        idéntica a los rolling stats del modelo base).
+        """
+        if horizonte_dias is None:
+            horizonte_dias = HORIZONTE_DIAS
+
+        # Generar predicciones con método base (rellena features faltantes con 0.0)
+        df_pred = super().predecir(horizonte_dias)
+
+        # Sobreescribir metodo_prediccion para identificación en BD
+        df_pred['metodo_prediccion'] = 'lgbm_aportes_nasa'
+
+        return df_pred
+
+    def _extrapolar_regresores(self, fechas_futuras):
+        """Extrapola regresores BD + features NASA para fechas futuras."""
+        # Extrapolar regresores BD estándar (MA30 + ajuste estacional)
+        regs_futuros = super()._extrapolar_regresores(fechas_futuras)
+
+        # Congelar features NASA en último valor conocido
+        if self._nasa_features is not None:
+            df_nasa = self._nasa_features
+            for col in df_nasa.columns:
+                # Usar último valor no-NaN de la serie
+                serie = df_nasa[col].dropna()
+                if len(serie) > 0:
+                    regs_futuros[col] = [float(serie.iloc[-1])] * len(fechas_futuras)
+                else:
+                    regs_futuros[col] = [0.0] * len(fechas_futuras)
+
+        return regs_futuros
+
+
+# =============================================================================
+# FASE 22 — STACKING ENSEMBLE PARA EÓLICA: LightGBM + XGBoost + Ridge
+# =============================================================================
+# Arquitectura:
+#   Nivel 1: LightGBM + XGBoost entrenados con 5-fold TimeSeriesSplit (OOF)
+#   Nivel 2: Ridge meta-learner sobre predicciones OOF del nivel 1
+# Literatura: R²=0.95, RMSE=2.65 kW (vs single-model)
+# Target MAPE: de 12.28% (LGBM solo) hacia ~8-10%
+# =============================================================================
+
+EOLICA_STACKING_CONFIG = {
+    **EOLICA_LGBM_CONFIG,   # hereda toda la config (regresores, ventana, piso, etc.)
+    # LightGBM base model (mismo que FASE 13+18)
+    'lgbm_params': {
+        'n_estimators': 400,
+        'max_depth': 6,
+        'learning_rate': 0.03,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'min_child_weight': 5,
+        'reg_alpha': 0.1,
+        'reg_lambda': 1.0,
+        'random_state': 42,
+        'n_jobs': -1,
+        'verbose': -1,
+    },
+    # XGBoost base model
+    'xgb_params': {
+        'n_estimators': 400,
+        'max_depth': 5,
+        'learning_rate': 0.03,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'min_child_weight': 5,
+        'reg_alpha': 0.1,
+        'reg_lambda': 1.0,
+        'random_state': 42,
+        'n_jobs': -1,
+        'verbosity': 0,
+        'tree_method': 'hist',
+    },
+    # Meta-learner
+    'meta_alpha': 1.0,          # Ridge regularization
+    'n_folds': 5,               # TimeSeriesSplit folds para OOF
+    'usar_optuna': False,       # Optuna optúna nivel 1
+    'optuna_n_trials': 30,
+}
+
+
+class PredictorStackingEolica(PredictorLGBMDirecto):
+    """
+    FASE 22 — Stacking Ensemble para Eólica.
+
+    Nivel 1: LightGBM + XGBoost con predicciones OOF (out-of-fold).
+    Nivel 2: Ridge meta-learner que pesa las salidas del nivel 1.
+
+    Hereda construir_dataset() y predecir() de PredictorLGBMDirecto.
+    Reemplaza entrenar_y_validar() con el pipeline de stacking.
+    """
+
+    def __init__(self, nombre: str, config: dict):
+        super().__init__(nombre, config)
+        self.modelo_lgbm = None
+        self.modelo_xgb = None
+        self.meta_learner = None
+        self.base_models_full: list = []  # [lgbm_full, xgb_full] para predicción
+
+    def _oof_predictions(self, X: 'pd.DataFrame', y: 'pd.Series',
+                         n_folds: int, piso: float):
+        """
+        Genera predicciones out-of-fold con LightGBM y XGBoost.
+
+        Returns:
+            oof_lgbm, oof_xgb: arrays de longitud len(X)
+            lgbm_full, xgb_full: modelos reentrenados en X completo
+        """
+        from lightgbm import LGBMRegressor
+        from xgboost import XGBRegressor
+        from sklearn.model_selection import TimeSeriesSplit
+
+        lgbm_params = self.config.get('lgbm_params', {})
+        xgb_params = self.config.get('xgb_params', {})
+
+        tscv = TimeSeriesSplit(n_splits=n_folds)
+        oof_lgbm = np.zeros(len(X))
+        oof_xgb = np.zeros(len(X))
+
+        print(f"  🔀 OOF {n_folds}-fold TimeSeriesSplit...")
+        for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+            X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+            m_lgbm = LGBMRegressor(**lgbm_params)
+            m_lgbm.fit(X_tr, y_tr)
+            oof_lgbm[val_idx] = np.maximum(m_lgbm.predict(X_val), piso)
+
+            m_xgb = XGBRegressor(**xgb_params)
+            m_xgb.fit(X_tr, y_tr)
+            oof_xgb[val_idx] = np.maximum(m_xgb.predict(X_val), piso)
+
+            mape_fold_lgbm = mean_absolute_percentage_error(y_val, oof_lgbm[val_idx])
+            mape_fold_xgb = mean_absolute_percentage_error(y_val, oof_xgb[val_idx])
+            print(f"    Fold {fold+1}/{n_folds}: LightGBM {mape_fold_lgbm:.2%} | "
+                  f"XGBoost {mape_fold_xgb:.2%}")
+
+        # Reentrenar modelos base en X completo para predicción
+        lgbm_full = LGBMRegressor(**lgbm_params)
+        lgbm_full.fit(X, y)
+        xgb_full = XGBRegressor(**xgb_params)
+        xgb_full.fit(X, y)
+
+        return oof_lgbm, oof_xgb, lgbm_full, xgb_full
+
+    def entrenar_y_validar(self, dias_holdout: int = 30) -> bool:
+        """Pipeline: dataset → OOF nivel 1 → Ridge meta-learner → holdout validation."""
+        from sklearn.linear_model import Ridge
+
+        print(f"\n{'='*70}")
+        print(f"🇨🇴 STACKING ENSEMBLE EÓLICA: {self.nombre} (FASE 22)")
+        print(f"   Nivel 1: LightGBM + XGBoost (OOF {self.config.get('n_folds', 5)}-fold)")
+        print(f"   Nivel 2: Ridge meta-learner (alpha={self.config.get('meta_alpha', 1.0)})")
+        print(f"{'='*70}")
+
+        df, feature_cols = self.construir_dataset()
+        if len(df) < 90:
+            print(f"  ❌ Datos insuficientes ({len(df)} < 90)")
+            return False
+
+        # Holdout split
+        df_train = df.iloc[:-dias_holdout]
+        df_test = df.iloc[-dias_holdout:]
+        y_test = df_test['valor'].values
+        X_train = df_train[feature_cols]
+        y_train = df_train['valor']
+        X_test = df_test[feature_cols]
+
+        print(f"\n  📐 Split: Train={len(df_train)} | Holdout={dias_holdout} "
+              f"({df_test.index.min().date()} → {df_test.index.max().date()})")
+
+        piso = self.config.get('piso', 0.0)
+        n_folds = self.config.get('n_folds', 5)
+
+        # Optuna en nivel 1 si se activó
+        if self.config.get('usar_optuna', False):
+            import time as _time
+            t_opt = _time.time()
+            n_trials = self.config.get('optuna_n_trials', 30)
+            best_lgbm = _optuna_tune_lgbm(X_train, y_train, piso=piso, n_trials=n_trials)
+            self.config['lgbm_params'] = best_lgbm
+            print(f"  ⏱️  Optuna LightGBM completado en {_time.time() - t_opt:.0f}s")
+
+        # ═ Nivel 1: OOF sobre datos de TRAIN ═
+        oof_lgbm, oof_xgb, lgbm_full, xgb_full = self._oof_predictions(
+            X_train, y_train, n_folds, piso
+        )
+
+        # ═ Nivel 2: meta-learner sobre OOF ═
+        meta_X_train = np.column_stack([oof_lgbm, oof_xgb])
+        meta = Ridge(alpha=self.config.get('meta_alpha', 1.0))
+        meta.fit(meta_X_train, y_train)
+        self.meta_learner = meta
+        self.base_models_full = [lgbm_full, xgb_full]
+
+        coef = meta.coef_
+        print(f"  ✓ Meta-learner: LightGBM coef={coef[0]:.3f} | XGBoost coef={coef[1]:.3f}")
+
+        # ═ Holdout: nivel 1 predict → meta predict ═
+        pred_lgbm_test = np.maximum(lgbm_full.predict(X_test), piso)
+        pred_xgb_test = np.maximum(xgb_full.predict(X_test), piso)
+        meta_X_test = np.column_stack([pred_lgbm_test, pred_xgb_test])
+        y_pred = np.maximum(meta.predict(meta_X_test), piso)
+
+        mape = mean_absolute_percentage_error(y_test, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        mape_lgbm = mean_absolute_percentage_error(y_test, pred_lgbm_test)
+        mape_xgb = mean_absolute_percentage_error(y_test, pred_xgb_test)
+
+        self.metricas = {
+            'mape': float(mape),
+            'rmse': float(rmse),
+            'confianza': max(0.0, 1.0 - mape),
+            'mape_lgbm_solo': float(mape_lgbm),
+            'mape_xgb_solo': float(mape_xgb),
+        }
+
+        print(f"\n  ── Validación Holdout ({dias_holdout}d) ──")
+        print(f"    LightGBM solo:  {mape_lgbm:.2%}")
+        print(f"    XGBoost solo:   {mape_xgb:.2%}")
+        print(f"    ⭐ Stacking:     {mape:.2%} (mejora: {(mape_lgbm-mape)*100:.2f}pp)")
+        print(f"    RMSE:           {rmse:.4f}")
+        print(f"    Confianza:      {self.metricas['confianza']:.2%}")
+
+        # Re-entrenar nivel 1 en dataset completo para producción
+        print(f"\n  → Re-entrenando nivel 1 en dataset completo para producción...")
+        from lightgbm import LGBMRegressor
+        from xgboost import XGBRegressor
+        X_full = df[feature_cols]
+        y_full = df['valor']
+        lgbm_prod = LGBMRegressor(**self.config.get('lgbm_params', {}))
+        lgbm_prod.fit(X_full, y_full)
+        xgb_prod = XGBRegressor(**self.config.get('xgb_params', {}))
+        xgb_prod.fit(X_full, y_full)
+        # OOF del dataset completo para re-entrenar meta-learner
+        oof_lgbm_full, oof_xgb_full, _, _ = self._oof_predictions(
+            X_full, y_full, n_folds, piso
+        )
+        meta_prod = Ridge(alpha=self.config.get('meta_alpha', 1.0))
+        meta_prod.fit(np.column_stack([oof_lgbm_full, oof_xgb_full]), y_full)
+        self.base_models_full = [lgbm_prod, xgb_prod]
+        self.meta_learner = meta_prod
+        print(f"    ✓ Modelos de producción listos ({len(X_full)} samples)")
+
+        return True
+
+    def predecir(self, horizonte_dias: int | None = None) -> 'pd.DataFrame':  # type: ignore[override]
+        """Predice usando el stacking ensemble: nivel 1 + meta-learner."""
+        assert self.meta_learner is not None, "Entrenar antes de predecir"
+
+        # Reutilizar construcción de features futuras del padre
+        df = self.df_dataset
+        assert df is not None
+        feature_cols = self.feature_cols
+        piso = self.config.get('piso', 0.0)
+        if horizonte_dias is None:
+            horizonte_dias = HORIZONTE_DIAS
+
+        ultimo_dia = df.index[-1]
+        fechas = pd.date_range(start=ultimo_dia + pd.Timedelta(days=1),
+                               periods=horizonte_dias, freq='D')
+
+        df_futuro = pd.DataFrame(index=fechas)
+        regs_futuro = self._extrapolar_regresores(fechas)
+        for reg_nombre, valores in regs_futuro.items():
+            df_futuro[reg_nombre] = valores
+        for col in ['rolling_mean_7d', 'rolling_std_7d', 'rolling_mean_30d',
+                    'rolling_std_30d', 'rolling_min_30d', 'rolling_max_30d']:
+            if col in feature_cols:
+                df_futuro[col] = df[col].iloc[-1]
+        df_futuro['mes'] = fechas.month
+        df_futuro['dia_del_anio'] = fechas.dayofyear
+        df_futuro['semana_del_anio'] = fechas.isocalendar().week.astype(int).values
+        mes_futuro = fechas.month
+        df_futuro['es_temporada_lluvias'] = (
+            (mes_futuro >= 4) & (mes_futuro <= 5) |
+            (mes_futuro >= 10) & (mes_futuro <= 11)
+        ).astype(int)
+        df_futuro['es_temporada_seca'] = (
+            (mes_futuro <= 3) |
+            (mes_futuro >= 6) & (mes_futuro <= 9) & ~((mes_futuro >= 10) & (mes_futuro <= 11))
+        ).astype(int)
+        df_futuro['sin_anual'] = np.sin(2 * np.pi * df_futuro['dia_del_anio'] / 365.25)
+        df_futuro['cos_anual'] = np.cos(2 * np.pi * df_futuro['dia_del_anio'] / 365.25)
+        df_futuro['sin_dds'] = np.sin(2 * np.pi * fechas.dayofweek / 7)
+        df_futuro['cos_dds'] = np.cos(2 * np.pi * fechas.dayofweek / 7)
+        if self.config.get('usar_calendario', True):
+            df_cal = construir_regresores_calendario(fechas)
+            df_futuro = df_futuro.join(df_cal)
+        for col in feature_cols:
+            if col not in df_futuro.columns:
+                df_futuro[col] = 0.0
+
+        X_futuro = df_futuro[feature_cols]
+        lgbm_full, xgb_full = self.base_models_full
+        pred_lgbm = np.maximum(lgbm_full.predict(X_futuro), piso)
+        pred_xgb = np.maximum(xgb_full.predict(X_futuro), piso)
+        preds = np.maximum(
+            self.meta_learner.predict(np.column_stack([pred_lgbm, pred_xgb])),
+            piso
+        )
+
+        # Intervalos: basados en residuos del train set
+        X_all = df[feature_cols]
+        y_all = df['valor']
+        pred_lgbm_tr = np.maximum(lgbm_full.predict(X_all), piso)
+        pred_xgb_tr = np.maximum(xgb_full.predict(X_all), piso)
+        preds_tr = np.maximum(
+            self.meta_learner.predict(np.column_stack([pred_lgbm_tr, pred_xgb_tr])),
+            piso
+        )
+        residuos = np.abs(y_all.values - preds_tr)
+        std_residuos = np.std(residuos)
+        factores = np.array([1.0 + 0.05 * i + 0.001 * i**2 for i in range(horizonte_dias)])
+        lower = np.maximum(preds - 1.96 * std_residuos * factores, piso)
+        upper = np.maximum(preds + 1.96 * std_residuos * factores, piso)
+
+        df_pred = pd.DataFrame({
+            'fecha_prediccion': fechas[:horizonte_dias],
+            'valor_predicho': preds[:horizonte_dias],
+            'intervalo_inferior': lower[:horizonte_dias],
+            'intervalo_superior': upper[:horizonte_dias],
+            'metodo_prediccion': 'stacking_lgbm_xgb_ridge',
+        })
+
+        print(f"    ✓ {len(df_pred)} predicciones Stacking, "
+              f"rango [{preds.min():.2f}, {preds.max():.2f}] "
+              f"{self.config.get('unidad', '')}")
 
         return df_pred
 
@@ -3677,6 +4512,86 @@ def main_lgbm_aportes():
 
     except Exception as e:
         print(f"\n  ❌ Error en LightGBM APORTES_HIDRICOS: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def main_lgbm_aportes_nasa():
+    """
+    FASE 22 — Pipeline LightGBM + NASA POWER para APORTES_HIDRICOS.
+
+    Extiende FASE 11 añadiendo 5 features de precipitación NASA POWER para las
+    4 cuencas hidrológicas principales de Colombia.  Experimento offline (FASE 21)
+    demostró 12.08% MAPE vs 16.52% del modelo base.
+
+    Target: < 13% MAPE → sistema global < 7.2% (mínimo histórico ENERTRACE).
+    """
+    print("\n" + "="*70)
+    print("🇨🇴 LIGHTGBM + NASA POWER — APORTES_HIDRICOS (FASE 22)")
+    print("   Experimento FASE 21: 12.08% MAPE (vs 16.52% base FASE 11)")
+    print("   NASA POWER: MAGDALENA_ALTO, CAUCA_MEDIO, SANTANDER_CUENCA, PACIFICO_CUENCA")
+    print("="*70)
+    print(f"   Modelo: {MODELO_VERSION_LGBM_APORTES_NASA}")
+    print(f"   Horizonte: {HORIZONTE_DIAS} días")
+    print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*70)
+
+    import time
+    t0 = time.time()
+
+    try:
+        predictor = PredictorLGBMDirectoNASA(
+            'APORTES_HIDRICOS', APORTES_HIDRICOS_LGBM_NASA_CONFIG
+        )
+        ok = predictor.entrenar_y_validar(dias_holdout=90)  # 90d = igual que experimento
+
+        if not ok:
+            print(f"\n  ❌ LightGBM NASA APORTES_HIDRICOS falló en entrenamiento")
+            return False
+
+        # Quality gate: experimento mostró 12.08%, producción debería ser <15%
+        mape = predictor.metricas.get('mape')
+        if mape is not None and mape > 0.30:
+            print(f"\n  ⚠️  APORTES_HIDRICOS NASA: MAPE={mape:.2%} > 30%. "
+                  f"Se guardan igual pero con advertencia.")
+        elif mape is not None:
+            mejora = 0.1652 - mape  # vs baseline 16.52% FASE 11
+            print(f"\n  🎯 MAPE={mape:.2%} — mejora vs línea base: {mejora*100:+.2f}pp")
+
+        # Generar predicciones 90 días
+        df_pred = predictor.predecir(HORIZONTE_DIAS)
+
+        save_config = {
+            'confianza_real': predictor.metricas.get('confianza', CONFIANZA_SIN_VALIDACION),
+            'mape_real': predictor.metricas.get('mape'),
+            'rmse_real': predictor.metricas.get('rmse'),
+        }
+
+        ok_bd = guardar_predicciones_bd(
+            'APORTES_HIDRICOS', df_pred, save_config,
+            metodo_prediccion='lgbm_aportes_nasa',
+            modelo_version=MODELO_VERSION_LGBM_APORTES_NASA,
+        )
+
+        elapsed = time.time() - t0
+
+        # FASE 17: MLflow tracking
+        mlflow_log_production_run('APORTES_HIDRICOS', predictor,
+                                  APORTES_HIDRICOS_LGBM_NASA_CONFIG,
+                                  MODELO_VERSION_LGBM_APORTES_NASA, elapsed, ok_bd)
+
+        if ok_bd:
+            print(f"\n  ✅ APORTES_HIDRICOS NASA completado — MAPE={mape:.2%}, "
+                  f"Confianza={predictor.metricas['confianza']:.2%}, "
+                  f"Tiempo={elapsed:.0f}s")
+            return True
+        else:
+            print(f"\n  ❌ Error guardando APORTES_HIDRICOS NASA en BD")
+            return False
+
+    except Exception as e:
+        print(f"\n  ❌ Error en LightGBM NASA APORTES_HIDRICOS: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -3894,6 +4809,82 @@ def main_lgbm_eolica():
         return False
 
 
+def main_stacking_eolica():
+    """
+    FASE 22 — Pipeline Stacking Ensemble para Eólica.
+
+    LightGBM + XGBoost como modelos base (OOF 5-fold TimeSeriesSplit).
+    Ridge meta-learner que combina ambas salidas.
+    Target MAPE: de 12.28% (LGBM solo) hacia ~8-10%.
+    """
+    print("\n" + "="*70)
+    print("🇨🇴 STACKING ENSEMBLE — EÓLICA (FASE 22)")
+    print("   LightGBM + XGBoost → Ridge meta-learner")
+    print(f"   Baseline LGBM (FASE 13+18): 12.28% MAPE")
+    print("="*70)
+    print(f"   Modelo: {MODELO_VERSION_STACKING_EOLICA}")
+    print(f"   Horizonte: {HORIZONTE_DIAS} días")
+    print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*70)
+
+    import time
+    t0 = time.time()
+
+    try:
+        predictor = PredictorStackingEolica('Eólica', EOLICA_STACKING_CONFIG)
+        ok = predictor.entrenar_y_validar(dias_holdout=30)
+
+        if not ok:
+            print(f"\n  ❌ Stacking Eólica falló en entrenamiento")
+            return False
+
+        mape = predictor.metricas.get('mape')
+        baseline_mape = 0.1228  # LGBM solo FASE 13+18
+
+        # Quality gate: solo guardar si mejora respecto al baseline LGBM
+        if mape is not None and mape > baseline_mape:
+            print(f"\n  ⚠️  Stacking MAPE={mape:.2%} > baseline LGBM {baseline_mape:.2%}. "
+                  f"No se actualiza la BD (el LGBM actual es mejor).")
+            print(f"     → Seguir usando --lgbm_eolica para producción.")
+            return False
+
+        if mape is not None and mape > 0.35:
+            print(f"\n  ⚠️  Eólica Stacking: MAPE={mape:.2%} > 35%. Se guardan con advertencia.")
+
+        df_pred = predictor.predecir(HORIZONTE_DIAS)
+
+        save_config = {
+            'confianza_real': predictor.metricas.get('confianza', CONFIANZA_SIN_VALIDACION),
+            'mape_real': predictor.metricas.get('mape'),
+            'rmse_real': predictor.metricas.get('rmse'),
+        }
+
+        ok_bd = guardar_predicciones_bd(
+            'Eólica', df_pred, save_config,
+            metodo_prediccion='stacking_lgbm_xgb_ridge',
+            modelo_version=MODELO_VERSION_STACKING_EOLICA,
+        )
+
+        elapsed = time.time() - t0
+
+        if ok_bd:
+            mejora_pp = (baseline_mape - mape) * 100 if mape is not None else 0
+            print(f"\n  ✅ Stacking Eólica completado — MAPE={mape:.2%} "
+                  f"(mejora vs LGBM solo: {mejora_pp:.2f}pp), "
+                  f"Confianza={predictor.metricas['confianza']:.2%}, "
+                  f"Tiempo={elapsed:.0f}s")
+            return True
+        else:
+            print(f"\n  ❌ Error guardando Stacking Eólica en BD")
+            return False
+
+    except Exception as e:
+        print(f"\n  ❌ Error en Stacking Eólica: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 # =============================================================================
 # FASE 14 — CROSS-VALIDATION TEMPORAL 5-FOLD
 # =============================================================================
@@ -4010,7 +5001,7 @@ def generar_plotly_cv(all_results, output_dir=None):
             line_dash='dash', line_color=color, line_width=2,
             annotation_text=f"CV μ={result['mape_mean']:.1%}",
             annotation_position='right',
-            row=row, col=1,
+            row=row, col=1,  # type: ignore[arg-type]
         )
 
         # Single holdout line
@@ -4020,7 +5011,7 @@ def generar_plotly_cv(all_results, output_dir=None):
                 line_dash='dot', line_color='red', line_width=1.5,
                 annotation_text=f"Single={mape_single:.1%}",
                 annotation_position='left',
-                row=row, col=1,
+                row=row, col=1,  # type: ignore[arg-type]
             )
 
         # CI 95% band
@@ -4029,7 +5020,7 @@ def generar_plotly_cv(all_results, output_dir=None):
             y0=ci_low * 100, y1=ci_high * 100,
             fillcolor=color, opacity=0.1,
             line_width=0,
-            row=row, col=1,
+            row=row, col=1,  # type: ignore[arg-type]
         )
 
         fig.update_yaxes(title_text='MAPE (%)', row=row, col=1)
@@ -4304,6 +5295,100 @@ def main_randomforest_precio():
 
     except Exception as e:
         print(f"\n  ❌ Error en RandomForest PRECIO_BOLSA: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def main_lgbm_precio():
+    """
+    FASE 23 — Pipeline LightGBM Directo para PRECIO_BOLSA.
+
+    Candidato a reemplazar RandomForest (FASE 10) usando los mismos 6
+    regresores BD + rolling stats + calendario, con predicción directa
+    (sin lags recursivos).
+
+    Validación: holdout de 90 días genuinos — mismo horizonte que se evalúa
+    para comparación justa con RF a 90d.
+
+    Baseline justo (RF @ 90d):
+      RF 30d = 15.73% (producción oficial)
+      RF 90d = 17.10% (comparación equitativa a igual ventana)
+
+    RESULTADO FASE 23: LGBM 90d = 24.43% (con Optuna) → RF gana.
+    RF usa rolling_mean_7d con 87% importancia (price momentum) — LGBM
+    distribuye importancia más uniformemente, lo que es subóptimo aquí.
+
+    Criterio de aceptación: MAPE holdout < 17.10% (RF @ 90d, comparación justa).
+    Si no se cumple, el RF sigue siendo el modelo de producción.
+    """
+    print("\n" + "="*70)
+    print("🇨🇴 LIGHTGBM DIRECTO — PRECIO_BOLSA (FASE 23)")
+    print("   Candidato a reemplazar RandomForest (RF@90d: 17.10%)")
+    print("="*70)
+    print(f"   Modelo: {MODELO_VERSION_LGBM_PRECIO}")
+    print(f"   Horizonte: {HORIZONTE_DIAS} días")
+    print(f"   Holdout validación: 90 días (genuino, comparación justa vs RF)")
+    print(f"   Criterio aceptación: MAPE < 17.10% (RF@90d, baseline justo)")
+    print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*70)
+
+    import time
+    t0 = time.time()
+
+    try:
+        predictor = PredictorLGBMDirecto('PRECIO_BOLSA', PRECIO_BOLSA_LGBM_CONFIG)
+        ok = predictor.entrenar_y_validar(dias_holdout=90)
+
+        if not ok:
+            print(f"\n  ❌ LightGBM PRECIO_BOLSA falló en entrenamiento")
+            return False
+
+        mape = predictor.metricas.get('mape')
+
+        # Criterio de aceptación: superar al RF @ 90d (comparación justa)
+        # RF@30d = 15.73% (producción), RF@90d = 17.10% (igual horizonte)
+        RF_BASELINE_90D = 0.1710
+        if mape is not None and mape > RF_BASELINE_90D:
+            print(f"\n  ⚠️  LGBM PRECIO_BOLSA: MAPE={mape:.2%} > RF@90d (17.10%).")
+            print(f"       Predicciones NO guardadas. Usar --rf_precio para producción.")
+            print(f"       Nota FASE 23: RF usa rolling_mean_7d@87% — mejor para mean-reversion.")
+            return False
+
+        # Generar predicciones
+        df_pred = predictor.predecir(HORIZONTE_DIAS)
+
+        # Guardar en BD
+        save_config = {
+            'confianza_real': predictor.metricas.get('confianza', CONFIANZA_SIN_VALIDACION),
+            'mape_real': mape,
+            'rmse_real': predictor.metricas.get('rmse'),
+        }
+
+        ok_bd = guardar_predicciones_bd(
+            'PRECIO_BOLSA', df_pred, save_config,
+            metodo_prediccion='lgbm_precio',
+            modelo_version=MODELO_VERSION_LGBM_PRECIO,
+        )
+
+        elapsed = time.time() - t0
+
+        # FASE 17: MLflow tracking
+        mlflow_log_production_run('PRECIO_BOLSA', predictor,
+                                  PRECIO_BOLSA_LGBM_CONFIG,
+                                  MODELO_VERSION_LGBM_PRECIO, elapsed, ok_bd)
+
+        if ok_bd:
+            print(f"\n  ✅ PRECIO_BOLSA LGBM completado — MAPE={mape:.2%}, "
+                  f"Confianza={predictor.metricas['confianza']:.2%}, "
+                  f"Tiempo={elapsed:.0f}s")
+            return True
+        else:
+            print(f"\n  ❌ Error guardando PRECIO_BOLSA LGBM en BD")
+            return False
+
+    except Exception as e:
+        print(f"\n  ❌ Error en LightGBM PRECIO_BOLSA: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -4791,6 +5876,8 @@ Modos de operación:
   --cv APORTES_HIDRICOS         Cross-validation solo métricas específicas (FASE 14)
   --mlflow                      Activar MLflow tracking (FASE 17)
   --mlflow --mlflow_experiment X  MLflow con experiment custom
+  --optuna                      Búsqueda bayesiana de hiperparámetros (FASE 21)
+  --optuna --optuna_trials N    Número de trials Optuna (default 30 LGBM / 20 RF)
 
 Ejemplos:
   python scripts/train_predictions_sector_energetico.py
@@ -4801,6 +5888,11 @@ Ejemplos:
   python scripts/train_predictions_sector_energetico.py --lgbm_termica
   python scripts/train_predictions_sector_energetico.py --lgbm_solar
   python scripts/train_predictions_sector_energetico.py --lgbm_eolica
+  python scripts/train_predictions_sector_energetico.py --stacking_eolica
+  python scripts/train_predictions_sector_energetico.py --stacking_eolica --optuna
+  python scripts/train_predictions_sector_energetico.py --lgbm_solar --optuna
+  python scripts/train_predictions_sector_energetico.py --lgbm_eolica --optuna --optuna_trials 50
+  python scripts/train_predictions_sector_energetico.py --rf_precio --optuna
   python scripts/train_predictions_sector_energetico.py --cv_all
   python scripts/train_predictions_sector_energetico.py --cv APORTES_HIDRICOS Térmica
         """,
@@ -4831,6 +5923,20 @@ Ejemplos:
         '--lgbm_eolica', action='store_true', default=False,
         help='Solo LightGBM directo Eólica (FASE 13).',
     )
+    parser.add_argument(
+        '--stacking_eolica', action='store_true', default=False,
+        help='Stacking Ensemble Eólica: LightGBM + XGBoost + Ridge meta-learner (FASE 22).',
+    )
+    parser.add_argument(
+        '--lgbm_aportes_nasa', action='store_true', default=False,
+        help='LightGBM + NASA POWER precipitación para APORTES_HIDRICOS (FASE 22). '
+             'Versión potenciada de --lgbm_aportes con features de 4 cuencas hidrológicas.',
+    )
+    parser.add_argument(
+        '--lgbm_precio', action='store_true', default=False,
+        help='LightGBM directo para PRECIO_BOLSA (FASE 23). '
+             'Reemplaza RandomForest si MAPE holdout 90d < 14.67%% (RF actual).',
+    )
     # FASE 14: Cross-validation temporal
     parser.add_argument(
         '--cv', nargs='+', default=None,
@@ -4845,6 +5951,18 @@ Ejemplos:
     # Mantener alias legacy por compatibilidad
     parser.add_argument('--test_horizonte_dual', nargs='*', default=None,
                         metavar='METRICA', help=argparse.SUPPRESS)
+    # FASE 21: Optuna hyperparameter optimization
+    parser.add_argument(
+        '--optuna', action='store_true', default=False,
+        help='Activar búsqueda bayesiana de hiperparámetros con Optuna (FASE 21). '
+             'Combinar con --lgbm_solar, --lgbm_eolica, --lgbm_aportes, '
+             '--lgbm_termica o --rf_precio.',
+    )
+    parser.add_argument(
+        '--optuna_trials', type=int, default=None,
+        metavar='N',
+        help='Número de trials Optuna (default: 30 para LGBM, 20 para RF).',
+    )
     # FASE 17: MLflow tracking
     parser.add_argument(
         '--mlflow', action='store_true', default=False,
@@ -4865,6 +5983,36 @@ Ejemplos:
             if args.mlflow_experiment:
                 print(f"     Experiment: {args.mlflow_experiment}")
 
+    # ── FASE 21: Inyectar usar_optuna en el config antes del dispatch ──
+    if args.optuna:
+        _n_trials_lgbm = args.optuna_trials or 30
+        _n_trials_rf = args.optuna_trials or 20
+        if args.lgbm_solar:
+            SOLAR_LGBM_CONFIG['usar_optuna'] = True
+            SOLAR_LGBM_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        if args.lgbm_eolica:
+            EOLICA_LGBM_CONFIG['usar_optuna'] = True
+            EOLICA_LGBM_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        if args.stacking_eolica:
+            EOLICA_STACKING_CONFIG['usar_optuna'] = True
+            EOLICA_STACKING_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        if args.lgbm_aportes:
+            APORTES_HIDRICOS_LGBM_CONFIG['usar_optuna'] = True
+            APORTES_HIDRICOS_LGBM_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        if args.lgbm_termica:
+            TERMICA_LGBM_CONFIG['usar_optuna'] = True
+            TERMICA_LGBM_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        if args.rf_precio:
+            PRECIO_BOLSA_RF_CONFIG['usar_optuna'] = True
+            PRECIO_BOLSA_RF_CONFIG['optuna_n_trials'] = _n_trials_rf
+        if args.lgbm_aportes_nasa:
+            APORTES_HIDRICOS_LGBM_NASA_CONFIG['usar_optuna'] = True
+            APORTES_HIDRICOS_LGBM_NASA_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        if args.lgbm_precio:
+            PRECIO_BOLSA_LGBM_CONFIG['usar_optuna'] = True
+            PRECIO_BOLSA_LGBM_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        print(f"\n  🔬 Optuna activado — búsqueda bayesiana de hiperparámetros (FASE 21)")
+
     dual_args = args.horizonte_dual if args.horizonte_dual is not None else args.test_horizonte_dual
     if args.cv_all:
         # FASE 14: CV todas las métricas
@@ -4872,9 +6020,15 @@ Ejemplos:
     elif args.cv is not None:
         # FASE 14: CV métricas específicas
         main_cross_validation(metricas=args.cv)
+    elif args.lgbm_precio:
+        # FASE 23 — LightGBM directo PRECIO_BOLSA (reemplaza RF si MAPE < 14.67%)
+        main_lgbm_precio()
     elif args.rf_precio:
-        # Modo solo RandomForest PRECIO_BOLSA
+        # Modo solo RandomForest PRECIO_BOLSA (FASE 10 — producción fallback)
         main_randomforest_precio()
+    elif args.lgbm_aportes_nasa:
+        # Modo LightGBM + NASA POWER APORTES_HIDRICOS (FASE 22)
+        main_lgbm_aportes_nasa()
     elif args.lgbm_aportes:
         # Modo solo LightGBM directo APORTES_HIDRICOS
         main_lgbm_aportes()
@@ -4887,6 +6041,9 @@ Ejemplos:
     elif args.lgbm_eolica:
         # Modo solo LightGBM directo Eólica
         main_lgbm_eolica()
+    elif args.stacking_eolica:
+        # Modo Stacking Ensemble Eólica (FASE 22)
+        main_stacking_eolica()
     elif dual_args is not None:
         # Modo horizonte dual
         metricas = dual_args if dual_args else None

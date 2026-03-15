@@ -922,6 +922,57 @@ def _section_hdr(title: str, color: str = '#254553') -> str:
 # PAGE 1: Variables del Mercado y Resumen
 # ═══════════════════════════════════════════════════════════════
 
+def _build_mercado_vars_cards(variables_mercado: Dict[str, Any]) -> str:
+    """
+    Renderiza una fila de mini-KPI cards para las variables adicionales de mercado:
+    Precio Escasez, Precio Máx Oferta Nal, PPP Precio Bolsa,
+    Demanda Regulada, Demanda No Regulada.
+    """
+    if not variables_mercado:
+        return ''
+
+    _ITEMS = [
+        ('precio_escasez',    'Precio Escasez',       '#1a5276'),
+        ('precio_max_oferta', 'Precio M&aacute;x Oferta', '#154360'),
+        ('ppp_bolsa',         'PPP Precio Bolsa',     '#0e5f58'),
+        ('demanda_regulada',  'Dem. Regulada',        '#196f3d'),
+        ('demanda_no_reg',    'Dem. No Regulada',     '#145a32'),
+    ]
+
+    cells = ''
+    for clave, label, color in _ITEMS:
+        entry = variables_mercado.get(clave)
+        if not entry:
+            continue
+        raw = entry.get('valor', '—')
+        unidad = entry.get('unidad', '')
+        valor_str = f'{float(raw):,.2f}' if isinstance(raw, (int, float)) else str(raw)
+        cells += (
+            f'<td style="background:{color}; border-radius:4px; padding:5px 8px; '
+            f'color:#fff; text-align:center;">'
+            f'<div style="font-size:6.5pt; font-weight:bold; opacity:0.85;">{label}</div>'
+            f'<div style="font-size:10pt; font-weight:bold; margin-top:2px;">'
+            f'{valor_str}'
+            f'<span style="font-size:6.5pt; margin-left:2px;">{unidad}</span>'
+            f'</div>'
+            f'</td>'
+        )
+
+    if not cells:
+        return ''
+
+    return (
+        f'<div style="margin:5px 10px 3px;">'
+        f'<table style="width:100%; border-collapse:separate; border-spacing:4px 0;">'
+        f'<tr>{cells}</tr>'
+        f'</table>'
+        f'<p style="font-size:6.5pt; font-style:italic; color:#666; margin:2px 0 0 2px;">'
+        f'Fuente: XM &mdash; SIMEM. Precios en $/kWh. '
+        f'Demanda: &uacute;ltimo valor diario del SIN (entidad Sistema).</p>'
+        f'</div>'
+    )
+
+
 def _build_page_mercado(
     logo_b64: str,
     fecha_label: str,
@@ -929,6 +980,7 @@ def _build_page_mercado(
     tabla_indicadores: List[Dict[str, Any]],
     chart_paths: List[str],
     pred_resumen: Optional[Dict[str, Any]] = None,
+    variables_mercado: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Página 1: Resumen ejecutivo con semáforo + Variables del Mercado
@@ -1075,15 +1127,17 @@ def _build_page_mercado(
     """
 
     # ── Predicción de Precio de Bolsa ──
-    precio_pred = _find_metric_prediction(pred_resumen, 'precio')
+    precio_pred = _find_metric_prediction(pred_resumen, 'precio')  # type: ignore
     if not precio_pred:
-        precio_pred = _find_metric_prediction(pred_resumen, 'bolsa')
+        precio_pred = _find_metric_prediction(pred_resumen, 'bolsa')  # type: ignore
     precio_pred_html = _build_pred_card(
         precio_pred,
         'El Precio de Bolsa proyectado refleja la din&aacute;mica '
         'esperada de oferta-demanda para el pr&oacute;ximo mes, '
         'considerando disponibilidad h&iacute;drica y despacho t&eacute;rmico.'
     ) if precio_pred else ''
+
+    mercado_vars_html = _build_mercado_vars_cards(variables_mercado or {})
 
     return f"""
     <div class="page">
@@ -1092,6 +1146,7 @@ def _build_page_mercado(
       {semaphore_html}
       {_section_hdr('Variables del Mercado', '#287270')}
       {content}
+      {mercado_vars_html}
       {precio_pred_html}
     </div>
     """
@@ -1253,9 +1308,9 @@ def _build_page_generacion(
     """
 
     # ── Predicción de Generación Total ──
-    gen_pred = _find_metric_prediction(pred_resumen, 'generaci')
+    gen_pred = _find_metric_prediction(pred_resumen, 'generaci')  # type: ignore
     if not gen_pred:
-        gen_pred = _find_metric_prediction(pred_resumen, 'GENE')
+        gen_pred = _find_metric_prediction(pred_resumen, 'GENE')  # type: ignore
     gen_pred_html = _build_pred_card(
         gen_pred,
         'La generaci&oacute;n total proyectada considera la estacionalidad '
@@ -1278,12 +1333,84 @@ def _build_page_generacion(
 # PAGE 3: Hidrología y Embalses + Proyecciones
 # ═══════════════════════════════════════════════════════════════
 
+def _build_embalses_regionales_html(embalses_regionales: Dict[str, Any]) -> str:
+    """
+    Tabla compacta de llenado por región hidrológica.
+    Muestra: región, # embalses, % promedio, estado semáforo.
+    Ordenada de menor a mayor % (riesgo primero).
+    """
+    if not embalses_regionales or 'regiones' not in embalses_regionales:
+        return ''
+
+    regiones = embalses_regionales.get('regiones', [])
+    if not regiones:
+        return ''
+
+    fecha_dato = embalses_regionales.get('fecha_dato', '')
+    rows = ''
+    for r in regiones:
+        pct = r.get('pct_promedio', 0.0)
+        estado = r.get('estado', 'Normal')
+        n_emb = r.get('n_embalses', 0)
+        region_label = str(r.get('region', '')).capitalize()
+        embalses_list = ', '.join(r.get('embalses', []))
+
+        if estado == 'Normal':
+            bcls = 'badge-ok'
+            bar_color = '#287270'
+        elif estado == 'Alerta':
+            bcls = 'badge-warn'
+            bar_color = '#E65100'
+        else:
+            bcls = 'badge-crit'
+            bar_color = '#C62828'
+
+        bar_w = min(int(pct), 100)
+        bar_html = (
+            f'<div style="background:#e0e0e0;border-radius:3px;height:6px;width:100%;margin-top:2px;">'  
+            f'<div style="background:{bar_color};height:6px;border-radius:3px;width:{bar_w}%;"></div>'
+            f'</div>'
+        )
+
+        rows += (
+            f'<tr>'
+            f'<td style="font-weight:bold;">{region_label}</td>'
+            f'<td style="text-align:center;color:#555;">{n_emb}</td>'
+            f'<td style="text-align:right;font-weight:bold;">{pct:.1f}%{bar_html}</td>'
+            f'<td style="text-align:center;">'
+            f'<span class="badge {bcls}">{estado}</span></td>'
+            f'<td style="font-size:6pt;color:#777;">{embalses_list}</td>'
+            f'</tr>'
+        )
+
+    nota = f'Fecha dato: {fecha_dato}' if fecha_dato else ''
+    return (
+        f'<div style="margin:4px 10px;">'
+        f'<table class="sema-tbl">'
+        f'<tr>'
+        f'<th>Región</th>'
+        f'<th style="text-align:center;"># Embalses</th>'
+        f'<th style="text-align:right;">Nivel Prom.</th>'
+        f'<th style="text-align:center;">Estado</th>'
+        f'<th>Embalses</th>'
+        f'</tr>'
+        f'{rows}'
+        f'</table>'
+        f'<div style="font-size:6pt;color:#8d8d8d;margin-top:2px;">'
+        f'Promedio simple por región &bull; PorcVoluUtilDiar XM/SIMEM'
+        f'{" &bull; " + nota if nota else ""}'
+        f'</div>'
+        f'</div>'
+    )
+
+
 def _build_page_hidrologia(
     logo_b64: str,
     fecha_label: str,
     embalses_detalle: Dict[str, Any],
     pred_resumen: Dict[str, Any],
     chart_paths: List[str],
+    embalses_regionales: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Página 3: Hidrología + embalses + predicciones compactas.
@@ -1443,11 +1570,15 @@ def _build_page_hidrologia(
         'hidroel&eacute;ctricas y perspectivas clim&aacute;ticas regionales.'
     ) if emb_pred else ''
 
+    regionales_html = _build_embalses_regionales_html(embalses_regionales or {})
+
     return f"""
     <div class="page">
       {header}
       {_section_hdr('Hidrolog&iacute;a y Embalses')}
       {hydro_section}
+      {_section_hdr('Nivel por Regi&oacute;n Hidrol&oacute;gica', '#254553') if regionales_html else ''}
+      {regionales_html}
       {emb_pred_html}
       {_section_hdr('Proyecciones a 1 Mes', '#287270') if pred_html else ''}
       {pred_html}
@@ -1644,6 +1775,8 @@ def generar_pdf_informe(
         gen_por_fuente = ctx.get('generacion_por_fuente', {})
         embalses_detalle = ctx.get('embalses_detalle', {})
         pred_resumen = ctx.get('predicciones_mes_resumen', {})
+        variables_mercado = ctx.get('variables_mercado', {})
+        embalses_regionales = ctx.get('embalses_regionales', {})
 
         logo_b64 = _load_logo_b64()
         charts = chart_paths or []
@@ -1653,6 +1786,7 @@ def generar_pdf_informe(
             logo_b64, fecha_label,
             fichas or [], tabla_indicadores, charts,
             pred_resumen=pred_resumen,
+            variables_mercado=variables_mercado,
         )
 
         page2 = _build_page_generacion(
@@ -1664,6 +1798,7 @@ def generar_pdf_informe(
         page3 = _build_page_hidrologia(
             logo_b64, fecha_label,
             embalses_detalle, pred_resumen, charts,
+            embalses_regionales=embalses_regionales,
         )
 
         page4 = _build_page_analisis(

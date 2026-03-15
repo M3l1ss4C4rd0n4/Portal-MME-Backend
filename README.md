@@ -1,7 +1,7 @@
 # Portal Energético Colombia — Dashboard MME
 
 > **Sistema Integral de Monitoreo y Análisis del Sector Energético Colombiano**  
-> **Versión 1.0.0 — Arquitectura Hexagonal + IA + Bots + API REST + ML (Marzo 2026)**
+> **Versión 1.4.0 — Arquitectura Hexagonal + IA + Bots + API REST + ML (Marzo 2026)**
 
 Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine Learning**, **Bots multicanal (Telegram + WhatsApp)**, **API REST pública**, **Noticias del sector**, **ETL automatizado** y **publicación ArcGIS** para análisis en tiempo real del Sistema Interconectado Nacional (SIN).
 
@@ -15,7 +15,7 @@ Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine 
 
 ---
 
-## Estado Actual del Sistema (5 Marzo 2026)
+## Estado Actual del Sistema (15 Marzo 2026)
 
 ### Plataforma
 
@@ -23,61 +23,44 @@ Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine 
 |-----------|--------|
 | **Servidor** | Srvwebprdctrlxm (Azure VM, Ubuntu) |
 | **Dashboard** | Dash 2.17.1 / Plotly 5.17.0 — 14 tableros activos, port 8050 |
-| **API REST** | FastAPI 0.128.2 — 21+ endpoints (14 routers), port 8000 |
+| **API REST** | FastAPI — 29+ endpoints, port 8000, autenticación X-API-Key |
+| **Chatbot IA** | Analista Energético flotante (izquierda), con alertas + noticias en tiempo real |
+| **Widget Noticias** | Carrusel KPI top-left en inicio, rotación automática cada 7 s |
+| **Alertas Inteligentes** | Celery Beat detecta anomalías, cooldown 2h, notifica Telegram |
 | **Bot Telegram** | Polling mode, inline keyboards, informes ejecutivos |
 | **Bot WhatsApp** | FastAPI + whatsapp-web.js, port 8001 (experimental) |
 | **MLflow** | Tracking server, port 5000 |
-| **Celery** | 2 workers + Beat + Flower (:5555) |
+| **Celery** | 2 workers + Beat |
 
 ### Base de Datos PostgreSQL 16
 
-| Tabla | Tamaño | Filas | Rango |
-|-------|--------|-------|-------|
-| `metrics_hourly` | 12 GB | 50,127,023 | 2020-01-01 → 2026-02-04 |
-| `metrics` | 2,845 MB | 13,775,431 | 2020-01-01 → 2026-03-04 |
-| `lineas_transmision` | 16 MB | — | — |
-| `subsidios_pagos` | 7 MB | 12,920 | — |
-| `commercial_metrics` | 1.9 MB | 11,470 | 2020-01-01 → 2026-02-27 |
-| `restriction_metrics` | 1.6 MB | 6,640 | 2020-02-06 → 2026-02-27 |
-| `cu_daily` | 1.1 MB | 2,214 | 2020-02-06 → 2026-02-27 |
-| `predictions` | 928 KB | 1,170 | 2026-02-24 → 2026-05-28 |
-| `losses_detailed` | 848 KB | 2,214 | 2020-02-06 → 2026-02-27 |
-| **Total** | **~15 GB** | **~64M** | Cobertura: 2020-01-01 → presente |
+| Tabla | Descripción |
+|-------|-------------|
+| `metrics_hourly` | Métricas XM horarias (50M+ filas, 2020→presente) |
+| `metrics` | Métricas XM diarias (13M+ filas) |
+| `cu_daily` | Costo Unitario mayorista diario |
+| `predictions` | Predicciones ML (horizonte 365 días) |
+| `alertas_historial` | Historial de alertas energéticas con cooldown |
+| `losses_detailed` | Pérdidas detalladas por OR |
+| `commercial_metrics` | Métricas comerciales por agente |
+| `restriction_metrics` | Restricciones operativas |
+| `subsidios_pagos` | Subsidios y estratos |
+| **Total** | **~15 GB**, ~64M filas, cobertura 2020-01-01 → presente |
 
 ### Métricas del Código
 
 | Métrica | Valor |
 |---------|-------|
-| Archivos totales | 579 |
-| Archivos Python | 234 |
-| Líneas de código Python | 86,312 |
-| Servicios de dominio | 26 |
+| Archivos Python | 261 (todos con sintaxis válida) |
+| Servicios de dominio | 28 |
 | Repositorios | 6 |
-| Endpoints API | 21+ |
-| Páginas Dashboard | 14 |
-| Tests | 150 pasando (0 fallas) |
-| Cron jobs activos | 8 cron + 4 Celery Beat |
-| Tablas PostgreSQL | 21 |
-| Tamaño del proyecto | 705 MB (sin venv/git) |
+| Endpoints API | 29+ |
+| Páginas Dashboard | 15 |
+| Handlers orquestador | 8 |
+| Tareas Celery | 2 archivos (anomaly_tasks + etl_tasks) |
+| ETL processes | 11 scripts ETL |
 
 ---
-
-## Arquitectura
-
-El proyecto implementa **Arquitectura Hexagonal (Ports & Adapters)** con inyección de dependencias:
-
-```
-                    NGINX (80/443)
-                    ┌─────┴──────┐
-              /api/* → :8000    /* → :8050
-              FastAPI            Dash
-                    └─────┬──────┘
-                    ┌─────┴──────┐
-                    │   domain/  │  ← 24 servicios de negocio
-                    │ interfaces │  ← Puertos (ABCs)
-                    └─────┬──────┘
-              ┌───────────┼───────────┐
-        infrastructure/         external APIs
         ├── database/           ├── XM Colombia
         │   ├── connection      ├── SIMEM
         │   ├── manager         ├── IDEAM
@@ -366,5 +349,19 @@ kill -HUP $(pgrep -f "gunicorn.*8000" | head -1)
 Propiedad del **Ministerio de Minas y Energía de Colombia**.
 
 **Repositorio:** https://github.com/MelissaCardona2003/Dashboard_Multipage_MME  
-**Última actualización:** 5 de marzo de 2026  
-**Tag:** v1.0.0
+**Última actualización:** 15 de marzo de 2026  
+**Tag:** v1.4.0
+
+---
+
+## Changelog
+
+### v1.4.0 — 15 Marzo 2026
+- **fix(costo_usuario_final):** `TypeError: can only concatenate str (not "Br") to str` al construir la alerta de metodología en la página CU Usuario Final
+- **fix(config_simem):** `AttributeError: 'list' object has no attribute 'empty'` — `obtener_listado_simem()` ahora retorna `pd.DataFrame` con columnas `CodigoVariable` y `Nombre` en lugar de lista plana
+- **feat(chatbot):** Widget flotante con panel anclado `bottom:20px` que crece hacia arriba; posición `top:70%` para no interferir con navbar
+- **feat(home):** Carrusel de noticias del sector energético en esquina superior izquierda, auto-rotante cada 7 s
+- **fix(alertas):** Eliminadas 2 alertas `BALANCE_ENERGETICO` falsas de la BD generadas antes del fix
+- **chore:** Eliminados 3 archivos basura del directorio raíz (`:`, `ettings`, `tructure.database.manager import db_manager`)
+- **chore(gitignore):** Patrones para ignorar salidas de pager/terminal guardadas accidentalmente
+- **refactor:** Arquitectura hexagonal completa — 261 archivos Python, 0 errores de sintaxis

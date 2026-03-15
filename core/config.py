@@ -158,37 +158,102 @@ class Settings(BaseSettings):
     )
     
     # ═══════════════════════════════════════════════════════════
-    # CARGOS REGULADOS CREG (para cálculo de CU)
+    # CARGOS REGULADOS CREG (para cálculo de CU MAYORISTA)
     # ═══════════════════════════════════════════════════════════
-    
+    #
+    # IMPORTANTE — CONTEXTO DE USO:
+    # Estos cargos son los que XM liquida en el mercado MAYORISTA a través
+    # del Boletín LAC (Liquidaciones y Asignación de Costos). NO son los
+    # componentes de la tarifa al usuario final que publica la SSPD en el
+    # Boletín Tarifario. Esos incluyen STR (sub-transmisión), DTUN y márgenes
+    # minoristas que elevan los valores 3-10x.
+    #
+    # Fuente oficial para actualizar T, D, C:
+    #   XM → https://www.xm.com.co/publicaciones/liquidaciones
+    #   Boletín LAC mensual → sección "Costos unitarios por cargo" → COP/kWh
+    #
+    # Indexación: Los cargos se actualizan anualmente por IPC (Resolución CREG).
+    # Si no se actualizan vía .env, revisar al menos una vez por año.
+    # Riesgo de desactualización: ~2-3% anual por IPC.
+    #
+    # Para anular los defaults sin tocar código:
+    #   CARGO_TRANSMISION_COP_KWH=9.8 en .env
+    #   CARGO_DISTRIBUCION_COP_KWH=42.0 en .env
+    #   CARGO_COMERCIALIZACION_COP_KWH=14.5 en .env
+    # ═══════════════════════════════════════════════════════════
+
     CARGO_TRANSMISION_COP_KWH: float = Field(
         default=8.5,
-        description="Cargo transmisión STN regulado CREG 2025 (COP/kWh)"
+        description=(
+            "Cargo transmisión STN en el mercado MAYORISTA (COP/kWh). "
+            "Valor del Boletín LAC de XM — componente de la bolsa/contratos mayoristas. "
+            "NO es equivalente al T del recibo del usuario final (ver CARGO_T_STN_MINORISTA_COP_KWH). "
+            "Actualizar desde: xm.com.co → Publicaciones → Liquidaciones → Boletín LAC."
+        )
     )
-    
+
+    CARGO_T_STN_MINORISTA_COP_KWH: float = Field(
+        default=50.87,
+        description=(
+            "Cargo transmisión STN en la tarifa MINORISTA al usuario final (COP/kWh). "
+            "Valor derivado del Boletín Tarifario oficial Enel Colombia enero 2026: "
+            "T_total=52.97 menos T_STR_Codensa=2.10 → T_STN=50.87 COP/kWh. "
+            "Este valor es nacional (CREG Resolution misma para todos los OR) y "
+            "se actualiza anualmente por IPC. "
+            "DISTINTO del cargo mayorista CARGO_TRANSMISION_COP_KWH (que es ~8.5 COP/kWh). "
+            "Fuente: superservicios.gov.co → Boletín Tarifario SSPD, columna T_STN. "
+            "O puede sobreescribirse vía columna t_stn_cop_kwh en cu_tarifas_or."
+        )
+    )
+
     CARGO_DISTRIBUCION_COP_KWH: float = Field(
         default=35.0,
-        description="Cargo distribución SDL regulado CREG 2025 (COP/kWh)"
+        description=(
+            "Cargo distribución SDL (promedio nacional) en el mercado MAYORISTA (COP/kWh). "
+            "Promedio nacional ponderado por energía del Boletín LAC de XM. "
+            "NO equivale al DTUN por OR del Boletín Tarifario SSPD (que varía 125-300 COP/kWh "
+            "por ADD e incluye niveles de tensión 1-4). "
+            "Actualizar desde: xm.com.co → Publicaciones → Liquidaciones → Boletín LAC."
+        )
     )
-    
+
     CARGO_COMERCIALIZACION_COP_KWH: float = Field(
         default=12.0,
-        description="Cargo comercialización regulado CREG 2025 (COP/kWh)"
+        description=(
+            "Cargo comercialización mayorista (promedio nacional) (COP/kWh). "
+            "Margen de comercialización en la frontera mayorista del Boletín LAC de XM. "
+            "NO equivale al componente C del recibo del usuario final (que incluye "
+            "contribuciones cruzadas, impuestos y márgenes minoristas totalizando ~80-120 COP/kWh). "
+            "Actualizar desde: xm.com.co → Publicaciones → Liquidaciones → Boletín LAC."
+        )
     )
-    
+
     FACTOR_PERDIDAS_DISTRIBUCION: float = Field(
         default=0.085,
-        description="Factor de pérdidas TÉCNICAS distribución SDL regulado CREG (~8.5%). "
-                    "Componente técnico solamente. Suma con pérdidas STN reales (~1.7%) "
-                    "para estimar pérdidas técnicas totales."
+        description=(
+            "Factor de pérdidas TÉCNICAS distribución SDL regulado CREG (~8.5%). "
+            "Promedio nacional según CREG/UPME. Componente técnico solamente. "
+            "Suma con pérdidas STN reales (medidas por XM, ~1.4-1.7%) "
+            "para estimar pérdidas técnicas totales del sistema."
+        )
     )
-    
+
     FACTOR_PERDIDAS_SDL_TOTAL: float = Field(
         default=0.12,
-        description="Factor de pérdidas TOTALES SDL (técnicas + no técnicas) por CREG "
-                    "promedio nacional (~12%). Incluye pérdidas técnicas de distribución "
-                    "(~8.5%) más pérdidas no técnicas estimadas (~3.5%). Se usa para "
-                    "estimar demanda a nivel de usuario final desde DemaReal (STN boundary)."
+        description=(
+            "Factor de pérdidas TOTALES SDL (técnicas + no técnicas) (COP/kWh). "
+            "Promedio nacional CREG/UPME (~12%): pérdidas técnicas distribución (~8.5%) "
+            "+ pérdidas no técnicas estimadas (~3.5%). "
+            "Se usa para proyectar energía a nivel usuario final desde DemaReal (frontera STN/SDL). "
+            "En ORs con alta PNT (Caribe, zonas rurales) puede alcanzar 20-30%."
+        )
+    )
+
+    TRM_REF_COP_USD: float = Field(
+        default=4_200.0,
+        description="TRM de referencia COP/USD para conversión de CAPEX en inversiones "
+                    "renovables. Actualizar vía variable de entorno TRM_REF_COP_USD "
+                    "o ajustar el default cuando cambie significativamente."
     )
     
     # ═══════════════════════════════════════════════════════════
@@ -534,6 +599,49 @@ def get_logs_dir() -> Path:
     logs_dir = settings.LOGS_DIR
     logs_dir.mkdir(exist_ok=True, parents=True)
     return logs_dir
+
+
+# ═══════════════════════════════════════════════════════════════
+# ACCESORES DE CARGOS CREG — Compatibilidad con DynamicConfig
+# ═══════════════════════════════════════════════════════════════
+#
+# Estas funciones son los puntos de entrada recomendados para leer
+# los cargos regulados en código nuevo.  Internamente delegan a
+# get_settings() con posibilidad de integrar DynamicConfig en el futuro.
+#
+# CONTEXTO: valores del MERCADO MAYORISTA (Boletín LAC de XM).
+# NO son los componentes de la factura al usuario final.
+
+
+def get_T() -> float:
+    """Cargo transmisión STN mayorista vigente (COP/kWh). Fuente: Boletín LAC XM."""
+    return get_settings().CARGO_TRANSMISION_COP_KWH
+
+
+def get_D() -> float:
+    """Cargo distribución SDL promedio nacional mayorista (COP/kWh). Fuente: Boletín LAC XM."""
+    return get_settings().CARGO_DISTRIBUCION_COP_KWH
+
+
+def get_C() -> float:
+    """Cargo comercialización mayorista (COP/kWh). Fuente: Boletín LAC XM."""
+    return get_settings().CARGO_COMERCIALIZACION_COP_KWH
+
+
+def get_TRM() -> float:
+    """
+    TRM vigente en COP/USD.
+
+    Intenta obtener el valor actualizado desde DynamicConfig (API datos.gov.co).
+    Cae back a ``settings.TRM_REF_COP_USD`` si la API no está disponible.
+    No lanza excepción — siempre retorna un valor utilizable.
+    """
+    try:
+        # Import tardío para evitar importación circular en arranque
+        from domain.services.config_dynamic import get_dynamic_config  # noqa: PLC0415
+        return get_dynamic_config().get_trm()
+    except Exception:  # noqa: BLE001
+        return get_settings().TRM_REF_COP_USD
 
 
 # ═══════════════════════════════════════════════════════════════

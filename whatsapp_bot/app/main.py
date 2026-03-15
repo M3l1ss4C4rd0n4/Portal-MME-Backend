@@ -4,6 +4,7 @@ Entry point del servicio
 """
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
+from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -98,17 +99,17 @@ async def health():
 @app.post("/webhook/whatsapp")
 async def webhook_whatsapp(
     request: Request,
-    x_twilio_signature: str = Header(None)
+    x_twilio_signature: Optional[str] = Header(None)
 ):
     """
     Webhook para recibir mensajes de WhatsApp desde Twilio/Meta
     """
     try:
         # Log request
-        logger.info(f"📩 Webhook recibido desde {request.client.host}")
+        logger.info(f"📩 Webhook recibido desde {request.client.host if request.client else 'unknown'}")
         
         # Procesar webhook
-        response = await handle_whatsapp_webhook(request, x_twilio_signature)
+        response = await handle_whatsapp_webhook(request, x_twilio_signature)  # type: ignore[arg-type]
         
         return JSONResponse(content=response)
     
@@ -125,7 +126,7 @@ async def webhook_whatsapp(
 async def send_message(
     to: str,
     body: str,
-    media_url: str = None
+    media_url: Optional[str] = None
 ):
     """
     Endpoint interno para enviar mensajes
@@ -266,42 +267,34 @@ async def broadcast_alert(request: Request):
             decode_responses=True
         )
         
-        known_users = redis_client.smembers('bot:known_users')
-        
+        known_users: set = redis_client.smembers('bot:known_users')  # type: ignore[assignment]
+
         if not known_users:
-            logger.warning("⚠️ No hay usuarios conocidos en el bot para enviar alerta")
-            return {
-                "status": "no_users",
-                "message": "No hay usuarios registrados en el bot",
-                "users_count": 0,
-                "sent": 0,
-                "timestamp": datetime.now().isoformat()
-            }
-        
-        logger.info(f"📋 Enviando alerta a {len(known_users)} usuarios conocidos")
-        
-        # Enviar a cada usuario
+            logger.info("ℹ️ Sin usuarios WhatsApp registrados — continuando con Telegram")
+
+        # ── WhatsApp: enviar a todos los usuarios conocidos ──
         sent = 0
         failed = 0
         errors_list = []
-        
-        for phone in known_users:
-            try:
-                result = await send_whatsapp_message(to=phone, body=message)
-                sent += 1
-                logger.info(f"✅ Alerta enviada a {phone}")
-            except Exception as e:
-                failed += 1
-                errors_list.append({"phone": phone, "error": str(e)})
-                logger.error(f"❌ Error enviando alerta a {phone}: {e}")
-        
-        logger.info(f"📤 Broadcast completado: {sent} enviados, {failed} fallidos")
-        
-        # ═══ También enviar a usuarios de Telegram ═══
+
+        if known_users:
+            logger.info(f"📋 Enviando alerta a {len(known_users)} usuarios WhatsApp")
+            for phone in known_users:
+                try:
+                    await send_whatsapp_message(to=phone, body=message)
+                    sent += 1
+                    logger.info(f"✅ Alerta enviada a {phone}")
+                except Exception as e:
+                    failed += 1
+                    errors_list.append({"phone": phone, "error": str(e)})
+                    logger.error(f"❌ Error enviando alerta a {phone}: {e}")
+            logger.info(f"📤 WhatsApp broadcast: {sent} enviados, {failed} fallidos")
+
+        # ── Telegram: siempre intentar, independientemente de WhatsApp ──
         telegram_sent = 0
         telegram_failed = 0
         try:
-            telegram_users = redis_client.smembers('bot:known_telegram_users')
+            telegram_users: set = redis_client.smembers('bot:known_telegram_users')  # type: ignore[assignment]
             if telegram_users:
                 import httpx
                 token = settings.TELEGRAM_BOT_TOKEN
@@ -321,17 +314,23 @@ async def broadcast_alert(request: Request):
                                 telegram_failed += 1
                                 logger.error(f"❌ Error Telegram {tg_user_id}: {te}")
                     logger.info(f"📤 Telegram broadcast: {telegram_sent} OK, {telegram_failed} fallidos")
+            else:
+                logger.warning("⚠️ No hay usuarios Telegram registrados en Redis (bot:known_telegram_users)")
         except Exception as te:
             logger.error(f"Error broadcast Telegram: {te}")
-        
+
+        total_sent = sent + telegram_sent
         return {
             "status": "completed",
             "severity": severity,
-            "users_count": len(known_users),
+            "whatsapp_users": len(known_users),
+            "users_count": len(known_users),  # compatibilidad con código legacy
             "sent": sent,
             "failed": failed,
+            "telegram_users": telegram_sent + telegram_failed,
             "telegram_sent": telegram_sent,
             "telegram_failed": telegram_failed,
+            "total_sent": total_sent,
             "errors": errors_list[:5] if errors_list else [],
             "timestamp": datetime.now().isoformat()
         }
@@ -359,10 +358,10 @@ async def get_known_users():
             decode_responses=True
         )
         
-        known_users = redis_client.smembers('bot:known_users')
+        known_users: set = redis_client.smembers('bot:known_users')  # type: ignore[assignment]
         
         # También obtener usuarios de Telegram
-        telegram_users = redis_client.smembers('bot:known_telegram_users')
+        telegram_users: set = redis_client.smembers('bot:known_telegram_users')  # type: ignore[assignment]
         
         return {
             "total_users": len(known_users) + len(telegram_users),

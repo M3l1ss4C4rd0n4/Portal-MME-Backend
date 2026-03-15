@@ -17,7 +17,7 @@ def get_plotly_modules():
 
 import dash
 from dash import dcc, html, Input, Output, State, callback, register_page
-import dash_table
+from dash import dash_table
 import datetime as dt
 import dash_bootstrap_components as dbc
 import pandas as pd
@@ -42,8 +42,9 @@ from core.config_simem import METRICAS_SIMEM_POR_CATEGORIA, obtener_listado_sime
 metrics_service = MetricsService()
 
 try:
+    from pydataxm.pydatasimem import VariableSIMEM as _VariableSIMEM  # type: ignore[import]  # noqa: F401
     PYDATASIMEM_AVAILABLE = True
-except ImportError:
+except (ImportError, Exception):
     PYDATASIMEM_AVAILABLE = False
 
 warnings.filterwarnings("ignore")
@@ -1462,14 +1463,14 @@ def display_metric_results(n_clicks, selected_metric, selected_entity, start_dat
                 if max_days_allowed == 'N/A':
                     max_days_allowed = 365
                 
-                start_validated, end_validated = validate_date_range(
+                start_dt, end_dt = validate_date_range(
                     start_date, 
                     end_date, 
                     max_days=int(max_days_allowed)
                 )
                 logger.info(f"Fechas validadas", extra={
-                    'inicio': start_validated,
-                    'fin': end_validated,
+                    'inicio': start_dt,
+                    'fin': end_dt,
                     'metrica': selected_metric,
                     'entidad': selected_entity
                 })
@@ -1703,7 +1704,7 @@ def consultar_variable_simem(n_clicks, variable, start_date, end_date):
     
     try:
         # Consultar datos SIMEM
-        from pydataxm.pydatasimem import VariableSIMEM
+        from pydataxm.pydatasimem import VariableSIMEM  # type: ignore[import]
         
         # Mostrar indicador de carga
         with logger.contextualize(variable=variable):
@@ -1905,7 +1906,7 @@ def analisis_multivariable_simem(n_clicks, variables, start_date, end_date):
         ], color="danger")
     
     try:
-        from pydataxm.pydatasimem import VariableSIMEM
+        from pydataxm.pydatasimem import VariableSIMEM  # type: ignore[import]
         
         logger.info(f"Análisis multivariable SIMEM: {len(variables)} variables")
         
@@ -1990,7 +1991,7 @@ def analisis_multivariable_simem(n_clicks, variables, start_date, end_date):
         # Series temporales
         fig_series = go.Figure()
         for col in df_numeric.columns:
-            fig_series.add_trace(go.Scatter(
+            fig_series.add_trace(go.Scattergl(
                 x=df_combined['Fecha'],
                 y=df_combined[col],
                 mode='lines',
@@ -2378,7 +2379,7 @@ def crear_visualizaciones_multivariadas(df, seccion, info_seccion, metricas_disp
     fig_series = go.Figure()
     for col in df_numeric.columns:
         if col in df_normalized.columns:
-            fig_series.add_trace(go.Scatter(
+            fig_series.add_trace(go.Scattergl(
                 x=df['fecha'] if 'fecha' in df.columns else df.index,
                 y=df_normalized[col],
                 mode='lines',

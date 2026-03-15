@@ -508,10 +508,10 @@ def crear_tabla_demanda_no_atendida(df_dna, page_current=0, page_size=10):
             'fontWeight': 'bold',
             'textAlign': 'center'
         },
-        style_data_conditional=[
+        style_data_conditional=[  # type: ignore[arg-type]
             {
                 'if': {'row_index': 'odd'},
-                'backgroundColor': '#f8f9fa'
+                'backgroundColor': '#f8f9fa'  # type: ignore[typeddict-unknown-key]
             }
         ]
     )
@@ -622,6 +622,13 @@ def _crear_mapa_distribucion():
 def layout(**kwargs):
     """Layout principal de la página de distribución"""
     
+    # Initialize with defaults in case the try block fails
+    fecha_fin = date.today() - timedelta(days=1)
+    fecha_inicio = fecha_fin - timedelta(days=365)
+    df_dna = pd.DataFrame()
+    df_demanda_real = pd.DataFrame()
+    agentes_df = pd.DataFrame()
+
     # Obtener datos iniciales
     try:
         fecha_fin = date.today() - timedelta(days=1)
@@ -760,6 +767,10 @@ def layout(**kwargs):
                 id='btn-actualizar-distribucion',
                 className="t-btn-filter",
             ),
+            dbc.Button(
+                [html.I(className="fas fa-file-excel me-1"), "Excel"],
+                id='btn-excel-distribucion', color="success", size="sm", outline=True,
+            ),
         ),
 
         # KPIs
@@ -800,6 +811,7 @@ def layout(**kwargs):
         # Stores & Modal
         dcc.Store(id='store-datos-distribucion'),
         dcc.Store(id='store-agentes-distribucion', data=agentes_df.to_json(date_format='iso', orient='split') if not agentes_df.empty else None),
+        dcc.Download(id='download-excel-distribucion'),
         dbc.Modal([
             dbc.ModalHeader(dbc.ModalTitle(id="modal-title-demanda")),
             dbc.ModalBody([
@@ -877,6 +889,12 @@ def actualizar_datos_distribucion(n_clicks, codigo_agente, fecha_inicio_str, fec
     
     px, go = get_plotly_modules()
     
+    # Fallback de fechas por defecto si los States no llegan (primer render o hidden)
+    if not fecha_fin_str:
+        fecha_fin_str = date.today().strftime('%Y-%m-%d')
+    if not fecha_inicio_str:
+        fecha_inicio_str = (date.today() - timedelta(days=180)).strftime('%Y-%m-%d')
+
     # Debug: Log cuando se ejecuta el callback
     logger.info(f"🔄 Callback actualizar_datos_distribucion ejecutado - n_clicks: {n_clicks}, agente: {codigo_agente}, fechas: {fecha_inicio_str} a {fecha_fin_str}")
     
@@ -1186,7 +1204,7 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
             # Crear tabla horaria
             tabla = dash_table.DataTable(
                 id='tabla-detalle-horario',
-                data=data_with_total,
+                data=data_with_total,  # type: ignore[arg-type]
                 columns=[{"name": col, "id": col} for col in df_tabla.columns],
                 css=[{
                     'selector': '.dash-spreadsheet td.cell--selected',
@@ -1209,7 +1227,7 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
                 style_data={
                     'backgroundColor': '#f8f9fa'
                 },
-                style_data_conditional=[
+                style_data_conditional=[  # type: ignore[arg-type]
                     {
                         'if': {'row_index': 'odd'},
                         'backgroundColor': 'white'
@@ -1301,3 +1319,42 @@ def mostrar_detalle_horario(clickData, n_clicks_close, datos_store, agentes_json
             return False, html.Div(f"Error: {str(e)[:200]}"), "Error", ""
     
     raise PreventUpdate
+
+
+# Fase G — Excel export (desde Store, sin re-consultar)
+@callback(
+    Output('download-excel-distribucion', 'data'),
+    Input('btn-excel-distribucion', 'n_clicks'),
+    [State('store-datos-distribucion', 'data'),
+     State('store-agentes-distribucion', 'data')],
+    prevent_initial_call=True,
+)
+def exportar_excel_distribucion(n_clicks, store_data, store_agentes):
+    import io
+    from io import StringIO
+    try:
+        if not store_data and not store_agentes:
+            return dash.no_update
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            if store_data:
+                for key in ('demanda_come', 'demanda_real', 'dna'):
+                    json_str = store_data.get(key) if isinstance(store_data, dict) else None
+                    if json_str:
+                        try:
+                            df = pd.read_json(StringIO(json_str), orient='split')
+                            sheet = key.replace('demanda_', 'Demanda_').replace('dna', 'DNA').title()
+                            df.to_excel(writer, sheet_name=sheet[:31], index=False)
+                        except Exception:
+                            pass
+            if store_agentes:
+                try:
+                    df_ag = pd.read_json(StringIO(store_agentes), orient='split')
+                    df_ag.to_excel(writer, sheet_name='Agentes', index=False)
+                except Exception:
+                    pass
+        buf.seek(0)
+        return dcc.send_bytes(buf.read(), "distribucion.xlsx")
+    except Exception as e:
+        logger.error("Error Excel distribucion: %s", e)
+        return dash.no_update

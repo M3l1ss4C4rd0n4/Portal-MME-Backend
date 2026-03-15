@@ -24,7 +24,7 @@ from interface.components.layout import registrar_callback_filtro_fechas
 from interface.components.kpi_card import crear_kpi_row
 from interface.components.chart_card import crear_page_header, crear_filter_bar
 from core.constants import UIColors as COLORS
-from infrastructure.external.xm_service import get_objetoAPI, obtener_datos_inteligente
+from infrastructure.external.xm_service import obtener_datos_inteligente
 from infrastructure.database.manager import db_manager
 # CACHE ELIMINADO - Ahora usamos solo ETL-PostgreSQL
 
@@ -140,11 +140,6 @@ def obtener_listado_recursos_desde_api(tipo_fuente='EOLICA'):
     # CACHE ELIMINADO - Consulta directa a PostgreSQL/API
     
     try:
-        objetoAPI = get_objetoAPI()
-        if objetoAPI is None:
-            logger.error("❌ API no disponible")
-            return pd.DataFrame()
-        
         fecha_fin = date.today() - timedelta(days=14)
         fecha_inicio = fecha_fin - timedelta(days=7)
         
@@ -904,36 +899,32 @@ def crear_grafica_barras_apiladas():
         # El mapeo de 'Tipo' ya se hizo en la sección anterior, no necesitamos hacer nada más aquí
         
         # Obtener ListadoRecursos para mapear tipos
-        objetoAPI = get_objetoAPI()
-        if objetoAPI:
-            try:
-                # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (PostgreSQL)
-                recursos_df, warning = obtener_datos_inteligente("ListadoRecursos", "Sistema", 
-                                                                  fecha_inicio.strftime('%Y-%m-%d'), 
-                                                                  fecha_fin.strftime('%Y-%m-%d'))
-                if recursos_df is not None and not recursos_df.empty:
-                    codigo_tipo = {}
-                    for _, row in recursos_df.iterrows():
-                        codigo = str(row.get('Values_Code', ''))
-                        tipo = str(row.get('Values_Type', 'TERMICA')).upper()
-                        if codigo:
-                            codigo_tipo[codigo.upper()] = tipo
-                    
-                    codigo_col = None
-                    for col in ['Values_code', 'Values_Code', 'Code']:
-                        if col in df_gene.columns:
-                            codigo_col = col
-                            break
-                    
-                    if codigo_col:
-                        df_gene['Tipo'] = df_gene[codigo_col].astype(str).str.upper().map(codigo_tipo).fillna('TERMICA')
-                    else:
-                        df_gene['Tipo'] = 'TERMICA'
+        try:
+            # ✅ OPTIMIZADO: Usar obtener_datos_inteligente (PostgreSQL)
+            recursos_df, warning = obtener_datos_inteligente("ListadoRecursos", "Sistema", 
+                                                              fecha_inicio.strftime('%Y-%m-%d'), 
+                                                              fecha_fin.strftime('%Y-%m-%d'))
+            if recursos_df is not None and not recursos_df.empty:
+                codigo_tipo = {}
+                for _, row in recursos_df.iterrows():
+                    codigo = str(row.get('Values_Code', ''))
+                    tipo = str(row.get('Values_Type', 'TERMICA')).upper()
+                    if codigo:
+                        codigo_tipo[codigo.upper()] = tipo
+                
+                codigo_col = None
+                for col in ['Values_code', 'Values_Code', 'Code']:
+                    if col in df_gene.columns:
+                        codigo_col = col
+                        break
+                
+                if codigo_col:
+                    df_gene['Tipo'] = df_gene[codigo_col].astype(str).str.upper().map(codigo_tipo).fillna('TERMICA')
                 else:
                     df_gene['Tipo'] = 'TERMICA'
-            except Exception as e:
+            else:
                 df_gene['Tipo'] = 'TERMICA'
-        else:
+        except Exception as e:
             df_gene['Tipo'] = 'TERMICA'
         
         df_gene['Fuente'] = df_gene['Tipo'].apply(categorizar_fuente_xm)
@@ -2402,9 +2393,6 @@ def crear_fichas_generacion_xm_con_fechas(fecha_inicio, fecha_fin, tipo_fuente='
         return _cache_fichas[cache_key]
     
     try:
-        objetoAPI = get_objetoAPI()
-        if objetoAPI is None:
-            return dbc.Alert("API de XM no disponible", color="danger")
         
         
         # PASO 1: Obtener ListadoRecursos para mapear códigos

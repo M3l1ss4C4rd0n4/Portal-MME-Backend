@@ -30,6 +30,8 @@ from datetime import datetime
 
 import psycopg2
 import psycopg2.extras
+import requests
+from bs4 import BeautifulSoup
 
 logging.basicConfig(
     level=logging.INFO,

@@ -47,12 +47,87 @@ import logging
 from datetime import date, timedelta
 from typing import Optional, Dict, Any
 
+import statistics
+from dataclasses import dataclass
+from typing import Literal
+
 import pandas as pd
 
 from core.config import get_settings
 from infrastructure.database.connection import PostgreSQLConnectionManager
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────
+# Perfiles de operador de red (OR) para umbrales regionalizados
+# Fuente: SSPD Informes de Pérdidas por OR 2023-2024
+# ─────────────────────────────────────────────────────────────
+
+ZoneType = Literal["urbano_denso", "mixto", "rural"]
+
+
+@dataclass
+class OperatorProfile:
+    """
+    Perfil técnico de un Operador de Red (OR) para contextualizar alertas
+    de Pérdidas No Técnicas (PNT) según zona de operación.
+
+    Los umbrales están calibrados con información del Informe Sectorial
+    de Pérdidas SSPD 2023 y el Plan de Pérdidas CREG 015 de 2018.
+
+    Attributes:
+        nombre:        Nombre del operador de red.
+        zona:          Clasificación de zona operativa.
+        sdl_pct_ref:   Pérdidas SDL de referencia (%) para ese OR.
+        pnt_warn_pct:  Umbral de advertencia PNT (%).
+        pnt_crit_pct:  Umbral crítico PNT (%).
+    """
+
+    nombre: str
+    zona: ZoneType
+    sdl_pct_ref: float       # % pérdidas SDL históricas del OR
+    pnt_warn_pct: float      # alerta amarilla
+    pnt_crit_pct: float      # alerta roja
+
+
+# Catálogo de perfiles de OR colombianos
+OPERATOR_PROFILES: dict[str, OperatorProfile] = {
+    "ENEL_CODENSA": OperatorProfile(
+        nombre="Enel Codensa (Cundinamarca)",
+        zona="urbano_denso",
+        sdl_pct_ref=8.2,
+        pnt_warn_pct=6.0,
+        pnt_crit_pct=10.0,
+    ),
+    "AIR_E": OperatorProfile(
+        nombre="Air-e (Caribe)",
+        zona="mixto",
+        sdl_pct_ref=12.5,
+        pnt_warn_pct=12.0,
+        pnt_crit_pct=18.0,
+    ),
+    "EPM": OperatorProfile(
+        nombre="EPM (Antioquia)",
+        zona="urbano_denso",
+        sdl_pct_ref=9.1,
+        pnt_warn_pct=6.0,
+        pnt_crit_pct=10.0,
+    ),
+    "CHEC": OperatorProfile(
+        nombre="CHEC (Eje Cafetero)",
+        zona="mixto",
+        sdl_pct_ref=11.0,
+        pnt_warn_pct=10.0,
+        pnt_crit_pct=15.0,
+    ),
+    "DEFAULT": OperatorProfile(
+        nombre="OR genérico / rural",
+        zona="rural",
+        sdl_pct_ref=15.0,
+        pnt_warn_pct=15.0,
+        pnt_crit_pct=20.0,
+    ),
+}
 
 # ─────────────────────────────────────────────────────────────
 # Constantes internas
@@ -841,6 +916,266 @@ class LossesNTService:
             })
 
         return pd.DataFrame(rows)
+
+    # ================================================================
+    # NUEVOS MÉTODOS DE ESTIMACIÓN DE PNT (Fase 3)
+    # ================================================================
+
+    def calculate_pnt_residual_creg(
+        self,
+        gene_gwh: float,
+        dema_real_gwh: float,
+        factor_dist: Optional[float] = None,
+        factor_sdl_total: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Método oficial CREG 015 de 2018 — cálculo residual puro.
+
+        Calcula PNT a partir de valores de generación y demanda, usando
+        los factores CREG como parámetro explícito (sin acceder a BD).
+        Útil para pruebas unitarias y cálculos ad-hoc.
+
+        Fórmula:
+            P_STN  = (Gene - DemaReal) / Gene × 100
+            P_dist = factor_dist × 100
+            P_tec  = P_STN + P_dist
+            P_NT   = P_total - P_tec     [método residual CREG]
+
+        Args:
+            gene_gwh:       Generación total inyectada al SIN (GWh).
+            dema_real_gwh:  Demanda real en frontera STN/SDL (GWh).
+            factor_dist:    Factor pérdidas distribución (decimal, ej 0.085).
+                            Si None, usa FACTOR_PERDIDAS_DISTRIBUCION de config.
+            factor_sdl_total: Factor pérdidas totales SDL (decimal, ej 0.12).
+                            Si None, usa FACTOR_PERDIDAS_SDL_TOTAL de config.
+
+        Returns:
+            Dict con p_stn_pct, p_dist_pct, p_tec_pct, p_nt_pct,
+            p_total_pct, metodo, advertencias.
+
+        Raises:
+            ValueError: Si gene_gwh <= 0.
+
+        Referencias:
+            CREG Resolución 015 de 2018 — Metodología de PNT.
+            XM — Informe Operativo SIN 2024.
+        """
+        if gene_gwh <= 0:
+            raise ValueError(f"Gene debe ser > 0. Valor: {gene_gwh}")
+
+        fd = factor_dist if factor_dist is not None else self._factor_dist
+        fs = factor_sdl_total if factor_sdl_total is not None else self._factor_sdl_total
+
+        p_stn_pct = (gene_gwh - dema_real_gwh) / gene_gwh * 100.0
+        p_dist_pct = fd * 100.0
+        p_tec_pct = p_stn_pct + p_dist_pct
+
+        dema_usuario_est = dema_real_gwh * (1.0 - fs)
+        p_total_pct = (gene_gwh - dema_usuario_est) / gene_gwh * 100.0
+        p_nt_pct = p_total_pct - p_tec_pct
+
+        advertencias: list[str] = []
+        if p_stn_pct < _STN_MIN_THRESHOLD:
+            advertencias.append(f"P_STN negativo ({p_stn_pct:.2f}%) — DemaReal > Gene")
+        if p_stn_pct > _STN_MAX_THRESHOLD:
+            advertencias.append(f"P_STN excesivo ({p_stn_pct:.2f}%) — verificar medición")
+        if p_nt_pct < _NT_MIN_THRESHOLD:
+            advertencias.append(f"P_NT negativo ({p_nt_pct:.2f}%) — incoherencia residual")
+        if p_nt_pct > _NT_MAX_THRESHOLD:
+            advertencias.append(f"P_NT muy alto ({p_nt_pct:.2f}%) — posible subfacturación")
+
+        return {
+            "p_stn_pct":   round(p_stn_pct, 4),
+            "p_dist_pct":  round(p_dist_pct, 4),
+            "p_tec_pct":   round(p_tec_pct, 4),
+            "p_nt_pct":    round(p_nt_pct, 4),
+            "p_total_pct": round(p_total_pct, 4),
+            "metodo":      "RESIDUO_CREG_015_2018",
+            "factor_dist_usado": fd,
+            "factor_sdl_usado":  fs,
+            "advertencias": advertencias,
+        }
+
+    def calculate_pnt_statistical(
+        self,
+        pnt_pct_actual: float,
+        n_dias_historico: int = 90,
+        umbral_zscore: float = 2.0,
+    ) -> Dict[str, Any]:
+        """
+        Estimación estadística de PNT usando z-score sobre historial de
+        pérdidas no técnicas almacenado en ``losses_detailed``.
+
+        Un z-score > umbral indica que el valor actual es estadísticamente
+        anómalo respecto al comportamiento reciente del sistema.
+
+        Args:
+            pnt_pct_actual:     Valor de PNT (%) del día a evaluar.
+            n_dias_historico:   Días de historia para calcular μ y σ.
+            umbral_zscore:      Umbral de alerta (default 2.0 = 95% CI).
+
+        Returns:
+            Dict con mean_hist, std_hist, zscore, is_anomaly, confianza,
+            rango_normal (tuple), mensaje.
+
+        Referencias:
+            Método estadístico de control de calidad para PNT;
+            aplicado en contexto SSPD Informe de Pérdidas 2024.
+        """
+        hist_values: list[float] = []
+        try:
+            with self._db.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT perdidas_no_tecnicas_pct
+                    FROM losses_detailed
+                    WHERE perdidas_no_tecnicas_pct IS NOT NULL
+                      AND fecha >= current_date - interval '%s days'
+                    ORDER BY fecha DESC
+                    """,
+                    (n_dias_historico,),
+                )
+                rows = cur.fetchall()
+                conn.commit()
+            hist_values = [float(r[0]) for r in rows if r[0] is not None]
+        except Exception as exc:
+            logger.warning("%s calculate_pnt_statistical: error BD: %s", _PREFIX, exc)
+
+        if len(hist_values) < 7:  # necesitamos mínimo 1 semana
+            return {
+                "mean_hist":   None,
+                "std_hist":    None,
+                "zscore":      None,
+                "is_anomaly":  False,
+                "confianza":   "baja",
+                "rango_normal": None,
+                "mensaje": (
+                    f"Historial insuficiente ({len(hist_values)} días). "
+                    "Se requieren al menos 7 días en losses_detailed."
+                ),
+            }
+
+        mean_h = statistics.mean(hist_values)
+        std_h  = statistics.pstdev(hist_values)  # desv. estándar poblacional
+
+        zscore = (pnt_pct_actual - mean_h) / std_h if std_h > 1e-6 else 0.0
+        is_anomaly = abs(zscore) > umbral_zscore
+
+        rango_normal = (
+            round(mean_h - umbral_zscore * std_h, 2),
+            round(mean_h + umbral_zscore * std_h, 2),
+        )
+
+        if std_h < 0.5 and len(hist_values) >= 30:
+            confianza = "alta"
+        elif len(hist_values) >= 14:
+            confianza = "media"
+        else:
+            confianza = "baja"
+
+        return {
+            "mean_hist":    round(mean_h, 4),
+            "std_hist":     round(std_h, 4),
+            "zscore":       round(zscore, 3),
+            "is_anomaly":   is_anomaly,
+            "confianza":    confianza,
+            "rango_normal": rango_normal,
+            "n_obs":        len(hist_values),
+            "mensaje": (
+                f"PNT actual {pnt_pct_actual:.2f}% — z={zscore:+.2f} "
+                f"({'ANOMALÍA' if is_anomaly else 'normal'}). "
+                f"Histórico {n_dias_historico}d: μ={mean_h:.2f}% σ={std_h:.2f}%."
+            ),
+        }
+
+    def calculate_pnt_hybrid(
+        self,
+        gene_gwh: float,
+        dema_real_gwh: float,
+        operator_key: str = "DEFAULT",
+        n_dias_historico: int = 90,
+    ) -> Dict[str, Any]:
+        """
+        Método híbrido de estimación de PNT: consenso ponderado entre el
+        método residual CREG y el análisis estadístico de z-score.
+
+        Ponderación: 70% CREG residual (determinístico, regulatorio) +
+                     30% z-score estadístico (detección de anomalías).
+
+        Incluye validación contra el perfil del operador de red y
+        generación de alertas contextualizadas por zona.
+
+        Args:
+            gene_gwh:          Generación total SIN (GWh).
+            dema_real_gwh:     Demanda real STN/SDL (GWh).
+            operator_key:      Clave del OR en OPERATOR_PROFILES.
+            n_dias_historico:  Días para el análisis estadístico.
+
+        Returns:
+            Dict con pnt_creg, pnt_zscore_meta, pnt_hybrid, operador,
+            alertas (list), confianza, metodo.
+
+        Referencias:
+            CREG 015 de 2018 + metodología híbrida MME/UPME.
+        """
+        perfil = OPERATOR_PROFILES.get(operator_key, OPERATOR_PROFILES["DEFAULT"])
+
+        # Rama 1: CREG residual
+        r_creg = self.calculate_pnt_residual_creg(gene_gwh, dema_real_gwh)
+        pnt_creg = r_creg["p_nt_pct"]
+
+        # Rama 2: punto estadístico de referencia (media histórica ajustada)
+        r_stat = self.calculate_pnt_statistical(pnt_creg, n_dias_historico)
+        pnt_stat_meta = r_stat["mean_hist"] if r_stat["mean_hist"] is not None else pnt_creg
+
+        # Consenso ponderado 70/30
+        pnt_hybrid = round(0.70 * pnt_creg + 0.30 * pnt_stat_meta, 4)
+
+        # Alertas contextualizadas por perfil de OR
+        alertas: list[str] = list(r_creg["advertencias"])  # advertencias residuales
+        if pnt_hybrid < 0:
+            alertas.append("⛔ PNT negativo — error en datos de entrada")
+        elif pnt_hybrid > perfil.pnt_crit_pct:
+            alertas.append(
+                f"🔴 PNT crítico para {perfil.zona}: "
+                f"{pnt_hybrid:.2f}% supera umbral crítico de {perfil.pnt_crit_pct}%"
+            )
+        elif pnt_hybrid > perfil.pnt_warn_pct:
+            alertas.append(
+                f"🟡 PNT elevado para {perfil.zona}: "
+                f"{pnt_hybrid:.2f}% supera advertencia de {perfil.pnt_warn_pct}%"
+            )
+
+        if r_stat["is_anomaly"]:
+            alertas.append(
+                f"📊 Anomalía estadística: z={r_stat['zscore']:+.2f} "
+                f"(umbral ±2σ)"
+            )
+
+        # Confianza combinada
+        if r_stat["confianza"] == "alta" and not alertas:
+            confianza_final = "alta"
+        elif r_stat["confianza"] == "baja" or pnt_hybrid < 0:
+            confianza_final = "baja"
+        else:
+            confianza_final = "media"
+
+        return {
+            "pnt_creg_pct":       pnt_creg,
+            "pnt_stat_meta_pct":  round(pnt_stat_meta, 4),
+            "pnt_hybrid_pct":     pnt_hybrid,
+            "operador":           perfil.nombre,
+            "zona":               perfil.zona,
+            "sdl_ref_pct":        perfil.sdl_pct_ref,
+            "alerta_warn_pct":    perfil.pnt_warn_pct,
+            "alerta_crit_pct":    perfil.pnt_crit_pct,
+            "alertas":            alertas,
+            "confianza":          confianza_final,
+            "detalle_creg":       r_creg,
+            "detalle_estadistico": r_stat,
+            "metodo":             "HIBRIDO_70_30_CREG_ZSCORE",
+        }
 
     @staticmethod
     def _row_to_dict(row) -> Dict[str, Any]:

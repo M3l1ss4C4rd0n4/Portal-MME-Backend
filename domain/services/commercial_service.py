@@ -38,9 +38,11 @@ class CommercialService:
         """Obtiene rango de fechas disponible para precios"""
         try:
             # Intentar repositorio commercial_metrics metrics
-            min_date, max_date = self.repository.fetch_date_range('PrecEsca')
-            if min_date and max_date:
-                return pd.to_datetime(min_date).date(), pd.to_datetime(max_date).date()
+            _date_range = self.repository.fetch_date_range('PrecEsca')
+            if _date_range:
+                min_date, max_date = _date_range
+                if min_date and max_date:
+                    return pd.to_datetime(min_date).date(), pd.to_datetime(max_date).date()
             return date.today() - pd.Timedelta(days=365), date.today()
         except Exception as e:
             logger.warning("Error obteniendo rango de fechas: %s", e)
@@ -180,6 +182,8 @@ class CommercialService:
                 start_date=start_date,
                 end_date=end_date
             )
+            if raw_data is None:
+                return pd.DataFrame()
             df = self._normalize_dataframe(raw_data, metric_code)
             
             if agente_comprador and 'agente_comprador' in df.columns:

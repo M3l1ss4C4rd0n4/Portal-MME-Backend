@@ -180,7 +180,7 @@ def etl_incremental_all_metrics():
     results = []
     for metric in metrics:
         try:
-            result = fetch_metric_data.delay(metric, start_str, end_str)
+            result = fetch_metric_data.delay(metric, start_str, end_str)  # type: ignore[union-attr]
             results.append({
                 "metric": metric,
                 "task_id": result.id,

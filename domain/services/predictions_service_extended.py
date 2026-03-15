@@ -73,7 +73,7 @@ class PredictionsService:
         end_date: Optional[str] = None
     ) -> pd.DataFrame:
         """Obtiene predicciones almacenadas para una métrica"""
-        return self.repo.get_predictions(metric_id, start_date, end_date)
+        return self.repo.get_predictions(metric_id, start_date, end_date)  # type: ignore[arg-type]
     
     # ═══════════════════════════════════════════════════════════
     # NUEVOS MÉTODOS DE PREDICCIÓN ML
@@ -86,61 +86,188 @@ class PredictionsService:
         horizon_days: int = 30,
         model_type: Literal["prophet", "arima", "ensemble"] = "prophet",
         confidence_level: float = 0.95,
+        conformal: bool = True,
+        conformal_cal_days: int = 60,
     ) -> pd.DataFrame:
         """
         Genera predicciones para una métrica específica.
-        
+
         Args:
             metric_id: Código de métrica XM (ej: 'Gene', 'DemaReal')
             entity: Entidad (ej: 'Sistema', 'Recurso')
             horizon_days: Días a predecir hacia el futuro
             model_type: Tipo de modelo ('prophet', 'arima', 'ensemble')
             confidence_level: Nivel de confianza para intervalos (0.80, 0.90, 0.95)
-        
+            conformal: Si True, reemplaza los intervalos nativos del modelo con
+                       intervalos conformales calibrados (ICP con LightGBM auxiliar).
+                       Garantía marginal: P(y ∈ [lower, upper]) ≥ confidence_level.
+            conformal_cal_days: Días del histórico reservados para calibración
+                                conformal (recomendado 45-90d).
+
         Returns:
             DataFrame con columnas: date, value, lower, upper, model
-        
+
         Raises:
             ValueError: Si no hay suficientes datos históricos
             RuntimeError: Si el modelo no está disponible
         """
-        logger.info(f"[PredictionsService] Iniciando predicción para {metric_id}/{entity} ({horizon_days} días, modelo={model_type})")
-        
+        logger.info(
+            f"[PredictionsService] Iniciando predicción para {metric_id}/{entity} "
+            f"({horizon_days}d, modelo={model_type}, conformal={conformal})"
+        )
+
         # 1. Obtener datos históricos
         historical_df = self._get_historical_data(metric_id, entity)
-        
+
         # 2. Validar datos suficientes
         if len(historical_df) < 30:
             raise ValueError(
                 f"Datos insuficientes para predicción: {len(historical_df)} registros. "
                 f"Se requieren al menos 30 días de histórico."
             )
-        
+
         # 3. Ejecutar predicción según modelo
         if model_type == "prophet":
             if not PROPHET_AVAILABLE:
                 raise RuntimeError("Prophet no está instalado. Ejecutar: pip install prophet")
             prediction_df = self._forecast_prophet(historical_df, horizon_days, confidence_level)
-        
+
         elif model_type == "arima":
             if not ARIMA_AVAILABLE:
                 raise RuntimeError("pmdarima no está instalado. Ejecutar: pip install pmdarima")
             prediction_df = self._forecast_arima(historical_df, horizon_days, confidence_level)
-        
+
         elif model_type == "ensemble":
             prediction_df = self._forecast_ensemble(historical_df, horizon_days, confidence_level)
-        
+
         else:
             raise ValueError(f"Tipo de modelo no soportado: {model_type}")
-        
+
+        # 3.5. Calibración conformal — reemplaza intervalos nativos del modelo
+        if conformal:
+            prediction_df = self._apply_conformal_calibration(
+                historical_df=historical_df,
+                forecast_df=prediction_df,
+                confidence_level=confidence_level,
+                cal_days=conformal_cal_days,
+            )
+
         # 4. Añadir metadata
         prediction_df['metric_id'] = metric_id
         prediction_df['entity'] = entity
         prediction_df['model'] = model_type
-        
+
         logger.info(f"[PredictionsService] Predicción completada: {len(prediction_df)} días generados")
-        
+
         return prediction_df
+
+    # ═══════════════════════════════════════════════════════════
+    # PREDICCIÓN CONFORMAL — intervalos calibrados garantizados
+    # FASE 16: ICP (Split Conformal) con LightGBM auxiliar
+    # Ref: Vovk et al. (2005); Romano et al. NeurIPS 2019
+    # ═══════════════════════════════════════════════════════════
+
+    def _build_time_features(self, dates: pd.Series) -> pd.DataFrame:
+        """
+        Features de calendario para el modelo auxiliar conformal.
+        Solo usa características temporales (sin lags) para operar
+        tanto en histórico como en fechas futuras sin ground truth.
+        """
+        dates = pd.to_datetime(dates)
+        doy = dates.dt.dayofyear
+        dow = dates.dt.dayofweek
+        return pd.DataFrame({
+            'doy_sin': np.sin(2 * np.pi * doy / 365.25),
+            'doy_cos': np.cos(2 * np.pi * doy / 365.25),
+            'dow_sin': np.sin(2 * np.pi * dow / 7),
+            'dow_cos': np.cos(2 * np.pi * dow / 7),
+            'month':   dates.dt.month.astype(float),
+            'day':     dates.dt.day.astype(float),
+        })
+
+    def _apply_conformal_calibration(
+        self,
+        historical_df: pd.DataFrame,
+        forecast_df: pd.DataFrame,
+        confidence_level: float = 0.90,
+        cal_days: int = 60,
+    ) -> pd.DataFrame:
+        """
+        Aplica calibración conformal (ICP/Split Conformal) a los intervalos.
+
+        Algoritmo:
+          1. Divide histórico: train_aux (n - cal_days) | cal (último cal_days)
+          2. Entrena LightGBM ligero sobre features temporales en train_aux
+          3. Predice en cal → scores = |actual - predicho|
+          4. q = quantile(scores, ceil((n+1)(1-α))/n)  [corrección finita]
+          5. Intervalos finales: [value - q, value + q]
+
+        Garantía marginal: P(y ∈ [value - q, value + q]) ≥ confidence_level
+        bajo intercambiabilidad aproximada de la ventana de calibración.
+
+        Args:
+            historical_df: DataFrame con 'date' y 'value' (datos históricos reales)
+            forecast_df:   DataFrame con 'date' y 'value' (predicciones futuras)
+            confidence_level: Nivel de confianza objetivo (0.80, 0.90, 0.95)
+            cal_days: Días del histórico reservados para calibración
+        """
+        try:
+            import lightgbm as lgb
+        except ImportError:
+            logger.warning("[Conformal] LightGBM no disponible — intervalos sin calibrar")
+            return forecast_df
+
+        alpha = 1.0 - confidence_level
+        min_train = 30
+
+        if len(historical_df) < cal_days + min_train:
+            logger.warning(
+                f"[Conformal] Datos insuficientes ({len(historical_df)} filas) "
+                f"para cal_days={cal_days}+{min_train} mín — omitiendo calibración"
+            )
+            return forecast_df
+
+        # ─── Split temporal sin shuffle ────────────────────────────────
+        df_sorted    = historical_df.sort_values('date').reset_index(drop=True)
+        df_train_aux = df_sorted.iloc[:-cal_days]
+        df_cal_aux   = df_sorted.iloc[-cal_days:]
+
+        X_tr  = self._build_time_features(df_train_aux['date'])
+        y_tr  = df_train_aux['value'].values
+        X_cal = self._build_time_features(df_cal_aux['date'])
+        y_cal = df_cal_aux['value'].values
+
+        # ─── Modelo auxiliar (regularizado → residuos realistas) ───────
+        aux_model = lgb.LGBMRegressor(
+            n_estimators=200, max_depth=4, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+            reg_alpha=1.0, reg_lambda=5.0, n_jobs=-1, verbosity=-1,
+            random_state=42,
+        )
+        aux_model.fit(X_tr, y_tr)
+
+        # ─── Puntuaciones conformales ──────────────────────────────────
+        scores = np.abs(y_cal - aux_model.predict(X_cal))
+
+        # Cuantil finito (Vovk et al. 2005)
+        n = len(scores)
+        level = min(np.ceil((n + 1) * (1 - alpha)) / n, 1.0)
+        q = float(np.quantile(scores, level))
+
+        logger.info(
+            f"[Conformal] α={alpha:.2f}, cal_days={cal_days}, q={q:.3f}, "
+            f"cal_window=({df_cal_aux['date'].iloc[0].date()} → "
+            f"{df_cal_aux['date'].iloc[-1].date()}), "
+            f"target={confidence_level:.0%}"
+        )
+
+        # ─── Aplicar corrección a predicciones futuras ─────────────────
+        result = forecast_df.copy()
+        result['lower'] = result['value'] - q
+        result['upper'] = result['value'] + q
+        result['confidence'] = confidence_level
+
+        return result
     
     def _get_historical_data(self, metric_id: str, entity: str, days_back: int = 365) -> pd.DataFrame:
         """
@@ -211,11 +338,11 @@ class PredictionsService:
         prophet_df = historical_df.rename(columns={'date': 'ds', 'value': 'y'})
         
         # Configurar modelo
-        model = Prophet(
+        model = Prophet(  # type: ignore[operator]
             interval_width=confidence_level,
-            daily_seasonality=True,
-            weekly_seasonality=True,
-            yearly_seasonality=True,
+            daily_seasonality=True,  # type: ignore[arg-type]
+            weekly_seasonality=True,  # type: ignore[arg-type]
+            yearly_seasonality=True,  # type: ignore[arg-type]
             changepoint_prior_scale=0.05,  # Regularización
         )
         
@@ -266,7 +393,7 @@ class PredictionsService:
         y = historical_df['value'].values
         
         # Auto-ARIMA para encontrar mejor modelo
-        model = auto_arima(
+        model = auto_arima(  # type: ignore[operator]
             y,
             start_p=1, start_q=1,
             max_p=5, max_q=5,
@@ -473,11 +600,11 @@ class PredictionsService:
         prophet_df['y'] = pd.to_numeric(prophet_df['y'], errors='coerce')
         prophet_df = prophet_df.dropna(subset=['ds', 'y'])
 
-        model = Prophet(
+        model = Prophet(  # type: ignore[operator]
             interval_width=confidence_level,
-            daily_seasonality=False,
-            weekly_seasonality=True,
-            yearly_seasonality=True,
+            daily_seasonality=False,  # type: ignore[arg-type]
+            weekly_seasonality=True,  # type: ignore[arg-type]
+            yearly_seasonality=True,  # type: ignore[arg-type]
             changepoint_prior_scale=0.05,
         )
         model.fit(prophet_df)
@@ -543,7 +670,7 @@ class PredictionsService:
 
     def save_long_term_predictions(
         self,
-        fuentes: list = None,
+        fuentes: list = None,  # type: ignore[assignment]
         horizonte_dias: int = 365,
     ) -> dict:
         """

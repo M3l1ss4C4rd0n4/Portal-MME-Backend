@@ -50,7 +50,7 @@ def create_line_chart(data, rio_name=None, start_date=None, end_date=None):
         fig = go.Figure()
         
         # Agregar línea de valores reales (negra para consistencia)
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Scattergl(
             x=data[date_col],
             y=data[value_col],
             mode='lines+markers',
@@ -125,7 +125,7 @@ def create_line_chart(data, rio_name=None, start_date=None, end_date=None):
                                     estado = 'Muy seco'
                                 
                                 # Agregar segmento de línea
-                                fig.add_trace(go.Scatter(
+                                fig.add_trace(go.Scattergl(
                                     x=merged_data['Date'].iloc[i:i+2],
                                     y=merged_data['Value_hist'].iloc[i:i+2],
                                     mode='lines',
@@ -138,7 +138,7 @@ def create_line_chart(data, rio_name=None, start_date=None, end_date=None):
                             tiene_media = True
                         else:
                             # Fallback: línea azul simple si no hay datos para comparar
-                            fig.add_trace(go.Scatter(
+                            fig.add_trace(go.Scattergl(
                                 x=media_hist_rio['Date'],
                                 y=media_hist_rio['Value'],
                                 mode='lines',
@@ -471,7 +471,7 @@ def create_total_timeline_chart(data, metric_name, region_filter=None, rio_filte
     fig = go.Figure()
     
     # Agregar línea de valores reales (negra) - optimizada para mejor visualización
-    fig.add_trace(go.Scatter(
+    fig.add_trace(go.Scattergl(
         x=daily_totals['Date'],
         y=daily_totals['Value'],
         mode='lines+markers',
@@ -550,7 +550,7 @@ def create_total_timeline_chart(data, metric_name, region_filter=None, rio_filte
                     )
                     
                     # Agregar segmento de línea
-                    fig.add_trace(go.Scatter(
+                    fig.add_trace(go.Scattergl(
                         x=merged_data['Date'].iloc[i:i+2],
                         y=merged_data['Value_hist'].iloc[i:i+2],
                         mode='lines',
@@ -562,7 +562,7 @@ def create_total_timeline_chart(data, metric_name, region_filter=None, rio_filte
                     ))
         else:
             # Fallback: línea azul simple si no hay datos para comparar
-            fig.add_trace(go.Scatter(
+            fig.add_trace(go.Scattergl(
                 x=media_hist_totals['Date'],
                 y=media_hist_totals['Value'],
                 mode='lines',

@@ -102,6 +102,10 @@ def layout():
             dbc.Button([
                 html.I(className="fas fa-search me-1"), "Actualizar"
             ], id='btn-actualizar-perdidas', color="primary", size="sm"),
+            dbc.Button([
+                html.I(className="fas fa-file-excel me-1"), "Excel"
+            ], id='btn-excel-perdidas', color="success", size="sm", outline=True),
+            dcc.Download(id='download-excel-perdidas'),
         ),
 
         # ── Tabs: Técnicas (existente) + No Técnicas (FASE 3) ──
@@ -251,7 +255,7 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin, tab_activo):
         
         # Gráfico 1: Serie temporal de pérdidas
         fig_serie = go.Figure()
-        fig_serie.add_trace(go.Scatter(
+        fig_serie.add_trace(go.Scattergl(
             x=perdidas_totales['Date'],
             y=perdidas_totales['Value'],
             mode='lines+markers',
@@ -260,7 +264,7 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin, tab_activo):
             marker=dict(size=4)
         ))
         if perdidas_reg is not None and not perdidas_reg.empty:
-            fig_serie.add_trace(go.Scatter(
+            fig_serie.add_trace(go.Scattergl(
                 x=perdidas_reg['Date'],
                 y=perdidas_reg['Value'],
                 mode='lines',
@@ -268,7 +272,7 @@ def actualizar_perdidas(n_clicks, fecha_inicio, fecha_fin, tab_activo):
                 line=dict(color='#3498db', width=1.5, dash='dot')
             ))
         if perdidas_no_reg is not None and not perdidas_no_reg.empty:
-            fig_serie.add_trace(go.Scatter(
+            fig_serie.add_trace(go.Scattergl(
                 x=perdidas_no_reg['Date'],
                 y=perdidas_no_reg['Value'],
                 mode='lines',
@@ -642,3 +646,39 @@ def actualizar_perdidas_nt(tab_activo, n_clicks, fecha_inicio, fecha_fin):
             html.Hr(),
             html.P("Por favor, intente nuevamente o contacte al administrador.", className="mb-0"),
         ], color="danger")
+
+# Fase G: Excel export para Pérdidas
+@callback(
+    Output('download-excel-perdidas', 'data'),
+    Input('btn-excel-perdidas', 'n_clicks'),
+    [dash.dependencies.State('fecha-filtro-perdidas', 'start_date'),
+     dash.dependencies.State('fecha-filtro-perdidas', 'end_date')],
+    prevent_initial_call=True,
+)
+def exportar_excel_perdidas(n_clicks, fecha_inicio, fecha_fin):
+    """Exporta los datos de pérdidas a Excel con múltiples hojas"""
+    import io
+    try:
+        if not fecha_inicio or not fecha_fin:
+            return dash.no_update
+        fecha_ini = pd.to_datetime(fecha_inicio).strftime('%Y-%m-%d')
+        fecha_fin = pd.to_datetime(fecha_fin).strftime('%Y-%m-%d')
+        data = losses_service.get_losses_analysis(fecha_ini, fecha_fin)
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            sheets = {
+                'Perdidas_Totales': data.get('PerdidasEner'),
+                'Perdidas_Reguladas': data.get('PerdidasEnerReg'),
+                'Perdidas_No_Reguladas': data.get('PerdidasEnerNoReg'),
+                'Generacion': data.get('Gene'),
+            }
+            for sheet, df in sheets.items():
+                if df is not None and not (isinstance(df, pd.DataFrame) and df.empty):
+                    pd.DataFrame(df).to_excel(writer, sheet_name=sheet, index=False)
+        buf.seek(0)
+        nombre = f"perdidas_{fecha_ini}_al_{fecha_fin}.xlsx"
+        return dcc.send_bytes(buf.read(), nombre)
+    except Exception as e:
+        logger.error("Error exportando Excel pérdidas: %s", e)
+        return dash.no_update

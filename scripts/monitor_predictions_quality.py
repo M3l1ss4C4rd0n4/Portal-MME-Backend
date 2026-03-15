@@ -267,8 +267,8 @@ def evaluar_fuente(conn, fuente, cfg):
     y_real = df_merge['valor'].values
     y_pred = df_merge['predicho'].values
 
-    mape_expost = mean_absolute_percentage_error(y_real, y_pred)
-    rmse_expost = float(np.sqrt(mean_squared_error(y_real, y_pred)))
+    mape_expost = mean_absolute_percentage_error(y_real, y_pred)  # type: ignore[arg-type]
+    rmse_expost = float(np.sqrt(mean_squared_error(y_real, y_pred)))  # type: ignore[arg-type]
 
     # MAPE/RMSE de entrenamiento (del batch más reciente)
     mape_train = df_pred['mape'].iloc[0]
@@ -324,8 +324,8 @@ def enviar_alerta_telegram(alertas_globales, resumen):
 
     text = "\n".join(lines)
 
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         data = urllib.parse.urlencode({
             'chat_id': chat_id,
             'text': text,

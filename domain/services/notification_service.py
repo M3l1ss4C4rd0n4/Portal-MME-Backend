@@ -23,6 +23,12 @@ from typing import Optional, List, Dict, Any
 import httpx
 import psycopg2
 import psycopg2.extras
+from dotenv import load_dotenv
+
+# Cargar .env para que os.getenv() encuentre SMTP y otras vars
+# (en producción las vars vienen del EnvironmentFile de systemd; en terminal/tests
+# necesitan cargarse explícitamente desde el archivo .env)
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +38,15 @@ logger = logging.getLogger(__name__)
 def _pg_params() -> dict:
     """Obtiene parámetros de conexión PostgreSQL."""
     try:
-        from infrastructure.database.connection import PostgreSQLConnectionManager
-        mgr = PostgreSQLConnectionManager()
+        from core.config import settings
         params = {
-            'host': mgr.host,
-            'port': mgr.port,
-            'database': mgr.database,
-            'user': mgr.user,
+            'host': settings.POSTGRES_HOST,
+            'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB,
+            'user': settings.POSTGRES_USER,
         }
-        if mgr.password:
-            params['password'] = mgr.password
+        if settings.POSTGRES_PASSWORD:
+            params['password'] = settings.POSTGRES_PASSWORD
         return params
     except Exception as e:
         logger.warning("Error leyendo config DB para notificaciones: %s", e)
@@ -76,6 +81,7 @@ def _get_telegram_token() -> str:
                         return line.strip().split('=', 1)[1].strip()
     except Exception as e:
         logger.debug("Error leyendo token Telegram del .env: %s", e)
+    return ''
 
 # ─────────────────── Telegram ───────────────────
 
@@ -99,7 +105,7 @@ def get_telegram_users() -> List[Dict[str, Any]]:
 def broadcast_telegram(
     message: str,
     pdf_path: Optional[str] = None,
-    parse_mode: str = "Markdown",
+    parse_mode: Optional[str] = None,
 ) -> Dict[str, int]:
     """
     Envía un mensaje (y opcionalmente un PDF) a todos los usuarios
@@ -237,7 +243,7 @@ def send_email(
     subject: str,
     body_html: str,
     pdf_path: Optional[str] = None,
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     """
     Envía un email HTML (opcionalmente con PDF adjunto) a una lista de direcciones.
 

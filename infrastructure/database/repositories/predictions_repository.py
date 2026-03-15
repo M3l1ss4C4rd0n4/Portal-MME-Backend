@@ -4,6 +4,7 @@ Implementa IPredictionsRepository (Arquitectura Limpia - Inversión de Dependenc
 """
 
 from typing import Optional, List
+from datetime import date
 import pandas as pd
 import logging
 from infrastructure.database.repositories.base_repository import BaseRepository
@@ -23,7 +24,14 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
         row = self.execute_query_one(query)
         return row["max_date"] if row and row.get("max_date") else None
     
-    def get_predictions(self, metric_id: str, start_date: str, end_date: Optional[str] = None):
+    def get_predictions(
+        self,
+        metric: str,
+        model_name: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> "pd.DataFrame":
+        metric_id = metric
         if end_date:
             query = """
                 SELECT fecha_prediccion, valor_gwh_predicho, intervalo_inferior, intervalo_superior, confianza

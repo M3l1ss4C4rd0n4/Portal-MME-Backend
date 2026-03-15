@@ -3,6 +3,7 @@ Agente IA para análisis en tiempo real del Dashboard MME
 Usa OpenRouter/Groq con modelos de última generación
 Conecta a PostgreSQL a través de DatabaseManager
 """
+import os
 from openai import OpenAI
 import json
 from typing import Dict, List, Optional
@@ -45,6 +46,79 @@ class AgentIA:
         'metrics', 'metrics_hourly', 'predictions', 'catalogos',
         'lineas_transmision', 'alertas_historial', 'commercial_metrics'
     })
+
+    def _llamar_orquestador(self, intent: str, params: Optional[Dict] = None) -> Dict:
+        """Llama al orquestador local para obtener datos estructurados en tiempo real."""
+        try:
+            import requests
+            api_key = os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
+            response = requests.post(
+                'http://localhost:8000/v1/chatbot/orchestrator',
+                json={
+                    'sessionId': f'chatbot_ia_{intent}',
+                    'intent': intent,
+                    'parameters': params or {},
+                },
+                headers={'Content-Type': 'application/json', 'X-API-Key': api_key},
+                timeout=15,
+            )
+            if response.status_code == 200:
+                return response.json().get('data', {})
+        except Exception as e:
+            print(f'⚠️ Orquestador no disponible para intent {intent}: {e}')
+        return {}
+
+    def obtener_contexto_sistema(self) -> str:
+        """
+        Obtiene el contexto del sistema eléctrico en tiempo real:
+        estado actual, anomalías detectadas y alertas recientes.
+        Retorna un texto formateado para incluir en el prompt del chatbot.
+        """
+        secciones = []
+
+        # Estado actual (KPIs reales)
+        estado = self._llamar_orquestador('estado_actual')
+        fichas = estado.get('fichas', [])
+        if fichas:
+            kpis = []
+            for f in fichas[:6]:
+                nombre = f.get('nombre', f.get('titulo', ''))
+                valor = f.get('valor_actual', f.get('valor', ''))
+                unidad = f.get('unidad', '')
+                estado_kpi = f.get('estado', '')
+                if nombre and valor:
+                    kpis.append(f'  - {nombre}: {valor} {unidad} [{estado_kpi}]'.strip())
+            if kpis:
+                secciones.append('ESTADO ACTUAL DEL SISTEMA (datos reales):\n' + '\n'.join(kpis))
+
+        # Anomalías detectadas
+        anomalias_data = self._llamar_orquestador('anomalias_detectadas')
+        anomalias = anomalias_data.get('anomalias', [])
+        if anomalias:
+            items = [f"  - [{a.get('severidad','?')}] {a.get('descripcion', a.get('metrica',''))}" for a in anomalias[:5]]
+            secciones.append('ANOMALÍAS DETECTADAS (sistema de monitoreo):\n' + '\n'.join(items))
+
+        # Alertas recientes de la BD (últimas 24h)
+        try:
+            df_alertas = db_manager.query_df("""
+                SELECT metrica, severidad, descripcion, fecha_generacion
+                FROM alertas_historial
+                WHERE fecha_generacion >= NOW() - INTERVAL '24 hours'
+                  AND severidad IN ('CRÍTICO', 'ALERTA')
+                ORDER BY fecha_generacion DESC
+                LIMIT 5
+            """)
+            if not df_alertas.empty:
+                items = []
+                for _, row in df_alertas.iterrows():
+                    items.append(
+                        f"  - [{row['severidad']}] {row['metrica']}: {row['descripcion']} ({str(row['fecha_generacion'])[:16]})"
+                    )
+                secciones.append('ALERTAS RECIENTES (BD, últimas 24h):\n' + '\n'.join(items))
+        except Exception:
+            pass
+
+        return '\n\n'.join(secciones) if secciones else ''
 
     def obtener_datos_recientes(self, tabla: str, limite: int = 100) -> List[Dict]:
         """Obtiene datos recientes de una tabla específica desde PostgreSQL"""
@@ -266,10 +340,13 @@ Responde SOLO con JSON válido en este formato:
     def chat_interactivo(self, pregunta: str, contexto_dashboard: Optional[Dict] = None) -> str:
         """Chat interactivo para responder preguntas del usuario"""
         
-        # Construir contexto con datos del dashboard si están disponibles
+        # Contexto en tiempo real del orquestador (estado, anomalías, alertas)
+        contexto_sistema = self.obtener_contexto_sistema()
         info_contexto = ""
+        if contexto_sistema:
+            info_contexto += f"\n\nCONTEXTO DEL SISTEMA EN TIEMPO REAL:\n{contexto_sistema}"
         if contexto_dashboard:
-            info_contexto = f"\n\nCONTEXTO ACTUAL DEL DASHBOARD:\n{json.dumps(contexto_dashboard, indent=2, default=str)}"
+            info_contexto += f"\n\nCONTEXTO ACTUAL DEL DASHBOARD:\n{json.dumps(contexto_dashboard, indent=2, default=str)}"
         
         prompt = f"""
 Eres un analista energético del sector eléctrico colombiano. Habla de forma natural, clara y amigable.

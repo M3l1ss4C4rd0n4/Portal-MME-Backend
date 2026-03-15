@@ -288,6 +288,8 @@ class DistributionService:
             )
             
             # Normalizar estructura
+            if raw_data is None:
+                return pd.DataFrame()
             df = self._normalize_dataframe(raw_data, metric_code)
             
             # Filtrar por agente si aplica

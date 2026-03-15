@@ -25,32 +25,24 @@ import json
 
 # Sistema de notificaciones: usar notification_service (producción)
 # sistema_notificaciones.py fue retirado (legacy Gmail/WhatsApp)
-try:
-    pass
 
-    class NotificationService:
-        """Adapter stub — redirige al servicio de producción."""
+class NotificationService:
+    """Adapter stub — redirige al servicio de producción."""
 
-    def notificar_alerta(alerta, enviar_email=True, enviar_whatsapp=True, solo_criticas=True):
-        """Stub que reemplaza al legacy sistema_notificaciones.notificar_alerta.
-        En producción las alertas se envían desde anomaly_tasks → notification_service."""
-        severidad = alerta.get('severidad', 'NORMAL')
-        if solo_criticas and severidad != 'CRÍTICO':
-            return {
-                'email': {'success': False, 'message': 'No es crítica, omitida'},
-                'whatsapp': {'success': False, 'message': 'No es crítica, omitida'}
-            }
-        # Las notificaciones reales pasan por anomaly_tasks → notification_service
+def notificar_alerta(alerta, enviar_email=True, enviar_whatsapp=True, solo_criticas=True):
+    """Stub que reemplaza al legacy sistema_notificaciones.notificar_alerta.
+    En producción las alertas se envían desde anomaly_tasks → notification_service."""
+    severidad = alerta.get('severidad', 'NORMAL')
+    if solo_criticas and severidad != 'CRÍTICO':
         return {
-            'email': {'success': True, 'message': 'Delegado a notification_service'},
-            'whatsapp': {'success': True, 'message': 'Delegado a notification_service'}
+            'email': {'success': False, 'message': 'No es crítica, omitida'},
+            'whatsapp': {'success': False, 'message': 'No es crítica, omitida'}
         }
-except ImportError:
-    # Fallback mínimo si no se puede importar
-    class NotificationService:
-        pass
-    def notificar_alerta(alerta, **kwargs):
-        return {'email': {'success': False}, 'whatsapp': {'success': False}}
+    # Las notificaciones reales pasan por anomaly_tasks → notification_service
+    return {
+        'email': {'success': True, 'message': 'Delegado a notification_service'},
+        'whatsapp': {'success': True, 'message': 'Delegado a notification_service'}
+    }
 
 # =============================================================================
 # UMBRALES DE ALERTAS (CONFIGURABLES POR POLÍTICA MINISTERIAL)
@@ -113,12 +105,17 @@ class SistemaAlertasEnergeticas:
         return psycopg2.connect(**conn_params)
     
     def cargar_predicciones(self, fuente, dias=30):
-        """Carga predicciones de una fuente específica"""
+        """Carga predicciones de una fuente específica.
+        
+        Solo trae predicciones para fechas >= HOY para evitar usar
+        datos históricos stale que producen falsos déficits en el balance.
+        """
         query = """
             SELECT fecha_prediccion, valor_gwh_predicho, 
                    intervalo_inferior, intervalo_superior
             FROM predictions
             WHERE fuente = %s
+              AND fecha_prediccion >= CURRENT_DATE
             ORDER BY fecha_prediccion
             LIMIT %s
         """
@@ -299,26 +296,36 @@ class SistemaAlertasEnergeticas:
         """Evalúa balance oferta-demanda"""
         print("⚖️  Evaluando BALANCE OFERTA-DEMANDA...")
         
-        # Cargar predicciones
+        # Cargar predicciones (solo fechas >= hoy, ya filtrado en cargar_predicciones)
         df_demanda = self.cargar_predicciones('DEMANDA', horizonte)
         df_gen_hidro = self.cargar_predicciones('Hidráulica', horizonte)
         df_gen_termo = self.cargar_predicciones('Térmica', horizonte)
         df_gen_solar = self.cargar_predicciones('Solar', horizonte)
         df_gen_eolica = self.cargar_predicciones('Eólica', horizonte)
+        df_gen_biomasa = self.cargar_predicciones('Biomasa', horizonte)
         
         if len(df_demanda) == 0:
             return
         
-        # Calcular balance
+        def safe_mean(df):
+            """Promedio 0 si el DataFrame está vacío."""
+            if df is None or len(df) == 0:
+                return 0.0
+            return df['valor_gwh_predicho'].mean()
+
+        # Calcular balance incluyendo todas las fuentes de generación
         generacion_total = (
-            df_gen_hidro['valor_gwh_predicho'].mean() +
-            df_gen_termo['valor_gwh_predicho'].mean() +
-            df_gen_solar['valor_gwh_predicho'].mean() +
-            df_gen_eolica['valor_gwh_predicho'].mean()
+            safe_mean(df_gen_hidro) +
+            safe_mean(df_gen_termo) +
+            safe_mean(df_gen_solar) +
+            safe_mean(df_gen_eolica) +
+            safe_mean(df_gen_biomasa)
         )
         
-        demanda_promedio = df_demanda['valor_gwh_predicho'].mean()
+        demanda_promedio = safe_mean(df_demanda)
         balance = generacion_total - demanda_promedio
+        
+        print(f"  Gen predicha: {generacion_total:.2f} GWh/día  |  Demanda predicha: {demanda_promedio:.2f} GWh/día  |  Balance: {balance:.2f}")
         
         if balance < UMBRALES['BALANCE']['CRITICO']:
             self.alertas.append({

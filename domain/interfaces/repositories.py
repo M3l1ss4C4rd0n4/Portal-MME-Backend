@@ -84,6 +84,10 @@ class ICommercialRepository(ABC):
     def get_available_metrics(self) -> List[str]:
         """Obtiene lista de métricas de comercialización disponibles"""
 
+    @abstractmethod
+    def get_available_buyers(self) -> List[Dict[str, str]]:
+        """Obtiene lista de compradores disponibles"""
+
 
 class IDistributionRepository(ABC):
     """Interface para acceso a datos de distribución eléctrica"""
@@ -98,9 +102,21 @@ class IDistributionRepository(ABC):
         metric_code: str,
         start_date: date,
         end_date: date,
-        distribuidor: Optional[str] = None
+        agente: Optional[str] = None,
+        entities: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """Consulta métricas de distribución"""
+    
+    @abstractmethod
+    def fetch_agent_statistics(self) -> pd.DataFrame:
+        """Obtiene estadísticas de agentes de distribución"""
+
+    @abstractmethod
+    def fetch_available_agents(self) -> List[Dict[str, str]]:
+        """Obtiene lista de agentes distribuidores disponibles"""
+
+    # db_manager is provided by concrete implementations via __init__
+    db_manager: Any
     
     @abstractmethod
     def get_distributors(self) -> List[str]:

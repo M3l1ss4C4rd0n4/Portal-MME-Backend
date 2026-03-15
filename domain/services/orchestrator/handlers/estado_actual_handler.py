@@ -701,3 +701,158 @@ class EstadoActualHandlerMixin:
         if len(deduplicadas) < len(anomalias):
             logger.info(f"[INFORME] Anomalías deduplicadas: {len(anomalias)} → {len(deduplicadas)}")
         return deduplicadas
+
+    def _build_embalses_regionales(self) -> Dict[str, Any]:
+        """
+        Agrega el porcentaje de llenado de embalses por región hidrológica,
+        usando PorcVoluUtilDiar (porcentaje diario precalculado por XM, en decimal).
+
+        Usa el último día con datos disponibles (suele ser D-1 o D-2 por publicación XM).
+        La asignación embalse→región usa EMBALSE_REGION de informe_charts.py
+        (fuente de verdad única — no duplicar el dict aquí).
+
+        Semáforo regional:
+          < 30% → Crítico | 30-40% → Alerta | ≥ 40% → Normal
+
+        Returns:
+            {
+              'regiones': [{region, pct_promedio, n_embalses, embalses, estado}...],
+              'total_embalses_mapeados': int,
+              'fecha_dato': str,
+            }
+        """
+        from infrastructure.database.manager import db_manager
+        from whatsapp_bot.services.informe_charts import EMBALSE_REGION
+
+        df = db_manager.query_df(
+            """
+            SELECT recurso,
+                   valor_gwh * 100 AS pct,
+                   fecha::date      AS fecha
+            FROM metrics
+            WHERE metrica = 'PorcVoluUtilDiar'
+              AND recurso NOT IN ('Sistema', 'Embalse')
+              AND fecha::date = (
+                  SELECT MAX(fecha)::date FROM metrics
+                  WHERE metrica = 'PorcVoluUtilDiar'
+                    AND recurso NOT IN ('Sistema', 'Embalse')
+              )
+            """
+        )
+
+        if df.empty:
+            return {"error": "Sin datos de PorcVoluUtilDiar por embalse"}
+
+        fecha_dato = str(df['fecha'].iloc[0])
+        df['region'] = df['recurso'].map(EMBALSE_REGION)
+        df_known = df.dropna(subset=['region'])
+
+        if df_known.empty:
+            return {"error": "Sin embalses mapeados a región conocida"}
+
+        regiones_out = []
+        for region, grp in df_known.groupby('region'):
+            pct_prom = round(float(grp['pct'].mean()), 1)
+            if pct_prom < 30:
+                estado = 'Crítico'
+            elif pct_prom < 40:
+                estado = 'Alerta'
+            else:
+                estado = 'Normal'
+            regiones_out.append({
+                'region': str(region),
+                'pct_promedio': pct_prom,
+                'n_embalses': int(len(grp)),
+                'embalses': sorted(grp['recurso'].tolist()),
+                'estado': estado,
+            })
+
+        # Ordenar: peores primero (más fácil detectar riesgos)
+        regiones_out.sort(key=lambda r: r['pct_promedio'])
+
+        total_mapeados = int(df_known['recurso'].nunique())
+        logger.info(
+            f"[INFORME] embalses_regionales OK: {len(regiones_out)} regiones, "
+            f"{total_mapeados} embalses, fecha={fecha_dato}"
+        )
+        return {
+            'regiones': regiones_out,
+            'total_embalses_mapeados': total_mapeados,
+            'fecha_dato': fecha_dato,
+        }
+
+    def _build_variables_mercado(self) -> Dict[str, Any]:
+        """
+        Consulta variables adicionales de mercado desde la tabla `metrics`.
+
+        Métricas consultadas (entidad='Sistema' = valor agregado del SIN):
+          - PrecEsca       → Precio Escasez ($/kWh)
+          - MaxPrecOferNal → Precio Máx Oferta Nacional ($/kWh)
+          - PPPrecBolsNaci → PPP Precio Bolsa Nacional ($/kWh)
+          - DemaRealReg    → Demanda Regulada (GWh/día)
+          - DemaRealNoReg  → Demanda No Regulada (GWh/día)
+
+        Para métricas de demanda aplica un umbral mínimo de GWh para saltar días
+        incompletos (XM publica en tiempo real durante el día; los días con pocas
+        horas publicadas tienen valores parciales muy inferiores a un día completo).
+
+        Returns:
+            Dict con claves por variable; cada valor es
+            {'valor': float, 'unidad': str, 'fecha': str}.
+            Si una métrica no tiene dato se omite (no lanza excepción).
+        """
+        from infrastructure.database.manager import db_manager
+
+        # (clave, metrica, unidad_default, min_gwh_completo)
+        # min_gwh_completo=None → sin filtro de umbral (precios, valores puntuales)
+        # min_gwh_completo>0   → saltar días parciales para métricas de volumen diario
+        _METRICAS = [
+            ('precio_escasez',    'PrecEsca',       '$/kWh', None),
+            ('precio_max_oferta', 'MaxPrecOferNal',  '$/kWh', None),
+            ('ppp_bolsa',         'PPPrecBolsNaci',  '$/kWh', None),
+            ('demanda_regulada',  'DemaRealReg',     'GWh',  100.0),
+            ('demanda_no_reg',    'DemaRealNoReg',   'GWh',   40.0),
+        ]
+
+        result: Dict[str, Any] = {}
+        for clave, metrica, unidad_default, min_gwh in _METRICAS:
+            try:
+                if min_gwh is not None:
+                    # Para demanda: excluir días con publicación parcial
+                    query = """
+                        SELECT valor_gwh, unidad, fecha::date AS fecha
+                        FROM metrics
+                        WHERE metrica = %s AND entidad = 'Sistema'
+                          AND valor_gwh >= %s
+                        ORDER BY fecha DESC
+                        LIMIT 1
+                    """
+                    params = (metrica, min_gwh)
+                else:
+                    query = """
+                        SELECT valor_gwh, unidad, fecha::date AS fecha
+                        FROM metrics
+                        WHERE metrica = %s AND entidad = 'Sistema'
+                        ORDER BY fecha DESC
+                        LIMIT 1
+                    """
+                    params = (metrica,)
+
+                df = db_manager.query_df(query, params)
+                if not df.empty:
+                    r = df.iloc[0]
+                    result[clave] = {
+                        'valor': round(float(r['valor_gwh']), 2),
+                        'unidad': str(r['unidad']) if r['unidad'] else unidad_default,
+                        'fecha': str(r['fecha']),
+                    }
+            except Exception as e:
+                logger.debug(f"[INFORME] variables_mercado.{clave} no disponible: {e}")
+
+        if result:
+            logger.info(
+                f"[INFORME] variables_mercado OK: {list(result.keys())}"
+            )
+        else:
+            logger.warning("[INFORME] variables_mercado: ninguna métrica disponible")
+        return result

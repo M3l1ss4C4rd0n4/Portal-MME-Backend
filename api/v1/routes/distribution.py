@@ -23,6 +23,7 @@ from api.v1.schemas.distribution import (
     DistributionOperatorsResponse
 )
 from core.container import get_distribution_service
+from core.exceptions import DataNotFoundError
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -99,6 +100,11 @@ async def get_distribution_data(
         
     except HTTPException:
         raise
+    except DataNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -151,6 +157,11 @@ async def get_distribution_operators(
         
     except HTTPException:
         raise
+    except DataNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -1,3 +1,4 @@
+
 # POLÍTICA DE CONFIANZA POR FUENTE DE PREDICCIÓN
 
 > **Portal Energético MME — Ministerio de Minas y Energía de Colombia**  

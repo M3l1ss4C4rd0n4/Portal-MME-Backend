@@ -45,6 +45,110 @@ def _ensure_date(d: Union[date, str]) -> date:
     return d
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# FUNCIONES DE CÁLCULO PURAS — Exportables, sin dependencias de BD
+# ════════════════════════════════════════════════════════════════════════════
+
+def calculate_cu_tecnico(
+    g: float,
+    t: float,
+    d: float,
+    c: float,
+    pr: float,
+    r: float,
+    pt: float,
+) -> float:
+    """
+    Calcula el Costo Unitario (CU) técnico según Resolución CREG 119 de 2007.
+
+    FÓRMULA OFICIAL:
+        CU = (G + T + D + C + PR + R) / (1 - PT/100)
+
+    NOTA: El CU técnico NO incluye IVA. El IVA (19%) aplica al calcular
+    la factura final al usuario, nunca al CU reportado regulatoriamente
+    ni al liquidado en el mercado mayorista (Boletín LAC de XM).
+
+    Args:
+        g:  Precio de bolsa / generación (COP/kWh, dato diario XM).
+        t:  Cargo transmisión STN (COP/kWh, Boletín LAC).
+        d:  Cargo distribución SDL promedio (COP/kWh, Boletín LAC).
+        c:  Cargo comercialización mayorista (COP/kWh, Boletín LAC).
+        pr: Pérdidas reguladas explícitas (COP/kWh). Pasar 0.0 si las
+            pérdidas se modelan con el factor pt (uso habitual en ENERTRACE).
+        r:  Restricciones operativas (COP/kWh, derivado de RestAliv XM).
+        pt: Pérdidas técnicas totales STN+SDL (%). Ej: 10.5 para 10.5 %.
+
+    Returns:
+        CU técnico en COP/kWh (sin IVA).
+
+    Raises:
+        ValueError: Si pt >= 100 (división por cero) o algún componente
+                    resulta en un CU físicamente inválido (negativo).
+
+    Referencias:
+        - CREG Resolución 119 de 2007 (modificada por CREG 101-28 de 2023).
+        - XM S.A. E.S.P. — Metodología LAC (Liquidaciones y Asignación
+          de Costos). URL: https://www.xm.com.co/publicaciones/liquidaciones
+    """
+    if pt < 0:
+        raise ValueError(f"Pérdidas técnicas no pueden ser negativas. Valor: {pt}")
+    if pt >= 100:
+        raise ValueError(
+            f"Pérdidas técnicas no pueden ser >= 100% (división por cero). Valor: {pt}"
+        )
+
+    numerador = g + t + d + c + pr + r
+    if numerador < 0:
+        raise ValueError(
+            f"Suma de componentes CU es negativa ({numerador:.4f}). "
+            "Verificar inputs de generación y restricciones."
+        )
+
+    cu = numerador / (1.0 - pt / 100.0)
+
+    if cu < 0:
+        raise ValueError(f"CU calculado es negativo: {cu:.4f} COP/kWh.")
+    if cu < 50:
+        logger.warning(
+            "calculate_cu_tecnico: CU muy bajo (%.2f COP/kWh) — "
+            "verificar inputs. G=%.2f T=%.2f D=%.2f C=%.2f PR=%.2f R=%.2f pt=%.2f%%",
+            cu, g, t, d, c, pr, r, pt,
+        )
+    if cu > 2000:
+        logger.warning(
+            "calculate_cu_tecnico: CU muy alto (%.2f COP/kWh) — "
+            "posible escenario El Niño extremo o error en inputs. "
+            "G=%.2f T=%.2f D=%.2f C=%.2f PR=%.2f R=%.2f pt=%.2f%%",
+            cu, g, t, d, c, pr, r, pt,
+        )
+
+    return cu
+
+
+def calculate_cu_factura(cu_tecnico: float, iva_rate: float = 0.19) -> float:
+    """
+    Aplica IVA al CU técnico para obtener el valor de facturación al usuario.
+
+    NOTA: Esta función es independiente del cálculo regulatorio.
+    El CU técnico reportado a CREG/XM NO incluye IVA; éste solo entra
+    en la factura que paga el usuario final (estratos 5 y 6, y sector
+    comercial/industrial sin subsidio).
+
+    Args:
+        cu_tecnico: Resultado de calculate_cu_tecnico() en COP/kWh.
+        iva_rate:   Tasa de IVA vigente (default 0.19 = 19 % para Colombia).
+
+    Returns:
+        CU con IVA aplicado en COP/kWh (únicamente para proyecciones
+        de factura de usuario, NO para análisis de mercado mayorista).
+    """
+    if cu_tecnico < 0:
+        raise ValueError(f"CU técnico no puede ser negativo: {cu_tecnico}")
+    if not (0.0 <= iva_rate <= 1.0):
+        raise ValueError(f"Tasa IVA debe estar entre 0 y 1. Valor: {iva_rate}")
+    return cu_tecnico * (1.0 + iva_rate)
+
+
 class CUService:
     """
     Servicio de cálculo del Costo Unitario (CU) de energía eléctrica.
@@ -83,6 +187,8 @@ class CUService:
         Retorna dict con:
           gene_gwh, dema_gwh, precio_bolsa, rest_aliv_mcop,
           rest_sin_aliv_mcop, perdidas_gwh, perdidas_stn_pct,
+          prec_cont_regu, comp_cont_reg_gwh,  ← para fórmula CREG G
+          qc, g_creg,                         ← calculados si disponibles
           componentes_disponibles (int 0-7)
 
         Si un dato no existe para esa fecha → None para ese campo.
@@ -96,6 +202,11 @@ class CUService:
             'rest_sin_aliv_mcop': None,
             'perdidas_gwh': None,
             'perdidas_stn_pct': None,
+            # Fórmula CREG G = Pc × Qc + Pb × (1 − Qc)
+            'prec_cont_regu': None,     # PrecPromContRegu (COP/kWh)
+            'comp_cont_reg_gwh': None,  # CompContEnerReg (GWh/día mercado regulado)
+            'qc': None,                 # Cobertura contratos = CompContEnerReg / DemaCome
+            'g_creg': None,             # G calculado con fórmula CREG
             'componentes_disponibles': 0,
         }
 
@@ -106,7 +217,8 @@ class CUService:
               AND entidad = 'Sistema'
               AND metrica IN (
                   'Gene', 'DemaCome', 'PrecBolsNaci',
-                  'RestAliv', 'RestSinAliv', 'PerdidasEner'
+                  'RestAliv', 'RestSinAliv', 'PerdidasEner',
+                  'PrecPromContRegu', 'CompContEnerReg'
               )
         """
 
@@ -140,11 +252,35 @@ class CUService:
                 elif metrica == 'PerdidasEner':
                     result['perdidas_gwh'] = float(valor)
                     conteo += 1
+                elif metrica == 'PrecPromContRegu':
+                    result['prec_cont_regu'] = float(valor)
+                elif metrica == 'CompContEnerReg':
+                    result['comp_cont_reg_gwh'] = float(valor)
 
             # Calcular pérdidas STN como porcentaje
             if result['perdidas_gwh'] is not None and result['gene_gwh'] and result['gene_gwh'] > 0:
                 result['perdidas_stn_pct'] = (result['perdidas_gwh'] / result['gene_gwh']) * 100
                 conteo += 1
+
+            # Calcular Qc y G según fórmula CREG 119/2007:
+            # G = Pc × Qc + Pb × (1 − Qc)
+            # Qc = CompContEnerReg / DemaCome  (cobertura en contratos)
+            pb = result['precio_bolsa']
+            pc = result['prec_cont_regu']
+            cont_reg = result['comp_cont_reg_gwh']
+            dema = result['dema_gwh']
+            if pb is not None and pc is not None and cont_reg is not None and dema and dema > 0:
+                qc = cont_reg / dema
+                # Sanidad: Qc debe estar entre 0 y 1
+                if 0.0 <= qc <= 1.0:
+                    result['qc'] = round(qc, 4)
+                    result['g_creg'] = round(pc * qc + pb * (1.0 - qc), 4)
+                    logger.debug(
+                        f"{_LOG} {fecha}: G_CREG={result['g_creg']:.2f} "
+                        f"(Pc={pc:.2f} × Qc={qc:.3f} + Pb={pb:.2f} × {1-qc:.3f})"
+                    )
+                else:
+                    logger.warning(f"{_LOG} {fecha}: Qc fuera de rango ({qc:.4f}), ignorando fórmula CREG")
 
             result['componentes_disponibles'] = conteo
 
@@ -177,7 +313,18 @@ class CUService:
             return None
 
         # --- Componente G: Generación ---
-        comp_g = comp['precio_bolsa'] if comp['precio_bolsa'] is not None else None
+        # Preferimos la fórmula CREG 119/2007: G = Pc × Qc + Pb × (1 − Qc)
+        # donde Pc = PrecPromContRegu, Qc = CompContEnerReg / DemaCome.
+        # Fallback a PrecBolsNaci solo si no hay datos de contratos.
+        if comp['g_creg'] is not None:
+            comp_g = comp['g_creg']
+            fuente_g = 'G_CREG_FORMULA'
+        elif comp['precio_bolsa'] is not None:
+            comp_g = comp['precio_bolsa']
+            fuente_g = 'G_BOLSA_FALLBACK'
+        else:
+            comp_g = None
+            fuente_g = 'G_SIN_DATO'
 
         # --- Componente T: Transmisión (cargo fijo CREG) ---
         comp_t = self._cargo_t
@@ -228,7 +375,20 @@ class CUService:
             suma_base += comp_r
             componentes_ok += 1
 
-        cu_total = suma_base * factor_perdidas
+        # Delegar aritmética central a la función pura (validaciones incluidas)
+        try:
+            cu_total = calculate_cu_tecnico(
+                g=comp_g if comp_g is not None else 0.0,
+                t=self._cargo_t,
+                d=self._cargo_d,
+                c=self._cargo_c,
+                pr=0.0,  # Pérdidas incluidas vía factor_total, no como componente aditivo
+                r=comp_r if comp_r is not None else 0.0,
+                pt=factor_total * 100.0,
+            )
+        except ValueError as exc:
+            logger.error(f"{_LOG} {fecha}: Error en calculate_cu_tecnico: {exc}. Usando fallback.")
+            cu_total = suma_base * factor_perdidas
 
         # --- Clasificar confianza ---
         if componentes_ok >= 5 and comp['perdidas_stn_pct'] is not None:
@@ -239,7 +399,7 @@ class CUService:
             confianza = 'baja'
 
         # --- Fuente de cálculo ---
-        if comp_g is not None and comp_r is not None and comp['perdidas_stn_pct'] is not None:
+        if comp['g_creg'] is not None and comp_r is not None and comp['perdidas_stn_pct'] is not None:
             fuente = 'XM_COMPLETO'
         elif comp_g is not None:
             fuente = 'XM_PARCIAL'
@@ -247,13 +407,15 @@ class CUService:
             fuente = 'CREG_SOLO'
 
         # --- Notas ---
-        notas_parts = []
+        notas_parts = [fuente_g]  # siempre registrar método de G
         if comp_g is None:
             notas_parts.append('sin_precio_bolsa')
         if comp_r is None:
             notas_parts.append('sin_restricciones')
         if comp['perdidas_stn_pct'] is None:
             notas_parts.append('sin_perdidas_stn')
+        if comp['qc'] is not None:
+            notas_parts.append(f'qc={comp["qc"]:.3f}')
 
         return {
             'fecha': fecha,
@@ -396,10 +558,31 @@ class CUService:
 
     def get_cu_current(self) -> Optional[dict]:
         """
-        Retorna el CU del día más reciente disponible en cu_daily.
-        Si cu_daily está vacía, calcula on-the-fly sin guardar.
+        Retorna el CU del día más reciente con datos COMPLETOS (G_CREG_FORMULA)
+        dentro de los últimos 7 días.
+
+        Si XM aún no ha publicado contratos para los últimos días (G_BOLSA_FALLBACK),
+        esos días se omiten y se muestra el último día con datos publicados completos.
+        Solo si no hay ningún día con fórmula CREG en los últimos 7 días se cae al
+        más reciente disponible (fallback de último recurso).
         """
-        query = """
+        hoy = date.today()
+
+        # ── 1. Día más reciente con datos completos (G CREG, no fallback de bolsa)
+        query_completo = """
+            SELECT fecha, componente_g, componente_t, componente_d,
+                   componente_c, componente_p, componente_r, cu_total,
+                   demanda_gwh, generacion_gwh, perdidas_gwh, perdidas_pct,
+                   fuentes_ok, confianza, notas
+            FROM cu_daily
+            WHERE fecha >= CURRENT_DATE - INTERVAL '7 days'
+              AND notas LIKE 'G_CREG_FORMULA%'
+            ORDER BY fecha DESC
+            LIMIT 1
+        """
+
+        # ── 2. Fallback de último recurso: el más reciente sin importar fuente
+        query_fallback = """
             SELECT fecha, componente_g, componente_t, componente_d,
                    componente_c, componente_p, componente_r, cu_total,
                    demanda_gwh, generacion_gwh, perdidas_gwh, perdidas_pct,
@@ -412,17 +595,28 @@ class CUService:
         try:
             with self._conn_mgr.get_connection() as conn:
                 cur = conn.cursor()
-                cur.execute(query)
+                cur.execute(query_completo)
                 row = cur.fetchone()
+                if row is None:
+                    logger.warning(
+                        f"{_LOG} Sin días con G_CREG_FORMULA en últimos 7 días, "
+                        "usando fallback más reciente"
+                    )
+                    cur.execute(query_fallback)
+                    row = cur.fetchone()
                 cur.close()
                 conn.commit()
 
             if row:
+                logger.info(
+                    f"{_LOG} CU actual: fecha={row[0]}, G={row[1]:.2f}, "
+                    f"CU={row[7]:.2f}, notas={row[14]}"
+                )
                 return self._row_to_dict(row)
 
-            # Fallback: calcular on-the-fly para ayer
+            # Último recurso: calcular on-the-fly
             logger.info(f"{_LOG} cu_daily vacía, calculando on-the-fly")
-            ayer = date.today() - timedelta(days=1)
+            ayer = hoy - timedelta(days=1)
             for d in range(0, 7):
                 cu = self.calculate_cu_for_date(ayer - timedelta(days=d))
                 if cu is not None:
@@ -447,7 +641,7 @@ class CUService:
             SELECT fecha, componente_g, componente_t, componente_d,
                    componente_c, componente_p, componente_r, cu_total,
                    demanda_gwh, generacion_gwh, perdidas_gwh, perdidas_pct,
-                   fuentes_ok, confianza
+                   fuentes_ok, confianza, notas
             FROM cu_daily
             WHERE fecha BETWEEN %s AND %s
             ORDER BY fecha
@@ -479,8 +673,10 @@ class CUService:
         Estrategia:
         1. Busca en la tabla ``predictions`` (fuente='CU_DIARIO') predicciones
            con fecha_prediccion >= hoy.
-        2. Si no hay suficientes datos ML, genera un pronóstico naive basado
-           en tendencia lineal de los últimos 30 registros de cu_daily.
+        2. Si no hay suficientes datos ML en producción, entrena un modelo
+           LightGBM con features de lag (y_lag1, y_lag7), hidro (embalses_pct,
+           aportes_gwh) y calendario, replicando la metodología FASE 5-6.
+        3. Si LightGBM no está disponible, genera tendencia lineal naive.
 
         Returns:
             DataFrame con columnas:
@@ -490,7 +686,7 @@ class CUService:
         horizon = min(max(horizon, 1), 90)
         hoy = date.today()
 
-        # ── 1. Intentar predicciones ML ─────────────────────
+        # ── 1. Intentar predicciones ML de producción ────────
         try:
             with self._conn_mgr.get_connection() as conn:
                 df_ml = pd.read_sql_query(
@@ -520,7 +716,133 @@ class CUService:
         except Exception as exc:
             logger.warning("%s Error leyendo predictions ML: %s", _LOG, exc)
 
-        # ── 2. Fallback: tendencia lineal naive ─────────────
+        # ── 2. Train-on-the-fly: LightGBM con lag + hidro ───
+        logger.info("%s Entrenando LightGBM con features de lag e hidro", _LOG)
+        try:
+            import lightgbm as lgb
+            import numpy as np
+
+            # Cargar 12 meses de historia CU diario (solo registros CREG)
+            with self._conn_mgr.get_connection() as conn:
+                df_hist = pd.read_sql_query(
+                    """
+                    SELECT fecha, cu_total
+                    FROM cu_daily
+                    WHERE notas LIKE 'G_CREG_FORMULA%%'
+                    ORDER BY fecha
+                    """,
+                    conn,
+                )
+                conn.commit()
+
+            if df_hist.empty or len(df_hist) < 30:
+                raise ValueError("Historia insuficiente para entrenar LightGBM")
+
+            df_hist['fecha'] = pd.to_datetime(df_hist['fecha'])
+            df_hist['cu_total'] = pd.to_numeric(df_hist['cu_total'], errors='coerce')
+            df_hist = df_hist.dropna(subset=['cu_total']).sort_values('fecha').reset_index(drop=True)
+
+            # Intentar enriquecer con embalses_pct y aportes_gwh desde metrics
+            try:
+                with self._conn_mgr.get_connection() as conn:
+                    df_hidro = pd.read_sql_query(
+                        """
+                        SELECT fecha,
+                          MAX(CASE WHEN metrica = 'PorcVoluUtilDiar' AND entidad = 'Sistema'
+                                   THEN valor_gwh END) AS embalses_pct,
+                          MAX(CASE WHEN metrica = 'AporEner'
+                                   THEN valor_gwh END) AS aportes_gwh
+                        FROM metrics
+                        GROUP BY fecha
+                        ORDER BY fecha
+                        """,
+                        conn,
+                    )
+                    conn.commit()
+                df_hidro['fecha'] = pd.to_datetime(df_hidro['fecha'])
+                df_hist = df_hist.merge(df_hidro, on='fecha', how='left')
+            except Exception:
+                df_hist['embalses_pct'] = np.nan
+                df_hist['aportes_gwh'] = np.nan
+
+            # Rellenar hidro con media rodante para no perder filas
+            for col in ['embalses_pct', 'aportes_gwh']:
+                df_hist[col] = df_hist[col].ffill().fillna(df_hist[col].mean())
+
+            # Construir features
+            df_feat = df_hist.copy()
+            df_feat['y_lag1'] = df_feat['cu_total'].shift(1)
+            df_feat['y_lag7'] = df_feat['cu_total'].shift(7)
+            df_feat['y_lag14'] = df_feat['cu_total'].shift(14)
+            df_feat['y_roll7'] = df_feat['cu_total'].shift(1).rolling(7).mean()
+            df_feat['dow'] = df_feat['fecha'].dt.dayofweek
+            df_feat['mes'] = df_feat['fecha'].dt.month
+            df_feat['dia_mes'] = df_feat['fecha'].dt.day
+            df_feat = df_feat.dropna()
+
+            FEATURES = ['y_lag1', 'y_lag7', 'y_lag14', 'y_roll7',
+                        'embalses_pct', 'aportes_gwh', 'dow', 'mes', 'dia_mes']
+            X = df_feat[FEATURES].values
+            y = df_feat['cu_total'].values
+
+            # Temporal split: 80% train / 20% val para determinar std residual
+            n_val = max(7, len(y) // 5)
+            X_tr, y_tr = X[:-n_val], y[:-n_val]
+            X_val, y_val = X[-n_val:], y[-n_val:]
+
+            model = lgb.LGBMRegressor(
+                n_estimators=400,
+                learning_rate=0.05,
+                num_leaves=31,
+                min_child_samples=5,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+                verbose=-1,
+            )
+            model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)])
+
+            # Residual std en validación → incertidumbre del intervalo
+            val_preds = model.predict(X_val)
+            residual_std = float(np.std(y_val - val_preds))
+
+            # Predicción iterativa: cada día usa el predicho anterior como lag
+            pred_history = list(df_feat['cu_total'].values)
+            emb_last = float(df_feat['embalses_pct'].iloc[-1])
+            apo_last = float(df_feat['aportes_gwh'].iloc[-1])
+
+            rows = []
+            for i in range(1, horizon + 1):
+                fut_fecha = pd.Timestamp(hoy + timedelta(days=i))
+                lag1  = pred_history[-1]
+                lag7  = pred_history[-7] if len(pred_history) >= 7 else lag1
+                lag14 = pred_history[-14] if len(pred_history) >= 14 else lag1
+                roll7 = float(np.mean(pred_history[-7:])) if len(pred_history) >= 7 else lag1
+                feat_row = np.array([[
+                    lag1, lag7, lag14, roll7,
+                    emb_last, apo_last,
+                    fut_fecha.dayofweek, fut_fecha.month, fut_fecha.day,
+                ]])
+                pred = float(model.predict(feat_row)[0])
+                pred_history.append(pred)
+                # Incertidumbre crece con el horizonte
+                sigma = residual_std * (1 + 0.05 * i) ** 0.5
+                rows.append({
+                    'fecha': fut_fecha,
+                    'cu_predicho': round(pred, 4),
+                    'limite_inferior': round(pred - 1.96 * sigma, 4),
+                    'limite_superior': round(pred + 1.96 * sigma, 4),
+                    'confianza': round(max(0.35, 0.80 - 0.008 * i), 2),
+                    'modelo': 'lgbm_lag_hidro',
+                })
+
+            logger.info("%s LightGBM forecast generado correctamente (horizon=%d)", _LOG, horizon)
+            return pd.DataFrame(rows)
+
+        except Exception as exc:
+            logger.warning("%s LightGBM forecast falló (%s), usando naive", _LOG, exc)
+
+        # ── 3. Fallback: tendencia lineal naive ─────────────
         logger.info("%s Generando forecast naive (horizon=%d)", _LOG, horizon)
         try:
             with self._conn_mgr.get_connection() as conn:
@@ -528,6 +850,7 @@ class CUService:
                     """
                     SELECT fecha, cu_total
                     FROM cu_daily
+                    WHERE notas LIKE 'G_CREG_FORMULA%%'
                     ORDER BY fecha DESC
                     LIMIT 30
                     """,

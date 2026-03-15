@@ -39,13 +39,13 @@ CU_BASE_DEFAULT = 192.6981           # COP/kWh — producción
 PRECIO_BOLSA_BASE = 115.1896         # COP/kWh — producción
 
 DESGLOSE_BASE = {
-    'g': 0.5973,   # generación
+    'g': 0.5965,   # generación  (ajustado para que sum=1.0000)
     'd': 0.1825,   # distribución
     'c': 0.0626,   # comercialización
     't': 0.0443,   # transmisión
     'p': 0.1026,   # pérdidas
     'r': 0.0115,   # restricciones
-}
+}  # sum = 1.0000
 
 # Rangos válidos para parámetros simulables
 PARAM_RANGES = {
@@ -245,10 +245,20 @@ class SimulationService:
     # SENSIBILIDAD
     # ════════════════════════════════════════════════════════════
 
+    # Valores de referencia (baseline) para cada parámetro simulable
+    _PARAM_DEFAULTS = {
+        'precio_bolsa_factor': 1.0,
+        'factor_perdidas': 0.085,
+        'tasa_transmision': 1.0,
+        'tasa_comercializacion': 1.0,
+        'cargo_restricciones_kw': 0.0,
+        'demanda_factor': 1.0,
+    }
+
     def _calcular_sensibilidad(self, params: dict, cu_base: float) -> dict:
         """
-        Para cada parámetro modificado, calcula su contribución
-        individual al delta total del CU.
+        Para cada parámetro REALMENTE modificado (distinto de su baseline),
+        calcula su contribución individual al delta total del CU.
         Retorna ranking ordenado de mayor a menor impacto.
         """
         delta_total = abs(
@@ -264,6 +274,10 @@ class SimulationService:
             'cargo_restricciones_kw', 'demanda_factor',
         ]:
             if param not in params:
+                continue
+            # Omitir parámetros en su valor baseline (no modificados)
+            default_val = self._PARAM_DEFAULTS.get(param, 0.0)
+            if abs((params[param] or 0.0) - default_val) < 1e-6:
                 continue
             # Simular solo este parámetro, el resto en baseline
             params_solo = {param: params[param]}
@@ -513,6 +527,20 @@ class SimulationService:
             logger.error(f"{_LOG} Error guardando simulación: {e}")
             raise DatabaseError(f"Error guardando simulación: {e}")
 
+    def limpiar_historial(self) -> int:
+        """Elimina todos los registros de simulation_results. Retorna filas borradas."""
+        try:
+            with self._conn_mgr.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM simulation_results")
+                deleted = cur.rowcount
+                conn.commit()
+                logger.info(f"{_LOG} Historial eliminado — {deleted} registros borrados")
+                return deleted
+        except Exception as e:
+            logger.error(f"{_LOG} Error limpiando historial: {e}")
+            raise DatabaseError(f"Error limpiando historial: {e}")
+
     def get_historial(self, limite: int = 20) -> list:
         """Retorna las últimas N simulaciones guardadas."""
         try:
@@ -568,6 +596,7 @@ class SimulationService:
                     FROM cu_daily
                     WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'
                       AND cu_total > 0
+                      AND notas LIKE 'G_CREG_FORMULA%%'
                     """
                 )
                 row = cur.fetchone()

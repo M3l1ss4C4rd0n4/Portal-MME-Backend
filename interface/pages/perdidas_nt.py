@@ -6,7 +6,7 @@ FASE 5 — TAREA 5.3
 """
 
 import dash
-from dash import html, dcc, dash_table, callback, Input, Output
+from dash import html, dcc, dash_table, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 from datetime import date, timedelta
 import pandas as pd
@@ -115,6 +115,10 @@ def layout(**kwargs):
             dbc.Button([
                 html.I(className="fas fa-search me-1"), "Actualizar"
             ], id="btn-actualizar-pnt", color="primary", size="sm"),
+            dbc.Button([
+                html.I(className="fas fa-file-excel me-1"), "Excel"
+            ], id="btn-excel-pnt", color="success", size="sm", outline=True),
+            dcc.Download(id="download-excel-pnt"),
         ),
 
         # KPIs
@@ -865,7 +869,7 @@ def _crear_tab_anomalias(fecha_inicio: date, fecha_fin: date):
     for sev, color in color_map.items():
         mask = df["severidad"] == sev
         sub = df[mask]
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Scattergl(
             x=sub["fecha"],
             y=sub["pnt_pct"],
             mode="markers",
@@ -893,6 +897,9 @@ def _crear_tab_anomalias(fecha_inicio: date, fecha_fin: date):
     df_anomalias["fecha"] = df_anomalias["fecha"].astype(str).str[:10]
     df_anomalias["pnt_pct"] = df_anomalias["pnt_pct"].round(3)
     df_anomalias["anomaly_score"] = df_anomalias["anomaly_score"].round(4)
+
+    # ── PNT promedio 30d desde el df (para semáforo operador) ────────
+    pnt_30d_actual = float(df['pnt_pct'].tail(30).mean()) if not df.empty else 0.0
 
     # ── Texto interpretativo ──────────────────────────────────────────
     min_fecha = str(df["fecha"].min())[:10]
@@ -959,6 +966,68 @@ def _crear_tab_anomalias(fecha_inicio: date, fecha_fin: date):
 
         # Texto interpretativo
         html.P(texto, className="mt-4 text-muted fst-italic small"),
+
+        # ── Análisis por Operador de Red ─────────────────────────────
+        html.Hr(className="my-4"),
+        html.H6([
+            html.I(className="fas fa-building me-2"),
+            "Umbrales de Alerta PNT por Operador de Red (CREG 015/2018)",
+        ], className="mb-3"),
+        _tabla_perfiles_operador(pnt_30d_actual),
+    ])
+
+
+def _tabla_perfiles_operador(pnt_actual: float):
+    """Tarjetas comparativas de umbrales PNT por OR con semáforo en tiempo real."""
+    from domain.services.losses_nt_service import OPERATOR_PROFILES
+
+    filas = []
+    for key, p in OPERATOR_PROFILES.items():
+        if p.pnt_warn_pct > 0 and p.pnt_crit_pct > 0:
+            if pnt_actual >= p.pnt_crit_pct:
+                estado, badge_color = "🔴 CRÍTICO", "danger"
+            elif pnt_actual >= p.pnt_warn_pct:
+                estado, badge_color = "🟡 ALERTA", "warning"
+            else:
+                estado, badge_color = "🟢 Normal", "success"
+        else:
+            estado, badge_color = "⚪ Sin datos", "secondary"
+
+        filas.append(
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardHeader(
+                        html.Strong(p.nombre),
+                        style={'backgroundColor': '#f8f9fa', 'padding': '8px 12px'},
+                    ),
+                    dbc.CardBody([
+                        dbc.Badge(estado, color=badge_color, pill=True,
+                                  className="mb-2 d-block text-center"),
+                        html.Small([
+                            html.Span(f"PNT actual: {pnt_actual:.1f}%",
+                                      style={'display': 'block'}),
+                            html.Span(f"Zona: {p.zona}",
+                                      className="text-muted", style={'display': 'block'}),
+                            html.Span(f"Alerta: >{p.pnt_warn_pct}%",
+                                      style={'display': 'block', 'color': '#856404'}),
+                            html.Span(f"Crítico: >{p.pnt_crit_pct}%",
+                                      style={'display': 'block', 'color': '#721c24'}),
+                            html.Span(f"SDL ref.: {p.sdl_pct_ref}%",
+                                      className="text-muted", style={'display': 'block'}),
+                        ]),
+                    ], style={'padding': '10px 12px'}),
+                ], className="h-100 shadow-sm",
+                   style={'borderTop': f'4px solid {PNT_COLORS["p_nt"]}'}),
+            md=2, className="mb-2",
+            )
+        )
+
+    return html.Div([
+        dbc.Row(filas, className="g-2"),
+        html.Small(
+            "PNT actual (30d) evaluado contra umbrales de cada OR según SSPD / CREG 015 de 2018.",
+            className="text-muted fst-italic mt-2 d-block",
+        ),
     ])
 
 
@@ -1076,3 +1145,37 @@ def _crear_tab_mapa():
     except Exception as e:
         logger.error("Error mapa departamental PNT: %s", e, exc_info=True)
         return dbc.Alert(f"Error cargando mapa: {e}", color="danger")
+
+
+# Fase G — Excel export
+@callback(
+    Output('download-excel-pnt', 'data'),
+    Input('btn-excel-pnt', 'n_clicks'),
+    [State('fecha-filtro-pnt', 'start_date'),
+     State('fecha-filtro-pnt', 'end_date')],
+    prevent_initial_call=True,
+)
+def exportar_excel_pnt(n_clicks, fecha_inicio_str, fecha_fin_str):
+    import io
+    try:
+        if not fecha_inicio_str or not fecha_fin_str:
+            return dash.no_update
+        fi = pd.to_datetime(fecha_inicio_str).date()
+        ff = pd.to_datetime(fecha_fin_str).date()
+
+        df_hist = _losses_service.get_losses_historico(fi, ff)
+        stats = _losses_service.get_losses_statistics()
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            if df_hist is not None and not (isinstance(df_hist, pd.DataFrame) and df_hist.empty):
+                pd.DataFrame(df_hist).to_excel(writer, sheet_name='PNT_Historico', index=False)
+            if stats and not isinstance(stats, dict) and 'error' not in stats:
+                pd.DataFrame([stats]).to_excel(writer, sheet_name='PNT_Estadisticas', index=False)
+            elif isinstance(stats, dict) and 'error' not in stats:
+                pd.DataFrame([stats]).to_excel(writer, sheet_name='PNT_Estadisticas', index=False)
+        buf.seek(0)
+        return dcc.send_bytes(buf.read(), f"perdidas_nt_{str(fi)}_al_{str(ff)}.xlsx")
+    except Exception as e:
+        logger.error("Error Excel PNT: %s", e)
+        return dash.no_update

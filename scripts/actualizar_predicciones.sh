@@ -172,18 +172,23 @@ fi
 ##############################################################################
 
 log ""
-log "🌿 PASO 3.6: LightGBM directo — APORTES_HIDRICOS (FASE 11)..."
+log "🌿 PASO 3.6: LightGBM + NASA POWER — APORTES_HIDRICOS (FASE 22)..."
 
 START_TIME=$(date +%s)
 
-if $VENV_PYTHON "$SCRIPT_DIR/scripts/train_predictions_sector_energetico.py" --lgbm_aportes >> "$LOG_FILE" 2>&1; then
+if $VENV_PYTHON "$SCRIPT_DIR/scripts/train_predictions_sector_energetico.py" --lgbm_aportes_nasa >> "$LOG_FILE" 2>&1; then
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
-    log "   ✅ LightGBM directo (APORTES_HIDRICOS) actualizado (${DURATION}s)"
+    log "   ✅ LightGBM NASA (APORTES_HIDRICOS) actualizado (${DURATION}s)"
 else
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
-    log "   ⚠️  LightGBM APORTES falló (${DURATION}s) — Predicciones ensemble de PASO 3 se mantienen"
+    log "   ⚠️  LightGBM NASA falló (${DURATION}s) — intentando fallback FASE 11..."
+    if $VENV_PYTHON "$SCRIPT_DIR/scripts/train_predictions_sector_energetico.py" --lgbm_aportes >> "$LOG_FILE" 2>&1; then
+        log "   ✅ Fallback LightGBM FASE 11 completado"
+    else
+        log "   ❌ Ambos modelos APORTES fallaron — predicciones ensemble de PASO 3 se mantienen"
+    fi
 fi
 
 ##############################################################################
@@ -254,6 +259,40 @@ else
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
     log "   ⚠️  LightGBM Eólica falló (${DURATION}s) — Predicciones ensemble de PASO 2 se mantienen"
+fi
+
+##############################################################################
+# PASO 3.10: RANDOMFOREST DIRECTO — PRECIO_BOLSA (FASE 10)
+#   • Ejecuta DESPUÉS de Eólica LGBM (PASO 3.9)
+#   • RandomForest con lags + regresores BD (embalses, demanda, aportes, hidráulica)
+#   • FASE 10: Reemplaza ensemble Prophet+SARIMA (40% MAPE → ~15%)
+#   • FASE 23: LightGBM directo — intenta superar RF (criterio: MAPE holdout 90d < 14.67%)
+#   • Si LightGBM falla o no mejora al RF: ejecuta RF como fallback
+##############################################################################
+
+log ""
+log "💲 PASO 3.10: LightGBM directo — PRECIO_BOLSA (FASE 23)..."
+
+START_TIME=$(date +%s)
+
+if $VENV_PYTHON "$SCRIPT_DIR/scripts/train_predictions_sector_energetico.py" --lgbm_precio >> "$LOG_FILE" 2>&1; then
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    log "   ✅ LightGBM PRECIO_BOLSA (FASE 23) actualizado (${DURATION}s)"
+else
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    log "   ⚠️  LightGBM PRECIO_BOLSA falló o no mejoró al RF (${DURATION}s) — ejecutando fallback RF..."
+    START_TIME=$(date +%s)
+    if $VENV_PYTHON "$SCRIPT_DIR/scripts/train_predictions_sector_energetico.py" --rf_precio >> "$LOG_FILE" 2>&1; then
+        END_TIME=$(date +%s)
+        DURATION=$((END_TIME - START_TIME))
+        log "   ✅ Fallback RandomForest PRECIO_BOLSA completado (${DURATION}s)"
+    else
+        END_TIME=$(date +%s)
+        DURATION=$((END_TIME - START_TIME))
+        log "   ⚠️  RandomForest PRECIO_BOLSA también falló (${DURATION}s) — predicciones del ensemble se mantienen"
+    fi
 fi
 
 ##############################################################################

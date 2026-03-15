@@ -78,9 +78,12 @@ def _broadcast_alert_via_bot(message: str, severity: str = "ALERT") -> dict:
         )
         if response.status_code == 200:
             result = response.json()
+            tg_sent = result.get('telegram_sent', 0)
+            wa_sent = result.get('sent', 0)
+            total = result.get('total_sent', tg_sent + wa_sent)
             logger.info(
-                f"✅ Broadcast completado: {result.get('sent', 0)} enviados "
-                f"de {result.get('users_count', 0)} usuarios"
+                f"✅ Broadcast completado: {total} enviados "
+                f"(Telegram={tg_sent}, WhatsApp={wa_sent})"
             )
             return result
         else:
@@ -120,7 +123,11 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
                      valor_promedio, json_completo,
                      notificacion_whatsapp_enviada)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT ON CONSTRAINT unique_alerta_fecha_metrica DO NOTHING
+                    ON CONFLICT ON CONSTRAINT unique_alerta_fecha_metrica DO UPDATE SET
+                        notificacion_whatsapp_enviada = GREATEST(
+                            alertas_historial.notificacion_whatsapp_enviada,
+                            EXCLUDED.notificacion_whatsapp_enviada
+                        )
                 """, (
                     date.today(),
                     alerta.get('categoria', alerta.get('metrica', 'SISTEMA')),
@@ -231,14 +238,12 @@ def _alerta_ya_notificada(titulo: str, horas: int = ALERT_COOLDOWN_HOURS) -> boo
         conn = psycopg2.connect(**conn_params)
         cur = conn.cursor()
         cur.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM alertas_historial
             WHERE descripcion = %s
-              AND (notificacion_whatsapp_enviada = TRUE
-                   OR notificacion_email_enviada = TRUE)
-              AND fecha_generacion >= NOW() - INTERVAL '%s hours'
+              AND fecha_generacion >= NOW() - INTERVAL '{int(horas)} hours'
             """,
-            (titulo, horas),
+            (titulo,),
         )
         count = cur.fetchone()[0]
         cur.close()
@@ -321,27 +326,37 @@ def check_anomalies(self):
 
         try:
             from core.container import container as _ctnr
+            from domain.services.losses_nt_service import OPERATOR_PROFILES
             _pnt = _ctnr.losses_nt_service.get_losses_statistics()
             if _pnt:
                 pnt_val = _pnt.get('pct_promedio_nt_30d', 0)
-                if pnt_val > 8.0:
+                # Umbral nacional agregado (perfil DEFAULT = mix todos OR)
+                _perfil_nac = OPERATOR_PROFILES['DEFAULT']
+                if pnt_val > _perfil_nac.pnt_crit_pct:
+                    alertas_criticas.append({
+                        'titulo': f'PNT_CRÍTICA: {pnt_val:.1f}%',
+                        'categoria': 'Pérdidas No Técnicas',
+                        'severidad': 'CRÍTICO',
+                        'descripcion': (
+                            f'P_NT promedio 30d: {pnt_val:.2f}% supera umbral crítico '
+                            f'nacional ({_perfil_nac.pnt_crit_pct}%). '
+                            f'Posible incremento sistémico de hurto/subfacturación.'
+                        ),
+                    })
+                    logger.info(f"🔴 [ANOMALÍAS] PNT CRÍTICA: {pnt_val:.2f}%")
+                elif pnt_val > _perfil_nac.pnt_warn_pct:
                     alertas_criticas.append({
                         'titulo': f'PNT_ELEVADA: {pnt_val:.1f}%',
                         'categoria': 'Pérdidas No Técnicas',
                         'severidad': 'ALERTA',
                         'descripcion': (
-                            f'Las P_NT promedio 30d alcanzaron {pnt_val:.2f}% '
-                            f'(umbral alerta: >8%). Posible incremento de hurto.'
+                            f'P_NT promedio 30d: {pnt_val:.2f}% supera umbral de alerta '
+                            f'({_perfil_nac.pnt_warn_pct}%). Revisar medición y facturación.'
                         ),
                     })
                     logger.info(f"⚠️ [ANOMALÍAS] PNT elevada: {pnt_val:.2f}%")
         except Exception as e:
             logger.warning(f"[ANOMALÍAS] PNT check falló (no crítico): {e}")
-
-        # Registrar TODAS las alertas en BD (para el informe diario)
-        if alertas_criticas:
-            _registrar_alerta_bd(alertas_criticas, 0)
-            logger.info(f"📝 [ANOMALÍAS] {len(alertas_criticas)} anomalías registradas en BD")
 
         # ── FILTRO DE URGENCIA ──
         # Solo notificar las CRÍTICAS (no las de severidad ALERTA)
@@ -351,7 +366,8 @@ def check_anomalies(self):
         ]
 
         # ── FILTRO DE COOLDOWN ──
-        # Eliminar las que ya fueron notificadas en las últimas N horas
+        # Se evalúa ANTES de registrar en BD para que la búsqueda de cooldown
+        # no encuentre la inserción actual (que aún no existe en este ciclo).
         alertas_nuevas = []
         for a in alertas_urgentes:
             titulo = a.get('titulo', a.get('descripcion', ''))
@@ -361,6 +377,11 @@ def check_anomalies(self):
                 logger.info(
                     f"⏳ [ANOMALÍAS] Alerta ya notificada recientemente, omitiendo: {titulo}"
                 )
+
+        # Registrar TODAS las alertas en BD (para el informe diario)
+        if alertas_criticas:
+            _registrar_alerta_bd(alertas_criticas, 0)
+            logger.info(f"📝 [ANOMALÍAS] {len(alertas_criticas)} anomalías registradas en BD")
 
         if alertas_nuevas:
             logger.warning(
@@ -397,8 +418,8 @@ def check_anomalies(self):
                 + broadcast_result.get('email', {}).get('sent', 0)
             )
 
-            # Actualizar BD con estado de envío
-            _registrar_alerta_bd(alertas_nuevas, enviados)
+            # Actualizar BD con estado de envío (garantizar flag = TRUE)
+            _registrar_alerta_bd(alertas_nuevas, max(1, enviados))
 
             logger.info(f"📤 [ANOMALÍAS] Broadcast completado: {enviados} usuarios notificados")
         elif alertas_criticas:
@@ -701,7 +722,19 @@ def send_daily_summary():
             if _pnt:
                 pnt_30d = _pnt.get('pct_promedio_nt_30d', 0)
                 tend = _pnt.get('tendencia_nt', '')
-                tg_message += f"🔌 *P\\_NT 30d:* {pnt_30d:.2f}% ({tend})\n"
+                # Enriquecer con análisis híbrido CREG+estadístico
+                try:
+                    from domain.services.losses_nt_service import OPERATOR_PROFILES
+                    _p = OPERATOR_PROFILES['DEFAULT']
+                    _emoji_pnt = '🔴' if pnt_30d > _p.pnt_crit_pct else ('🟡' if pnt_30d > _p.pnt_warn_pct else '🟢')
+                    _estado_pnt = 'CRÍTICO' if pnt_30d > _p.pnt_crit_pct else ('ALERTA' if pnt_30d > _p.pnt_warn_pct else 'Normal')
+                    tg_message += (
+                        f"🔌 *P\_NT 30d:* {pnt_30d:.2f}% ({tend}) "
+                        f"{_emoji_pnt} {_estado_pnt} "
+                        f"\[warn>{_p.pnt_warn_pct}% crit>{_p.pnt_crit_pct}%\]\n"
+                    )
+                except Exception:
+                    tg_message += f"🔌 *P\_NT 30d:* {pnt_30d:.2f}% ({tend})\n"
             if _cu or _pnt:
                 tg_message += "\n"
         except Exception as _e:
@@ -760,7 +793,7 @@ def send_daily_summary():
             informe_texto,
             noticias=noticias,
             fichas=fichas,
-            predicciones=predicciones_lista or predicciones_data,
+            predicciones=predicciones_lista if isinstance(predicciones_lista, dict) else (predicciones_data if isinstance(predicciones_data, dict) else None),
             anomalias=anomalias,
             generado_con_ia=generado_con_ia,
         )
@@ -852,7 +885,7 @@ def _build_kpi_fallback() -> str:
 
     precio = 'N/D'
     try:
-        df_precio = metrics_service.get_metric_data('PrecBolsNaci', start, end)
+        df_precio = metrics_service.get_metric_data('PrecBolsNaci', start, end)  # type: ignore[attr-defined]
         if not df_precio.empty:
             col = 'valor' if 'valor' in df_precio.columns else df_precio.columns[-1]
             precio = f"{round(df_precio[col].mean(), 2)} COP/kWh"
@@ -861,7 +894,7 @@ def _build_kpi_fallback() -> str:
 
     embalses = 'N/D'
     try:
-        emb_data = hydro_service.get_hydrology_summary(start, end)
+        emb_data = hydro_service.get_hydrology_summary(start, end)  # type: ignore[attr-defined]
         if emb_data and 'porcentaje_embalses' in emb_data:
             embalses = f"{round(emb_data['porcentaje_embalses'], 1)}%"
     except Exception:
@@ -869,7 +902,7 @@ def _build_kpi_fallback() -> str:
 
     mix_text = ""
     try:
-        df_fuentes = gen_service.get_generation_by_sources(start, end)
+        df_fuentes = gen_service.get_generation_by_sources(start, end)  # type: ignore[attr-defined]
         if not df_fuentes.empty:
             total = df_fuentes['valor_gwh'].sum()
             if total > 0:

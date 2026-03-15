@@ -286,6 +286,18 @@ class InformeHandlerMixin:
                 contexto['embalses_detalle'] = {"error": str(e)}
 
             try:
+                contexto['variables_mercado'] = self._build_variables_mercado()
+            except Exception as e:
+                logger.warning(f"[INFORME] variables_mercado falló (no crítico): {e}")
+                contexto['variables_mercado'] = {}
+
+            try:
+                contexto['embalses_regionales'] = self._build_embalses_regionales()
+            except Exception as e:
+                logger.warning(f"[INFORME] embalses_regionales falló (no crítico): {e}")
+                contexto['embalses_regionales'] = {}
+
+            try:
                 contexto['predicciones_mes_resumen'] = self._build_predicciones_mes_resumen(
                     _fichas,
                     contexto.get('predicciones_mes', {}),
@@ -609,6 +621,23 @@ class InformeHandlerMixin:
             emb_det = contexto.get("embalses_detalle", {})
             if emb_det and "error" not in emb_det:
                 contexto_ia["embalses_detalle"] = emb_det
+            vmercado = contexto.get("variables_mercado", {})
+            if vmercado:
+                contexto_ia["variables_mercado"] = vmercado
+            emb_reg = contexto.get("embalses_regionales", {})
+            if emb_reg and "regiones" in emb_reg:
+                # Versión compacta para IA: solo region, pct, estado
+                contexto_ia["embalses_regionales"] = {
+                    "fecha_dato": emb_reg.get("fecha_dato", ""),
+                    "regiones": [
+                        {
+                            "region": r["region"],
+                            "pct": r["pct_promedio"],
+                            "estado": r["estado"],
+                        }
+                        for r in emb_reg["regiones"]
+                    ],
+                }
             tabla_kpi = contexto.get("tabla_indicadores_clave", [])
             if tabla_kpi:
                 contexto_ia["semaforo_kpi"] = tabla_kpi
@@ -653,9 +682,13 @@ class InformeHandlerMixin:
                 "tendencia y contexto histórico.\n"
                 "• generacion_por_fuente: participación por tipo con GWh y %.\n"
                 "• embalses_detalle: nivel actual vs media histórica 2020–2025.\n"
+                "• variables_mercado: precio escasez, precio máx oferta nacional, "
+                "PPP precio bolsa y demanda regulada/no regulada (GWh/día del SIN).\n"
+                "• embalses_regionales: nivel de llenado promedio por región hidrológica "
+                "(Antioquia, Centro, Huila, etc.) con % y estado semáforo.\n"
                 "• predicciones_mes: proyecciones 1 mes (promedio, rango, tendencia).\n"
                 "• anomalias: alertas con severidad y desvío.\n"
-                "• noticias.titulares: hasta 5 noticias del sector.\n\n"
+                "• noticias.titulares: noticias del sector (puede estar vacío).\n\n"
                 "═══ REGLAS OBLIGATORIAS ═══\n\n"
                 "R1 — NO REPITAS NÚMEROS: La página 1 del PDF ya muestra una TABLA "
                 "SEMÁFORO con los 3 indicadores, sus valores exactos, tendencia y estado. "
@@ -664,7 +697,13 @@ class InformeHandlerMixin:
                 "R2 — LONGITUD: Máximo 600 palabras / ≤3000 caracteres.\n\n"
                 "R3 — ESTRUCTURA EXACTA: Exactamente 5 secciones, ni más ni menos.\n\n"
                 "R4 — NUNCA uses nombres de campos JSON, backticks, guiones bajos.\n\n"
-                "R5 — NUNCA inventes datos. SIEMPRE integra noticias y anomalías.\n\n"
+                "R5a — NUNCA inventes datos ni detalles que no estén en el JSON.\n\n"
+                "R5b — ANOMALÍAS: Si existen en el contexto, son OBLIGATORIAS en "
+                "sección 3.1. Cada una con causa probable e implicación operativa.\n\n"
+                "R5c — NOTICIAS: Solo integra noticias si el contexto incluye "
+                "titulares Y son directamente relevantes al sector energético colombiano. "
+                "Si no hay noticias pertinentes, omite esa referencia por completo. "
+                "NUNCA menciones titulares inventados.\n\n"
                 "R6 — PRECIO_BOLSA es experimental. Generación y Embalses son de alta confianza.\n\n"
                 "═══ ESTRUCTURA OBLIGATORIA (5 secciones) ═══\n\n"
                 "## 1. Contexto general del sistema\n"
@@ -679,10 +718,28 @@ class InformeHandlerMixin:
                 "### 4.1 Corto plazo (días/semana)\n"
                 "### 4.2 Mediano plazo (semanas/meses)\n"
                 "## 5. Calificación del sistema\n"
-                "OBLIGATORIO. Elige: ESTABLE / EN VIGILANCIA / PREOCUPANTE y justifica en 2-3 frases.\n\n"
+                "OBLIGATORIO. Elige una: ESTABLE / EN VIGILANCIA / PREOCUPANTE "
+                "y justifica en 2-3 frases.\n\n"
+                "═══ EJEMPLOS DE ESTILO (sigue este tono exacto) ═══\n\n"
+                "SECCIÓN 1 — bien escrita:\n"
+                "\"El Sistema Interconectado Nacional opera con oferta ajustada. "
+                "La generación hidráulica lidera el despacho, sostenida por embalses "
+                "que se ubican por encima de su media histórica para este período. "
+                "La demanda mantiene su tendencia estacional sin eventos atípicos relevantes.\"\n\n"
+                "SECCIÓN 3.1 — bien escrita:\n"
+                "\"La principal alerta es una desviación significativa en la generación "
+                "térmica respecto a su media histórica, asociada a restricciones de "
+                "combustible en plantas del interior. Esta condición eleva la dependencia "
+                "hidráulica y puede presionar el precio de bolsa si los aportes hídricos "
+                "no compensan el déficit.\"\n\n"
+                "SECCIÓN 5 — bien escrita:\n"
+                "\"**EN VIGILANCIA.** La combinación de embalses por debajo del umbral de "
+                "alerta y demanda en tendencia alcista configura un riesgo moderado para "
+                "las próximas semanas. Se recomienda seguimiento diario de aportes "
+                "hídricos y activación temprana de la reserva térmica disponible.\"\n\n"
                 "═══ ESTILO ═══\n"
-                "Español profesional. ## para secciones, ### para sub-secciones.\n"
-                "NO empieces con frases genéricas. Ve directo al análisis."
+                "Español técnico-profesional. ## para secciones, ### para sub-secciones.\n"
+                "Empieza directamente con el análisis. Evita frases introductorias genéricas."
             )
 
             _anomalias_para_prompt = []
@@ -702,15 +759,31 @@ class InformeHandlerMixin:
             else:
                 _bloque_anomalias = ""
 
+            # Bloque condicional de noticias (D5 — nunca forces noticias vacías)
+            _noticias_count = len(contexto_ia.get("noticias", {}).get("titulares", []))
+            if _noticias_count > 0:
+                _bloque_noticias_user = (
+                    f"\n\n📰 HAY {_noticias_count} NOTICIAS en el contexto JSON. "
+                    "Integra solo las directamente relacionadas con el sector energético "
+                    "colombiano (SIN, XM, precios, generación, embalses, regulación). "
+                    "Si un titular no es relevante, no lo forces en el texto."
+                )
+            else:
+                _bloque_noticias_user = (
+                    "\n\n📰 No hay noticias disponibles hoy. "
+                    "Omite cualquier referencia a prensa o titulares en el informe."
+                )
+
             user_prompt = (
                 f"Datos del sistema eléctrico colombiano para hoy:\n\n"
-                f"```json\n{contexto_json}\n```\n"
-                f"{_bloque_anomalias}\n\n"
+                f"```json\n{contexto_json}\n```"
+                f"{_bloque_anomalias}"
+                f"{_bloque_noticias_user}\n\n"
                 f"Genera el informe ejecutivo con EXACTAMENTE 5 secciones numeradas.\n\n"
                 f"RECORDATORIOS CRÍTICOS:\n"
                 f"- NO menciones valores numéricos específicos. Usa lenguaje cualitativo.\n"
-                f"- Cada anomalía → sección 3.1 con magnitud del desvío.\n"
-                f"- Sección 5 es OBLIGATORIA: califica ESTABLE / EN VIGILANCIA / PREOCUPANTE.\n"
+                f"- Cada anomalía → sección 3.1 con causa probable e implicación operativa.\n"
+                f"- Sección 5 es OBLIGATORIA: elige ESTABLE / EN VIGILANCIA / PREOCUPANTE.\n"
                 f"- Máximo 600 palabras."
             )
 

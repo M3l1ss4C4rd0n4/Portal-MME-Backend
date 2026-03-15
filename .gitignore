@@ -143,6 +143,11 @@ siea/**/__pycache__/
 # Archivos temporales de sistema
 ystemctl*
 
+# Archivos de terminal / pager guardados accidentalmente
+":
+ettings
+"tructure.*"
+
 # Archivos de validación y debug temporal
 validate_fixes.sh
 test_*_debug.py
@@ -177,3 +182,4 @@ whatsapp_bot/whatsapp-web-service/.wwebjs_auth/
 # OneDrive test files
 data/onedrive/test_*
 data/onedrive/Test_*
+.pyright-baseline

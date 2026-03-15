@@ -416,6 +416,23 @@ METRICAS_CONFIG = {
             'dias_history': 365,  # Desde marzo 2025
             'batch_size': 30,
             'descripcion': 'Precio Escasez Inferior (desde marzo 2025)'
+        },
+        # --- Métricas para fórmula CREG G = Pc × Qc + Pb × (1 − Qc) ---
+        {
+            'metric': 'PrecPromContRegu',
+            'entity': 'Sistema',
+            'conversion': 'sin_conversion',  # Valor diario en $/kWh (promedio ponderado contratos mercado regulado)
+            'dias_history': 365,
+            'batch_size': 30,
+            'descripcion': 'Precio promedio contratos mercado regulado (Pc para fórmula CREG G)'
+        },
+        {
+            'metric': 'CompContEnerReg',
+            'entity': 'Sistema',
+            'conversion': 'horas_a_diario',  # Suma horaria kWh → GWh/día (energía comprada en contratos, mercado regulado)
+            'dias_history': 365,
+            'batch_size': 30,
+            'descripcion': 'Compras de energía en contratos mercado regulado (GWh/día, para calcular Qc)'
         }
     ]
 }

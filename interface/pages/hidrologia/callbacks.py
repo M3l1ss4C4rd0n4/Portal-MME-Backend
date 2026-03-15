@@ -13,7 +13,7 @@ import dash
 from dash import dcc, html, Input, Output, State, callback, dash_table
 import dash_bootstrap_components as dbc
 
-from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI, obtener_datos_desde_bd
+from infrastructure.external.xm_service import obtener_datos_inteligente, obtener_datos_desde_bd
 from domain.services.geo_service import REGIONES_COORDENADAS
 
 from interface.components.chart_card import (
@@ -216,7 +216,6 @@ def render_hidro_tab_content(active_tab):
             # Usar la función auxiliar definida en update_content
             # Debemos replicar la lógica aquí para obtener el contenido por defecto
             def show_default_view(start_date, end_date):
-                objetoAPI = get_objetoAPI()
                 es_valido, mensaje = validar_rango_fechas(start_date, end_date)
                 
                 # Mensaje informativo si hay advertencia (no bloquea)
@@ -354,8 +353,7 @@ def render_hidro_tab_content(active_tab):
                 children=html.Div([
                     html.Div(id="hidro-results-content-dynamic", className="mt-2", children=resultados_embalse)
                 ], id="hidro-results-content", className="mt-2"),
-                color=COLORS['primary'],
-                loading_state={'is_loading': False}
+                color=COLORS['primary']
             )
         ])
     elif active_tab == "tab-analisis":
@@ -530,7 +528,6 @@ def update_content(n_clicks, rio, start_date, end_date, region):
     
     # Función auxiliar para mostrar la vista por defecto (panorámica nacional)
     def show_default_view(start_date, end_date):
-        objetoAPI = get_objetoAPI()
         # Validar rango de fechas
         es_valido, mensaje = validar_rango_fechas(start_date, end_date)
         
@@ -861,7 +858,6 @@ def update_content(n_clicks, rio, start_date, end_date, region):
     if filtros_vacios:
         return show_default_view(start_date, end_date)
     
-    objetoAPI = get_objetoAPI()
     # Validar fechas antes de proceder
     es_valido, mensaje = validar_rango_fechas(start_date, end_date)
     
@@ -953,7 +949,6 @@ def update_content(n_clicks, rio, start_date, end_date, region):
                 
             # Obtener embalses de la región específica
             try:
-                objetoAPI = get_objetoAPI()
                 # Usar fecha actual para obtener listado más reciente
                 today = datetime.now().strftime('%Y-%m-%d')
                 yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -1303,7 +1298,6 @@ def update_content(n_clicks, rio, start_date, end_date, region):
 def initialize_hierarchical_tables(start_date, end_date):
     """Inicializar las tablas jerárquicas con datos de regiones al cargar la página"""
     try:
-        objetoAPI = get_objetoAPI()
         logger.debug(f"DEBUG INIT: Inicializando tablas jerárquicas con fechas {start_date} - {end_date}")
         
         # 🔍 Buscar la última fecha con datos disponibles (no asumir que hoy tiene datos)
@@ -1322,7 +1316,7 @@ def initialize_hierarchical_tables(start_date, end_date):
         
         if fecha_obj is None:
             logger.error(f"❌ DEBUG INIT: No se encontraron fechas con datos en los últimos {max_intentos} días")
-            return [], []
+            return [], [], None
         
         fecha_con_datos = fecha_obj.strftime('%Y-%m-%d')
         logger.info(f"✅ DEBUG INIT: Última fecha con datos disponibles: {fecha_con_datos}")
@@ -1332,7 +1326,7 @@ def initialize_hierarchical_tables(start_date, end_date):
         
         if regiones_totales.empty:
             logger.warning("DEBUG INIT: No hay regiones, retornando listas vacías")
-            return [], []
+            return [], [], None
         
         # Crear datos para tabla de participación (solo regiones inicialmente)
         participacion_data = []
@@ -1850,9 +1844,6 @@ def show_modal_table(timeline_clickData, is_open, region_data):
             
             # Obtener datos de media histórica
             try:
-                # Necesitamos obtener la media histórica del backend
-                objetoAPI = get_objetoAPI()
-                
                 # Obtener el rango de fechas del store de datos
                 df_store = pd.DataFrame(region_data) if region_data else pd.DataFrame()
                 if not df_store.empty:
@@ -2428,7 +2419,7 @@ def actualizar_comparacion_anual_hidro(n_clicks, years_selected, active_tab):
             ]
             
             fig_lineas.add_trace(
-                go.Scatter(
+                go.Scattergl(
                     x=df_year['FechaNormalizada'],
                     y=df_year['Volumen_GWh'],
                     mode='lines',
@@ -2522,8 +2513,7 @@ def actualizar_comparacion_anual_hidro(n_clicks, years_selected, active_tab):
                     tickfont=dict(size=7)
                 ),
                 yaxis=dict(
-                    title="GWh",
-                    titlefont=dict(size=8),
+                    title=dict(text="GWh", font=dict(size=8)),
                     tickfont=dict(size=7)
                 )
             )

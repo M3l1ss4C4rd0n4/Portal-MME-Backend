@@ -83,9 +83,9 @@ class PredictorEnsemble:
         print(f"  → Entrenando Prophet para {self.fuente}...", flush=True)
         
         modelo = Prophet(
-            yearly_seasonality=True,
-            weekly_seasonality=False,
-            daily_seasonality=False,
+            yearly_seasonality=True,  # type: ignore[arg-type]
+            weekly_seasonality=False,  # type: ignore[arg-type]
+            daily_seasonality=False,  # type: ignore[arg-type]
             interval_width=CONFIANZA,
             changepoint_prior_scale=0.05,
             seasonality_prior_scale=10.0,
@@ -156,8 +156,8 @@ class PredictorEnsemble:
         
         # Re-entrenar Prophet con subset de entrenamiento
         modelo_p_temp = Prophet(
-            yearly_seasonality=True,
-            weekly_seasonality=False,
+            yearly_seasonality=True,  # type: ignore[arg-type]
+            weekly_seasonality=False,  # type: ignore[arg-type]
             interval_width=CONFIANZA,
             mcmc_samples=0
         ).fit(df_train_p)
@@ -189,8 +189,8 @@ class PredictorEnsemble:
             
             if pred_sarima_val is not None:
                 # Calcular MAPE real para cada modelo
-                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)
-                mape_sarima = mean_absolute_percentage_error(y_real, pred_sarima_val)
+                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
+                mape_sarima = mean_absolute_percentage_error(y_real, pred_sarima_val)  # type: ignore[arg-type]
                 
                 # Pesos inversamente proporcionales al error
                 total_error = mape_prophet + mape_sarima
@@ -206,12 +206,12 @@ class PredictorEnsemble:
                 self.pesos['sarima'] /= suma_pesos
                 
                 # MAPE ensemble real
-                pred_ensemble_val = self.pesos['prophet'] * pred_prophet_val + self.pesos['sarima'] * pred_sarima_val
-                mape_ensemble = mean_absolute_percentage_error(y_real, pred_ensemble_val)
+                pred_ensemble_val = self.pesos['prophet'] * pred_prophet_val + self.pesos['sarima'] * pred_sarima_val  # type: ignore[operator]
+                mape_ensemble = mean_absolute_percentage_error(y_real, pred_ensemble_val)  # type: ignore[arg-type]
                 
                 # FASE 7B: Calcular RMSE
                 from sklearn.metrics import mean_squared_error
-                rmse_ensemble = np.sqrt(mean_squared_error(y_real, pred_ensemble_val))
+                rmse_ensemble = np.sqrt(mean_squared_error(y_real, pred_ensemble_val))  # type: ignore[arg-type]
                 
                 self.metricas = {
                     'mape_prophet': mape_prophet,
@@ -226,9 +226,9 @@ class PredictorEnsemble:
                 print(f"    ✓ Pesos óptimos: Prophet={self.pesos['prophet']:.2f}, SARIMA={self.pesos['sarima']:.2f}", flush=True)
             else:
                 # SARIMA holdout falló, usar solo Prophet
-                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)
+                mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
                 from sklearn.metrics import mean_squared_error
-                rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))
+                rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))  # type: ignore[arg-type]
                 self.pesos = {'prophet': 1.0, 'sarima': 0.0}
                 self.metricas = {
                     'mape_prophet': mape_prophet,
@@ -239,9 +239,9 @@ class PredictorEnsemble:
                 }
                 print(f"    ✓ MAPE Prophet (solo, SARIMA holdout falló): {mape_prophet:.2%}", flush=True)
         else:
-            mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)
+            mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
             from sklearn.metrics import mean_squared_error
-            rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))
+            rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))  # type: ignore[arg-type]
             self.pesos = {'prophet': 1.0, 'sarima': 0.0}
             self.metricas = {
                 'mape_prophet': mape_prophet,
@@ -257,6 +257,7 @@ class PredictorEnsemble:
         print(f"  → Generando predicciones {horizonte_dias} días...", flush=True)
         
         # Prophet
+        assert self.modelo_prophet is not None
         future = self.modelo_prophet.make_future_dataframe(periods=horizonte_dias, freq='D')
         pred_prophet = self.modelo_prophet.predict(future)
         pred_prophet = pred_prophet.tail(horizonte_dias)
@@ -271,17 +272,17 @@ class PredictorEnsemble:
                 
                 # Ensemble ponderado
                 predicciones_ensemble = (
-                    self.pesos['prophet'] * pred_prophet['yhat'].values +
+                    self.pesos['prophet'] * pred_prophet['yhat'].values +  # type: ignore[operator]
                     self.pesos['sarima'] * pred_sarima
                 )
                 
                 # Intervalos ponderados con intervalos reales de SARIMA
                 intervalo_inferior = (
-                    self.pesos['prophet'] * pred_prophet['yhat_lower'].values +
+                    self.pesos['prophet'] * pred_prophet['yhat_lower'].values +  # type: ignore[operator]
                     self.pesos['sarima'] * sarima_lower
                 )
                 intervalo_superior = (
-                    self.pesos['prophet'] * pred_prophet['yhat_upper'].values +
+                    self.pesos['prophet'] * pred_prophet['yhat_upper'].values +  # type: ignore[operator]
                     self.pesos['sarima'] * sarima_upper
                 )
                 
@@ -297,9 +298,9 @@ class PredictorEnsemble:
             intervalo_superior = pred_prophet['yhat_upper'].values
         
         # CLAMP: Generación eléctrica no puede ser negativa
-        predicciones_ensemble = np.maximum(predicciones_ensemble, 0.0)
-        intervalo_inferior = np.maximum(intervalo_inferior, 0.0)
-        intervalo_superior = np.maximum(intervalo_superior, 0.0)
+        predicciones_ensemble = np.maximum(predicciones_ensemble, 0.0)  # type: ignore[call-overload,arg-type]
+        intervalo_inferior = np.maximum(intervalo_inferior, 0.0)  # type: ignore[call-overload,arg-type]
+        intervalo_superior = np.maximum(intervalo_superior, 0.0)  # type: ignore[call-overload,arg-type]
         
         # Crear DataFrame de resultados
         fechas_prediccion = pred_prophet['ds'].values
@@ -346,7 +347,7 @@ def cargar_datos_historicos(fuente, fecha_inicio='2020-01-01'):
     """
     
     try:
-        df = pd.read_sql_query(query, conn, params=(tipo_catalogo, fecha_inicio))
+        df = pd.read_sql_query(query, conn, params=(tipo_catalogo, fecha_inicio))  # type: ignore[arg-type]
         conn.close()
         
         df['fecha'] = pd.to_datetime(df['fecha'])

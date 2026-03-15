@@ -31,13 +31,13 @@ def get_plotly_modules():
     return px, go
 
 
-# ── Registrar la página ──────────────────────────────────────
+# ── Registrar la página (subpágina de Costo Unitario) ───────
 dash.register_page(
     __name__,
-    path="/simulacion-creg",
+    path="/costo-unitario/simulacion",
     name="Simulación CREG",
     title="Simulación CREG — Portal Energético MME",
-    order=60,
+    order=26,
 )
 
 
@@ -116,16 +116,13 @@ def _render_placeholder():
         html.H5("⚡ Simulador CREG", className='mb-2'),
         html.P(
             "Ajusta los parámetros regulatorios a la izquierda y presiona "
-            "▶ Simular para ver el impacto en el Costo Unitario y en la "
-            "factura de un hogar estrato 3."
+            "▶ Simular para ver el impacto en el Costo Unitario de Energía."
         ),
         html.Hr(),
-        html.Small([
-            html.Strong("Base actual: "),
-            "CU = 192.70 COP/kWh | ",
-            "PrecBolsa = 115.19 COP/kWh | ",
-            "P_NT = 3.33% (validado 1,985 días)",
-        ], className='text-muted'),
+        html.Small(
+            id='sim-placeholder-base',
+            className='text-muted',
+        ),
     ], color='light', className='mb-0')
 
 
@@ -141,7 +138,6 @@ def _render_resultado(resultado: dict):
     cu_base = resultado.get('cu_baseline', 0)
     delta_pct = resultado.get('delta_pct', 0)
     delta_cop = resultado.get('delta_cop_kwh', 0)
-    impacto = resultado.get('impacto_estrato3', {})
     sens = resultado.get('sensibilidad', {})
     advertencias = resultado.get('advertencias', [])
     comp_sim = resultado.get('componentes_simulados', {})
@@ -183,21 +179,20 @@ def _render_resultado(resultado: dict):
             'variacion_dir': var_dir,
         },
         {
-            'titulo': 'Factura Estrato 3',
-            'valor': f'{impacto.get("factura_sim_cop", 0):,.0f}',
-            'unidad': ' COP/mes',
-            'icono': 'fas fa-home',
-            'color': 'orange',
-            'variacion': f'{impacto.get("diferencia_cop_mes", 0):+,.0f} COP',
-            'variacion_dir': 'up' if impacto.get('diferencia_cop_mes', 0) > 0 else 'down',
+            'titulo': 'Cu Base (30d)',
+            'valor': f'{cu_base:.2f}',
+            'unidad': ' COP/kWh',
+            'icono': 'fas fa-chart-line',
+            'color': 'blue',
+            'subtexto': 'Promedio últimos 30 días',
         },
         {
             'titulo': 'Mayor Impacto',
-            'valor': param_names.get(top_sens_name, top_sens_name),
+            'valor': param_names.get(top_sens_name, top_sens_name) if top_sens_name != '—' else '—',
             'unidad': '',
             'icono': 'fas fa-bullseye',
             'color': 'purple',
-            'subtexto': f'{top_sens_pct:.0f}% del cambio',
+            'subtexto': f'{top_sens_pct:.0f}% del cambio' if top_sens_name != '—' else 'Sin cambios',
         },
     ]
     kpi_row = crear_kpi_row(kpi_data, columnas=4)
@@ -276,46 +271,12 @@ def _render_resultado(resultado: dict):
         )
         children_serie = [
             crear_chart_card_custom(
-                dcc.Graph(figure=fig_serie, config={'displayModeBar': False}),
-                alto_px=320,
+                titulo="Proyección CU: Real vs Simulado",
+                children=dcc.Graph(figure=fig_serie, config={'displayModeBar': False}),
             ),
         ]
 
-    # d. Tarjeta impacto estrato 3
-    diff_cop = impacto.get('diferencia_cop_mes', 0)
-    diff_pct_e3 = impacto.get('diferencia_pct', 0)
-    impacto_color = '#E63946' if diff_cop > 0 else '#2A9D8F'
-    impacto_icono = '↑' if diff_cop > 0 else '↓'
-
-    tarjeta_impacto = dbc.Card([
-        dbc.CardBody([
-            html.H6("🏠 Impacto en hogar estrato 3", className='fw-bold mb-2'),
-            html.Div([
-                html.Span(
-                    f"Un hogar estrato 3 (173 kWh/mes) pagaría:",
-                    className='d-block mb-1',
-                ),
-                html.Span(
-                    f"${impacto.get('factura_sim_cop', 0):,.0f} COP/mes",
-                    style={'fontSize': '1.6rem', 'fontWeight': '700',
-                           'color': impacto_color},
-                ),
-                html.Span(
-                    f"  {impacto_icono} {diff_cop:+,.0f} COP vs actual "
-                    f"({diff_pct_e3:+.1f}%)",
-                    style={'fontSize': '0.95rem', 'color': impacto_color,
-                           'fontWeight': '600'},
-                    className='d-block mt-1',
-                ),
-            ]),
-            html.Small(
-                impacto.get('nota', ''),
-                className='text-muted d-block mt-2',
-            ),
-        ]),
-    ], style={'borderLeft': f'4px solid {SIM_COLORS["impacto"]}',
-              'backgroundColor': '#FFF8ED'},
-       className='shadow-sm mb-3')
+    # d. Tarjeta impacto estrato 3 — ELIMINADA (se cal­cula en sección CU por Usuario)
 
     # e. Análisis de sensibilidad (barras horizontales)
     children_sens = []
@@ -344,8 +305,8 @@ def _render_resultado(resultado: dict):
         )
         children_sens = [
             crear_chart_card_custom(
-                dcc.Graph(figure=fig_sens, config={'displayModeBar': False}),
-                alto_px=max(160, len(sens) * 50 + 80),
+                titulo="Análisis de Sensibilidad",
+                children=dcc.Graph(figure=fig_sens, config={'displayModeBar': False}),
             ),
         ]
 
@@ -366,11 +327,10 @@ def _render_resultado(resultado: dict):
     return html.Div([
         kpi_row,
         crear_chart_card_custom(
-            dcc.Graph(figure=fig_comp, config={'displayModeBar': False}),
-            alto_px=340,
+            titulo="Desglose CU: Base vs Simulado",
+            children=dcc.Graph(figure=fig_comp, config={'displayModeBar': False}),
         ),
         *children_serie,
-        tarjeta_impacto,
         *children_sens,
         *children_adv,
         nota_legal,
@@ -382,11 +342,11 @@ def _render_resultado(resultado: dict):
 # ══════════════════════════════════════════════════════════════
 
 def layout(**kwargs):
-    """Layout principal de la página de simulación CREG."""
+    """Layout principal de la página de simulación CREG (subpágina de Costo Unitario)."""
     return html.Div([
         crear_page_header(
             titulo="Simulación CREG",
-            breadcrumb="Inicio / Simulación CREG — Motor de Simulación Paramétrica",
+            breadcrumb="Inicio / Costo Unitario / Simulación CREG",
             icono="fas fa-flask",
         ),
 
@@ -399,17 +359,13 @@ def layout(**kwargs):
                         className='mb-0 fw-bold',
                     )),
                     dbc.CardBody([
-                        # Baseline badge
-                        dbc.Alert([
-                            html.Strong("Base actual: "),
-                            "192.70 COP/kWh",
-                            html.Br(),
-                            html.Small(
-                                "PrecBolsa: 115.19 COP/kWh (30d)",
-                                className='text-muted',
-                            ),
-                        ], color='light', className='py-2 mb-3',
-                           style={'borderLeft': '4px solid #F5A623'}),
+                        # Baseline badge (actualizado dinámicamente al cargar)
+                        dbc.Alert(
+                            id='sim-baseline-badge',
+                            color='light',
+                            className='py-2 mb-3',
+                            style={'borderLeft': '4px solid #F5A623'},
+                        ),
 
                         # Dropdown escenarios predefinidos
                         html.Label(
@@ -448,7 +404,8 @@ def layout(**kwargs):
                             dbc.Badge(id='sim-pb-val', color='secondary', pill=True),
                         ], className='form-label fw-semibold'),
                         html.Small(
-                            "Componente G: 59.7% del CU",
+                            "Afecta componente G (generación, ~60% del CU). "
+                            "Factor 1.0 = sin cambio vs. hoy.",
                             className='text-muted d-block mb-1',
                         ),
                         dcc.Slider(
@@ -465,7 +422,8 @@ def layout(**kwargs):
                             dbc.Badge(id='sim-fp-val', color='secondary', pill=True),
                         ], className='form-label fw-semibold mt-3'),
                         html.Small(
-                            "Actual CREG: 8.5% | Componente P+D: 28.5%",
+                            "Afecta componentes P y D (~29% del CU). "
+                            "CREG actual reconoce 8.5% por OR. Rango histórico: 5–15%.",
                             className='text-muted d-block mb-1',
                         ),
                         dcc.Slider(
@@ -481,7 +439,8 @@ def layout(**kwargs):
                             dbc.Badge(id='sim-cr-val', color='secondary', pill=True),
                         ], className='form-label fw-semibold mt-3'),
                         html.Small(
-                            "Valor en COP/kWh. 0 = usar valor actual",
+                            "Componente R (~1% del CU en condiciones normales). "
+                            "Se eleva a 10–30 COP/kWh en crisis operativas del SIN.",
                             className='text-muted d-block mb-1',
                         ),
                         dcc.Slider(
@@ -495,6 +454,11 @@ def layout(**kwargs):
                             "Tasa transmisión ",
                             dbc.Badge(id='sim-tr-val', color='secondary', pill=True),
                         ], className='form-label fw-semibold mt-3'),
+                        html.Small(
+                            "Componente T (~4.4% del CU). Cargo CND regulado. "
+                            "Factor 1.0 = tarifa vigente aprobada por CREG.",
+                            className='text-muted d-block mb-1',
+                        ),
                         dcc.Slider(
                             id='sim-trans',
                             min=0.5, max=1.5, step=0.05, value=1.0,
@@ -506,6 +470,11 @@ def layout(**kwargs):
                             "Tasa comercialización ",
                             dbc.Badge(id='sim-tc-val', color='secondary', pill=True),
                         ], className='form-label fw-semibold mt-3'),
+                        html.Small(
+                            "Componente C (~6.3% del CU). Margen regulado del "
+                            "comercializador. Factor 1.0 = tarifa vigente.",
+                            className='text-muted d-block mb-1',
+                        ),
                         dcc.Slider(
                             id='sim-com',
                             min=0.5, max=1.5, step=0.05, value=1.0,
@@ -599,18 +568,65 @@ def layout(**kwargs):
                className='text-muted fst-italic small mt-2'),
 
         html.Hr(className='my-4'),
-        html.H6("📋 Historial de Simulaciones Guardadas", className='fw-bold'),
+        html.Div([
+            html.H6("📋 Historial de Simulaciones Guardadas",
+                    className='fw-bold mb-0'),
+            dbc.Button([
+                html.I(className='fas fa-trash me-1'), "Limpiar historial"
+            ], id='btn-limpiar-historial', color='danger', size='sm',
+               outline=True),
+        ], className='d-flex justify-content-between align-items-center mb-2'),
+        html.Div(id='sim-limpiar-status'),
         html.Div(id='sim-historial'),
 
         # Stores
         dcc.Store(id='sim-resultado-store'),
         dcc.Download(id='download-excel-simulacion'),
+        # Dispara una sola vez al cargar la página para obtener CU actual
+        dcc.Interval(id='sim-init-interval', interval=500, max_intervals=1, n_intervals=0),
     ], className='container-fluid px-4 py-3')
 
 
 # ══════════════════════════════════════════════════════════════
 # CALLBACKS
 # ══════════════════════════════════════════════════════════════
+
+# 0. Carga inicial → llenar badge de CU base y placeholder con valores reales de BD
+@callback(
+    Output('sim-baseline-badge', 'children'),
+    Output('sim-placeholder-base', 'children'),
+    Input('sim-init-interval', 'n_intervals'),
+    prevent_initial_call=False,
+)
+def cargar_baseline_dinamico(n_intervals):
+    """Lee el CU base (últimos 30 días) de BD y actualiza los badges."""
+    try:
+        from core.container import container
+        svc = container.simulation_service
+        cu_base = svc._get_cu_base_dinamico()
+    except Exception:
+        cu_base = None
+
+    if cu_base is not None:
+        cu_txt = f"{cu_base:.2f} COP/kWh"
+    else:
+        from domain.services.simulation_service import CU_BASE_DEFAULT
+        cu_txt = f"{CU_BASE_DEFAULT:.2f} COP/kWh (ref. hardcoded)"
+
+    badge_children = [
+        html.Strong("Base actual: "),
+        cu_txt,
+        html.Br(),
+        html.Small("Promedio CU últimos 30 días", className='text-muted'),
+    ]
+
+    placeholder_children = [
+        html.Strong("Base actual: "),
+        f"CU = {cu_txt}",
+    ]
+
+    return badge_children, placeholder_children
+
 
 # 1. Preset → poblar sliders
 @callback(
@@ -692,21 +708,17 @@ def run_simulation(n_clicks, pb, fp, rest, trans, com, nombre):
         from core.container import container
         svc = container.simulation_service
 
-        # Construir parámetros
-        params = {}
-        if pb != 1.0:
-            params['precio_bolsa_factor'] = pb
-        if fp != 0.085:
-            params['factor_perdidas'] = fp
+        # Construir parámetros — siempre pasar todos los valores para
+        # que _calcular_sensibilidad pueda filtrar los que están en su
+        # valor baseline y evitar el artefacto "100% precio bolsa".
+        params = {
+            'precio_bolsa_factor': pb,
+            'factor_perdidas': fp,
+            'tasa_transmision': trans,
+            'tasa_comercializacion': com,
+        }
         if rest > 0:
             params['cargo_restricciones_kw'] = rest
-        if trans != 1.0:
-            params['tasa_transmision'] = trans
-        if com != 1.0:
-            params['tasa_comercializacion'] = com
-
-        if not params:
-            params['precio_bolsa_factor'] = 1.0
 
         resultado = svc.simular_escenario(
             parametros=params,
@@ -726,7 +738,29 @@ def run_simulation(n_clicks, pb, fp, rest, trans, com, nombre):
             logger.warning(f"No se pudo auto-guardar simulación: {e_save}")
             historial_actualizado = no_update
 
-        return _render_resultado(resultado), resultado, False, historial_actualizado
+        # Validación física del CU simulado
+        cu_sim = resultado.get('cu_simulado', 0)
+        alertas_fisicas = []
+        if cu_sim < 300:
+            alertas_fisicas.append(
+                dbc.Alert(
+                    f"⚠️ CU simulado ({cu_sim:.1f} COP/kWh) está por debajo de 300 COP/kWh — "
+                    "valor inferior al mínimo histórico del mercado colombiano (CU nunca bajó "
+                    "de ~600 COP/kWh en La Niña 2023-2024). Revisar parámetros.",
+                    color='warning', className='mb-2',
+                )
+            )
+        elif cu_sim > 1_500:
+            alertas_fisicas.append(
+                dbc.Alert(
+                    f"⚠️ CU simulado ({cu_sim:.1f} COP/kWh) supera 1,500 COP/kWh — "
+                    "nivel de crisis extrema comparable a El Niño 2023. Confirmar escenario.",
+                    color='warning', className='mb-2',
+                )
+            )
+
+        output_children = alertas_fisicas + [_render_resultado(resultado)] if alertas_fisicas else _render_resultado(resultado)
+        return output_children, resultado, False, historial_actualizado
 
     except Exception as e:
         logger.error(f"Error en simulación dashboard: {e}\n{traceback.format_exc()}")
@@ -792,6 +826,32 @@ def reset_simulation(n_clicks):
     if not n_clicks:
         return no_update, no_update, no_update
     return '', _render_placeholder(), True
+
+
+# 6b. Limpiar historial
+@callback(
+    Output('sim-historial', 'children', allow_duplicate=True),
+    Output('sim-limpiar-status', 'children'),
+    Input('btn-limpiar-historial', 'n_clicks'),
+    prevent_initial_call=True,
+)
+def limpiar_historial_callback(n_clicks):
+    """Elimina todo el historial de simulaciones guardadas."""
+    if not n_clicks:
+        return no_update, no_update
+    try:
+        from core.container import container
+        svc = container.simulation_service
+        deleted = svc.limpiar_historial()
+        status = dbc.Alert(
+            f"✅ {deleted} simulacion{'es' if deleted != 1 else ''} eliminada{'s' if deleted != 1 else ''}.",
+            color='success', duration=4000, className='py-1 px-2 mb-0 mt-1',
+        )
+        return html.Small("Sin simulaciones guardadas.", className='text-muted'), status
+    except Exception as e:
+        return no_update, dbc.Alert(
+            f"Error al limpiar: {e}", color='danger', className='py-1 px-2 mb-0 mt-1',
+        )
 
 
 # 6. Historial al cargar

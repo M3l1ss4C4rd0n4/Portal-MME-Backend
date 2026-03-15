@@ -11,7 +11,40 @@ from datetime import date, datetime, timedelta
 from dash import html, dash_table
 import dash_bootstrap_components as dbc
 
-from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI, obtener_datos_desde_bd
+from infrastructure.external.xm_service import obtener_datos_inteligente, obtener_datos_desde_bd
+
+# Mapeo estático embalse → región hidrológica XM.
+# Se usa como fallback cuando ListadoEmbalses no está disponible en la BD local
+# ni la API XM (pydataxm) está accesible.
+_EMBALSE_REGION_FALLBACK = {
+    'PENOL':           'ANTIOQUIA',
+    'RIOGRANDE2':      'ANTIOQUIA',
+    'PORCE II':        'ANTIOQUIA',
+    'PORCE III':       'ANTIOQUIA',
+    'MIRAFLORES':      'ANTIOQUIA',
+    'PLAYAS':          'ANTIOQUIA',
+    'TRONERAS':        'ANTIOQUIA',
+    'PUNCHINA':        'ANTIOQUIA',
+    'ITUANGO':         'ANTIOQUIA',
+    'AGREGADO BOGOTA': 'CENTRO',
+    'CHUZA':           'CENTRO',
+    'GUAVIO':          'CENTRO',
+    'MUNA':            'CENTRO',
+    'BETANIA':         'HUILA',
+    'EL QUIMBO':       'HUILA',
+    'CALIMA1':         'VALLE',
+    'ALTOANCHICAYA':   'VALLE',
+    'SALVAJINA':       'CAUCA',
+    'FLORIDA II':      'CAUCA',
+    'URRA1':           'CARIBE',
+    'PRADO':           'TOLIMA',
+    'AMANI':           'CALDAS',
+    'ESMERALDA':       'CALDAS',
+    'SAN LORENZO':     'CALDAS',
+    'TOPOCORO':        'SANTANDER',
+    'CHIVOR':          'ORIENTE',
+    'SAN CARLOS':      'CENTRO',
+}
 
 from .utils import (
     logger, format_number, format_date,
@@ -623,29 +656,31 @@ def get_tabla_regiones_embalses(start_date=None, end_date=None):
     Crea una tabla jerárquica que muestra primero las regiones y permite expandir para ver embalses.
     """
     try:
-        objetoAPI = get_objetoAPI()
-        
         # Obtener información de embalses desde API XM (fuente de verdad para regiones)
         today = datetime.now().strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         embalses_info, warning = obtener_datos_inteligente('ListadoEmbalses','Sistema', yesterday, today)
         
-        # ✅ NORMALIZAR usando funciones unificadas
-        embalses_info['Values_Name'] = normalizar_codigo(embalses_info['Values_Name'])
-        embalses_info['Values_HydroRegion'] = normalizar_region(embalses_info['Values_HydroRegion'])
-        
-        # ✅ FIX: Limpiar duplicados y entradas sin región (causa de "inflated values" / duplicados visuales)
-        # Priorizar entradas con región válida
-        if not embalses_info.empty:
-            # Eliminar registros con región vacía o nula
+        if embalses_info is not None and not embalses_info.empty:
+            # ✅ NORMALIZAR usando funciones unificadas
+            embalses_info['Values_Name'] = normalizar_codigo(embalses_info['Values_Name'])
+            embalses_info['Values_HydroRegion'] = normalizar_region(embalses_info['Values_HydroRegion'])
+            
+            # Limpiar duplicados y entradas sin región
             embalses_info = embalses_info[embalses_info['Values_HydroRegion'].notna() & (embalses_info['Values_HydroRegion'] != '')]
-            # Eliminar duplicados de nombre
             embalses_info = embalses_info.drop_duplicates(subset=['Values_Name'])
             logger.info(f"Listado embalses filtrado: {len(embalses_info)} registros únicos con región")
-
-        # CREAR MAPEO CÓDIGO → REGIÓN (fuente única de verdad)
-        embalse_region_map = dict(zip(embalses_info['Values_Name'], embalses_info['Values_HydroRegion']))
-        logger.debug(f"Mapeo embalse-región creado: {len(embalse_region_map)} embalses")
+            embalse_region_map = dict(zip(embalses_info['Values_Name'], embalses_info['Values_HydroRegion']))
+            logger.debug(f"Mapeo embalse-región creado desde API: {len(embalse_region_map)} embalses")
+        else:
+            # Fallback: usar mapeo estático cuando la API XM no está disponible
+            logger.warning("ListadoEmbalses no disponible desde API/BD — usando mapeo estático de embalse→región")
+            embalse_region_map = _EMBALSE_REGION_FALLBACK.copy()
+            embalses_info = pd.DataFrame([
+                {'Values_Name': k, 'Values_HydroRegion': v}
+                for k, v in embalse_region_map.items()
+            ])
+            logger.info(f"Mapeo estático cargado: {len(embalse_region_map)} embalses")
 
         # Obtener fecha con datos COMPLETOS (n_vol/n_cap >= 80%)
         fecha_solicitada = end_date if end_date else start_date
@@ -823,7 +858,7 @@ def get_tabla_regiones_embalses(start_date=None, end_date=None):
         # (No agregar fila TOTAL SISTEMA aquí, se agregará manualmente en la tabla de participación)
         return regiones_totales, df_embalses
     except Exception as e:
-# print(f"[ERROR] get_tabla_regiones_embalses: {e}")
+        logger.error(f"❌ Error en get_tabla_regiones_embalses: {e}", exc_info=True)
         return pd.DataFrame(), pd.DataFrame()
 
 

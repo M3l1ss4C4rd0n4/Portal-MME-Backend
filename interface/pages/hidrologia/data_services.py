@@ -9,7 +9,7 @@ y el servicio de hidrología.
 import pandas as pd
 from datetime import date, datetime, timedelta
 
-from infrastructure.external.xm_service import obtener_datos_inteligente, get_objetoAPI
+from infrastructure.external.xm_service import obtener_datos_inteligente
 
 from .utils import (
     logger, normalizar_codigo, normalizar_region, 
@@ -491,6 +491,7 @@ def get_embalses_completa_para_tabla(region=None, start_date=None, end_date=None
         else:
             # Consultar datos si no se pasaron pre-consultados
 # print(f"📊 [CONSULTA] Consultando datos de embalses...")
+            from .tables import get_tabla_regiones_embalses  # lazy import para evitar circular
             regiones_totales, df_embalses = get_tabla_regiones_embalses(start_date, end_date)
             
 # print(f"🔥 [AFTER_CALL] get_tabla_regiones_embalses retornó: {len(df_embalses)} embalses")
@@ -952,8 +953,6 @@ def get_embalses_capacidad(region=None, start_date=None, end_date=None):
     IMPORTANTE: Usa solo end_date (fecha final) para los cálculos de volumen útil.
     """
     try:
-        objetoAPI = get_objetoAPI()
-        
         # Si no se proporcionan fechas, usar fecha actual
         if not start_date or not end_date:
             today = datetime.now().strftime('%Y-%m-%d')
@@ -1089,7 +1088,6 @@ def get_embalses_capacidad(region=None, start_date=None, end_date=None):
 def get_porcapor_data(fecha_inicio, fecha_fin):
     """Obtener datos de la métrica PorcApor - Aportes % por río"""
     try:
-        objetoAPI = get_objetoAPI()
         data, warning = obtener_datos_inteligente('PorcApor', 'Rio', fecha_inicio, fecha_fin)
         if not data.empty:
             # Multiplicar por 100 para convertir a porcentaje

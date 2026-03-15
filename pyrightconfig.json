@@ -1,0 +1,45 @@
+{
+    "venvPath": "/home/admonctrlxm/server",
+    "venv": "venv",
+    "pythonVersion": "3.12",
+    "pythonPlatform": "Linux",
+
+    "include": [
+        "core",
+        "domain",
+        "infrastructure",
+        "interface",
+        "scripts",
+        "tasks",
+        "whatsapp_bot",
+        "etl",
+        "_check_oe.py"
+    ],
+    "exclude": [
+        "**/.*",
+        "**/node_modules",
+        "**/__pycache__",
+        "**/venv",
+        "mlruns",
+        "backups",
+        "notebooks",
+        "experiments",
+        "ejemplos",
+        "api"
+    ],
+
+    "reportMissingImports": "warning",
+    "reportMissingModuleSource": "none",
+    "reportUnknownVariableType": "none",
+    "reportUnknownMemberType": "none",
+    "reportUnknownArgumentType": "none",
+    "reportUnknownParameterType": "none",
+    "reportMissingTypeArgument": "none",
+    "reportPrivateUsage": "none",
+    "reportUntypedFunctionDecorator": "none",
+
+    "typeCheckingMode": "off",
+
+    "reportPossiblyUnbound": "error",
+    "reportOptionalCall": "error"
+}

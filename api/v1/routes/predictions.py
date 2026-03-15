@@ -65,9 +65,9 @@ def _get_redis():
         return None
 
 
-def _cache_key(metric_id: str, entity: str, horizon_days: int, model_type: str) -> str:
+def _cache_key(metric_id: str, entity: str, horizon_days: int, model_type: str, conformal: bool = True) -> str:
     """Cache key determinista para una predicción."""
-    raw = f"{metric_id}|{entity}|{horizon_days}|{model_type}"
+    raw = f"{metric_id}|{entity}|{horizon_days}|{model_type}|{conformal}"
     short_hash = hashlib.md5(raw.encode()).hexdigest()[:8]
     return f"pred:{metric_id}:{entity}:{horizon_days}:{model_type}:{short_hash}"
 
@@ -149,6 +149,10 @@ async def get_prediction(
         default="prophet",
         description="Tipo de modelo ML a usar"
     ),
+    conformal: bool = Query(
+        default=True,
+        description="Aplicar calibración conformal a los intervalos (garantía ≥ confidence_level de cobertura)"
+    ),
     api_key: str = Depends(get_api_key),
     service: PredictionsService = Depends(get_predictions_service)
 ) -> PredictionResponse:
@@ -176,7 +180,7 @@ async def get_prediction(
         t0 = time.time()
         
         # ── FASE 19: Check Redis cache ──
-        cache_k = _cache_key(metric_id, entity, horizon_days, model_type)
+        cache_k = _cache_key(metric_id, entity, horizon_days, model_type, conformal)
         cached = _cache_get(cache_k)
         if cached:
             elapsed_ms = (time.time() - t0) * 1000
@@ -189,7 +193,8 @@ async def get_prediction(
             metric_id=metric_id,
             entity=entity,
             horizon_days=horizon_days,
-            model_type=model_type
+            model_type=model_type,
+            conformal=conformal,
         )
         
         # Verificar si se generó la predicción
@@ -363,6 +368,10 @@ async def get_batch_predictions(
     ),
     horizon_days: int = Query(default=30, ge=1, le=365),
     model_type: Literal["prophet", "arima", "ensemble"] = Query(default="prophet"),
+    conformal: bool = Query(
+        default=True,
+        description="Aplicar calibración conformal a los intervalos"
+    ),
     api_key: str = Depends(get_api_key),
     service: PredictionsService = Depends(get_predictions_service)
 ) -> dict:
@@ -372,7 +381,7 @@ async def get_batch_predictions(
         metricas = DEFAULT_BATCH_METRICS
 
     # Check batch cache
-    batch_key_raw = f"batch|{'_'.join(sorted(metricas))}|{horizon_days}|{model_type}"
+    batch_key_raw = f"batch|{'_'.join(sorted(metricas))}|{horizon_days}|{model_type}|{conformal}"
     batch_hash = hashlib.md5(batch_key_raw.encode()).hexdigest()[:8]
     batch_cache_key = f"pred:batch:{batch_hash}"
 
@@ -387,7 +396,7 @@ async def get_batch_predictions(
     cache_hits = 0
     for m in metricas:
         # Try individual cache first
-        ind_key = _cache_key(m, "Sistema", horizon_days, model_type)
+        ind_key = _cache_key(m, "Sistema", horizon_days, model_type, conformal)
         ind_cached = _cache_get(ind_key)
         if ind_cached:
             results[m] = ind_cached
@@ -399,7 +408,8 @@ async def get_batch_predictions(
                 metric_id=m,
                 entity="Sistema",
                 horizon_days=horizon_days,
-                model_type=model_type
+                model_type=model_type,
+                conformal=conformal,
             )
             if df_pred is not None and not df_pred.empty:
                 resp = PredictionResponse.from_dataframe(

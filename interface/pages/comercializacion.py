@@ -174,7 +174,7 @@ def crear_tabla_horaria_unificada(datos_metricas, valores_diarios, fecha_selecci
         # Calcular total y promedio Bolsa
         valores_bolsa = [v['valor'] for v in valores_horarios_bolsa if v['valor'] is not None]
         total_bolsa = sum(valores_bolsa) if valores_bolsa else None
-        promedio_bolsa = total_bolsa / len(valores_bolsa) if valores_bolsa else None
+        promedio_bolsa = total_bolsa / len(valores_bolsa) if valores_bolsa else None  # type: ignore[operator]
         
         # Crear filas para tabla Bolsa
         filas_bolsa = []
@@ -444,9 +444,9 @@ def layout(**kwargs):
                 html.Label("Fechas", className="t-filter-label"),
                 dcc.DatePickerRange(
                     id='fecha-filtro-comercializacion',
-                    min_date_allowed=date(2000, 1, 1),
-                    max_date_allowed=date.today(),
-                    initial_visible_month=date.today(),
+                    min_date_allowed=date(2000, 1, 1),  # type: ignore[arg-type]
+                    max_date_allowed=date.today(),  # type: ignore[arg-type]
+                    initial_visible_month=date.today(),  # type: ignore[arg-type]
                     start_date=fecha_inicio,
                     end_date=fecha_fin,
                     display_format='YYYY-MM-DD',
@@ -456,6 +456,10 @@ def layout(**kwargs):
             dbc.Button([
                 html.I(className="fas fa-search me-1"), "Actualizar"
             ], id='btn-actualizar-comercializacion', color="primary", size="sm"),
+            dbc.Button([
+                html.I(className="fas fa-file-excel me-1"), "Excel"
+            ], id='btn-excel-comercializacion', color="success", size="sm", outline=True),
+            dcc.Download(id='download-excel-comercializacion'),
         ),
 
         # KPIs container (updated by callback)
@@ -551,12 +555,18 @@ def actualizar_fechas_rango_comercializacion(rango):
     [Input('btn-actualizar-comercializacion', 'n_clicks'),
      Input('fecha-filtro-comercializacion', 'start_date'),
      Input('fecha-filtro-comercializacion', 'end_date')],
-    prevent_initial_call='initial_duplicate'
+    prevent_initial_call=False
 )
 def actualizar_datos_comercializacion(n_clicks, fecha_inicio_str, fecha_fin_str):
     """Callback para actualizar la gráfica y fichas según las fechas seleccionadas"""
     
     px, go = get_plotly_modules()
+
+    # Fallback de fechas por defecto si llegan None en el initial call
+    if not fecha_fin_str:
+        fecha_fin_str = date.today().strftime('%Y-%m-%d')
+    if not fecha_inicio_str:
+        fecha_inicio_str = (date.today() - timedelta(days=90)).strftime('%Y-%m-%d')
     
     try:
         # Convertir fechas
@@ -822,3 +832,48 @@ def toggle_modal_spread(btn_clicks, close_clicks, is_open):
     """Abrir/cerrar modal de información del Spread de Escasez"""
     return not is_open
 
+
+
+# Fase G: Excel export para Comercializacion
+@callback(
+    Output('download-excel-comercializacion', 'data'),
+    Input('btn-excel-comercializacion', 'n_clicks'),
+    [State('fecha-filtro-comercializacion', 'start_date'),
+     State('fecha-filtro-comercializacion', 'end_date')],
+    prevent_initial_call=True,
+)
+def exportar_excel_comercializacion(n_clicks, fecha_inicio_str, fecha_fin_str):
+    """Exporta precios de bolsa y escasez a Excel con múltiples hojas"""
+    import io
+    try:
+        if not fecha_inicio_str or not fecha_fin_str:
+            return dash.no_update
+        fecha_inicio = pd.to_datetime(fecha_inicio_str).date()
+        fecha_fin = pd.to_datetime(fecha_fin_str).date()
+
+        df_bolsa = obtener_precio_bolsa(fecha_inicio, fecha_fin)
+        df_escasez = obtener_precio_escasez(fecha_inicio, fecha_fin)
+        df_escasez_act = obtener_precio_escasez_activacion(fecha_inicio, fecha_fin)
+        df_escasez_sup = obtener_precio_escasez_superior(fecha_inicio, fecha_fin)
+        df_escasez_inf = obtener_precio_escasez_inferior(fecha_inicio, fecha_fin)
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            sheets = {
+                'Precio_Bolsa': df_bolsa,
+                'Escasez': df_escasez,
+                'Escasez_Activacion': df_escasez_act,
+                'Escasez_Superior': df_escasez_sup,
+                'Escasez_Inferior': df_escasez_inf,
+            }
+            for sheet, df in sheets.items():
+                if df is not None and not (isinstance(df, pd.DataFrame) and df.empty):
+                    pd.DataFrame(df).to_excel(writer, sheet_name=sheet, index=False)
+        buf.seek(0)
+        fi = str(fecha_inicio)
+        ff = str(fecha_fin)
+        nombre = f"comercializacion_{fi}_al_{ff}.xlsx"
+        return dcc.send_bytes(buf.read(), nombre)
+    except Exception as e:
+        logger.error("Error exportando Excel comercializacion: %s", e)
+        return dash.no_update

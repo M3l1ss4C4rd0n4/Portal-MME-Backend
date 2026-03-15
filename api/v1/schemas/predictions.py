@@ -107,6 +107,15 @@ class PredictionResponse(BaseModel):
         # Normalizar nombres de columnas según el modelo
         df_normalized = df.copy()
         
+        # Formato genérico en minúsculas desde forecast_metric() → date, value, lower, upper
+        if 'date' in df_normalized.columns:
+            df_normalized = df_normalized.rename(columns={
+                'date': 'Date',
+                'value': 'Value',
+                'lower': 'Lower',
+                'upper': 'Upper',
+            })
+        
         # Prophet usa 'ds', 'yhat', 'yhat_lower', 'yhat_upper'
         if 'ds' in df_normalized.columns:
             df_normalized = df_normalized.rename(columns={

@@ -95,22 +95,22 @@ def _preload_xm_api(logger):
 def _register_layout(app):
     """Registra el layout principal"""
     app.layout = html.Div([
-        # ✅ ÚNICO ENCABEZADO CENTRALIZADO (Fixed Top)
+        # ✅ ÚNICO ENCABEZADO CENTRALIZADO (Navbar sticky)
         crear_header_restaurado(),
-        
+
         # Elementos invisibles
         dcc.Location(id="url", refresh=False),
         dcc.Store(id='store-datos-chatbot-generacion', data={}),
         dcc.Store(id='error-log-store', data=None),
         dcc.Store(id='theme-store', storage_type='local', data='light'),
-        
+
         # Contenedor principal — navbar sticky, sin paddingTop fijo
         html.Div([
             page_container,
         ]),
-        
+
         # ✨ Chat Widget
-        crear_componente_chat()
+        crear_componente_chat(),
     ])
 
 
@@ -147,19 +147,10 @@ def _register_callbacks(app):
         prevent_initial_call=True,
     )
 
-    # BUG 3: Toggler mobile para el nuevo dbc.Navbar
-    @app.callback(
-        Output('navbar-collapse', 'is_open'),
-        Input('navbar-toggler', 'n_clicks'),
-        prevent_initial_call=True,
-    )
-    def toggle_navbar(n_clicks):
-        return bool(n_clicks % 2)
-
     NAV_NAMES = [
         'inicio', 'generacion', 'transmision', 'distribucion',
-        'comercializacion', 'perdidas', 'costo-unitario', 'simulacion-creg',
-        'perdidas-nt', 'restricciones', 'metricas', 'seguimiento-predicciones'
+        'comercializacion', 'perdidas', 'costo-unitario', 'cu-usuario',
+        'inversiones', 'perdidas-nt', 'restricciones', 'metricas', 'seguimiento-predicciones'
     ]
 
     @app.callback(
@@ -201,9 +192,10 @@ def _register_callbacks(app):
             'comercializacion': lambda p: p.startswith('/comercializacion'),
             'perdidas': lambda p: p == '/perdidas' or p.startswith('/perdidas/'),
             'costo-unitario': lambda p: p.startswith('/costo-unitario'),
-            'simulacion-creg': lambda p: p.startswith('/simulacion-creg'),
+            'cu-usuario': lambda p: p.startswith('/costo-usuario-final'),
             'perdidas-nt': lambda p: p.startswith('/perdidas-nt'),
             'restricciones': lambda p: p.startswith('/restricciones'),
+            'inversiones': lambda p: p.startswith('/inversiones'),
             'metricas': lambda p: p.startswith('/metricas'),
             'seguimiento-predicciones': lambda p: p.startswith('/seguimiento-predicciones'),
         }
@@ -250,7 +242,23 @@ def create_app() -> Dash:
              "/assets/mme-corporate.css",
              "/assets/professional-style.css"
         ],
-        suppress_callback_exceptions=True
+        suppress_callback_exceptions=True,
+        meta_tags=[
+            {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+            {"property": "og:title", "content": "Portal Energético — Ministerio de Minas y Energía"},
+            {"property": "og:description", "content": "Tablero de indicadores energéticos de Colombia: generación, transmisión, distribución, comercialización y más."},
+            {"property": "og:type", "content": "website"},
+            {"property": "og:url", "content": "https://dashboard.mme.gov.co/"},
+            {"property": "og:image", "content": "https://dashboard.mme.gov.co/assets/images/og-preview.jpg"},
+            {"property": "og:image:width", "content": "1200"},
+            {"property": "og:image:height", "content": "630"},
+            {"property": "og:image:type", "content": "image/jpeg"},
+            {"name": "twitter:card", "content": "summary_large_image"},
+            {"name": "twitter:title", "content": "Portal Energético — Ministerio de Minas y Energía"},
+            {"name": "twitter:description", "content": "Tablero de indicadores energéticos de Colombia."},
+            {"name": "twitter:image", "content": "https://dashboard.mme.gov.co/assets/images/og-preview.jpg"},
+        ],
+        title="Portal Energético — Ministerio de Minas y Energía",
     )
 
     # Health check

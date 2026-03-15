@@ -7,9 +7,10 @@ Fuentes: IRENA 2023 · UPME Plan Expansión 2023-2037 · XM Colombia 2024
 import dash
 from dash import html, dcc, dash_table, callback, Input, Output, State
 import dash_bootstrap_components as dbc
-import plotly.graph_objects as go
 
 from domain.services.investment_service import InvestmentService
+from interface.components.kpi_card import crear_kpi_row
+from interface.components.chart_card import crear_chart_card_custom, crear_page_header
 
 dash.register_page(
     __name__,
@@ -19,11 +20,27 @@ dash.register_page(
 
 _svc = InvestmentService()
 
+# Paleta de colores página
+INV_COLORS = {
+    'solar': '#F5A623',
+    'eolica': '#2A9D8F',
+    'hidro': '#457B9D',
+    'positivo': '#2A9D8F',
+    'negativo': '#E63946',
+    'acento': '#264653',
+}
+
 # ══════════════════════════════════════════════════════════════
 # DATOS PARA TABLA
 # ══════════════════════════════════════════════════════════════
 
 _BENCHMARKS = _svc.get_benchmarks()
+# TRM leído desde config (sobreescribible vía env var TRM_REF_COP_USD)
+try:
+    from core.config import settings as _inv_settings
+    _trm: float = _inv_settings.TRM_REF_COP_USD
+except Exception:
+    _trm = 4_200.0
 _TABLE_COLS = [
     {"name": "Tecnología", "id": "tecnologia"},
     {"name": "LCOE Colombia", "id": "lcoe_colombia"},
@@ -53,78 +70,43 @@ _STYLE_DATA_CONDITIONAL = [
 
 layout = html.Div([
 
-    # ── Header ───────────────────────────────────────────────
+    crear_page_header(
+        titulo="Propuestas de Inversión en Renovables",
+        breadcrumb="Inicio / Inversiones",
+        icono="fas fa-lightbulb",
+    ),
+
     dbc.Row([
+        # ── COLUMNA IZQ — Panel de control ──────────────────
         dbc.Col([
-            html.H3(
-                "💡 Propuestas de Inversión en Energías Renovables",
-                className="fw-bold mb-1",
-            ),
-            html.P(
-                "Benchmarks internacionales y estimación de impacto tarifario",
-                className="text-muted mb-0",
-            ),
-            html.Small(
-                "Fuentes: IRENA 2023 · UPME Plan Expansión 2023-2037 · XM Colombia 2024",
-                className="text-secondary",
-            ),
-        ]),
-    ], className="mb-4"),
+            dbc.Card([
+                dbc.CardHeader(html.H6(
+                    "⚙️ Parámetros de Inversión",
+                    className='mb-0 fw-bold',
+                )),
+                dbc.CardBody([
+                    dbc.Alert([
+                        html.Strong("Referencias: "),
+                        "IRENA 2023 · UPME 2023-2037 · XM 2024",
+                        html.Br(),
+                        html.Small(
+                            "Cap. SIN: ~20 GW instalados | FCP solar Caribe: 24%",
+                            className='text-muted',
+                        ),
+                    ], color='light', className='py-2 mb-3',
+                       style={'borderLeft': f'4px solid {INV_COLORS["solar"]}'}),
 
-    # ── Tabla LCOE ───────────────────────────────────────────
-    dbc.Card([
-        dbc.CardHeader(
-            html.H5("📊 Comparativo LCOE Internacional", className="mb-0 fw-bold")
-        ),
-        dbc.CardBody([
-            html.P(
-                "Costo Nivelado de Energía (LCOE) en USD/MWh. "
-                "Resaltado verde = Colombia es competitivo respecto a economías desarrolladas.",
-                className="text-muted small mb-3",
-            ),
-            dash_table.DataTable(
-                id="tabla-lcoe",
-                columns=_TABLE_COLS,
-                data=_BENCHMARKS,
-                style_table={"overflowX": "auto"},
-                style_header={
-                    "backgroundColor": "#264653",
-                    "color": "white",
-                    "fontWeight": "bold",
-                    "textAlign": "center",
-                    "fontSize": "0.85rem",
-                },
-                style_cell={
-                    "textAlign": "center",
-                    "padding": "8px 12px",
-                    "fontSize": "0.88rem",
-                    "fontFamily": "system-ui, sans-serif",
-                },
-                style_cell_conditional=[
-                    {"if": {"column_id": "tecnologia"}, "textAlign": "left", "fontWeight": "600"},
-                ],
-                style_data_conditional=_STYLE_DATA_CONDITIONAL,
-                style_data={"border": "1px solid #dee2e6"},
-                hidden_columns=["_competitivo"],
-                page_action="none",
-            ),
-        ]),
-    ], className="shadow-sm mb-4"),
+                    # ─ Sección: Impacto CU ─────────────────
+                    html.H6([
+                        html.I(className='fas fa-solar-panel me-2',
+                               style={'color': INV_COLORS['solar']}),
+                        "Calculadora de Impacto CU",
+                    ], className='fw-semibold mb-3',
+                       style={'borderBottom': '2px solid #f0f0f0',
+                              'paddingBottom': '8px'}),
 
-    # ── Calculadora de impacto ────────────────────────────────
-    dbc.Card([
-        dbc.CardHeader(
-            html.H5("🧮 Calculadora de Impacto en CU", className="mb-0 fw-bold")
-        ),
-        dbc.CardBody([
-            html.P(
-                "Estimación de la reducción tarifaria dado un incremento de capacidad renovable.",
-                className="text-muted small mb-3",
-            ),
-            dbc.Row([
-                # Sliders
-                dbc.Col([
-                    html.Label("☀️ MW Solares a instalar", className="fw-semibold"),
+                    html.Label("☀️ MW Solares a instalar",
+                               className='fw-semibold small'),
                     dcc.Slider(
                         id="inv-mw-solar",
                         min=0, max=3000, step=100, value=500,
@@ -132,8 +114,9 @@ layout = html.Div([
                                2000: "2.000", 3000: "3.000 MW"},
                         tooltip={"placement": "bottom", "always_visible": True},
                     ),
-                    html.Div(className="mb-4"),
-                    html.Label("💨 MW Eólicos a instalar", className="fw-semibold"),
+
+                    html.Label("💨 MW Eólicos a instalar",
+                               className='fw-semibold small mt-4 d-block'),
                     dcc.Slider(
                         id="inv-mw-eolica",
                         min=0, max=5000, step=100, value=1000,
@@ -141,47 +124,20 @@ layout = html.Div([
                                3000: "3.000", 5000: "5.000 MW"},
                         tooltip={"placement": "bottom", "always_visible": True},
                     ),
-                ], md=7),
 
-                # Resultado
-                dbc.Col([
-                    html.Div(id="inv-resultado"),
-                ], md=5),
-            ]),
-        ]),
-    ], className="shadow-sm mb-4"),
+                    html.Hr(className='my-4'),
 
-    # ── Nota metodológica ────────────────────────────────────
-    dbc.Card([
-        dbc.CardBody(
-            html.P([
-                html.Strong("Nota metodológica: "),
-                "Los cálculos son estimaciones basadas en factores de capacidad "
-                "típicos para Colombia (IDEAM/UPME) y datos de generación del SIN "
-                "(XM 2024). Factor de desplazamiento térmico conservador: 0.6 "
-                "(no toda la generación renovable adicional desplaza generación "
-                "térmica en el despacho). ",
-                html.Br(),
-                html.Strong("Fuentes: "),
-                "IRENA Renewable Power Generation Costs 2023, "
-                "UPME Plan de Expansión 2023-2037, XM Colombia — Informe SIN 2024.",
-            ], className="text-muted small mb-0"),
-        ),
-    ], className="shadow-sm border-secondary"),
+                    # ─ Sección: Análisis Financiero ─────────
+                    html.H6([
+                        html.I(className='fas fa-chart-line me-2',
+                               style={'color': INV_COLORS['eolica']}),
+                        "Análisis Financiero",
+                    ], className='fw-semibold mb-3',
+                       style={'borderBottom': '2px solid #f0f0f0',
+                              'paddingBottom': '8px'}),
 
-    # ── Análisis Financiero ───────────────────────────────────
-    dbc.Card([
-        dbc.CardHeader(
-            html.H5("📈 Análisis Financiero del Proyecto", className="mb-0 fw-bold")
-        ),
-        dbc.CardBody([
-            html.P(
-                "TIR, VAN, Payback, CO₂ evitado y empleos generados por tecnología.",
-                className="text-muted small mb-3",
-            ),
-            dbc.Row([
-                dbc.Col([
-                    html.Label("Tecnología", className="fw-semibold"),
+                    html.Label("Tecnología",
+                               className='text-muted small fw-semibold'),
                     dcc.Dropdown(
                         id="inv-tecnologia",
                         options=[
@@ -191,43 +147,308 @@ layout = html.Div([
                         ],
                         value="solar_fv",
                         clearable=False,
+                        className='mb-3',
                     ),
-                ], md=4),
-                dbc.Col([
-                    html.Label("Capacidad a instalar (MW)", className="fw-semibold"),
+
+                    html.Label("Capacidad a instalar (MW)",
+                               className='text-muted small fw-semibold'),
                     dcc.Slider(
                         id="inv-mw",
                         min=10, max=1000, step=10, value=100,
-                        marks={10: "10", 100: "100 MW", 500: "500 MW", 1000: "1 GW"},
+                        marks={10: "10", 100: "100 MW",
+                               500: "500 MW", 1000: "1 GW"},
                         tooltip={"placement": "bottom", "always_visible": True},
                     ),
-                ], md=6),
-                dbc.Col([
-                    html.Label("\u00a0", className="d-block"),
+
                     dbc.Button(
-                        "Calcular TIR y retorno",
+                        [html.I(className='fas fa-calculator me-2'),
+                         "Calcular TIR y retorno"],
                         id="btn-calcular-tir",
                         color="primary",
-                        size="sm",
-                        className="mt-2",
+                        className="w-100 mt-4",
                     ),
-                ], md=2),
-            ], className="mb-3"),
-            html.Div(id="inv-financial-kpis"),
-            html.Div(id="inv-cashflow-summary"),
-            html.Hr(),
-            dbc.Button(
-                "📄 Descargar propuesta PDF",
-                id="btn-download-inv-pdf",
-                color="outline-secondary",
-                size="sm",
-                className="mt-1",
+
+                    html.Hr(className='my-3'),
+
+                    dbc.Button(
+                        [html.I(className='fas fa-file-pdf me-2'),
+                         "Descargar propuesta PDF"],
+                        id="btn-download-inv-pdf",
+                        color="outline-secondary",
+                        size="sm",
+                        className="w-100",
+                    ),
+                    dcc.Download(id="inv-pdf-download"),
+                ]),
+            ], className='shadow-sm', style={'position': 'sticky', 'top': '60px'}),
+        ], md=4),
+
+        # ── COLUMNA DER — Resultados ─────────────────────────
+        dbc.Col([
+            # KPIs de impacto CU (se actualiza automáticamente con los sliders)
+            dcc.Loading(html.Div(id="inv-resultado"), type="circle"),
+
+            # Tabla LCOE comparativa
+            crear_chart_card_custom(
+                titulo="Comparativo LCOE Internacional",
+                subtitulo="Costo Nivelado en USD/MWh — verde = Colombia es competitivo",
+                children=dash_table.DataTable(
+                    id="tabla-lcoe",
+                    columns=_TABLE_COLS,  # type: ignore[arg-type]
+                    data=_BENCHMARKS,
+                    style_table={"overflowX": "auto"},
+                    style_header={
+                        "backgroundColor": "#264653",
+                        "color": "white",
+                        "fontWeight": "bold",
+                        "textAlign": "center",
+                        "fontSize": "0.85rem",
+                    },
+                    style_cell={
+                        "textAlign": "center",
+                        "padding": "8px 12px",
+                        "fontSize": "0.88rem",
+                        "fontFamily": "Inter, system-ui, sans-serif",
+                    },
+                    style_cell_conditional=[  # type: ignore[arg-type]
+                        {"if": {"column_id": "tecnologia"},
+                         "textAlign": "left", "fontWeight": "600"},
+                    ],
+                    style_data_conditional=_STYLE_DATA_CONDITIONAL,  # type: ignore[arg-type]
+                    style_data={"border": "1px solid #dee2e6"},
+                    hidden_columns=["_competitivo"],
+                    page_action="none",
+                ),
             ),
-            dcc.Download(id="inv-pdf-download"),
+
+            # Resultados análisis financiero (se llena al hacer clic)
+            dcc.Loading(html.Div(id="inv-financial-kpis"), type="circle"),
+            dcc.Loading(html.Div(id="inv-cashflow-summary"), type="circle"),
+
+        ], md=8),
+
+    ], className='g-3 mt-0'),
+
+    html.Small(
+        [html.I(className='fas fa-info-circle me-1 text-muted'),
+         "Estimaciones basadas en factores de capacidad típicos Colombia (IDEAM/UPME), "
+         f"factor desplazamiento térmico: 0.6. TRM ref.: {_trm:,.0f} COP/USD. "
+         "No representa datos reales ni proyecciones oficiales del MME."],
+        className='text-muted fst-italic d-block mt-3 mb-4',
+    ),
+
+    # ══════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════
+    # SECCIÓN: LCOE Eólico Offshore — La Guajira (Fases 5)
+    # ══════════════════════════════════════════════════════════
+    html.Hr(className='my-4'),
+    dbc.Card([
+        dbc.CardHeader([
+            html.I(className='fas fa-wind me-2', style={'color': '#2A9D8F'}),
+            html.Strong("LCOE Eólico Offshore — Parque La Guajira"),
+            dbc.Badge("Weibull ERA5 k=2.2 c=9.5 m/s", color="info", pill=True,
+                      className="ms-2", style={'fontSize': '0.75rem'}),
+        ], style={'backgroundColor': '#f0fafa'}),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col([
+                    html.Label("Turbina", className="fw-semibold mb-1"),
+                    dcc.Dropdown(
+                        id='guajira-turbina',
+                        options=[
+                            {'label': 'Goldwind GW155-4.0 MW (nearshore)', 'value': 'GOLDWIND_GW155_4MW'},
+                            {'label': 'Mingyang MySE 5.5-155 (offshore)', 'value': 'MINGYANG_MYSE_5_5_155'},
+                        ],
+                        value='GOLDWIND_GW155_4MW',
+                        clearable=False,
+                    ),
+                    html.Div(className='mt-3'),
+                    html.Label("Número de aerogeneradores", className="fw-semibold mb-1"),
+                    dcc.Slider(
+                        id='guajira-n-turbinas',
+                        min=10, max=200, step=10, value=100,
+                        marks={10: '10', 50: '50', 100: '100', 150: '150', 200: '200'},
+                        tooltip={'placement': 'bottom'},
+                    ),
+                ], md=4),
+                dbc.Col([
+                    dcc.Loading(
+                        html.Div(id='guajira-lcoe-resultado'),
+                        type='circle',
+                    ),
+                ], md=8),
+            ]),
+            html.Small([
+                html.I(className='fas fa-info-circle me-1 text-muted'),
+                "CAPEX basado en NREL ATB 2023 + factor Colombia (+15%). "
+                "Factor de capacidad: integral Weibull × curva turbina (ERA5 La Guajira). "
+                "OPEX incluye mantenimiento marino. Créditos carbono: 15 USD/tCO₂."
+            ], className='text-muted fst-italic d-block mt-3'),
         ]),
-    ], className="shadow-sm mt-4 mb-4"),
+    ], className='shadow-sm mb-4'),
+
+    # SECCIÓN: Simulación de Expansión — Estabilidad de Red
+    # ══════════════════════════════════════════════════════════
+    html.Hr(className='my-4'),
+    dbc.Card([
+        dbc.CardHeader([
+            html.Div([
+                html.Span([
+                    html.I(className='fas fa-wave-square me-2',
+                           style={'color': '#2A9D8F'}),
+                    html.Strong("Simulación de Estabilidad de Red — Plan Expansión"),
+                ]),
+                dbc.Badge("En desarrollo", color="warning", pill=True,
+                          className="ms-2", style={'fontSize': '0.75rem'}),
+            ], className='d-flex align-items-center'),
+        ], style={'backgroundColor': '#f8f9fa'}),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col([
+                    html.H5("⚡ Kuramoto-SIN: Simulador de Estabilidad",
+                            className='fw-bold mb-3'),
+                    html.P(
+                        "Módulo de simulación basado en el modelo de Kuramoto-Sakaguchi "
+                        "para evaluar la estabilidad de frecuencia del SIN Colombia "
+                        "ante la penetración de tecnología eólica offshore china "
+                        "(Goldwind / Mingyang) en La Guajira.",
+                        className='text-muted',
+                    ),
+                    html.Hr(className='my-3'),
+                    html.H6("¿Qué simulará este módulo?",
+                            className='fw-semibold mb-2'),
+                    html.Ul([
+                        html.Li([
+                            html.Strong("Inercia equivalente del SIN "),
+                            "(H_eq) al incorporar mix eólico offshore con y sin "
+                            "inercia virtual síncrona (VSM).",
+                        ], className='mb-1'),
+                        html.Li([
+                            html.Strong("RoCoF y frecuencia nadir "),
+                            "tras pérdida de mayor unidad generadora (N-1) "
+                            "con distintos niveles de penetración ERNC.",
+                        ], className='mb-1'),
+                        html.Li([
+                            html.Strong("Eigenvalores λ₂ (Laplaciano) "),
+                            "del grafo SIN agregado (10-15 nodos por zona geográfica) "
+                            "para detectar bifurcaciones de sincronización.",
+                        ], className='mb-1'),
+                        html.Li([
+                            html.Strong("Correlación ENSO → Generación eólica "),
+                            "usando índice ONI (NOAA) y datos ERA5 de La Guajira.",
+                        ], className='mb-1'),
+                    ], style={'fontSize': '0.88rem'}),
+                ], md=7),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H6("Parámetros del modelo",
+                                    className='fw-semibold mb-3 text-center'),
+                            html.Div([
+                                html.Div([
+                                    html.Span("Tecnología offshore",
+                                             className='text-muted small'),
+                                    html.Br(),
+                                    html.Strong("Goldwind 3 MW / Mingyang 5.5 MW"),
+                                ], className='mb-3'),
+                                html.Div([
+                                    html.Span("Factor de planta estimado",
+                                             className='text-muted small'),
+                                    html.Br(),
+                                    html.Strong("35 – 44 % (La Guajira offshore ERA5)"),
+                                ], className='mb-3'),
+                                html.Div([
+                                    html.Span("Inercia turbinas PMDD",
+                                             className='text-muted small'),
+                                    html.Br(),
+                                    html.Strong("H = 0.5 s (convencional) / 3.0 s (VSM)"),
+                                ], className='mb-3'),
+                                html.Div([
+                                    html.Span("Nodos del grafo SIN",
+                                             className='text-muted small'),
+                                    html.Br(),
+                                    html.Strong("10 – 15 zonas (Caribe, Andina, Pacifico, Orinoquía)"),
+                                ], className='mb-3'),
+                                html.Div([
+                                    html.Span("Benchmark de validación",
+                                             className='text-muted small'),
+                                    html.Br(),
+                                    html.Strong("CU histórico XM (cu_daily) + ONI NOAA"),
+                                ], className='mb-3'),
+                            ]),
+                            html.Hr(className='my-2'),
+                            dbc.Alert([
+                                html.I(className='fas fa-clock me-2'),
+                                "Desarrollo estimado: Q3 2026. "
+                                "Requiere datos ERA5 (Copernicus CDS) y "
+                                "topología de red (XM/UPME).",
+                            ], color='info', className='py-2 mb-0',
+                               style={'fontSize': '0.82rem'}),
+                        ]),
+                    ], className='shadow-sm',
+                       style={'borderTop': f'4px solid {INV_COLORS["eolica"]}'}),
+                ], md=5),
+            ]),
+        ]),
+    ], className='shadow-sm mb-4'),
 
 ], className="container-fluid px-4 py-3")
+
+
+# ══════════════════════════════════════════════════════════════
+# CALLBACK — LCOE Eólico Offshore La Guajira (Fase 5)
+# ══════════════════════════════════════════════════════════════
+
+@callback(
+    Output("guajira-lcoe-resultado", "children"),
+    Input("guajira-turbina", "value"),
+    Input("guajira-n-turbinas", "value"),
+)
+def calcular_lcoe_guajira(turbine_key, n_turbinas):
+    n_turbinas = n_turbinas or 100
+    turbine_key = turbine_key or "GOLDWIND_GW155_4MW"
+    try:
+        r = _svc.calculate_lcoe_eolico_guajira(
+            turbine_key=turbine_key,
+            n_turbinas=int(n_turbinas),
+        )
+    except Exception as e:
+        return dbc.Alert(f"Error calculando LCOE: {e}", color="danger")
+
+    lcoe_b = r.get("lcoe_bruto_usd_mwh", 0)
+    lcoe_n = r.get("lcoe_neto_usd_mwh", 0)
+    lcoe_cop = r.get("lcoe_neto_cop_kwh", 0)
+    cf_pct = r.get("factor_capacidad_pct", 0)
+    gen_gwh = r.get("generacion_anual_mwh", 0) / 1_000
+    capex_usd = r.get("capex_total_usd", 0)
+    co2 = r.get("co2_evitado_ton_anual", 0)
+    pot_mw = r.get("potencia_total_mw", 0)
+    trm = r.get("trm_usada", 4200)
+
+    return html.Div([
+        crear_kpi_row([
+            {"titulo": "LCOE Bruto", "valor": f"{lcoe_b:.1f}", "unidad": "USD/MWh",
+             "subtitulo": "Sin créditos carbono", "color": "info"},
+            {"titulo": "LCOE Neto", "valor": f"{lcoe_n:.1f}", "unidad": "USD/MWh",
+             "subtitulo": f"≈ {lcoe_cop:.2f} COP/kWh", "color": "success"},
+            {"titulo": "Factor Capacidad", "valor": f"{cf_pct:.1f}", "unidad": "%",
+             "subtitulo": "Weibull ERA5 La Guajira", "color": "primary"},
+            {"titulo": "Generación Anual", "valor": f"{gen_gwh:.0f}", "unidad": "GWh/año",
+             "subtitulo": f"Parque {pot_mw:.0f} MW", "color": "warning"},
+        ]),
+        dbc.Row([
+            dbc.Col([
+                html.Small([
+                    html.Strong("CAPEX: "),
+                    f"USD {capex_usd/1e6:,.0f} M  |  ",
+                    html.Strong("CO₂ evitado: "),
+                    f"{co2/1e3:,.0f} ktCO₂/año  |  ",
+                    html.Strong("TRM ref: "),
+                    f"{trm:,.0f} COP/USD",
+                ], className="text-muted"),
+            ]),
+        ], className="mt-2"),
+    ])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -255,53 +476,46 @@ def calcular_impacto(mw_solar, mw_eolica):
     cu_ref = result.get("cu_referencia_cop_kwh", 250.0)
     gen_sin = result.get("gen_total_sin_gwh", 80_000)
 
-    color = "success" if reduccion > 0 else "secondary"
+    color_reduccion = "green" if reduccion > 0 else "orange"
 
-    return dbc.Card([
-        dbc.CardBody([
-            html.H6("Resultado estimado", className="text-muted mb-3"),
-            dbc.Row([
-                dbc.Col([
-                    html.P("Capacidad total", className="text-muted small mb-1"),
-                    html.H4(f"{mw_total:,.0f} MW", className="fw-bold text-primary mb-0"),
-                ], className="text-center"),
-                dbc.Col([
-                    html.P("Generación adicional", className="text-muted small mb-1"),
-                    html.H4(f"{gen:,.1f} GWh/año", className="fw-bold text-info mb-0"),
-                ], className="text-center"),
-            ], className="mb-3"),
-            dbc.Row([
-                dbc.Col([
-                    html.P("Reducción CU estimada", className="text-muted small mb-1"),
-                    html.H3(
-                        f"{reduccion:.2f}%",
-                        className=f"fw-bold text-{color} mb-0",
-                    ),
-                ], className="text-center"),
-                dbc.Col([
-                    html.P("Ahorro estimado", className="text-muted small mb-1"),
-                    html.H3(
-                        f"{ahorro:.1f} COP/kWh",
-                        className=f"fw-bold text-{color} mb-0",
-                    ),
-                ], className="text-center"),
-            ], className="mb-3"),
-            html.Hr(),
-            html.P(
-                f"Instalar {mw_solar:,.0f} MW solares + {mw_eolica:,.0f} MW eólicos "
-                f"generaría {gen:,.1f} GWh/año adicionales, "
-                f"reduciendo el CU estimado en {reduccion:.2f}% "
-                f"(≈ {ahorro:.1f} COP/kWh de ahorro al usuario final).",
-                className="text-muted small fst-italic mb-1",
-            ),
-            html.Small(
-                f"📊 Calculado con datos reales: CU={cu_ref:.1f} COP/kWh (BD, 30d) · "
-                f"SIN={gen_sin:,.0f} GWh/año (BD, 365d)",
-                className="text-secondary",
-                style={"fontSize": "0.75rem"},
-            ),
+    return html.Div([
+        crear_kpi_row([
+            {
+                "titulo": "Capacidad Total",
+                "valor": f"{mw_total:,.0f}",
+                "unidad": "MW",
+                "icono": "fas fa-solar-panel",
+                "color": "orange",
+            },
+            {
+                "titulo": "Generación Adicional",
+                "valor": f"{gen:,.1f}",
+                "unidad": "GWh/año",
+                "icono": "fas fa-bolt",
+                "color": "blue",
+            },
+            {
+                "titulo": "Reducción CU",
+                "valor": f"{reduccion:.2f}",
+                "unidad": "%",
+                "icono": "fas fa-arrow-down",
+                "color": color_reduccion,
+            },
+            {
+                "titulo": "Ahorro Estimado",
+                "valor": f"{ahorro:.1f}",
+                "unidad": "COP/kWh",
+                "icono": "fas fa-piggy-bank",
+                "color": color_reduccion,
+            },
         ]),
-    ], color=color, outline=True)
+        html.Small(
+            f"📊 CU ref={cu_ref:.1f} COP/kWh · SIN={gen_sin:,.0f} GWh/año · "
+            f"{mw_solar:,.0f} MW solar + {mw_eolica:,.0f} MW eólico",
+            className="text-muted fst-italic d-block mt-1 mb-3",
+            style={"fontSize": "0.75rem"},
+        ),
+    ])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -326,47 +540,71 @@ def calcular_tir(n_clicks, tecnologia, mw):
     capex_m = r["capex_total_usd"] / 1_000_000
     ingresos_m = r["ingresos_anuales_usd"] / 1_000_000
 
-    color_van = "success" if r["van_usd"] > 0 else "danger"
-    color_tir = "success" if r["tir_pct"] > 8 else ("warning" if r["tir_pct"] > 0 else "danger")
+    color_van = "green" if r["van_usd"] > 0 else "red"
+    color_tir = "green" if r["tir_pct"] > 8 else ("orange" if r["tir_pct"] > 0 else "red")
 
-    kpis = dbc.Row([
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.P("💰 CAPEX Total", className="text-muted small mb-1"),
-            html.H5(f"USD {capex_m:,.1f} M", className="fw-bold mb-0"),
-            html.Small(f"COP {r['capex_total_cop']/1e9:,.1f} B", className="text-muted"),
-        ])), md=2),
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.P("📈 TIR", className="text-muted small mb-1"),
-            html.H5(f"{r['tir_pct']}%", className=f"fw-bold text-{color_tir} mb-0"),
-            html.Small(f"WACC ref: {r['tasa_descuento_pct']}%", className="text-muted"),
-        ])), md=2),
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.P("⏱️ Payback", className="text-muted small mb-1"),
-            html.H5(f"{r['payback_años']} años", className="fw-bold mb-0"),
-            html.Small(f"Vida útil: {r['vida_util_años']} años", className="text-muted"),
-        ])), md=2),
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.P("🌱 CO₂ evitado/año", className="text-muted small mb-1"),
-            html.H5(f"{r['co2_evitado_ton_anual']:,.0f} tCO₂", className="fw-bold text-success mb-0"),
-            html.Small(f"Total vida útil: {r['co2_evitado_total']/1e6:,.2f} M ton", className="text-muted"),
-        ])), md=2),
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.P("👥 Empleos", className="text-muted small mb-1"),
-            html.H5(f"{r['empleos_directos']} directos", className="fw-bold mb-0"),
-            html.Small(f"+ {r['empleos_indirectos']} indirectos = {r['empleos_total']} total", className="text-muted"),
-        ])), md=2),
-        dbc.Col(dbc.Card(dbc.CardBody([
-            html.P("💵 VAN", className="text-muted small mb-1"),
-            html.H5(f"USD {van_m:,.1f} M", className=f"fw-bold text-{color_van} mb-0"),
-            html.Small(f"Ingresos: USD {ingresos_m:,.1f} M/año", className="text-muted"),
-        ])), md=2),
-    ], className="g-2 mt-2")
+    nombre_tec = {"solar_fv": "Solar FV", "eolica": "Eólica",
+                  "hidro_pequena": "Hidro Pequeña"}
 
-    nombre_tec = {"solar_fv": "Solar FV", "eolica": "Eólica", "hidro_pequena": "Hidro Pequeña"}
+    kpis = crear_chart_card_custom(
+        titulo=f"Análisis Financiero — {mw:.0f} MW {nombre_tec.get(tecnologia, tecnologia)}",
+        subtitulo="TIR · VAN · Payback · CO₂ evitado · Empleos generados",
+        children=crear_kpi_row([
+            {
+                "titulo": "CAPEX Total",
+                "valor": f"USD {capex_m:,.1f} M",
+                "unidad": "",
+                "icono": "fas fa-coins",
+                "color": "blue",
+                "subtexto": f"COP {r['capex_total_cop']/1e9:,.1f} B",
+            },
+            {
+                "titulo": "TIR",
+                "valor": f"{r['tir_pct']}",
+                "unidad": "%",
+                "icono": "fas fa-percent",
+                "color": color_tir,
+                "subtexto": f"WACC ref: {r['tasa_descuento_pct']}%",
+            },
+            {
+                "titulo": "Payback",
+                "valor": f"{r['payback_años']}",
+                "unidad": "años",
+                "icono": "fas fa-hourglass-half",
+                "color": "purple",
+                "subtexto": f"Vida útil: {r['vida_util_años']} años",
+            },
+            {
+                "titulo": "VAN",
+                "valor": f"USD {van_m:,.1f} M",
+                "unidad": "",
+                "icono": "fas fa-chart-line",
+                "color": color_van,
+                "subtexto": f"Ingresos: USD {ingresos_m:,.1f} M/año",
+            },
+            {
+                "titulo": "CO₂ Evitado/año",
+                "valor": f"{r['co2_evitado_ton_anual']:,.0f}",
+                "unidad": "tCO₂",
+                "icono": "fas fa-leaf",
+                "color": "green",
+                "subtexto": f"Total: {r['co2_evitado_total']/1e6:,.2f} M ton",
+            },
+            {
+                "titulo": "Empleos",
+                "valor": f"{r['empleos_total']:,}",
+                "unidad": "",
+                "icono": "fas fa-users",
+                "color": "cyan",
+                "subtexto": f"{r['empleos_directos']} dir. + {r['empleos_indirectos']} ind.",
+            },
+        ]),
+    )
+
     resumen = html.P(
         f"Proyecto {nombre_tec.get(tecnologia, tecnologia)} de {mw:.0f} MW: "
         f"CAPEX USD {capex_m:,.1f} M · TIR {r['tir_pct']}% · Payback {r['payback_años']} años · "
-        f"VAN USD {van_m:,.1f} M · CO₂ evitado {r['co2_evitado_ton_anual']:,.0f} tCO₂/año · "
+        f"VAN USD {van_m:,.1f} M · CO₂ {r['co2_evitado_ton_anual']:,.0f} tCO₂/año · "
         f"{r['empleos_total']} empleos generados.",
         className="text-muted small fst-italic mt-3 mb-0",
     )
@@ -421,62 +659,8 @@ td{{border:1px solid #dee2e6;padding:8px 12px}}
 </table>
 <div class="footer">
 Fuentes: IRENA 2023, UPME 2024, IDEAM 2023 (factor CO2: 0.126 tCO2/MWh),
-XM Colombia. TRM referencia: 4,200 COP/USD. Generado por ENERTRACE v1.2.0.
+XM Colombia. TRM referencia: {r.get('trm_ref_cop_usd', _trm):,.0f} COP/USD. Generado por ENERTRACE v1.2.0.
 </div>
 </body></html>"""
     pdf = _wp.HTML(string=html_content).write_pdf()
     return dcc.send_bytes(pdf, f"ENERTRACE_propuesta_{tecnologia}_{mw:.0f}MW.pdf")
-    mw_solar = mw_solar or 0
-    mw_eolica = mw_eolica or 0
-
-    result = _svc.calculate_cu_impact(
-        mw_solar=float(mw_solar),
-        mw_eolica=float(mw_eolica),
-    )
-
-    reduccion = result["reduccion_cu_pct"]
-    ahorro = result["ahorro_estimado_cop_kwh"]
-    gen = result["generacion_adicional_gwh"]
-    mw_total = result["mw_total"]
-
-    color = "success" if reduccion > 0 else "secondary"
-
-    return dbc.Card([
-        dbc.CardBody([
-            html.H6("Resultado estimado", className="text-muted mb-3"),
-            dbc.Row([
-                dbc.Col([
-                    html.P("Capacidad total", className="text-muted small mb-1"),
-                    html.H4(f"{mw_total:,.0f} MW", className="fw-bold text-primary mb-0"),
-                ], className="text-center"),
-                dbc.Col([
-                    html.P("Generación adicional", className="text-muted small mb-1"),
-                    html.H4(f"{gen:,.1f} GWh/año", className="fw-bold text-info mb-0"),
-                ], className="text-center"),
-            ], className="mb-3"),
-            dbc.Row([
-                dbc.Col([
-                    html.P("Reducción CU estimada", className="text-muted small mb-1"),
-                    html.H3(
-                        f"{reduccion:.2f}%",
-                        className=f"fw-bold text-{color} mb-0",
-                    ),
-                ], className="text-center"),
-                dbc.Col([
-                    html.P("Ahorro estimado", className="text-muted small mb-1"),
-                    html.H3(
-                        f"{ahorro:.1f} COP/kWh",
-                        className=f"fw-bold text-{color} mb-0",
-                    ),
-                ], className="text-center"),
-            ], className="mb-3"),
-            html.Hr(),
-            html.P(
-                f"Instalar {mw_solar:,.0f} MW solares + {mw_eolica:,.0f} MW eólicos "
-                f"generaría {gen:,.1f} GWh/año adicionales, "
-                f"reduciendo el CU estimado en {reduccion:.2f}% "
-                f"(≈ {ahorro:.1f} COP/kWh de ahorro al usuario final).",
-                className="text-muted small fst-italic mb-0",
-            ),
-        ]),
-    ], color=color, outline=True)

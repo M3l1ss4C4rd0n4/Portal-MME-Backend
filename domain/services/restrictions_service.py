@@ -45,51 +45,75 @@ class RestrictionsService:
                 # Obtener datos SOLO desde PostgreSQL (arquitectura robusta)
                 # Para restricciones, filtrar unidad='Millones COP'
                 df = self.repo.get_metric_data(
-                    metric_id, 
-                    start_date, 
-                    end_date, 
+                    metric_id,
+                    start_date,
+                    end_date,
                     unit='Millones COP'
                 )
-                
+
                 if df is None or df.empty:
                     logger.warning(f"⚠️ {metric_id}: Sin datos con unit='Millones COP', probando sin filtro...")
-                    # Consultar sin filtro de unidad
                     df = self.repo.get_metric_data(metric_id, start_date, end_date)
-                    
+
                     if df is not None and not df.empty:
-                        # Filtrar manualmente si existe columna unidad
                         if 'unidad' in df.columns:
                             df = df[df['unidad'].isin(['Millones COP', 'COP'])]
                             logger.info(f"✅ {metric_id}: Filtrado manual, {len(df)} registros")
                         else:
                             logger.warning(f"⚠️ {metric_id}: Sin columna 'unidad', asumiendo Millones COP")
-                
-                # Validar que no sean todos ceros
+
+                # Normalizar y renombrar columnas
                 if df is not None and not df.empty:
-                    # Si todos los valores son 0, intentar días anteriores
-                    if df['valor_gwh'].sum() == 0:
+                    valor_col = next(
+                        (c for c in ('valor_gwh', 'valor', 'Value') if c in df.columns),
+                        None,
+                    )
+                    fecha_col = next(
+                        (c for c in ('fecha', 'date', 'Date') if c in df.columns),
+                        None,
+                    )
+
+                    if valor_col is None or fecha_col is None:
+                        logger.warning(
+                            f"⚠️ {metric_id}: columnas inesperadas {list(df.columns)}, descartando"
+                        )
+                        result[metric_id] = pd.DataFrame(columns=['fecha', 'valor_gwh'])
+                        continue
+
+                    # Si todos los valores son 0, intentar 7 días atrás
+                    if df[valor_col].sum() == 0:
                         logger.warning(f"{metric_id}: Todos los valores son 0, buscando días anteriores")
-                        # Intentar 7 días atrás
                         from datetime import datetime, timedelta
                         end_dt = datetime.strptime(end_date, '%Y-%m-%d')
                         new_end = (end_dt - timedelta(days=1)).strftime('%Y-%m-%d')
                         new_start = (end_dt - timedelta(days=7)).strftime('%Y-%m-%d')
-                        
-                        df = self.repo.get_metric_data(metric_id, new_start, new_end, unit='Millones COP')
-                    
-                    # ✅ FIX: valor_gwh YA contiene Millones COP (no dividir)
-                    # La columna se llama valor_gwh por legacy pero almacena Millones COP
-                    if 'valor_gwh' in df.columns:
-                        df['valor_cop_millones'] = df['valor_gwh']  # Ya está en Millones
-                        # Compatibilidad con callback: renombrar a 'Value' y 'Date'
-                        df = df.rename(columns={'valor_gwh': 'Value', 'fecha': 'Date'})
-                    
+                        df_retry = self.repo.get_metric_data(metric_id, new_start, new_end, unit='Millones COP')
+                        if df_retry is not None and not df_retry.empty:
+                            df = df_retry
+                            valor_col = next(
+                                (c for c in ('valor_gwh', 'valor', 'Value') if c in df.columns),
+                                valor_col,
+                            )
+                            fecha_col = next(
+                                (c for c in ('fecha', 'date', 'Date') if c in df.columns),
+                                fecha_col,
+                            )
+
+                    # valor_gwh almacena Millones COP por convención legacy
+                    df['valor_cop_millones'] = df[valor_col]
+                    rename_map: dict = {}
+                    if valor_col != 'Value':
+                        rename_map[valor_col] = 'Value'
+                    if fecha_col != 'Date':
+                        rename_map[fecha_col] = 'Date'
+                    if rename_map:
+                        df = df.rename(columns=rename_map)
                     df['tipo'] = name
-                    
+
                 result[metric_id] = df if df is not None else pd.DataFrame(columns=['fecha', 'valor_gwh'])
-                
-            except Exception as e:
-                logger.error(f"Error fetching {metric_id}: {e}")
+
+            except Exception:
+                logger.exception(f"Error fetching {metric_id}")
                 result[metric_id] = pd.DataFrame(columns=['fecha', 'valor_gwh'])
                 
         return result
