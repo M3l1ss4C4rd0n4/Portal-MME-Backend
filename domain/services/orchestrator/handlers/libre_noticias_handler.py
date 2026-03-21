@@ -131,8 +131,8 @@ class LibreNoticiasHandlerMixin:
                 'costo unitario', 'cu ', 'cop/kwh', 'tarifa regulada', 'componente_g',
             ]):
                 try:
-                    from core.container import container
-                    cu = await asyncio.to_thread(container.get_cu_service().get_cu_current)
+                    from core.container import get_cu_service
+                    cu = await asyncio.to_thread(get_cu_service().get_cu_current)
                     if cu:
                         datos_consultados['costo_unitario'] = {
                             'cu_total_cop_kwh': round(cu.get('cu_total', 0), 2),
@@ -148,8 +148,8 @@ class LibreNoticiasHandlerMixin:
                 'pérdida', 'perdida', 'hurto', 'no técnica', 'no tecnica', 'p_nt', 'pnt',
             ]):
                 try:
-                    from core.container import container
-                    stats = await asyncio.to_thread(container.losses_nt_service.get_losses_statistics)
+                    from core.container import get_losses_nt_service
+                    stats = await asyncio.to_thread(get_losses_nt_service().get_losses_statistics)
                     if stats:
                         datos_consultados['perdidas_nt'] = {
                             'pct_promedio_nt_30d': round(stats.get('pct_promedio_nt_30d', 0), 2),

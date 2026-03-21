@@ -8,11 +8,17 @@ from typing import Optional, List, Dict, Any
 import pandas as pd
 
 from domain.interfaces.repositories import IMetricsRepository
-from infrastructure.database.repositories.metrics_repository import MetricsRepository
+from core.cache import cached, cache_manager
 from infrastructure.cache.redis_client import redis_get_json, redis_set_json
-from infrastructure.logging.logger import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
+
+# Importaciones lazy para evitar circular imports
+def _get_default_repo():
+    """Obtiene repositorio por defecto vía container."""
+    from core.container import container
+    return container.resolve(IMetricsRepository)
 
 
 class MetricsService:
@@ -27,9 +33,12 @@ class MetricsService:
         
         Args:
             repository: Implementación de IMetricsRepository. 
-                       Si es None, usa MetricsRepository() por defecto.
+                       Si es None, usa container por defecto.
         """
-        self.repo = repository if repository is not None else MetricsRepository()
+        if repository is not None:
+            self.repo = repository
+        else:
+            self.repo = _get_default_repo()
     
     def get_latest_date(self) -> Optional[str]:
         """Obtiene la fecha más reciente de datos"""
@@ -83,7 +92,7 @@ class MetricsService:
         
         # 3. Validar existencia de columnas obligatorias
         if 'Date' not in df.columns or 'Value' not in df.columns:
-            print(f"⚠️ [MetricsService] Error de normalización: columnas faltantes. Disponible: {df.columns.tolist()}")
+            logger.warning(f"⚠️ [MetricsService] Error de normalización: columnas faltantes. Disponible: {df.columns.tolist()}")
             return pd.DataFrame(columns=['Date', 'Value'])
             
         # 4. Asegurar tipos de datos
@@ -170,14 +179,16 @@ class MetricsService:
         df = self.repo.get_metric_data_by_entity(metric_id, entity, start_date, end_date)
         return self._normalize_time_series(df)
 
+    @cached(ttl=600, prefix="metrics:agent_stats")
     def get_agent_statistics(self) -> pd.DataFrame:
-        """Obtiene estadísticas de agentes"""
+        """Obtiene estadísticas de agentes (cacheado 10 min)"""
         return self.repo.get_agent_statistics()
 
     def get_hourly_data(self, metric_id: str, entity_type: str, date_str: str) -> pd.DataFrame:
         """Obtiene datos horarios"""
         return self.repo.get_hourly_data(metric_id, entity_type, date_str)
 
+    @cached(ttl=300, prefix="metrics:series")
     def get_metric_series(
         self,
         metric_id: str,
@@ -185,7 +196,7 @@ class MetricsService:
         end_date: Optional[str] = None,
         limit: Optional[int] = None
     ) -> pd.DataFrame:
-        """Serie temporal de una métrica"""
+        """Serie temporal de una métrica (cacheado 5 min)"""
         df = self.repo.get_metric_data(metric_id, start_date, end_date, limit)
         return self._normalize_time_series(df)
 
@@ -200,8 +211,9 @@ class MetricsService:
         """
         return self.repo.get_metrics_history_by_list(metrics_list, start_date, end_date)
     
+    @cached(ttl=300, prefix="metrics:summary")
     def get_metrics_summary(self, start_date: str, end_date: str) -> pd.DataFrame:
-        """Resumen de métricas en un rango"""
+        """Resumen de métricas en un rango (cacheado 5 min)"""
         return self.repo.get_metrics_summary(start_date, end_date)
 
 # Compatibility wrapper

@@ -428,13 +428,13 @@ def calcular_lcoe_guajira(turbine_key, n_turbinas):
     return html.Div([
         crear_kpi_row([
             {"titulo": "LCOE Bruto", "valor": f"{lcoe_b:.1f}", "unidad": "USD/MWh",
-             "subtitulo": "Sin créditos carbono", "color": "info"},
+             "subtexto": "Sin créditos carbono", "color": "info"},
             {"titulo": "LCOE Neto", "valor": f"{lcoe_n:.1f}", "unidad": "USD/MWh",
-             "subtitulo": f"≈ {lcoe_cop:.2f} COP/kWh", "color": "success"},
+             "subtexto": f"≈ {lcoe_cop:.2f} COP/kWh", "color": "success"},
             {"titulo": "Factor Capacidad", "valor": f"{cf_pct:.1f}", "unidad": "%",
-             "subtitulo": "Weibull ERA5 La Guajira", "color": "primary"},
+             "subtexto": "Weibull ERA5 La Guajira", "color": "primary"},
             {"titulo": "Generación Anual", "valor": f"{gen_gwh:.0f}", "unidad": "GWh/año",
-             "subtitulo": f"Parque {pot_mw:.0f} MW", "color": "warning"},
+             "subtexto": f"Parque {pot_mw:.0f} MW", "color": "warning"},
         ]),
         dbc.Row([
             dbc.Col([

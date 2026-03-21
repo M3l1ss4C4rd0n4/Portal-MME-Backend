@@ -183,8 +183,8 @@ def get_cu_service():
     Returns:
         Instancia compartida de CUService
     """
-    from core.container import container
-    return container.get_cu_service()
+from core.container import get_cu_service as _get_cu_service
+    return _get_cu_service()
 
 
 def get_losses_nt_service():
@@ -194,19 +194,19 @@ def get_losses_nt_service():
     Returns:
         Instancia compartida de LossesNTService
     """
-    from core.container import container
-    return container.losses_nt_service
+    from core.container import get_losses_nt_service as _get_losses_nt_service
+    return _get_losses_nt_service()
 
 
 def get_simulation_service():
     """
     Singleton del servicio de Simulación CREG.
-
+    
     Returns:
         Instancia compartida de SimulationService
     """
-    from core.container import container
-    return container.simulation_service
+    from core.container import get_simulation_service as _get_simulation_service
+    return _get_simulation_service()
 
 
 def get_orchestrator_service():

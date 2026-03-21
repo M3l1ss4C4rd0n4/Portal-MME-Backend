@@ -22,7 +22,9 @@ import logging
 from typing import Optional
 
 from core.exceptions import DatabaseError
-from infrastructure.database.connection import PostgreSQLConnectionManager
+def _get_connection_manager():
+    from infrastructure.database.connection import PostgreSQLConnectionManager
+    return PostgreSQLConnectionManager()
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +74,7 @@ class SimulationService:
     """
 
     def __init__(self):
-        self._conn_mgr = PostgreSQLConnectionManager()
+        self._conn_mgr = _get_connection_manager()
         logger.info(f"{_LOG} Inicializado — CU_base={CU_BASE_DEFAULT}, "
                      f"PrecBolsa_base={PRECIO_BOLSA_BASE}")
 

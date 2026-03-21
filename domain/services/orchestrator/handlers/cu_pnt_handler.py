@@ -27,9 +27,9 @@ class CuPntHandlerMixin:
         errors = []
 
         try:
-            from core.container import container
+            from core.container import get_cu_service
             cu = await asyncio.to_thread(
-                container.get_cu_service().get_cu_current
+                get_cu_service().get_cu_current
             )
             if not cu:
                 data['respuesta'] = "No hay datos de CU disponibles en este momento."
@@ -91,9 +91,9 @@ class CuPntHandlerMixin:
         errors = []
 
         try:
-            from core.container import container
+            from core.container import get_losses_nt_service
             stats = await asyncio.to_thread(
-                container.losses_nt_service.get_losses_statistics
+                get_losses_nt_service().get_losses_statistics
             )
             if not stats:
                 data['respuesta'] = "No hay datos de P_NT disponibles."

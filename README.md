@@ -15,22 +15,24 @@ Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine 
 
 ---
 
-## Estado Actual del Sistema (15 Marzo 2026)
+## Estado Actual del Sistema (20 Marzo 2026)
 
 ### Plataforma
 
-| Componente | Detalle |
-|-----------|--------|
-| **Servidor** | Srvwebprdctrlxm (Azure VM, Ubuntu) |
-| **Dashboard** | Dash 2.17.1 / Plotly 5.17.0 — 14 tableros activos, port 8050 |
-| **API REST** | FastAPI — 29+ endpoints, port 8000, autenticación X-API-Key |
-| **Chatbot IA** | Analista Energético flotante (izquierda), con alertas + noticias en tiempo real |
-| **Widget Noticias** | Carrusel KPI top-left en inicio, rotación automática cada 7 s |
-| **Alertas Inteligentes** | Celery Beat detecta anomalías, cooldown 2h, notifica Telegram |
-| **Bot Telegram** | Polling mode, inline keyboards, informes ejecutivos |
-| **Bot WhatsApp** | FastAPI + whatsapp-web.js, port 8001 (experimental) |
-| **MLflow** | Tracking server, port 5000 |
-| **Celery** | 2 workers + Beat |
+| Componente | Detalle | Estado |
+|-----------|---------|--------|
+| **Servidor** | Srvwebprdctrlxm (Azure VM, Ubuntu) | ✅ Activo |
+| **Dashboard** | Dash 2.17.1 / Plotly 5.17.0 — 17 tableros activos, port 8050 | ✅ Activo |
+| **API REST** | FastAPI — 29+ endpoints, port 8000, autenticación X-API-Key | ✅ Activo |
+| **Chatbot IA** | Analista Energético flotante (izquierda), con alertas + noticias en tiempo real | ✅ Activo |
+| **Widget Noticias** | Carrusel KPI top-left en inicio, rotación automática cada 7 s | ✅ Activo |
+| **Alertas Inteligentes** | Celery Beat detecta anomalías, cooldown 2h, notifica Telegram | ✅ Activo |
+| **Bot Telegram** | Polling mode, inline keyboards, informes ejecutivos | ✅ Activo |
+| **Bot WhatsApp** | FastAPI + whatsapp-web.js, port 8001 (experimental) | ⚠️ En desarrollo |
+| **MLflow** | Tracking server, port 5000 | ✅ Activo |
+| **Celery** | 11 procesos (2 workers + Beat + Flower) | ✅ Activo |
+| **Base de Datos** | PostgreSQL 16, ~300K registros diarios + 50M horarios | ✅ Activo |
+| **Observabilidad** | Métricas, Health Checks, Tracing, Alertas | ✅ Activo |
 
 ### Base de Datos PostgreSQL 16
 
@@ -310,18 +312,52 @@ uvicorn whatsapp_bot.app.main:app --host 0.0.0.0 --port 8001
 
 ## Documentación
 
+### 🚀 Para Empezar
+| Documento | Contenido |
+|-----------|-----------|
+| [Guía de Onboarding](docs/GUIA_ONBOARDING.md) | Configuración inicial para nuevos desarrolladores |
+| [Guía de Troubleshooting](docs/GUIA_TROUBLESHOOTING.md) | Solución de problemas comunes |
+| [Guía de Uso del API](docs/GUIA_USO_API.md) | Endpoints, autenticación, ejemplos |
+
+### 🏗️ Arquitectura y Diseño
 | Documento | Contenido |
 |-----------|-----------|
 | [Informe Arquitectura Completa v4](docs/informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-05.md) | Inspección completa: 12 secciones, inventario BD, deuda técnica, seguridad |
+| [Fases 1-5 Completadas](docs/informes/INFORME_PROYECTO_COMPLETO_FASES_1_5.md) | Resumen de todas las fases de modernización |
+| [Arquitectura E2E](docs/ARQUITECTURA_E2E.md) | Arquitectura end-to-end completa |
+| [Análisis Dashboard](docs/ANALISIS_COMPLETO_DASHBOARD_MME.md) | Análisis completo del dashboard |
+
+### 🤖 Orquestador e Integraciones
+| Documento | Contenido |
+|-----------|-----------|
 | [Documentación Técnica Orquestador](docs/DOCUMENTACION_TECNICA_ORQUESTADOR.md) | 20+ intents, timeout, flujo completo |
-| [Guía de Uso del API](docs/GUIA_USO_API.md) | Endpoints, autenticación, ejemplos |
 | [Endpoint Orchestrator](docs/ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md) | Integración para Oscar (WhatsApp) |
-| [Auditoría Predicciones](docs/FASE7_AUDITORIA_PREDICCIONES.md) | MAPE/RMSE por modelo y métrica |
-| [Mapeo Métricas](docs/MAPEO_COMPLETO_METRICAS.md) | 120+ métricas XM/SIMEM documentadas |
-| [Cron Jobs ETL](docs/CRON_JOB_ETL_POSTGRESQL.md) | Configuración de automatización |
+| [Plan Subsidios Telegram](docs/PLAN_SUBSIDIOS_TELEGRAM.md) | Notificaciones y alertas |
+
+### 🔧 Operaciones
+| Documento | Contenido |
+|-----------|-----------|
+| [Inventario Servidor](docs/INVENTARIO_SERVIDOR.md) | Configuración del servidor |
 | [Disponibilidad 24/7](docs/DISPONIBILIDAD_24_7.md) | systemd, nginx, monitoreo |
+| [Cron Jobs ETL](docs/CRON_JOB_ETL_POSTGRESQL.md) | Configuración de automatización |
+| [Links de Acceso](docs/LINKS_ACCESO.md) | URLs y accesos importantes |
+
+### 🤖 ML e IA
+| Documento | Contenido |
+|-----------|-----------|
+| [Auditoría Predicciones](docs/FASE7_AUDITORIA_PREDICCIONES.md) | MAPE/RMSE por modelo y métrica |
 | [Política de Confianza](docs/POLITICA_CONFIANZA_PREDICCIONES.md) | Niveles de confianza ML |
-| [Plan de Estabilidad ETL](docs/etl_stability_plan.md) | Diagnósticos y mejoras ETL |
+| [Documentación IA/ML](docs/tecnicos/DOCUMENTACION_TECNICA_IA_ML.md) | Documentación técnica de IA/ML |
+
+### 📊 Datos y Referencias
+| Documento | Contenido |
+|-----------|-----------|
+| [Mapeo Métricas](docs/MAPEO_COMPLETO_METRICAS.md) | 120+ métricas XM/SIMEM documentadas |
+| [Metodología CU](docs/METODOLOGIA_CU.md) | Metodología Costo Unitario |
+
+---
+
+[Ver índice completo de documentación](docs/README.md)
 
 ---
 
@@ -349,12 +385,20 @@ kill -HUP $(pgrep -f "gunicorn.*8000" | head -1)
 Propiedad del **Ministerio de Minas y Energía de Colombia**.
 
 **Repositorio:** https://github.com/MelissaCardona2003/Dashboard_Multipage_MME  
-**Última actualización:** 15 de marzo de 2026  
-**Tag:** v1.4.0
+**Última actualización:** 21 de marzo de 2026  
+**Tag:** v1.5.0
 
 ---
 
 ## Changelog
+
+### v1.5.0 — 21 Marzo 2026
+- **fix(inversiones):** `TypeError: crear_kpi() got an unexpected keyword argument 'subtitulo'` — cambiado kwarg `subtitulo` → `subtexto` en 4 dicts del callback `calcular_lcoe_guajira()`
+- **fix(metrics_service):** `NameError: name 'redis_get_json' is not defined` — agregado import faltante `from infrastructure.cache.redis_client import redis_get_json, redis_set_json`
+- **fix(dependencies):** `AttributeError: 'DependencyContainer' has no attribute 'get_cu_service'/'losses_nt_service'/'simulation_service'` — reemplazados con llamadas a funciones de módulo en `core.container` en `api/dependencies.py`, `cu_pnt_handler.py` y `libre_noticias_handler.py`
+- **fix(simulation_service):** `NameError: name 'PostgreSQLConnectionManager' is not defined` — corregido `self._conn_mgr = PostgreSQLConnectionManager()` → `self._conn_mgr = _get_connection_manager()`
+- **fix(cache):** `AttributeError: 'str' object has no attribute 'empty'` — `CacheManager` ahora serializa `pd.DataFrame` con marker tipado `{"__dataframe__": True, "records": [...]}` en lugar de `json.dumps(default=str)` para evitar deserialización como string; afectaba `distribucion.py`, `perdidas_nt.py` y todos los servicios con `@cached`
+- **chore(docs):** Eliminados 14 informes de sesión obsoletos de `docs/.archivados/` e `docs/informes/`; actualizados `LINKS_ACCESO.md` (stats BD reales) y `GUIA_TROUBLESHOOTING.md` (bugs conocidos y soluciones de caché)
 
 ### v1.4.0 — 15 Marzo 2026
 - **fix(costo_usuario_final):** `TypeError: can only concatenate str (not "Br") to str` al construir la alerta de metodología en la página CU Usuario Final
