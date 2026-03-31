@@ -183,7 +183,7 @@ def get_cu_service():
     Returns:
         Instancia compartida de CUService
     """
-from core.container import get_cu_service as _get_cu_service
+    from core.container import get_cu_service as _get_cu_service
     return _get_cu_service()
 
 
