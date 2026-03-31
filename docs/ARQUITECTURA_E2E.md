@@ -426,7 +426,7 @@ El sistema verifica automáticamente (8:00 AM diario via `monitor_predictions_qu
 | `categorizar_fuente_xm` ×5 duplicados | Consolidado en una función top-level | -64 LOC, un solo punto de mantenimiento |
 | `UIColors` ×3 definiciones redundantes | Unificado: SmartDict + colors_data | -50 LOC, una sola fuente de verdad |
 | `httpx` 0.28.1 → 0.27.2 | Pin de versión en requirements.txt | 14 errores de test API corregidos |
-| 37 tests fallando (sesión anterior) | Mocks actualizados a APIs reales | 117/117 passing |
+| 37 tests fallando (sesión anterior) | Mocks actualizados a APIs reales | 347/354 passing (7 fallando) |
 | Celery deprecation warning ×88/día | `broker_connection_retry_on_startup=True` | 0 warnings |
 | `sistema_notificaciones.py` muerto | Movido a `backups/deprecated/` | Sin imports rotos |
 | Git post-commit hook roto | Deshabilitado (referenciaba archivo inexistente) | Commits limpios |

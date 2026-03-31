@@ -33,18 +33,18 @@ API REST + Dashboard Analítico + ETL Pipeline
 
 Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 
-- **API REST** (FastAPI): 29+ endpoints para consumo del frontend Next.js
+- **API REST** (FastAPI): 52 endpoints para consumo del frontend Next.js
 - **Dashboard Analítico** (Dash): 17 tableros interactivos legacy
 - **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive
 - **Sistema de Alertas**: Notificaciones Telegram basadas en anomalías
 
 ### Estadísticas
 
-- **351 archivos Python**
+- **350 archivos Python**
 - **30 servicios de dominio**
 - **17 scripts ETL**
-- **42 tests**
-- **~50,000 líneas de código**
+- **354 tests recopilados (347 pasan, 7 fallando)**
+- **~113,000 líneas de código**
 
 ---
 
@@ -64,7 +64,7 @@ Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 ├─────────────────────────────────────────────────────────────┤
 │  api/main.py (FastAPI)              app.py (Dash)          │
 │  ├── Puerto: 8000                   ├── Puerto: 8050       │
-│  ├── 29+ endpoints REST             └── 17 tableros        │
+│  ├── 52 endpoints REST              └── 17 tableros        │
 │  └── Autenticación X-API-Key                                │
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -132,7 +132,7 @@ Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 server/
 ├── api/                          (36 archivos)
 │   ├── main.py                   → Entry point FastAPI
-│   ├── v1/routes/                → 29+ endpoints REST
+│   ├── v1/routes/                → 52 endpoints REST
 │   │   ├── restrictions.py
 │   │   ├── distribution.py
 │   │   ├── system.py

@@ -470,10 +470,11 @@ result = await conn.fetch(f"SELECT * FROM users WHERE id = {user_id}")  # SQL In
 
 ### Mejoras Pendientes
 
-- 72 archivos con `print()` → migrar a logger
-- 171 archivos con `except Exception` genérico → específicos
-- 0 tests de integración → implementar
+- 65 archivos con `print()` → migrar a logger
+- 187 archivos con `except Exception` genérico → específicos
+- Tests de integración parciales (`test_integracion_fase7.py`, `test_hardening_fase8.py`) → ampliar cobertura
 - 0 tests e2e → implementar
+- 7 tests fallando: `test_container.py` (5) + `test_transmission_service.py` (2) → corregir
 
 ---
 
@@ -493,4 +494,4 @@ result = await conn.fetch(f"SELECT * FROM users WHERE id = {user_id}")  # SQL In
 
 ---
 
-*Documento actualizado: 31 de marzo de 2026*
+*Documento actualizado: 31 de marzo de 2026 — Stats: 350 py files, 52 endpoints, 347/354 tests*
