@@ -215,3 +215,7 @@ data/*.csv
 *.xlsx
 *.csv
 !data/catalogs/*.csv
+
+# Módulos experimentales (no listos para producción)
+infrastructure/cqrs/
+infrastructure/event_sourcing/
