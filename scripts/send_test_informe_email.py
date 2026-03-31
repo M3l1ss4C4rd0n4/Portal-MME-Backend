@@ -28,7 +28,9 @@ from domain.services.report_service import generar_pdf_informe
 def obtener_informe_real() -> dict:
     """Llama al orquestador para obtener el informe con datos reales de la BD."""
     API_BASE = "http://localhost:8000"
-    API_KEY = os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
+    API_KEY = os.getenv('API_KEY')
+    if not API_KEY:
+        raise ValueError("API_KEY no configurada en variables de entorno")
 
     try:
         resp = requests.post(
@@ -62,7 +64,9 @@ def obtener_informe_real() -> dict:
 def obtener_noticias_sector() -> list:
     """Llama al orquestador para obtener las noticias del sector."""
     API_BASE = "http://localhost:8000"
-    API_KEY = os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
+    API_KEY = os.getenv('API_KEY')
+    if not API_KEY:
+        raise ValueError("API_KEY no configurada en variables de entorno")
 
     try:
         resp = requests.post(

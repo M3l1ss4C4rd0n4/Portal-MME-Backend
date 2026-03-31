@@ -53,7 +53,7 @@ except ImportError:
 # Crea un archivo .env en el mismo directorio con:
 # ARCGIS_PORTAL_URL=https://arcgisenterprise.minenergia.gov.co/portal/
 # ARCGIS_USERNAME=Vice_Energia
-# ARCGIS_PASSWORD=Survey123+
+# Password cargada desde variables de entorno: ARCGIS_PASSWORD
 # FEATURE_LAYER_ID=id_obtenido_primera_vez
 
 ARCGIS_PORTAL_URL = os.getenv("ARCGIS_PORTAL_URL", "https://arcgisenterprise.minenergia.gov.co/portal/")
