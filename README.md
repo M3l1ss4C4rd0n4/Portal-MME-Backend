@@ -1,452 +1,476 @@
-# Portal Energético Colombia — Dashboard MME
+# Server Backend - Portal Dirección MME
 
-> **Sistema Integral de Monitoreo y Análisis del Sector Energético Colombiano**  
-> **Versión 1.4.0 — Arquitectura Hexagonal + IA + Bots + API REST + ML (Marzo 2026)**
+<div align="center">
 
-Dashboard interactivo de producción con **Inteligencia Artificial**, **Machine Learning**, **Bots multicanal (Telegram + WhatsApp)**, **API REST pública**, **Noticias del sector**, **ETL automatizado** y **publicación ArcGIS** para análisis en tiempo real del Sistema Interconectado Nacional (SIN).
+![Python](https://img.shields.io/badge/Python-3.12-3776AB)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.109.2-009688)
+![Dash](https://img.shields.io/badge/Dash-2.17.1-19A7CE)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)
+![Architecture](https://img.shields.io/badge/Architecture-Hexagonal-purple)
 
-[![Estado](https://img.shields.io/badge/Estado-Producción-success)]()
-[![Python](https://img.shields.io/badge/Python-3.12+-blue)]()
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-316192)]()
-[![Architecture](https://img.shields.io/badge/Architecture-Hexagonal-purple)]()
-[![AI](https://img.shields.io/badge/AI-Llama%203.3%2070B-orange)]()
-[![API](https://img.shields.io/badge/API-FastAPI%2029%20endpoints-009688)]()
-[![Telegram](https://img.shields.io/badge/Bot-Telegram-26A5E4)]()
+**Backend del Portal de Dirección de Energía Eléctrica**  
+API REST + Dashboard Analítico + ETL Pipeline
+
+</div>
+
+---
+
+## 📋 Índice
+
+1. [Visión General](#visión-general)
+2. [Arquitectura](#arquitectura)
+3. [Estructura del Proyecto](#estructura-del-proyecto)
+4. [Servicios de Dominio](#servicios-de-dominio)
+5. [API Endpoints](#api-endpoints)
+6. [ETL Pipeline](#etl-pipeline)
+7. [Instalación](#instalación)
+8. [Despliegue](#despliegue)
+9. [Monitoreo y Logs](#monitoreo-y-logs)
 
 ---
 
-## Estado Actual del Sistema (20 Marzo 2026)
+## Visión General
 
-### Plataforma
+Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 
-| Componente | Detalle | Estado |
-|-----------|---------|--------|
-| **Servidor** | Srvwebprdctrlxm (Azure VM, Ubuntu) | ✅ Activo |
-| **Dashboard** | Dash 2.17.1 / Plotly 5.17.0 — 17 tableros activos, port 8050 | ✅ Activo |
-| **API REST** | FastAPI — 29+ endpoints, port 8000, autenticación X-API-Key | ✅ Activo |
-| **Chatbot IA** | Analista Energético flotante (izquierda), con alertas + noticias en tiempo real | ✅ Activo |
-| **Widget Noticias** | Carrusel KPI top-left en inicio, rotación automática cada 7 s | ✅ Activo |
-| **Alertas Inteligentes** | Celery Beat detecta anomalías, cooldown 2h, notifica Telegram | ✅ Activo |
-| **Bot Telegram** | Polling mode, inline keyboards, informes ejecutivos | ✅ Activo |
-| **Bot WhatsApp** | FastAPI + whatsapp-web.js, port 8001 (experimental) | ⚠️ En desarrollo |
-| **MLflow** | Tracking server, port 5000 | ✅ Activo |
-| **Celery** | 11 procesos (2 workers + Beat + Flower) | ✅ Activo |
-| **Base de Datos** | PostgreSQL 16, ~300K registros diarios + 50M horarios | ✅ Activo |
-| **Observabilidad** | Métricas, Health Checks, Tracing, Alertas | ✅ Activo |
+- **API REST** (FastAPI): 29+ endpoints para consumo del frontend Next.js
+- **Dashboard Analítico** (Dash): 17 tableros interactivos legacy
+- **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive
+- **Sistema de Alertas**: Notificaciones Telegram basadas en anomalías
 
-### Base de Datos PostgreSQL 16
+### Estadísticas
 
-| Tabla | Descripción |
-|-------|-------------|
-| `metrics_hourly` | Métricas XM horarias (50M+ filas, 2020→presente) |
-| `metrics` | Métricas XM diarias (13M+ filas) |
-| `cu_daily` | Costo Unitario mayorista diario |
-| `predictions` | Predicciones ML (horizonte 365 días) |
-| `alertas_historial` | Historial de alertas energéticas con cooldown |
-| `losses_detailed` | Pérdidas detalladas por OR |
-| `commercial_metrics` | Métricas comerciales por agente |
-| `restriction_metrics` | Restricciones operativas |
-| `subsidios_pagos` | Subsidios y estratos |
-| **Total** | **~15 GB**, ~64M filas, cobertura 2020-01-01 → presente |
-
-### Métricas del Código
-
-| Métrica | Valor |
-|---------|-------|
-| Archivos Python | 261 (todos con sintaxis válida) |
-| Servicios de dominio | 28 |
-| Repositorios | 6 |
-| Endpoints API | 29+ |
-| Páginas Dashboard | 15 |
-| Handlers orquestador | 8 |
-| Tareas Celery | 2 archivos (anomaly_tasks + etl_tasks) |
-| ETL processes | 11 scripts ETL |
+- **351 archivos Python**
+- **30 servicios de dominio**
+- **17 scripts ETL**
+- **42 tests**
+- **~50,000 líneas de código**
 
 ---
-        ├── database/           ├── XM Colombia
-        │   ├── connection      ├── SIMEM
-        │   ├── manager         ├── IDEAM
-        │   └── repositories    ├── Groq/OpenRouter
-        ├── external/           ├── ArcGIS
-        ├── logging/            ├── Telegram
-        └── news/               └── Twilio/Meta
+
+## Arquitectura
+
+### Diagrama de Componentes
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         CLIENTES                            │
+│     (Portal Next.js / Dashboard Dash / Telegram Bot)       │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ HTTP/HTTPS
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      ENTRY POINTS                           │
+├─────────────────────────────────────────────────────────────┤
+│  api/main.py (FastAPI)              app.py (Dash)          │
+│  ├── Puerto: 8000                   ├── Puerto: 8050       │
+│  ├── 29+ endpoints REST             └── 17 tableros        │
+│  └── Autenticación X-API-Key                                │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+           ┌───────────────┼───────────────┐
+           │               │               │
+           ▼               ▼               ▼
+┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
+│   Domain Layer  │ │   Core      │ │  Infrastructure │
+│   (Servicios)   │ │   (DI/Config)│ │   (BD/Cache)   │
+└────────┬────────┘ └──────┬──────┘ └────────┬────────┘
+         │                 │                 │
+         └─────────────────┼─────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    DATA SOURCES                             │
+├─────────────────────────────────────────────────────────────┤
+│  PostgreSQL 16    Redis 7    XM API    OneDrive    IDEAM   │
+│  (15GB, 64M filas)  (Cache)   (Datos)   (Excel)   (Hydro)  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Estructura del Proyecto
+### Arquitectura Hexagonal (Ports & Adapters)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      ADAPTERS                               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │  REST API   │  │   Dash UI   │  │   Telegram Bot      │ │
+│  │  (FastAPI)  │  │  (Legacy)   │  │   (Async)           │ │
+│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘ │
+└─────────┼────────────────┼────────────────────┼────────────┘
+          │                │                    │
+          └────────────────┴────────────────────┘
+                           │
+          ┌────────────────┴────────────────┐
+          │         APPLICATION             │
+          │         (Domain Layer)          │
+          │  ┌─────────────────────────┐    │
+          │  │    30 Services          │    │
+          │  │  - cu_service            │    │
+          │  │  - report_service        │    │
+          │  │  - metrics_service       │    │
+          │  │  - ...                   │    │
+          │  └─────────────────────────┘    │
+          └────────────────┬────────────────┘
+                           │
+          ┌────────────────┴────────────────┐
+          │      INFRASTRUCTURE (Ports)     │
+          │  ┌─────────────┐ ┌────────────┐ │
+          │  │  Database   │ │   Cache    │ │
+          │  │  (PostgreSQL)│ │  (Redis)   │ │
+          │  └─────────────┘ └────────────┘ │
+          │  ┌─────────────┐ ┌────────────┐ │
+          │  │   XM API    │ │  OneDrive  │ │
+          │  │   Client    │ │   Client   │ │
+          │  └─────────────┘ └────────────┘ │
+          └─────────────────────────────────┘
+```
+
+---
+
+## Estructura del Proyecto
 
 ```
 server/
-├── core/                      # Configuración, DI, factory, constantes
-│   ├── config.py             # Pydantic Settings (40+ campos)
-│   ├── constants.py          # IDs métricas XM, colores, umbrales
-│   ├── container.py          # Contenedor DI (singletons lazy)
-│   ├── app_factory.py        # Factory Dash + Prometheus
-│   ├── exceptions.py         # PortalError → 5 subtipos
-│   └── validators.py         # Validación global
+├── api/                          (36 archivos)
+│   ├── main.py                   → Entry point FastAPI
+│   ├── v1/routes/                → 29+ endpoints REST
+│   │   ├── restrictions.py
+│   │   ├── distribution.py
+│   │   ├── system.py
+│   │   ├── cu.py
+│   │   ├── commercial.py
+│   │   ├── generation.py
+│   │   └── ...
+│   └── dependencies.py           → Inyección FastAPI
 │
-├── domain/                    # Lógica de negocio (15,110 líneas)
-│   ├── interfaces/           # 10 ABCs (puertos)
-│   ├── models/               # Metric, Prediction (frozen dataclass)
-│   ├── schemas/              # OrchestratorRequest/Response (Pydantic)
-│   └── services/             # 24 servicios especializados
-│       ├── orchestrator_service.py          # Orquestador (20+ intents)
-│       ├── executive_report_service.py      # Informe ejecutivo (11 secciones)
-│       ├── intelligent_analysis_service.py  # Anomalías y estado sectorial
-│       ├── report_service.py                # PDFs (WeasyPrint)
-│       ├── notification_service.py          # Telegram + Email SMTP
-│       ├── generation_service.py            # Generación eléctrica
-│       ├── predictions_service_extended.py  # ML: Prophet + ARIMA + Ensemble
-│       ├── ai_service.py                    # Agente IA (Groq/OpenRouter)
-│       ├── news_service.py                  # Noticias (GNews, Mediastack, RSS)
-│       └── ... (15 servicios más)
+├── core/                         (21 archivos)
+│   ├── app_factory.py            → Factory Dash app
+│   ├── container.py              → DependencyContainer (DI)
+│   ├── config.py                 → Configuración centralizada
+│   ├── database/
+│   │   ├── pool.py               → Connection pool PostgreSQL
+│   │   └── migration_helper.py   → Helpers migraciones
+│   ├── security/
+│   │   ├── vault.py              → Gestión de secretos
+│   │   └── sql_validator.py      → Validación SQL
+│   └── utils/
+│       └── date_utils.py         → Utilidades de fechas
 │
-├── infrastructure/            # Adaptadores (repositorios, APIs, logging)
-│   ├── database/             # PostgreSQL: connection, manager, 6 repos
-│   ├── external/             # XM, IDEAM adapters
-│   ├── news/                 # 3 clientes de noticias (async)
-│   └── logging/              # RotatingFileHandler
+├── domain/                       (53 archivos)
+│   ├── services/                 → 30 servicios
+│   ├── models/                   → Modelos Pydantic
+│   ├── schemas/                  → DTOs y validaciones
+│   └── interfaces/               → Interfaces abstractas
 │
-├── interface/                 # Dashboard Dash (19,354 líneas)
-│   ├── components/           # chart_card, kpi_card, chat_widget, header
-│   └── pages/                # 12 tableros + config + hidrologia/utils
+├── infrastructure/               (41 archivos)
+│   ├── database/                 → Repositorios PostgreSQL
+│   ├── cache/                    → Redis cache manager
+│   ├── external/                 → Clientes APIs externas
+│   │   ├── xm_client.py
+│   │   ├── onedrive_client.py
+│   │   └── ideam_client.py
+│   ├── logging/                  → Sistema de logging
+│   └── observability/            → Métricas y health checks
 │
-├── api/                       # API REST FastAPI
-│   ├── main.py               # CORS, rate limiting, OpenAPI 3.0.3
-│   ├── dependencies.py       # DI + API Key auth
-│   └── v1/                   # 12 routers + 12 schemas
+├── interface/                    (17 archivos) [LEGACY]
+│   └── pages/                    → Páginas Dash
 │
-├── etl/                       # Pipelines de datos (8 archivos)
-├── scripts/                   # Operaciones y diagnósticos (32 archivos)
-├── tasks/                     # Celery tasks (ETL + predicciones + reportes)
-├── whatsapp_bot/              # Bot WhatsApp + Telegram (19 archivos)
-├── experiments/               # ML offline: FASE 5B/6/7/15
-├── tests/                     # Unit + integration + ARGIS scripts
-├── docs/                      # Documentación técnica
-├── sql/                       # Scripts DDL
-├── assets/                    # CSS, JS, imágenes, GeoJSON
-├── data/                      # OneDrive sync + charts generados
-├── config/                    # systemd, logrotate
-├── ejemplos/                  # Ejemplos de consumo del API
-└── backups/                   # DB dumps semanales automáticos
+├── etl/                          (17 archivos)
+│   ├── etl_todas_metricas_xm.py  → Principal (cada 6h)
+│   ├── etl_xm_to_postgres.py     → Backfill manual
+│   ├── etl_nuevos_dashboards.py  → Datos dashboard
+│   └── validaciones_rangos.py    → Validaciones
+│
+├── tasks/                        → Celery tasks
+│   ├── anomaly_tasks.py
+│   └── etl_tasks.py
+│
+├── tests/                        (42 archivos)
+│   ├── unit/                     (35 archivos)
+│   ├── integration/              (0 archivos) ⚠️
+│   └── e2e/                      (0 archivos) ⚠️
+│
+├── config/
+│   └── logrotate-mme.conf        → Config rotación logs
+│
+├── data/                         → Datos locales
+│   ├── base_de_datos_comunidades_energeticas/
+│   ├── base_de_datos_contratos_or/
+│   ├── base_de_datos_supervision/
+│   └── ejecucion_presupuestal/
+│
+├── logs/                         → Logs de aplicación
+│   ├── gunicorn_error.log
+│   ├── gunicorn_access.log
+│   └── celery/
+│
+├── docs/                         (24+ archivos MD)
+├── backups/                      → Backups BD
+├── experiments/                  → Experimentos ML
+├── scripts/                      (43 archivos)
+└── app.py                        → Entry point Dash
 ```
 
 ---
 
-## Tableros del Dashboard
+## Servicios de Dominio
 
-| # | Ruta | Descripción | Estado |
-|---|------|-------------|--------|
-| # | Ruta | Descripción | Estado |
-|---|------|-------------|--------|
-| 1 | `/` | Portada interactiva | ✅ 200 |
-| 2 | `/generacion` | Generación SIN | ✅ 200 |
-| 3 | `/generacion-fuentes` | Por fuente energética | ✅ 200 |
-| 4 | `/hidrologia` | Hidrología | ✅ 200 |
-| 5 | `/transmision` | Transmisión | ✅ 200 |
-| 6 | `/distribucion` | Distribución | ✅ 200 |
-| 7 | `/comercializacion` | Comercialización | ✅ 200 |
-| 8 | `/perdidas` | Pérdidas técnicas | ✅ 200 |
-| 9 | `/perdidas-nt` | Pérdidas no técnicas | ✅ 200 |
-| 10 | `/costo-unitario` | Costo unitario (CU) | ✅ 200 |
-| 11 | `/simulacion` | Simulación CREG | ✅ 200 |
-| 12 | `/restricciones` | Restricciones | ✅ 200 |
-| 13 | `/metricas` | Explorador universal | ✅ 200 |
-| 14 | `/seguimiento-predicciones` | Monitoreo ML | ✅ 200 |
+### Servicios Principales (por tamaño)
 
----
+| Servicio | Líneas | Función | Estado |
+|----------|--------|---------|--------|
+| `report_service.py` | 1,850 | Generación de informes | ✅ Activo |
+| `executive_report_service.py` | 1,618 | Informes ejecutivos | ✅ Activo |
+| `cu_service.py` | 1,010 | Comercialización mayorista | ✅ Activo |
+| `losses_nt_service.py` | 1,199 | Pérdidas no técnicas | ✅ Activo |
+| `notification_service.py` | 1,178 | Notificaciones Telegram | ✅ Activo |
+| `intelligent_analysis_service.py` | 829 | Análisis con IA | ✅ Activo |
+| `simulation_service.py` | 748 | Simulaciones | ✅ Activo |
+| `predictions_service_extended.py` | 698 | Predicciones ML | ✅ Activo |
+| `cu_minorista_service.py` | 599 | Comercialización minorista | ✅ Activo |
+| `ai_service.py` | 504 | Integración LLM | ✅ Activo |
+| `commercial_service.py` | 342 | Datos comerciales | ✅ Activo |
+| `hydrology_service.py` | 368 | Datos hidrológicos | ✅ Activo |
+| `investment_service.py` | 523 | Inversiones | ✅ Activo |
+| `distribution_service.py` | 480 | Distribución | ✅ Activo |
+| `generation_service.py` | 448 | Generación | ✅ Activo |
+| `metrics_service.py` | 222 | Métricas calculadas | ✅ Activo |
+| `restrictions_service.py` | 222 | Restricciones | ✅ Activo |
+| `transmission_service.py` | 207 | Transmisión | ✅ Activo |
+| `indicators_service.py` | 173 | Indicadores | ✅ Activo |
+| `system_service.py` | 193 | Sistema | ✅ Activo |
+| `validators.py` | 247 | Validaciones | ✅ Activo |
+| `confianza_politica.py` | 122 | Análisis político | ⚠️ Sin documentar |
+| `geo_service.py` | 32 | Georreferenciación | ⚠️ DEPRECATED |
+| `orchestrator_service.py` | 4 | Orquestación | ⚠️ DEPRECATED |
+| `predictions_service.py` | 10 | Predicciones (stub) | ⚠️ DEPRECATED |
 
-## API REST (FastAPI)
+### Servicios Deprecated
 
-**Base URL:** `https://portalenergetico.minenergia.gov.co/api`  
-**Documentación:** `/api/docs` (Swagger) · `/api/redoc` (ReDoc)  
-**Autenticación:** Header `X-API-Key`
+Los siguientes servicios están marcados como deprecated y serán eliminados en V5:
 
-### Endpoints
-
-| Grupo | Prefijo | Endpoints | Rate Limit |
-|-------|---------|----------|------------|
-| Generación | `/v1/generation` | system, by-source, resources, mix | 100/min |
-| Hidrología | `/v1/hydrology` | aportes, reservoirs, energy | 100/min |
-| Sistema | `/v1/system` | demand, prices | 100/min |
-| Transmisión | `/v1/transmission` | lines, flows, international | 100/min |
-| Distribución | `/v1/distribution` | data, operators | 100/min |
-| Comercial | `/v1/commercial` | prices, contracts | 100/min |
-| Pérdidas | `/v1/losses` | data | 100/min |
-| Restricciones | `/v1/restrictions` | data | 100/min |
-| Métricas | `/v1/metrics` | list, by id | 60-100/min |
-| Predicciones | `/v1/predictions` | forecast, train, batch, cache stats, cache flush | 5-20/min |
-| Chatbot | `/v1/chatbot` | orchestrator, health | 100/min |
-| WhatsApp | `/v1/whatsapp` | send-alert, bot-status | — |
-
-**Total:** 29 endpoints (25 GET, 2 POST, 1 DELETE, 1 batch)
+- `geo_service.py` → Funcionalidad no implementada
+- `orchestrator_service.py` → Vacío, sin uso
+- `predictions_service.py` → Consolidado en `predictions_service_extended.py`
 
 ---
 
-## Inteligencia Artificial y Machine Learning
+## API Endpoints
 
-### Chatbot IA
-- **Modelo:** Llama 3.3 70B Versatile (Groq primario, OpenRouter fallback)
-- **Acceso:** Widget flotante en Dashboard + Bot Telegram + API `POST /v1/chatbot/orchestrator`
-- **Intents:** 20+ (estado_actual, generacion, hidrologia, precios, predicciones, anomalias, informe_ejecutivo, noticias, comparacion_anual...)
+### Endpoints Principales
 
-### Predicciones ML
-- **Modelos en producción:** Prophet, ARIMA/SARIMA, Ensemble (promedio ponderado)
-- **Modelos experimentados:** XGBoost, LightGBM, Random Forest, LSTM, PatchTST, N-BEATS, TCN, N-HiTS, Chronos
-- **Métricas predichas:** DemaCome, Gene, PrecBolsNaci, AporEner, Gene_Eolica, Gene_Solar
-- **Regresores:** 11 variables multivariable (embalses, aportes, precios...)
-- **Entrenamiento:** Semanal automático (domingos 2:00 AM)
-- **Horizonte:** 30 días
-- **Política de confianza:** MUY_CONFIABLE (<5% MAPE) → EXPERIMENTAL (>25% MAPE)
+| Endpoint | Método | Descripción | Cache |
+|----------|--------|-------------|-------|
+| `/api/v1/restrictions` | GET | Restricciones del SIN | 5 min |
+| `/api/v1/distribution` | GET | Datos de distribución | 5 min |
+| `/api/v1/system/metrics` | GET | Métricas del sistema | 1 min |
+| `/api/v1/commercial` | GET | Datos comerciales | 5 min |
+| `/api/v1/generation` | GET | Generación eléctrica | 5 min |
+| `/api/v1/cu` | GET | Comercialización mayorista | 5 min |
+| `/api/v1/predictions` | GET | Predicciones ML | 1 hora |
+| `/health` | GET | Health check | No |
 
----
+### Autenticación
 
-## ETL y Automatización
+```bash
+# Header requerido
+X-API-Key: <api_key>
 
-### Cron Jobs Activos
-
-| Frecuencia | Tarea | Script |
-|-----------|-------|--------|
-| Cada 6 horas | ETL métricas XM (106 métricas) | `etl/etl_todas_metricas_xm.py` |
-| Diario 6:30 AM | ETL transmisión | `etl/etl_transmision.py` |
-| Cada hora | ArcGIS Enterprise (dual account) | `scripts/arcgis/ejecutar_dual.sh` |
-| Cada 30 min | ArcGIS Online | `scripts/arcgis/actualizar_datos_xm_online.py` |
-| Semanal dom 2 AM | Predicciones ML | `scripts/actualizar_predicciones.sh` |
-| Semanal dom 3 AM | Backup PostgreSQL | `scripts/backup_postgres_diario.sh` |
-| Mensual día 1 | Backfill métricas | `scripts/backfill_sistema_metricas.py` |
-| Cada 5 min | Monitor API | `scripts/monitor_api.sh` |
-| @reboot | Auto-start API | `api/start_api_daemon.sh` |
-
-### Celery Beat
-
-| Tarea | Frecuencia |
-|-------|-----------|
-| ETL métricas core | Cada 6 horas |
-| Limpieza logs | Diario 3:00 AM |
-| Detección anomalías | Cada 30 minutos |
-| Resumen diario (PDF + charts) | Diario 8:00 AM |
+# Ejemplo
+curl -H "X-API-Key: tu_api_key" http://localhost:8000/api/v1/restrictions
+```
 
 ---
 
-## Bot Telegram
+## ETL Pipeline
 
-Bot con inline keyboards y navegación bidireccional:
+### Scripts Principales
 
-**Comandos:** `/menu`, `/estado`, `/predicciones`, `/anomalias`, `/noticias`, `/informe`, `/ayuda`, `/precio`, `/generacion`, `/demanda`, `/mix`, `/grafico`, `/resumen`
+| Script | Frecuencia | Fuente | Descripción |
+|--------|------------|--------|-------------|
+| `etl_todas_metricas_xm.py` | Cada 6h | XM API | Métricas en tiempo real |
+| `etl_xm_to_postgres.py` | Manual | XM API | Backfill histórico |
+| `etl_nuevos_dashboards.py` | On-demand | OneDrive | Presupuesto, comunidades |
+| `etl_losses_detailed.py` | Diario | XM API | Pérdidas detalladas |
+| `etl_transmision.py` | Cada 6h | XM API | Datos de transmisión |
 
-**Funcionalidades:**
-- Estado actual del sector con KPIs
-- Predicciones con 5 horizontes temporales
-- Detección de anomalías con detalle expandible
-- Noticias del sector con scoring y URLs
-- Informe ejecutivo completo (11 secciones)
-- Gráficos PNG (embalses, precios, generación)
-- Chat libre con IA
+### Scheduling (Celery Beat)
+
+```python
+# Configuración en core/config.py o celery_config.py
+beat_schedule = {
+    'etl-metricas-xm': {
+        'task': 'tasks.etl_tasks.run_etl_xm',
+        'schedule': crontab(hour='*/6', minute=0),  # Cada 6 horas
+    },
+    'check-anomalies': {
+        'task': 'tasks.anomaly_tasks.detect_anomalies',
+        'schedule': crontab(minute='*/30'),  # Cada 30 minutos
+    },
+}
+```
 
 ---
 
 ## Instalación
 
 ### Requisitos
+
 - Python 3.12+
 - PostgreSQL 16+
-- Redis (para Celery Beat y caché)
-- Node.js 18+ (para WhatsApp Web, opcional)
-- Linux Ubuntu 20.04+
+- Redis 7+
+- 4GB RAM mínimo
+- 20GB espacio en disco
 
-### Setup
+### Pasos
 
 ```bash
-git clone https://github.com/MelissaCardona2003/Dashboard_Multipage_MME.git
-cd Dashboard_Multipage_MME
+# 1. Clonar repositorio
+git clone <url-repositorio> server
+cd server
 
-python3 -m venv venv
+# 2. Crear entorno virtual
+python3.12 -m venv venv
 source venv/bin/activate
+
+# 3. Instalar dependencias
 pip install -r requirements.txt
 
-# Configurar variables de entorno
+# 4. Configurar variables de entorno
 cp .env.example .env
-# Editar .env con credenciales reales
+nano .env  # Editar con credenciales reales
 
-# Base de datos
-sudo -u postgres createdb portal_energetico
+# 5. Inicializar base de datos
+python scripts/init_db.py
 
-# ETL inicial
-python3 etl/etl_xm_to_postgres.py --fecha-inicio 2020-01-01 --sin-timeout
+# 6. Ejecutar tests
+pytest tests/ -v
+
+# 7. Iniciar servicios
+# Terminal 1: API
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 2: Dashboard
+python app.py
+
+# Terminal 3: Celery Worker
+celery -A tasks worker --loglevel=info
+
+# Terminal 4: Celery Beat
+celery -A tasks beat --loglevel=info
 ```
 
-### Ejecución
+---
+
+## Despliegue
+
+### Producción (systemd)
 
 ```bash
-# Dashboard (systemd)
-sudo systemctl start dashboard-mme
+# API FastAPI
+sudo systemctl status api-mme
+sudo systemctl restart api-mme
 
-# API REST (systemd)
-sudo systemctl start api-mme
+# Dashboard Dash
+sudo systemctl status dashboard-mme
+sudo systemctl restart dashboard-mme
 
-# Bot Telegram
-python3 whatsapp_bot/telegram_polling.py &
+# Celery
+sudo systemctl status celery-worker
+sudo systemctl restart celery-worker
 
-# Bot WhatsApp
-uvicorn whatsapp_bot.app.main:app --host 0.0.0.0 --port 8001
+sudo systemctl status celery-beat
+sudo systemctl restart celery-beat
+```
+
+### Configuración Gunicorn
+
+```python
+# gunicorn_config.py
+bind = "127.0.0.1:8050"
+workers = 5
+worker_class = "gthread"
+threads = 2
+timeout = 120
+max_requests = 1000
 ```
 
 ---
 
-## Stack Tecnológico
+## Monitoreo y Logs
 
-| Capa | Tecnologías |
-|------|-------------|
-| Dashboard | Dash 2.17.1, Plotly 5.17.0, Flask 3.0.0, DBC 1.5.0 |
-| API | FastAPI 0.128.2, Pydantic 2.5, slowapi 0.1.9, Redis 5.0.8 |
-| Base de datos | PostgreSQL 16, psycopg2-binary 2.9.11 |
-| ML | Prophet 1.1.5, statsmodels, scikit-learn, XGBoost, LightGBM |
-| IA | Groq (Llama 3.3 70B), OpenRouter, openai SDK |
-| Bots | python-telegram-bot, Twilio, whatsapp-web.js (Node.js) |
-| Noticias | GNews, Mediastack, Google News RSS (httpx async) |
-| ETL | pydataxm 0.7.1, Celery 5.6.2, ArcGIS Python API |
-| Servidor | Gunicorn 23.0.0, Uvicorn 0.34.0, Nginx, systemd |
-| PDF | WeasyPrint |
-| Monitoreo | Prometheus, psutil, logrotate, MLflow 2.21.3 |
+### Rotación de Logs
 
----
-
-## Documentación
-
-### 🚀 Para Empezar
-| Documento | Contenido |
-|-----------|-----------|
-| [Guía de Onboarding](docs/GUIA_ONBOARDING.md) | Configuración inicial para nuevos desarrolladores |
-| [Guía de Troubleshooting](docs/GUIA_TROUBLESHOOTING.md) | Solución de problemas comunes |
-| [Guía de Uso del API](docs/GUIA_USO_API.md) | Endpoints, autenticación, ejemplos |
-
-### 🏗️ Arquitectura y Diseño
-| Documento | Contenido |
-|-----------|-----------|
-| [Informe Arquitectura Completa v4](docs/informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-05.md) | Inspección completa: 12 secciones, inventario BD, deuda técnica, seguridad |
-| [Fases 1-5 Completadas](docs/informes/INFORME_PROYECTO_COMPLETO_FASES_1_5.md) | Resumen de todas las fases de modernización |
-| [Arquitectura E2E](docs/ARQUITECTURA_E2E.md) | Arquitectura end-to-end completa |
-| [Análisis Dashboard](docs/ANALISIS_COMPLETO_DASHBOARD_MME.md) | Análisis completo del dashboard |
-
-### 🤖 Orquestador e Integraciones
-| Documento | Contenido |
-|-----------|-----------|
-| [Documentación Técnica Orquestador](docs/DOCUMENTACION_TECNICA_ORQUESTADOR.md) | 20+ intents, timeout, flujo completo |
-| [Endpoint Orchestrator](docs/ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md) | Integración para Oscar (WhatsApp) |
-| [Plan Subsidios Telegram](docs/PLAN_SUBSIDIOS_TELEGRAM.md) | Notificaciones y alertas |
-
-### 🔧 Operaciones
-| Documento | Contenido |
-|-----------|-----------|
-| [Inventario Servidor](docs/INVENTARIO_SERVIDOR.md) | Configuración del servidor |
-| [Disponibilidad 24/7](docs/DISPONIBILIDAD_24_7.md) | systemd, nginx, monitoreo |
-| [Cron Jobs ETL](docs/CRON_JOB_ETL_POSTGRESQL.md) | Configuración de automatización |
-| [Links de Acceso](docs/LINKS_ACCESO.md) | URLs y accesos importantes |
-
-### 🤖 ML e IA
-| Documento | Contenido |
-|-----------|-----------|
-| [Auditoría Predicciones](docs/FASE7_AUDITORIA_PREDICCIONES.md) | MAPE/RMSE por modelo y métrica |
-| [Política de Confianza](docs/POLITICA_CONFIANZA_PREDICCIONES.md) | Niveles de confianza ML |
-| [Documentación IA/ML](docs/tecnicos/DOCUMENTACION_TECNICA_IA_ML.md) | Documentación técnica de IA/ML |
-
-### 📊 Datos y Referencias
-| Documento | Contenido |
-|-----------|-----------|
-| [Mapeo Métricas](docs/MAPEO_COMPLETO_METRICAS.md) | 120+ métricas XM/SIMEM documentadas |
-| [Metodología CU](docs/METODOLOGIA_CU.md) | Metodología Costo Unitario |
-
----
-
-[Ver índice completo de documentación](docs/README.md)
-
----
-
-## Administración
+Configuración en `config/logrotate-mme.conf`:
 
 ```bash
-# Estado de servicios
-sudo systemctl status dashboard-mme api-mme
+# Aplicar configuración
+sudo cp config/logrotate-mme.conf /etc/logrotate.d/mme-server
+sudo logrotate -f /etc/logrotate.d/mme-server
+```
 
-# Logs en vivo
-tail -f logs/gunicorn_error.log
-tail -f logs/api-error.log
+### Métricas Clave
 
-# Puertos activos
-ss -tlnp | grep -E '8000|8050|8001|5000'
+| Métrica | Valor Esperado | Alerta si |
+|---------|----------------|-----------|
+| Uptime API | >99% | <95% |
+| Tiempo respuesta API | <200ms | >500ms |
+| Errores 5xx | <1% | >5% |
+| Conexiones BD | <80% pool | >95% pool |
+| Uso RAM | <70% | >90% |
 
-# Restart sin downtime (API)
-kill -HUP $(pgrep -f "gunicorn.*8000" | head -1)
+### Logs Importantes
+
+```bash
+# API
+ tail -f logs/gunicorn_error.log
+ tail -f logs/gunicorn_access.log
+
+# Celery
+ tail -f logs/celery/worker-1.log
+ tail -f logs/celery/worker-2.log
+
+# ETL
+ tail -f logs/actualizacion_onedrive_arcgis.log
 ```
 
 ---
 
-## Licencia
+## Documentación Adicional
 
-Propiedad del **Ministerio de Minas y Energía de Colombia**.
-
-**Repositorio:** https://github.com/MelissaCardona2003/Dashboard_Multipage_MME  
-**Última actualización:** 21 de marzo de 2026  
-**Tag:** v1.5.0
-
----
-
-## Changelog
-
-### v1.5.0 — 21 Marzo 2026
-- **fix(inversiones):** `TypeError: crear_kpi() got an unexpected keyword argument 'subtitulo'` — cambiado kwarg `subtitulo` → `subtexto` en 4 dicts del callback `calcular_lcoe_guajira()`
-- **fix(metrics_service):** `NameError: name 'redis_get_json' is not defined` — agregado import faltante `from infrastructure.cache.redis_client import redis_get_json, redis_set_json`
-- **fix(dependencies):** `AttributeError: 'DependencyContainer' has no attribute 'get_cu_service'/'losses_nt_service'/'simulation_service'` — reemplazados con llamadas a funciones de módulo en `core.container` en `api/dependencies.py`, `cu_pnt_handler.py` y `libre_noticias_handler.py`
-- **fix(simulation_service):** `NameError: name 'PostgreSQLConnectionManager' is not defined` — corregido `self._conn_mgr = PostgreSQLConnectionManager()` → `self._conn_mgr = _get_connection_manager()`
-- **fix(cache):** `AttributeError: 'str' object has no attribute 'empty'` — `CacheManager` ahora serializa `pd.DataFrame` con marker tipado `{"__dataframe__": True, "records": [...]}` en lugar de `json.dumps(default=str)` para evitar deserialización como string; afectaba `distribucion.py`, `perdidas_nt.py` y todos los servicios con `@cached`
-- **chore(docs):** Eliminados 14 informes de sesión obsoletos de `docs/.archivados/` e `docs/informes/`; actualizados `LINKS_ACCESO.md` (stats BD reales) y `GUIA_TROUBLESHOOTING.md` (bugs conocidos y soluciones de caché)
-
-### v1.4.0 — 15 Marzo 2026
-- **fix(costo_usuario_final):** `TypeError: can only concatenate str (not "Br") to str` al construir la alerta de metodología en la página CU Usuario Final
-- **fix(config_simem):** `AttributeError: 'list' object has no attribute 'empty'` — `obtener_listado_simem()` ahora retorna `pd.DataFrame` con columnas `CodigoVariable` y `Nombre` en lugar de lista plana
-- **feat(chatbot):** Widget flotante con panel anclado `bottom:20px` que crece hacia arriba; posición `top:70%` para no interferir con navbar
-- **feat(home):** Carrusel de noticias del sector energético en esquina superior izquierda, auto-rotante cada 7 s
-- **fix(alertas):** Eliminadas 2 alertas `BALANCE_ENERGETICO` falsas de la BD generadas antes del fix
-- **chore:** Eliminados 3 archivos basura del directorio raíz (`:`, `ettings`, `tructure.database.manager import db_manager`)
-- **chore(gitignore):** Patrones para ignorar salidas de pager/terminal guardadas accidentalmente
-- **refactor:** Arquitectura hexagonal completa — 261 archivos Python, 0 errores de sintaxis
+- [Guía de Onboarding](./docs/GUIA_ONBOARDING.md)
+- [Arquitectura E2E](./docs/ARQUITECTURA_E2E.md)
+- [Guía Troubleshooting](./docs/GUIA_TROUBLESHOOTING.md)
+- [Uso de API](./docs/GUIA_USO_API.md)
+- [Índice Completo](./docs/INDICE.md)
 
 ---
 
-## 🔥 Hotfix Reciente (2026-03-30)
+## Estado de Corrección V4
 
-### Bugs Críticos Corregidos
+### Fases Completadas
 
-#### 1. IndentationError en api/dependencies.py
-- **Problema:** Línea 187 con indentación incorrecta causaba fallo al importar
-- **Fix:** Corregir indentación de `return _get_cu_service()`
-- **Impacto:** 8 tests no podían arrancar, API en riesgo de caída
+| Fase | Descripción | Estado |
+|------|-------------|--------|
+| 1 | Limpieza basura | ✅ 6 archivos eliminados |
+| 2 | Documentar deuda técnica | ✅ 3 servicios deprecated |
+| 3 | Optimización espacio | ✅ ~1GB liberado |
+| 4 | Arquitectura | ⏸️ Diferida a V5 |
+| 5 | Documentación | ✅ README actualizado |
 
-#### 2. Credenciales Hardcodeadas
-- **Archivos afectados:**
-  - `scripts/inspeccion_senior_endpoint.py` - API_KEY literal
-  - `scripts/send_test_informe_email.py` - Fallback inseguro
-  - `scripts/arcgis/actualizar_datos_xm_online.py` - Password en comentario
-- **Fix:** Mover a variables de entorno, eliminar fallbacks inseguros
+### Deuda Técnica Documentada
 
-#### 3. Dependencias
-- Actualizar `fastapi==0.109.0` → `0.109.2`
-- Agregar `cryptography>=41.0.7` (requerido por vault.py)
+- **Archivos con print():** 72 (planificado para V5)
+- **Archivos con except Exception:** 171 (planificado para V5)
+- **Tests de integración:** 0 (planificado para V5)
 
-### Módulos Integrados
+---
 
-#### core/security/ (Nuevo)
-- `vault.py` - Encriptación Fernet AES-128
-- `sql_validator.py` - Validación de queries SQL
+## Contacto
 
-#### core/database/ (Nuevo)
-- `migration_helper.py` - Utilidades para migraciones
+- **Desarrollador Principal:** [Tu nombre/email]
+- **Infraestructura:** Equipo TI MinMinas
+- **Repositorio:** [URL del repositorio]
 
-#### core/app_factory_fix.py (Referencia)
-- Fix para problema de callbacks Dash en Gunicorn multiworker
-- Solución: `use_pages=False`
+---
 
-### Estado de Tests
-- ✅ 104 tests pasando
-- ⚠️ 15 tests fallan por dependencias opcionales (sklearn, prophet)
-- ✅ Tests críticos de servicios principales funcionando
-
+© 2026 Ministerio de Minas y Energía - República de Colombia
