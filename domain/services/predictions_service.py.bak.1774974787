@@ -3,15 +3,6 @@ Servicio de dominio para predicciones.
 Re-exporta PredictionsService desde predictions_service_extended para unificar
 la implementación. El stub original está consolidado en el módulo extendido.
 """
-"""
-⚠️  DEPRECATED ⚠️
-Este servicio está marcado como deprecated y será eliminado en futuras versiones.
-Razón: Funcionalidad delegada a predictions_service_extended.py
-Fecha de deprecación: 2026-03-31
-Última versión compatible: V4
-"""
-
-
 
 # Re-export: un único PredictionsService canónico en todo el codebase
 from domain.services.predictions_service_extended import PredictionsService  # noqa: F401
