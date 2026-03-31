@@ -2,7 +2,7 @@
 
 ## Documentación del Sistema
 
-Última actualización: 31 de marzo de 2026
+Última actualización: 31 de marzo de 2026 — Stats: 350 archivos Python, 52 endpoints, 347/354 tests
 
 ---
 
@@ -77,6 +77,14 @@
 |-----------|-------------|---------------------|
 | [informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-05.md](./informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-05.md) | Arquitectura completa | 2026-03-05 |
 | [informes/INFORME MENSUAL DE ACTIVIDADES - FEBRERO 2026.md](./informes/INFORME%20MENSUAL%20DE%20ACTIVIDADES%20-%20FEBRERO%202026.md) | Actividades febrero 2026 | 2026-02-28 |
+
+### Refactoring y Técnicos
+
+| Documento | Descripción | Última Actualización |
+|-----------|-------------|---------------------|
+| [refactoring/ARCHIVOS_GRANDES_PLAN.md](./refactoring/ARCHIVOS_GRANDES_PLAN.md) | Plan archivos grandes | 2026-03-31 |
+| [tecnicos/ANALISIS_HIDROLOGIA_SEMAFORO.md](./tecnicos/ANALISIS_HIDROLOGIA_SEMAFORO.md) | Análisis hidrología semáforo | 2026-03-31 |
+| [tecnicos/DOCUMENTACION_TECNICA_IA_ML.md](./tecnicos/DOCUMENTACION_TECNICA_IA_ML.md) | Documentación IA/ML | 2026-03-31 |
 
 ---
 

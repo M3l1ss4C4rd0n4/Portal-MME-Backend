@@ -186,9 +186,10 @@ Ambas apuntan al mismo servidor con las mismas credenciales.
 
 | Métrica | Valor |
 |---|---|
-| Tests pasando | 117/117 |
+| Tests pasando | 347/354 |
 | Tests deseleccionados | 10 (integración/async) |
-| Tests fallando | 0 |
+| Tests fallando | 7 (test_container x5, test_transmission_service x2) |
+| Errores de colección | 6 (servicios refactorizados) |
 | Cobertura estimada | ~35-40% |
 
 ---
@@ -199,7 +200,7 @@ Ambas apuntan al mismo servidor con las mismas credenciales.
 |---|---|---|
 | **Servicios** | ✅ Todos activos | 11 servicios systemd running |
 | **Base de datos** | ✅ Operativa | 63.8M filas, 14.8 GB |
-| **Tests** | ✅ 117/117 | 0 fallos |
+| **Tests** | ⚠️ 347/354 | 7 fallos pendientes |
 | **Código muerto** | ⚠️ Menor | SmartDict dup + debug write (FASE 5) |
 | **Deuda técnica** | ⚠️ Moderada | DI 2/12, doble ruta DB |
 | **Seguridad** | ✅ API Key | Todas las rutas protegidas |
