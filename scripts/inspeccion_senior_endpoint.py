@@ -3,12 +3,16 @@
 Script de inspección senior para validar endpoint orquestador
 Valida disponibilidad, seguridad, contratos y documentación
 """
+import os
 import requests
 import sys
 from datetime import datetime
 
 BASE_URL = "http://127.0.0.1:8000"
-API_KEY = "MME2026_SECURE_KEY"
+API_KEY = os.getenv("MME_INSPECTION_API_KEY")
+if not API_KEY:
+    print("ERROR: MME_INSPECTION_API_KEY no configurada", file=sys.stderr)
+    sys.exit(1)
 
 class Colors:
     GREEN = '\033[92m'
