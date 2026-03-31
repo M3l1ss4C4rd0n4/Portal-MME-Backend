@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def _get_default_repo():
     """Obtiene repositorio por defecto vía container."""
     from core.container import container
-    return container.resolve(IMetricsRepository)
+    return container.get_metrics_repository()
 
 
 class MetricsService:
