@@ -409,3 +409,44 @@ Propiedad del **Ministerio de Minas y Energía de Colombia**.
 - **chore:** Eliminados 3 archivos basura del directorio raíz (`:`, `ettings`, `tructure.database.manager import db_manager`)
 - **chore(gitignore):** Patrones para ignorar salidas de pager/terminal guardadas accidentalmente
 - **refactor:** Arquitectura hexagonal completa — 261 archivos Python, 0 errores de sintaxis
+
+---
+
+## 🔥 Hotfix Reciente (2026-03-30)
+
+### Bugs Críticos Corregidos
+
+#### 1. IndentationError en api/dependencies.py
+- **Problema:** Línea 187 con indentación incorrecta causaba fallo al importar
+- **Fix:** Corregir indentación de `return _get_cu_service()`
+- **Impacto:** 8 tests no podían arrancar, API en riesgo de caída
+
+#### 2. Credenciales Hardcodeadas
+- **Archivos afectados:**
+  - `scripts/inspeccion_senior_endpoint.py` - API_KEY literal
+  - `scripts/send_test_informe_email.py` - Fallback inseguro
+  - `scripts/arcgis/actualizar_datos_xm_online.py` - Password en comentario
+- **Fix:** Mover a variables de entorno, eliminar fallbacks inseguros
+
+#### 3. Dependencias
+- Actualizar `fastapi==0.109.0` → `0.109.2`
+- Agregar `cryptography>=41.0.7` (requerido por vault.py)
+
+### Módulos Integrados
+
+#### core/security/ (Nuevo)
+- `vault.py` - Encriptación Fernet AES-128
+- `sql_validator.py` - Validación de queries SQL
+
+#### core/database/ (Nuevo)
+- `migration_helper.py` - Utilidades para migraciones
+
+#### core/app_factory_fix.py (Referencia)
+- Fix para problema de callbacks Dash en Gunicorn multiworker
+- Solución: `use_pages=False`
+
+### Estado de Tests
+- ✅ 104 tests pasando
+- ⚠️ 15 tests fallan por dependencias opcionales (sklearn, prophet)
+- ✅ Tests críticos de servicios principales funcionando
+
