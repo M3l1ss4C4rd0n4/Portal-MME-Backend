@@ -178,8 +178,30 @@ experiments/*.csv
 # WhatsApp Web Service runtime
 whatsapp_bot/whatsapp-web-service/node_modules/
 whatsapp_bot/whatsapp-web-service/.wwebjs_auth/
+whatsapp_bot/venv/
 
 # OneDrive test files
 data/onedrive/test_*
 data/onedrive/Test_*
 .pyright-baseline
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Pyright / type checking runtime
+.pyright-current-errors
+pyrightconfig.json
+
+# Logs (rotar con logrotate, no rastrear)
+logs/*.log
+logs/**/*.log
+nohup.out
+
+# Vault y secrets runtime
+.vault_key
+
+# Terminal/proceso output
+gunicorn.ctl
+htmlcov/
