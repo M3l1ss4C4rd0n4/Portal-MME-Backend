@@ -170,7 +170,7 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
 
 def etl_supervision() -> None:
     """Carga Matriz General de Reparto.xlsx → schema supervision."""
-    xlsx_path = BASE_DIR / 'data' / 'base de datos supervision' / 'Matriz General de Reparto.xlsx'
+    xlsx_path = BASE_DIR / 'data' / 'base_de_datos_supervision' / 'Matriz General de Reparto.xlsx'
     logger.info(f"=== ETL SUPERVISION: {xlsx_path.name} ===")
 
     # Main sheet: Matriz General de Reparto
@@ -237,7 +237,7 @@ def etl_presupuesto() -> None:
 
 def etl_contratos_or() -> None:
     """Carga Seguimiento Completo_CE_Contratos.xlsx → schema contratos_or."""
-    xlsx_path = (BASE_DIR / 'data' / 'base de datos contratos OR' /
+    xlsx_path = (BASE_DIR / 'data' / 'base_de_datos_contratos_or' /
                  'Seguimiento Completo_CE_Contratos.xlsx')
     logger.info(f"=== ETL CONTRATOS OR: {xlsx_path.name} ===")
 
