@@ -205,3 +205,13 @@ nohup.out
 # Terminal/proceso output
 gunicorn.ctl
 htmlcov/
+
+# Archivos de datos sensibles (no commitear)
+data/onedrive/*.xlsx
+data/onedrive/*.csv
+data/onedrive/*.json
+data/*.xlsx
+data/*.csv
+*.xlsx
+*.csv
+!data/catalogs/*.csv
