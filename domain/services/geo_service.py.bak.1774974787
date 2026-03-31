@@ -2,15 +2,6 @@
 Servicio de Georreferenciación y Coordenadas
 Reemplaza utils.embalses_coordenadas
 """
-"""
-⚠️  DEPRECATED ⚠️
-Este servicio está marcado como deprecated y será eliminado en futuras versiones.
-Razón: Servicio casi vacío (32 líneas), funcionalidad no implementada
-Fecha de deprecación: 2026-03-31
-Última versión compatible: V4
-"""
-
-
 
 REGIONES_COORDENADAS = {
     "ANTIOQUIA": {"lat": 6.949021, "lon": -75.244383, "nombre": "Antioquia"},
