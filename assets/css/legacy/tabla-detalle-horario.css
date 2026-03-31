@@ -1,0 +1,18 @@
+/* ============================================
+   TABLA DETALLE HORARIO - Fila TOTAL
+   ============================================ */
+
+/* Sobrescribir todos los estilos de color para fila TOTAL */
+#tabla-detalle-horario .dash-spreadsheet-container .dash-spreadsheet-inner table tbody tr:last-child td,
+#tabla-detalle-horario .dash-spreadsheet-container .dash-spreadsheet-inner table tbody tr:last-child td div {
+    background-color: #0d6efd !important;
+    color: #ffffff !important;
+    font-weight: bold !important;
+    text-align: center !important;
+}
+
+/* Asegurar que no haya hover en la última fila */
+#tabla-detalle-horario .dash-spreadsheet-container .dash-spreadsheet-inner table tbody tr:last-child:hover td {
+    background-color: #0d6efd !important;
+    color: #ffffff !important;
+}

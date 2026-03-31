@@ -1,0 +1,30 @@
+/* Estilos forzados para KPI números - Sobrescribir todo */
+.kpi-number {
+    color: #000000 !important;
+    font-weight: 800 !important;
+    font-size: 2.7rem !important;
+    line-height: 1 !important;
+    display: inline-block !important;
+    -webkit-text-fill-color: #000000 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+.kpi-number * {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+}
+
+/* Forzar color negro en todos los textos de las tarjetas KPI */
+#contenedor-fichas-generacion .card-body * {
+    color: #000000 !important;
+}
+
+#contenedor-fichas-generacion h6 {
+    color: #111827 !important;
+}
+
+#contenedor-fichas-generacion .badge {
+    color: #000000 !important;
+    background-color: #fbbf24 !important;
+}

@@ -1,0 +1,426 @@
+/* ============================================================
+   04-PAGES.CSS
+   Estilos Específicos por Página - Portal Energético MME
+   ============================================================
+   Estilos particulares de cada página/módulo
+   ============================================================ */
+
+/* ────────────────────────────────────────────────────────────
+   PÁGINA: GENERACIÓN POR FUENTES
+   ──────────────────────────────────────────────────────────── */
+
+/* Layout específico de la página */
+.generacion-fuentes-page {
+  padding: var(--space-4);
+}
+
+/* Grid de gráficas */
+.generacion-fuentes-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr 350px;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 1400px) {
+  .generacion-fuentes-grid {
+    grid-template-columns: 280px 1fr 320px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .generacion-fuentes-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  
+  .generacion-fuentes-grid > *:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .generacion-fuentes-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Torta de participación */
+.torta-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.torta-title {
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+  text-align: center;
+}
+
+/* Gráfica temporal */
+.grafica-temporal-container {
+  min-height: 400px;
+}
+
+/* Tabla de detalle */
+.tabla-detalle-container {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* Fila total en tabla */
+.tabla-detalle-container .dash-spreadsheet-container 
+.dash-spreadsheet-inner table tbody tr:last-child td {
+  background-color: var(--mme-primary) !important;
+  color: white !important;
+  font-weight: var(--font-bold) !important;
+}
+
+/* ────────────────────────────────────────────────────────────
+   PÁGINA: HOME / PORTADA
+   ──────────────────────────────────────────────────────────── */
+
+.home-page {
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Módulos interactivos en la portada */
+.modulo-card {
+  position: absolute;
+  background: white;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  box-shadow: var(--shadow);
+  transition: all var(--transition);
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--text-primary);
+  max-width: 200px;
+}
+
+.modulo-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--mme-primary-light);
+}
+
+.modulo-icon {
+  font-size: 24px;
+  margin-bottom: var(--space-2);
+  color: var(--mme-primary);
+}
+
+.modulo-title {
+  font-size: var(--text-sm);
+  font-weight: var(--font-bold);
+  margin-bottom: var(--space-1);
+}
+
+.modulo-description {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ────────────────────────────────────────────────────────────
+   PÁGINA: TRANSMISIÓN
+   ──────────────────────────────────────────────────────────── */
+
+.transmision-map-container {
+  height: 600px;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* ────────────────────────────────────────────────────────────
+   PÁGINA: COSTO UNITARIO
+   ──────────────────────────────────────────────────────────── */
+
+.cu-breakdown-card {
+  background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+}
+
+.cu-component-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+.cu-component-row:last-child {
+  border-bottom: none;
+}
+
+.cu-component-name {
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+
+.cu-component-value {
+  font-size: var(--text-lg);
+  font-weight: var(--font-bold);
+  color: var(--mme-primary);
+}
+
+/* ────────────────────────────────────────────────────────────
+   PÁGINA: PÉRDIDAS
+   ──────────────────────────────────────────────────────────── */
+
+.perdidas-chart-container {
+  position: relative;
+}
+
+.perdidas-zona-badge {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 10;
+}
+
+/* ────────────────────────────────────────────────────────────
+   PÁGINA: PREDICCIONES
+   ──────────────────────────────────────────────────────────── */
+
+.prediccion-card {
+  border-left: 4px solid var(--mme-primary);
+}
+
+.prediccion-card.alerta-baja {
+  border-left-color: var(--success);
+}
+
+.prediccion-card.alerta-media {
+  border-left-color: var(--warning);
+}
+
+.prediccion-card.alerta-alta {
+  border-left-color: var(--danger);
+}
+
+/* ────────────────────────────────────────────────────────────
+   COMPONENTES ESPECÍFICOS
+   ──────────────────────────────────────────────────────────── */
+
+/* Toggle de tema */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+}
+
+.theme-toggle i {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-4);
+  z-index: var(--z-tooltip);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.toast-success {
+  background: var(--success-bg);
+  border-left: 4px solid var(--success);
+}
+
+.toast-error {
+  background: var(--danger-bg);
+  border-left: 4px solid var(--danger);
+}
+
+/* Breadcrumbs */
+.app-breadcrumbs {
+  background: transparent;
+  padding: var(--space-2) 0;
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.app-breadcrumbs .breadcrumb-item a {
+  color: var(--text-muted);
+}
+
+.app-breadcrumbs .breadcrumb-item a:hover {
+  color: var(--mme-primary);
+}
+
+.app-breadcrumbs .breadcrumb-item.active {
+  color: var(--text-primary);
+  font-weight: var(--font-medium);
+}
+
+/* Help tooltip */
+.help-icon-wrapper {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-1);
+}
+
+.help-icon-wrapper i {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: help;
+}
+
+.help-icon-wrapper i:hover {
+  color: var(--mme-primary);
+}
+
+.help-tooltip {
+  font-size: var(--text-xs);
+  max-width: 250px;
+}
+
+/* Loading spinner */
+.loading-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+}
+
+.loading-spinner::after {
+  content: "";
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--mme-primary);
+  border-radius: 50%;
+  animation: spinner 0.8s linear infinite;
+}
+
+@keyframes spinner {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-10);
+  text-align: center;
+}
+
+.empty-state-icon {
+  font-size: 48px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.empty-state-title {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.empty-state-description {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  max-width: 300px;
+}
+
+/* Error state */
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-10);
+  text-align: center;
+}
+
+.error-state-icon {
+  font-size: 48px;
+  color: var(--danger);
+  margin-bottom: var(--space-4);
+}
+
+.error-state-title {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--danger);
+  margin-bottom: var(--space-2);
+}
+
+.error-state-description {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  max-width: 400px;
+  margin-bottom: var(--space-4);
+}
+
+/* Date range picker custom */
+.DateRangePicker {
+  display: block;
+}
+
+.DateRangePickerInput {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.DateRangePickerInput__withBorder {
+  border: 1px solid var(--border-color);
+}
+
+.DateInput {
+  width: 100px;
+}
+
+.DateInput_input {
+  font-size: var(--text-sm);
+  padding: 6px 8px;
+  line-height: 1.5;
+}
+
+.CalendarDay__selected {
+  background: var(--mme-primary);
+  border-color: var(--mme-primary);
+}
+
+.CalendarDay__selected:hover {
+  background: var(--mme-primary-dark);
+  border-color: var(--mme-primary-dark);
+}
+
+/* Dropdown multi-select */
+.Select--multi .Select-value {
+  background: var(--mme-primary-bg);
+  border-color: var(--mme-primary-light);
+  color: var(--mme-primary);
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
+}
+
+.Select--multi .Select-value-icon {
+  border-right-color: var(--mme-primary-light);
+  color: var(--mme-primary);
+}
+
+.Select--multi .Select-value-icon:hover {
+  background: var(--mme-primary-light);
+  color: white;
+}

@@ -1,0 +1,500 @@
+/*
+ * density-override.css — Portal Energético MME
+ * ────────────────────────────────────────────
+ * Reduce la densidad visual global para que el dashboard quepa correctamente
+ * en pantallas 1080p a zoom 100% sin scroll horizontal ni vertical excesivo.
+ * Cargado DESPUÉS de styles.css y tabler-mme.css gracias al nombre alfabético.
+ */
+
+/* ── 1. VARIABLE BASE ───────────────────────────────────────────────────── */
+:root {
+    --navbar-height: 42px;        /* dbc.Navbar sticky — altura compacta */
+    --card-padding-y: 0.6rem;
+    --card-padding-x: 0.75rem;
+    --section-gap: 0.5rem;
+    --font-base: 13px;
+}
+
+/* ── 2. TIPOGRAFÍA GLOBAL ────────────────────────────────────────────────── */
+body, .container-fluid, .container {
+    font-size: var(--font-base) !important;
+}
+
+h1 { font-size: 1.4rem !important; }
+h2 { font-size: 1.2rem !important; }
+h3 { font-size: 1.05rem !important; }
+h4 { font-size: 0.95rem !important; }
+h5 { font-size: 0.85rem !important; }
+h6 { font-size: 0.8rem  !important; }
+
+/* ── 3. NAVBAR COMPACTA ──────────────────────────────────────────────────── */
+.navbar {
+    min-height: var(--navbar-height) !important;
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+}
+
+.t-global-navbar {
+    height: var(--navbar-height) !important;
+    min-height: var(--navbar-height) !important;
+}
+
+/* NavLinks del header: más compactos */
+.navbar .nav-link,
+.t-global-navbar .nav-link {
+    font-size: 12px !important;
+    padding: 4px 9px !important;
+    margin: 0 1px !important;
+}
+
+/* Logo / brand compacto */
+.navbar-brand img {
+    height: 34px !important;
+}
+
+.navbar-brand {
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+    font-size: 13px !important;
+}
+
+/* ── 4. COMPENSACIÓN TOP (fixed navbar) ─────────────────────────────────── */
+/* navbar es sticky — sin necesidad de offset */
+#page-content,
+.page-wrapper,
+.main-content {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+
+/* Ocultar dcc.Location invisible para que no genere altura */
+#_pages_location, #url-navbar, #url {
+    display: block !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    position: absolute !important;
+    visibility: hidden !important;
+}
+
+/* ── 5. CARDS COMPACTAS ──────────────────────────────────────────────────── */
+.card {
+    margin-bottom: var(--section-gap) !important;
+}
+.card-header {
+    padding: var(--card-padding-y) var(--card-padding-x) !important;
+    font-size: 0.82rem !important;
+    font-weight: 600 !important;
+}
+.card-body {
+    padding: var(--card-padding-y) var(--card-padding-x) !important;
+}
+.card-footer {
+    padding: 0.35rem var(--card-padding-x) !important;
+}
+
+/* ── 6. REDUCIR MÁRGENES DE ROW/COL ─────────────────────────────────────── */
+.row {
+    --bs-gutter-x: 0.6rem;
+    --bs-gutter-y: 0.4rem;
+}
+
+/* ── 7. FILTROS / FORMULARIOS COMPACTOS ─────────────────────────────────── */
+.form-label {
+    font-size: 0.75rem !important;
+    margin-bottom: 2px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: #6c757d;
+}
+
+.form-control,
+.form-select {
+    font-size: 0.8rem !important;
+    padding: 0.25rem 0.5rem !important;
+    height: auto !important;
+}
+
+/* Dash Core Components: Dropdown */
+.Select-control,
+.VirtualizedSelectFocusedOption,
+.Select-menu-outer {
+    font-size: 0.8rem !important;
+}
+.Select-input > input {
+    font-size: 0.8rem !important;
+}
+.Select-placeholder,
+.Select-value-label {
+    font-size: 0.8rem !important;
+    line-height: 30px !important;
+}
+.Select-control {
+    min-height: 32px !important;
+    height: 32px !important;
+}
+/* Nuevo Dash (>=2.x) dropdown */
+.dash-dropdown .Select-control {
+    min-height: 30px !important;
+    height: 30px !important;
+}
+
+/* DBC Dropdown */
+.dropdown-menu {
+    font-size: 0.8rem !important;
+}
+.dropdown-item {
+    padding: 0.25rem 0.75rem !important;
+}
+
+/* Botones compactos */
+.btn {
+    font-size: 0.8rem !important;
+    padding: 0.25rem 0.65rem !important;
+}
+.btn-sm {
+    font-size: 0.75rem !important;
+    padding: 0.2rem 0.5rem !important;
+}
+.btn-lg {
+    font-size: 0.9rem !important;
+    padding: 0.35rem 1rem !important;
+}
+
+/* ── 8. GRÁFICAS: márgenes internos reducidos ────────────────────────────── */
+.dash-graph {
+    overflow: hidden;
+}
+/* Reduce el espacio en blanco sobre/bajo gráficas */
+.dash-graph .js-plotly-plot {
+    margin-top: 0 !important;
+}
+
+/* ── 9. BREADCRUMBS / SUBTÍTULOS ────────────────────────────────────────── */
+.breadcrumb {
+    font-size: 0.72rem !important;
+    padding: 0.2rem 0 !important;
+    margin-bottom: 0.3rem !important;
+}
+.breadcrumb-item + .breadcrumb-item::before {
+    font-size: 0.72rem;
+}
+
+/* ── 10. TABLAS ──────────────────────────────────────────────────────────── */
+.dash-spreadsheet-container .dash-spreadsheet-inner td,
+.dash-spreadsheet-container .dash-spreadsheet-inner th {
+    font-size: 0.75rem !important;
+    padding: 4px 8px !important;
+}
+
+/* ── 11. TABS ────────────────────────────────────────────────────────────── */
+.nav-tabs .nav-link {
+    font-size: 0.8rem !important;
+    padding: 0.3rem 0.75rem !important;
+}
+
+/* ── 12. ALERTS / BADGES ─────────────────────────────────────────────────── */
+.alert {
+    padding: 0.4rem 0.75rem !important;
+    font-size: 0.8rem !important;
+    margin-bottom: 0.4rem !important;
+}
+.badge {
+    font-size: 0.7rem !important;
+}
+
+/* ── 13. MODAL: más compacto ─────────────────────────────────────────────── */
+.modal-header {
+    padding: 0.6rem 0.9rem !important;
+}
+.modal-body {
+    padding: 0.75rem 0.9rem !important;
+}
+.modal-footer {
+    padding: 0.4rem 0.9rem !important;
+}
+
+/* ── 14. SECCIONES CON EXCESO DE PADDING ────────────────────────────────── */
+.hero-header {
+    padding: 1.2rem 1.5rem !important;
+}
+.hero-header h1 {
+    font-size: 1.6rem !important;
+}
+
+/* KPI Cards: más apretadas */
+.kpi-card, .kpi-number {
+    font-size: 1.4rem !important;
+}
+
+/* ── 15. SCROLL SUAVIZADO ────────────────────────────────────────────────── */
+html {
+    scroll-behavior: smooth;
+}
+
+/* ── 16. SEPARACIÓN ENTRE SECCIONES ─────────────────────────────────────── */
+.mb-4 { margin-bottom: 0.75rem !important; }
+.mb-3 { margin-bottom: 0.5rem !important; }
+.mb-2 { margin-bottom: 0.35rem !important; }
+.mt-4 { margin-top: 0.75rem !important; }
+.mt-3 { margin-top: 0.5rem !important; }
+.mt-2 { margin-top: 0.35rem !important; }
+.py-4 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+.py-3 { padding-top: 0.5rem !important; padding-bottom: 0.5rem !important; }
+.px-4 { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+.p-4  { padding: 0.75rem !important; }
+.p-3  { padding: 0.5rem !important; }
+
+/* ── 17. CONTENEDOR PRINCIPAL (evitar scroll horizontal) ─────────────────── */
+.container-fluid {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    max-width: 100% !important;
+    overflow-x: hidden;
+}
+
+/* == 18. PREDICCIONES: tarjetas metricas alineadas con design system MME == */
+#grid-tarjetas-predicciones .row {
+    --bs-gutter-x: 0.5rem;
+    --bs-gutter-y: 0.5rem;
+}
+#grid-tarjetas-predicciones .card {
+    border: 1px solid var(--t-border, #e2e8f0) !important;
+    border-radius: 8px !important;
+    background: var(--t-bg-card, #ffffff) !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+    transition: box-shadow 0.2s ease, transform 0.15s ease !important;
+    margin-bottom: 0 !important;
+}
+#grid-tarjetas-predicciones .card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
+    transform: translateY(-1px);
+}
+#grid-tarjetas-predicciones .card-header {
+    padding: 0.4rem 0.65rem !important;
+    font-size: 0.8rem !important;
+    font-weight: 600 !important;
+    background: transparent !important;
+    border-bottom: 1px solid var(--t-border-light, #f1f5f9) !important;
+}
+#grid-tarjetas-predicciones .card-body {
+    padding: 0.55rem 0.65rem !important;
+    font-size: 0.78rem !important;
+}
+#grid-tarjetas-predicciones .btn-outline-primary {
+    font-size: 0.72rem !important;
+    padding: 0.2rem 0.5rem !important;
+}
+#seccion-resumen-ejecutivo .card {
+    border-radius: 8px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+}
+#seccion-resumen-ejecutivo .card-body {
+    padding: 0.6rem 0.75rem !important;
+}
+#collapse-tabla-maestra .dash-spreadsheet-container {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+/* == 19. DARK MODE: variables CSS para DBC con data-bs-theme == */
+:root {
+    color-scheme: light;
+}
+[data-bs-theme="dark"] {
+    --bs-body-bg: #0f172a;
+    --bs-body-color: #e2e8f0;
+    --bs-card-bg: #1e293b;
+    --bs-border-color: #334155;
+    color-scheme: dark;
+    --t-bg: #0f172a;
+    --t-bg-card: #1e293b;
+    --t-border: #334155;
+    --t-border-light: #263148;
+    --t-text: #e2e8f0;
+    --t-text-secondary: #94a3b8;
+    --t-text-muted: #64748b;
+}
+[data-bs-theme="dark"] body,
+[data-bs-theme="dark"] .container-fluid {
+    background-color: #0f172a !important;
+    color: #e2e8f0 !important;
+}
+[data-bs-theme="dark"] .card,
+[data-bs-theme="dark"] .t-chart-card,
+[data-bs-theme="dark"] .t-kpi,
+[data-bs-theme="dark"] .t-filter-bar {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+[data-bs-theme="dark"] .card-header,
+[data-bs-theme="dark"] .t-chart-header {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+[data-bs-theme="dark"] .navbar {
+    background: linear-gradient(90deg, #0f172a 0%, #0a1628 100%) !important;
+}
+[data-bs-theme="dark"] .modal-content {
+    background-color: #1e293b !important;
+    color: #e2e8f0 !important;
+}
+[data-bs-theme="dark"] .dash-spreadsheet-container,
+[data-bs-theme="dark"] .dash-spreadsheet-inner {
+    background-color: #1e293b !important;
+    color: #e2e8f0 !important;
+}
+[data-bs-theme="dark"] .form-control,
+[data-bs-theme="dark"] .form-select,
+[data-bs-theme="dark"] .Select-control {
+    background-color: #263148 !important;
+    color: #e2e8f0 !important;
+    border-color: #334155 !important;
+}
+[data-bs-theme="dark"] .dropdown-menu {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+}
+[data-bs-theme="dark"] .dropdown-item {
+    color: #e2e8f0 !important;
+}
+[data-bs-theme="dark"] .dropdown-item:hover {
+    background-color: #263148 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   CSS GLOBAL — Rediseño visual (Marzo 2026)
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Fuente Inter desde Google Fonts ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ── Tipografía base más moderna ── */
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+                 'Segoe UI', sans-serif !important;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ── Cards con sombra y radio consistente ── */
+.card {
+    border-radius: 8px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08) !important;
+    transition: box-shadow 0.15s ease !important;
+}
+.card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+}
+
+/* ── Hover con elevación en cards de modelo ML ── */
+.card.shadow-sm:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.18) !important;
+}
+
+/* ── Breadcrumb compacto ── */
+.breadcrumb {
+    font-size: 11px !important;
+    margin-bottom: 8px !important;
+    padding: 0 !important;
+    background: transparent !important;
+}
+
+/* ── Títulos de sección más compactos ── */
+h1, .h1 { font-size: 1.4rem !important; font-weight: 700 !important; }
+h2, .h2 { font-size: 1.2rem !important; font-weight: 600 !important; }
+h3, .h3 { font-size: 1.0rem !important; font-weight: 600 !important; }
+
+/* ── Badges más redondeados ── */
+.badge {
+    border-radius: 20px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.3px !important;
+}
+
+/* ── Botones con esquinas suaves ── */
+.btn {
+    border-radius: 6px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+}
+.btn-sm { font-size: 11px !important; padding: 3px 10px !important; }
+
+/* ── Inputs y selects más compactos ── */
+.form-control, .form-select {
+    border-radius: 6px !important;
+    font-size: 12px !important;
+    padding: 4px 8px !important;
+}
+
+/* ── Dash Dropdown override ── */
+.Select-control {
+    border-radius: 6px !important;
+    min-height: 30px !important;
+    font-size: 12px !important;
+}
+.Select-value-label { font-size: 12px !important; }
+
+/* ── AG Grid — cabeceras compactas ── */
+.ag-theme-alpine .ag-header-cell-label,
+.ag-theme-alpine-dark .ag-header-cell-label {
+    font-size: 10px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}
+.ag-theme-alpine .ag-cell,
+.ag-theme-alpine-dark .ag-cell {
+    font-size: 11px !important;
+    line-height: 36px !important;
+}
+
+/* ── Área de título de página compacta ── */
+.t-page-header {
+    padding-top: 6px !important;
+    padding-bottom: 4px !important;
+    margin-bottom: 6px !important;
+}
+
+.t-page-header h1 {
+    font-size: 1.0rem !important;
+    font-weight: 700 !important;
+    margin-bottom: 0 !important;
+    line-height: 1.3 !important;
+}
+
+.t-page-header .t-breadcrumb {
+    font-size: 10px !important;
+    margin-top: 1px !important;
+    opacity: 0.7;
+}
+
+.t-page-header .t-badge-date {
+    font-size: 10px !important;
+    padding: 2px 8px !important;
+}
+
+/* Reglas genéricas por si alguna página usa clases estándar */
+.page-header,
+.page-title-area,
+#page-header {
+    padding-top: 8px !important;
+    padding-bottom: 4px !important;
+    margin-bottom: 8px !important;
+}
+
+.page-header h1,
+.page-header .h1,
+#page-header h1 {
+    font-size: 1.05rem !important;
+    font-weight: 700 !important;
+    margin-bottom: 0 !important;
+    line-height: 1.3 !important;
+}
+
+.page-timestamp,
+#page-timestamp {
+    font-size: 10px !important;
+    opacity: 0.6;
+}

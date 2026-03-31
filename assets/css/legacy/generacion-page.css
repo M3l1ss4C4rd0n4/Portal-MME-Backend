@@ -1,0 +1,366 @@
+/* Estilos para la página de Generación Eléctrica */
+
+/* Animación de fade-in para toda la página */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Animación de entrada de las fichas */
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(50px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Animación de entrada de la imagen */
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-50px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Animación de flotación para la imagen */
+@keyframes float {
+    0%, 100% {
+        transform: translateY(0px);
+    }
+    50% {
+        transform: translateY(-15px);
+    }
+}
+
+/* Animación de pulso suave */
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+/* Container de la imagen de generación */
+.generacion-image-container {
+    animation: slideInLeft 1.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    position: relative;
+}
+
+
+
+.generacion-image {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    filter: drop-shadow(0 10px 30px rgba(66, 133, 244, 0.2));
+    transition: filter 0.3s ease;
+    position: relative;
+    z-index: 1;
+}
+
+.generacion-image:hover {
+    filter: drop-shadow(0 15px 40px rgba(66, 133, 244, 0.3));
+}
+
+/* Container de las fichas KPI */
+.fichas-kpi-container {
+    animation: slideInRight 1s ease-out;
+}
+
+/* Mejoras para las fichas KPI - Versión compacta */
+.kpi-card {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    overflow: hidden;
+    position: relative;
+    max-height: 200px;
+}
+
+.kpi-card .card-body {
+    padding: 1rem !important;
+}
+
+.kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--kpi-color, #4285F4) 0%, var(--kpi-color-light, #669DF6) 100%);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s ease;
+}
+
+.kpi-card:hover::before {
+    transform: scaleX(1);
+}
+
+.kpi-card:hover {
+    transform: translateY(-5px) scale(1.01);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Animación de los iconos - Versión compacta */
+.kpi-icon {
+    transition: all 0.3s ease;
+    display: inline-block;
+}
+
+.kpi-card:hover .kpi-icon {
+    transform: scale(1.1) rotate(3deg);
+    filter: brightness(1.15);
+}
+
+.kpi-value {
+    transition: all 0.2s ease;
+}
+
+.kpi-card:hover .kpi-value {
+    transform: scale(1.03);
+    color: var(--kpi-color) !important;
+}
+
+/* Mejoras para las tarjetas de tecnología - Versión compacta */
+.tech-card {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+    position: relative;
+    overflow: hidden;
+    max-height: 150px;
+}
+
+.tech-card .card-body {
+    padding: 0.75rem !important;
+}
+
+.tech-card::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: radial-gradient(circle, rgba(66, 133, 244, 0.08) 0%, transparent 70%);
+    transform: translate(-50%, -50%);
+    transition: width 0.4s ease, height 0.4s ease;
+    border-radius: 50%;
+}
+
+.tech-card:hover::before {
+    width: 300%;
+    height: 300%;
+}
+
+.tech-card:hover {
+    transform: translateY(-12px) scale(1.03);
+    box-shadow: 0 25px 50px rgba(66, 133, 244, 0.2) !important;
+    border-color: var(--tech-color) !important;
+}
+
+.tech-card .card-body {
+    position: relative;
+    z-index: 1;
+}
+
+.tech-card i {
+    transition: all 0.4s ease;
+}
+
+.tech-card:hover i {
+    transform: scale(1.2) rotate(10deg);
+    filter: brightness(1.3);
+}
+
+/* Título animado */
+.generacion-title {
+    background: linear-gradient(135deg, #4285F4 0%, #34A853 50%, #FBBC04 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: fadeIn 1s ease-out;
+}
+
+/* Descripción animada */
+.generacion-description {
+    animation: fadeIn 1.2s ease-out;
+}
+
+/* Efecto de brillo en hover para números */
+.kpi-value {
+    position: relative;
+    display: inline-block;
+    transition: all 0.3s ease;
+}
+
+.kpi-card:hover .kpi-value {
+    text-shadow: 0 0 20px rgba(var(--kpi-rgb), 0.3);
+    transform: scale(1.05);
+}
+
+/* Animación de aparición escalonada para las fichas */
+.kpi-card:nth-child(1) {
+    animation: slideInRight 0.6s ease-out;
+}
+
+.kpi-card:nth-child(2) {
+    animation: slideInRight 0.6s ease-out;
+    animation-delay: 0.1s;
+}
+
+.kpi-card:nth-child(3) {
+    animation: slideInRight 0.6s ease-out;
+    animation-delay: 0.2s;
+}
+
+/* Animación para las tarjetas de tecnología */
+.tech-card-container:nth-child(1) {
+    animation: fadeIn 0.8s ease-out;
+}
+
+.tech-card-container:nth-child(2) {
+    animation: fadeIn 0.8s ease-out;
+    animation-delay: 0.2s;
+}
+
+/* Efecto de partículas de fondo */
+.generacion-container {
+    position: relative;
+    overflow: hidden;
+}
+
+.generacion-container::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle at 20% 80%, rgba(66, 133, 244, 0.03) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(52, 168, 83, 0.03) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(251, 188, 4, 0.03) 0%, transparent 50%);
+    animation: pulse 15s ease-in-out infinite;
+    pointer-events: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+    .generacion-image-container {
+        margin-bottom: 2rem;
+    }
+    
+    .generacion-image {
+        max-width: 350px;
+    }
+}
+
+@media (max-width: 768px) {
+    .generacion-image {
+        max-width: 280px;
+    }
+    
+    .kpi-card h2 {
+        font-size: 2rem !important;
+    }
+}
+
+/* Estilos para las fichas de XM (Generación Renovable, No Renovable, Total) */
+.xm-card {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    position: relative;
+    overflow: hidden;
+}
+
+.xm-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: var(--card-color, #4285F4);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s ease;
+}
+
+.xm-card:hover::before {
+    transform: scaleX(1);
+}
+
+.xm-card:hover {
+    transform: translateY(-8px) scale(1.02);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+}
+
+.xm-card .fa-leaf,
+.xm-card .fa-industry,
+.xm-card .fa-bolt {
+    transition: all 0.3s ease;
+    display: inline-block;
+}
+
+.xm-card:hover .fa-leaf,
+.xm-card:hover .fa-industry,
+.xm-card:hover .fa-bolt {
+    transform: scale(1.15) rotate(5deg);
+    filter: brightness(1.2);
+}
+
+.xm-card h3 {
+    transition: all 0.2s ease;
+}
+
+.xm-card:hover h3 {
+    transform: scale(1.05);
+}
+
+/* Animación de entrada para las fichas XM */
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.xm-card {
+    animation: slideInUp 0.6s ease-out;
+}
+
+.xm-card:nth-child(1) {
+    animation-delay: 0.1s;
+}
+
+.xm-card:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.xm-card:nth-child(3) {
+    animation-delay: 0.3s;
+}

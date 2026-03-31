@@ -1,0 +1,864 @@
+/* ============================================================
+   05-DARK-THEME.CSS
+   Estilos específicos para el tema oscuro
+   ============================================================ */
+
+/* ────────────────────────────────────────────────────────────
+   VARIABLES DEL TEMA OSCURO
+   ──────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  /* Backgrounds */
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-tertiary: #334155;
+  --bg-elevated: #475569;
+  --bg-overlay: rgba(15, 23, 42, 0.8);
+  
+  /* Textos */
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-disabled: #64748b;
+  
+  /* Bordes */
+  --border-color: #334155;
+  --border-color-light: #475569;
+  --border-color-strong: #64748b;
+  
+  /* Sombras ajustadas para tema oscuro */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5), 0 4px 6px rgba(0, 0, 0, 0.3);
+  
+  /* Colores semánticos adaptados */
+  --success: #34d399;
+  --success-bg: rgba(52, 211, 153, 0.1);
+  --success-dark: #10b981;
+  
+  --warning: #fbbf24;
+  --warning-bg: rgba(251, 191, 36, 0.1);
+  --warning-dark: #f59e0b;
+  
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.1);
+  --danger-dark: #ef4444;
+  
+  --info: #818cf8;
+  --info-bg: rgba(129, 140, 248, 0.1);
+  --info-dark: #6366f1;
+  
+  /* Colores primarios ajustados */
+  --mme-primary: #60a5fa;
+  --mme-primary-light: #93c5fd;
+  --mme-primary-dark: #3b82f6;
+  --mme-primary-bg: rgba(96, 165, 250, 0.1);
+  
+  /* Scrollbar oscuro */
+  --scrollbar-track: #1e293b;
+  --scrollbar-thumb: #475569;
+  --scrollbar-thumb-hover: #64748b;
+}
+
+/* ────────────────────────────────────────────────────────────
+   BASE - TEMA OSCURO
+   ──────────────────────────────────────────────────────────── */
+[data-theme="dark"] body {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] html {
+  background-color: var(--bg-secondary);
+}
+
+/* ────────────────────────────────────────────────────────────
+   COMPONENTES - TEMA OSCURO  
+   ──────────────────────────────────────────────────────────── */
+
+/* FORZAR fondo oscuro en contenedores principales */
+[data-theme="dark"] .tab-content,
+[data-theme="dark"] .tab-pane,
+[data-theme="dark"] [class*="tab-content"],
+[data-theme="dark"] [class*="tab-pane"] {
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Tabs de Bootstrap - Forzar tema oscuro */
+[data-theme="dark"] .nav-tabs {
+  background: var(--bg-secondary) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+[data-theme="dark"] .nav-tabs .nav-link {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border-color) !important;
+  border-bottom: none !important;
+}
+
+[data-theme="dark"] .nav-tabs .nav-link:hover {
+  background: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color-strong) !important;
+}
+
+[data-theme="dark"] .nav-tabs .nav-link.active {
+  background: var(--mme-primary) !important;
+  color: white !important;
+  border-color: var(--mme-primary) !important;
+}
+
+/* Custom tabs específicos de la app */
+[data-theme="dark"] .custom-tab {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+[data-theme="dark"] .custom-tab--selected {
+  background: var(--mme-primary) !important;
+  color: white !important;
+  border-color: var(--mme-primary) !important;
+}
+
+/* Card que contiene tabs */
+[data-theme="dark"] .card:has(.nav-tabs),
+[data-theme="dark"] .card-body:has(.nav-tabs) {
+  background: var(--bg-secondary) !important;
+}
+
+/* KPI Cards */
+[data-theme="dark"] .kpi-card {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .kpi-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--mme-primary);
+}
+
+[data-theme="dark"] .kpi-value {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .kpi-label {
+  color: var(--text-muted);
+}
+
+[data-theme="dark"] .kpi-subtext {
+  color: var(--text-secondary);
+}
+
+/* Chart Cards */
+[data-theme="dark"] .chart-card {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .chart-header {
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .chart-title {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .chart-subtitle {
+  color: var(--text-muted);
+}
+
+/* Tablas */
+[data-theme="dark"] .dash-spreadsheet-container {
+  background: var(--bg-primary);
+}
+
+[data-theme="dark"] .dash-spreadsheet-container .dash-header {
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .dash-spreadsheet-container .dash-cell {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .dash-spreadsheet-container tr:nth-child(even) .dash-cell {
+  background: var(--bg-secondary) !important;
+}
+
+[data-theme="dark"] .dash-spreadsheet-container .dash-spreadsheet-inner tbody tr:hover td {
+  background: var(--bg-tertiary) !important;
+}
+
+/* Cards */
+[data-theme="dark"] .card {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .card-header {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+/* Botones */
+[data-theme="dark"] .btn-secondary {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .btn-secondary:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-color-strong);
+  color: var(--text-primary);
+}
+
+/* Forms */
+[data-theme="dark"] .form-control,
+[data-theme="dark"] .Select-control {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .form-control:focus,
+[data-theme="dark"] .Select-control:focus {
+  border-color: var(--mme-primary);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2);
+}
+
+[data-theme="dark"] .form-label {
+  color: var(--text-secondary);
+}
+
+/* Select dropdown */
+[data-theme="dark"] .Select-menu-outer {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .Select-option {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .Select-option.is-focused {
+  background: var(--bg-elevated);
+}
+
+[data-theme="dark"] .Select-option.is-selected {
+  background: var(--mme-primary-bg);
+  color: var(--mme-primary);
+}
+
+/* Alerts */
+[data-theme="dark"] .alert-info {
+  background: var(--mme-primary-bg);
+  border-color: var(--mme-primary);
+  color: var(--mme-primary-light);
+}
+
+[data-theme="dark"] .alert-success {
+  background: var(--success-bg);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+[data-theme="dark"] .alert-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+[data-theme="dark"] .alert-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* Filter Bar */
+[data-theme="dark"] .filter-bar {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .filter-label {
+  color: var(--text-muted);
+}
+
+/* Tabs */
+[data-theme="dark"] .nav-tabs {
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .nav-tabs .nav-link {
+  color: var(--text-muted);
+}
+
+[data-theme="dark"] .nav-tabs .nav-link:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .nav-tabs .nav-link.active {
+  color: var(--mme-primary);
+  border-color: var(--mme-primary);
+  background: transparent;
+}
+
+/* Breadcrumbs */
+[data-theme="dark"] .app-breadcrumbs .breadcrumb-item a {
+  color: var(--text-muted);
+}
+
+[data-theme="dark"] .app-breadcrumbs .breadcrumb-item a:hover {
+  color: var(--mme-primary);
+}
+
+[data-theme="dark"] .app-breadcrumbs .breadcrumb-item.active {
+  color: var(--text-primary);
+}
+
+/* Scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Plotly Charts - Ajustes agresivos para tema oscuro */
+[data-theme="dark"] .js-plotly-plot,
+[data-theme="dark"] .js-plotly-plot .plotly,
+[data-theme="dark"] .js-plotly-plot .plotly .main-svg,
+[data-theme="dark"] .js-plotly-plot .plotly .svg-container {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Forzar fondo transparente en SVG de Plotly */
+[data-theme="dark"] .plotly .main-svg {
+  background: transparent !important;
+}
+
+[data-theme="dark"] .plotly .bg {
+  fill: transparent !important;
+}
+
+/* Contenedor de gráficos */
+[data-theme="dark"] .chart-container,
+[data-theme="dark"] [class*="chart"] {
+  background: var(--bg-primary) !important;
+}
+
+/* Tablas Bootstrap */
+[data-theme="dark"] .table,
+[data-theme="dark"] .table-modern,
+[data-theme="dark"] .table-sm {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .table thead th,
+[data-theme="dark"] .table-modern thead th {
+  background: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .table tbody td,
+[data-theme="dark"] .table-modern tbody td {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .table-striped tbody tr:nth-of-type(odd) td {
+  background: var(--bg-secondary) !important;
+}
+
+[data-theme="dark"] .table-hover tbody tr:hover td {
+  background: var(--bg-tertiary) !important;
+}
+
+/* Pills navigation */
+[data-theme="dark"] .nav-pills .nav-link {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .nav-pills .nav-link.active {
+  background: var(--mme-primary) !important;
+  color: white !important;
+}
+
+/* Dropdowns de Dash/React Select */
+[data-theme="dark"] .Select-control {
+  background: var(--bg-tertiary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .Select-value-label {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .Select-input > input {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .Select-menu-outer {
+  background: var(--bg-tertiary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .VirtualizedSelectOption {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .VirtualizedSelectFocusedOption {
+  background: var(--bg-elevated) !important;
+}
+
+[data-theme="dark"] .VirtualizedSelectSelectedOption {
+  background: var(--mme-primary-bg) !important;
+  color: var(--mme-primary) !important;
+}
+
+/* DatePicker */
+[data-theme="dark"] .DateInput {
+  background: var(--bg-tertiary) !important;
+}
+
+[data-theme="dark"] .DateInput_input {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .CalendarMonth {
+  background: var(--bg-primary) !important;
+}
+
+[data-theme="dark"] .CalendarMonth_caption {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .CalendarDay {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .CalendarDay__selected {
+  background: var(--mme-primary) !important;
+  color: white !important;
+}
+
+/* Mapas Leaflet - Ajustar controles */
+[data-theme="dark"] .leaflet-control-zoom a {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .leaflet-control-zoom a:hover {
+  background: var(--bg-elevated) !important;
+}
+
+/* Mejorar contraste en textos de gráficos */
+[data-theme="dark"] .plotly .gtitle,
+[data-theme="dark"] .plotly .xtitle,
+[data-theme="dark"] .plotly .ytitle {
+  fill: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .plotly .g-xtick text,
+[data-theme="dark"] .plotly .g-ytick text {
+  fill: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .plotly .legendtext {
+  fill: var(--text-primary) !important;
+}
+
+/* Modal */
+[data-theme="dark"] .modal-content {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .modal-header {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .modal-footer {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+}
+
+/* Toast */
+[data-theme="dark"] .toast {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .toast-success {
+  background: var(--success-bg);
+  border-color: var(--success);
+}
+
+[data-theme="dark"] .toast-error {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+}
+
+/* Tooltip */
+[data-theme="dark"] .tooltip-inner {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .tooltip.bs-tooltip-top .arrow::before {
+  border-top-color: var(--bg-elevated);
+}
+
+/* Dropdown */
+[data-theme="dark"] .dropdown-menu {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .dropdown-item {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .dropdown-item:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* Badges */
+[data-theme="dark"] .badge-blue {
+  background: var(--mme-primary-bg);
+  color: var(--mme-primary);
+}
+
+[data-theme="dark"] .badge-gray {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+/* ────────────────────────────────────────────────────────────
+   BOOTSTRAP COMPONENTS - OVERRIDE AGRESIVO PARA TEMA OSCURO
+   ──────────────────────────────────────────────────────────── */
+
+/* Forzar fondo oscuro en todos los contenedores */
+[data-theme="dark"] .container,
+[data-theme="dark"] .container-fluid,
+[data-theme="dark"] .row,
+[data-theme="dark"] .col,
+[data-theme="dark"] [class*="col-"] {
+  background-color: transparent !important;
+}
+
+/* Cards */
+[data-theme="dark"] .card {
+  background-color: var(--bg-primary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .card-body {
+  background-color: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .card-header {
+  background-color: var(--bg-secondary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .card-footer {
+  background-color: var(--bg-secondary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Navbar */
+[data-theme="dark"] .navbar {
+  background-color: var(--bg-secondary) !important;
+  border-color: var(--border-color) !important;
+}
+
+/* List groups */
+[data-theme="dark"] .list-group {
+  background-color: var(--bg-primary) !important;
+}
+
+[data-theme="dark"] .list-group-item {
+  background-color: var(--bg-primary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .list-group-item:hover {
+  background-color: var(--bg-tertiary) !important;
+}
+
+[data-theme="dark"] .list-group-item.active {
+  background-color: var(--mme-primary) !important;
+  border-color: var(--mme-primary) !important;
+  color: white !important;
+}
+
+/* Modals */
+[data-theme="dark"] .modal-content {
+  background-color: var(--bg-primary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .modal-header,
+[data-theme="dark"] .modal-footer {
+  background-color: var(--bg-secondary) !important;
+  border-color: var(--border-color) !important;
+}
+
+/* Pagination */
+[data-theme="dark"] .page-link {
+  background-color: var(--bg-tertiary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .page-link:hover {
+  background-color: var(--bg-elevated) !important;
+  border-color: var(--border-color-strong) !important;
+}
+
+[data-theme="dark"] .page-item.active .page-link {
+  background-color: var(--mme-primary) !important;
+  border-color: var(--mme-primary) !important;
+}
+
+[data-theme="dark"] .page-item.disabled .page-link {
+  background-color: var(--bg-tertiary) !important;
+  color: var(--text-disabled) !important;
+}
+
+/* Progress bars background */
+[data-theme="dark"] .progress {
+  background-color: var(--bg-tertiary) !important;
+}
+
+/* Accordion */
+[data-theme="dark"] .accordion-item {
+  background-color: var(--bg-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .accordion-button {
+  background-color: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .accordion-button:not(.collapsed) {
+  background-color: var(--mme-primary-bg) !important;
+  color: var(--mme-primary) !important;
+}
+
+/* Breadcrumb */
+[data-theme="dark"] .breadcrumb {
+  background-color: var(--bg-tertiary) !important;
+}
+
+[data-theme="dark"] .breadcrumb-item a {
+  color: var(--mme-primary) !important;
+}
+
+[data-theme="dark"] .breadcrumb-item.active {
+  color: var(--text-secondary) !important;
+}
+
+/* Alerts */
+[data-theme="dark"] .alert {
+  border-color: transparent !important;
+}
+
+[data-theme="dark"] .alert-primary {
+  background-color: var(--mme-primary-bg) !important;
+  color: var(--mme-primary-light) !important;
+}
+
+[data-theme="dark"] .alert-secondary {
+  background-color: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+}
+
+/* DASH SPECIFIC COMPONENTS */
+
+/* Dash Dropdown */
+[data-theme="dark"] .dash-dropdown .Select-control {
+  background-color: var(--bg-tertiary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .dash-dropdown .Select-value {
+  background-color: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .dash-dropdown .Select-placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* DatePicker */
+[data-theme="dark"] .DateRangePicker,
+[data-theme="dark"] .SingleDatePicker {
+  background-color: transparent !important;
+}
+
+[data-theme="dark"] .DateRangePickerInput,
+[data-theme="dark"] .SingleDatePickerInput {
+  background-color: var(--bg-tertiary) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .DateInput {
+  background-color: var(--bg-tertiary) !important;
+}
+
+[data-theme="dark"] .DateInput_input {
+  background-color: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Upload */
+[data-theme="dark"] .upload-box {
+  background-color: var(--bg-tertiary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .upload-box:hover {
+  border-color: var(--mme-primary) !important;
+}
+
+/* Markdown */
+[data-theme="dark"] .dash-markdown {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .dash-markdown code {
+  background-color: var(--bg-tertiary) !important;
+  color: var(--mme-accent-light) !important;
+}
+
+[data-theme="dark"] .dash-markdown pre {
+  background-color: var(--bg-tertiary) !important;
+  border-color: var(--border-color) !important;
+}
+
+/* PLOTLY CHARTS - FONDO TRANSPARENTE FORZADO */
+
+[data-theme="dark"] .js-plotly-plot,
+[data-theme="dark"] .js-plotly-plot .plotly {
+  background: transparent !important;
+}
+
+/* Forzar que el SVG no tenga fondo */
+[data-theme="dark"] .js-plotly-plot svg {
+  background: transparent !important;
+}
+
+/* Textos de ejes */
+[data-theme="dark"] .js-plotly-plot .gtitle,
+[data-theme="dark"] .js-plotly-plot .xtitle,
+[data-theme="dark"] .js-plotly-plot .ytitle,
+[data-theme="dark"] .js-plotly-plot .g-xtick text,
+[data-theme="dark"] .js-plotly-plot .g-ytick text {
+  fill: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .js-plotly-plot .gtitle {
+  fill: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .js-plotly-plot .legendtext {
+  fill: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .js-plotly-plot .annotation-text {
+  fill: var(--text-secondary) !important;
+}
+
+/* ────────────────────────────────────────────────────────────
+   TRANSICIONES SUAVES
+   ──────────────────────────────────────────────────────────── */
+
+/* Aplicar transiciones suaves a elementos que cambian de tema */
+body,
+.card,
+.kpi-card,
+.chart-card,
+.btn,
+.form-control,
+.nav-link,
+.dash-spreadsheet-container .dash-cell,
+.dash-spreadsheet-container .dash-header {
+  transition: background-color 0.3s ease, 
+              color 0.3s ease, 
+              border-color 0.3s ease,
+              box-shadow 0.3s ease;
+}
+
+/* ────────────────────────────────────────────────────────────
+   MEJORAS DE CONTRASTE
+   ──────────────────────────────────────────────────────────── */
+
+/* Asegurar contraste mínimo WCAG AA (4.5:1) */
+[data-theme="dark"] .text-muted {
+  color: #94a3b8 !important; /* Contraste 7:1 con fondo #0f172a */
+}
+
+[data-theme="dark"] .text-secondary {
+  color: #cbd5e1 !important; /* Contraste 11:1 con fondo #0f172a */
+}
+
+/* Links */
+[data-theme="dark"] a {
+  color: var(--mme-primary);
+}
+
+[data-theme="dark"] a:hover {
+  color: var(--mme-primary-light);
+}
+
+/* Focus visible */
+[data-theme="dark"] :focus-visible {
+  outline: 2px solid var(--mme-primary);
+  outline-offset: 2px;
+}

@@ -1,0 +1,454 @@
+/* ============================================
+   ESTILO CORPORATIVO MME
+   Sistema de diseño profesional para dashboards
+   ============================================ */
+
+/* Paleta de colores institucional */
+:root {
+    --mme-primary: #1e3a8a;
+    --mme-secondary: #3b82f6;
+    --mme-accent: #0ea5e9;
+    --mme-success: #10b981;
+    --mme-warning: #f59e0b;
+    --mme-danger: #ef4444;
+    --mme-gray-50: #f9fafb;
+    --mme-gray-100: #f3f4f6;
+    --mme-gray-200: #e5e7eb;
+    --mme-gray-300: #d1d5db;
+    --mme-gray-400: #9ca3af;
+    --mme-gray-500: #6b7280;
+    --mme-gray-600: #4b5563;
+    --mme-gray-700: #374151;
+    --mme-gray-800: #1f2937;
+    --mme-gray-900: #111827;
+}
+
+/* Reset y configuración base */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--mme-gray-900);
+    background-color: var(--mme-gray-50);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Títulos jerárquicos profesionales */
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+    color: var(--mme-gray-900);
+    margin-bottom: 0.5em;
+    letter-spacing: -0.5px;
+}
+
+h1 { font-size: 2rem; line-height: 1.2; }
+h2 { font-size: 1.75rem; line-height: 1.25; }
+h3 { font-size: 1.5rem; line-height: 1.3; }
+h4 { font-size: 1.25rem; line-height: 1.35; }
+h5 { font-size: 1.125rem; line-height: 1.4; }
+h6 { font-size: 1rem; line-height: 1.4; }
+
+/* Contenedor principal con espaciado consistente */
+.container,
+.container-fluid {
+    padding-top: 24px;
+    padding-bottom: 24px;
+}
+
+/* Tarjetas corporativas uniformes */
+.card {
+    background: white;
+    border: 1px solid var(--mme-gray-200);
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    margin-bottom: 24px;
+    transition: box-shadow 0.3s ease;
+}
+
+.card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.card-body {
+    padding: 24px;
+}
+
+.card-header {
+    background: var(--mme-gray-100);
+    border-bottom: 1px solid var(--mme-gray-200);
+    padding: 16px 24px;
+    font-weight: 600;
+    color: var(--mme-gray-800);
+    border-radius: 12px 12px 0 0;
+}
+
+/* Botones corporativos consistentes */
+.btn {
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    border-radius: 8px;
+    padding: 10px 20px;
+    border: none;
+    transition: all 0.2s ease;
+    font-size: 14px;
+    text-transform: none;
+}
+
+.btn-primary {
+    background-color: var(--mme-primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #1e40af;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.25);
+}
+
+.btn-secondary {
+    background-color: var(--mme-gray-200);
+    color: var(--mme-gray-800);
+}
+
+.btn-secondary:hover {
+    background-color: var(--mme-gray-300);
+}
+
+.btn-success {
+    background-color: var(--mme-success);
+}
+
+.btn-success:hover {
+    background-color: #059669;
+}
+
+/* Labels minimalistas y uniformes */
+label {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--mme-gray-700);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+/* Controles de formulario modernos */
+.Select-control,
+.form-control,
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+select,
+textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--mme-gray-300);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--mme-gray-900);
+    background-color: white;
+    transition: all 0.2s ease;
+}
+
+.Select-control:hover,
+.form-control:hover,
+input:hover,
+select:hover,
+textarea:hover {
+    border-color: var(--mme-gray-400);
+}
+
+.Select-control:focus,
+.form-control:focus,
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--mme-secondary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Date pickers corporativos */
+.DateInput,
+.DateInput_input {
+    font-size: 14px;
+    font-weight: 400;
+    padding: 10px 14px;
+    border-radius: 8px;
+}
+
+/* Tablas profesionales y limpias */
+.table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 14px;
+}
+
+.table thead th {
+    background-color: var(--mme-gray-100);
+    color: var(--mme-gray-800);
+    font-weight: 700;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding: 14px 16px;
+    border-bottom: 2px solid var(--mme-gray-300);
+    text-align: left;
+}
+
+.table tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--mme-gray-200);
+    color: var(--mme-gray-900);
+}
+
+.table tbody tr:hover {
+    background-color: var(--mme-gray-50);
+}
+
+.table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Alertas corporativas sin iconos excesivos */
+.alert {
+    border: none;
+    border-left: 4px solid;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    font-size: 14px;
+}
+
+.alert-info {
+    background-color: #eff6ff;
+    border-left-color: var(--mme-secondary);
+    color: #1e40af;
+}
+
+.alert-success {
+    background-color: #f0fdf4;
+    border-left-color: var(--mme-success);
+    color: #065f46;
+}
+
+.alert-warning {
+    background-color: #fffbeb;
+    border-left-color: var(--mme-warning);
+    color: #92400e;
+}
+
+.alert-danger {
+    background-color: #fef2f2;
+    border-left-color: var(--mme-danger);
+    color: #991b1b;
+}
+
+/* Badges corporativos */
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    border-radius: 6px;
+    letter-spacing: 0.3px;
+}
+
+.badge-primary {
+    background-color: var(--mme-primary);
+    color: white;
+}
+
+.badge-success {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.badge-warning {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.badge-danger {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+/* Navegación con pestañas minimalistas */
+.nav-tabs {
+    border-bottom: 2px solid var(--mme-gray-200);
+    margin-bottom: 24px;
+}
+
+.nav-tabs .nav-link {
+    border: none;
+    color: var(--mme-gray-600);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 12px 20px;
+    margin-right: 8px;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s ease;
+    background-color: transparent;
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--mme-primary);
+    border-bottom-color: var(--mme-gray-300);
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--mme-primary);
+    border-bottom-color: var(--mme-primary);
+    background-color: transparent;
+}
+
+/* Dropdown moderno */
+.dropdown-menu {
+    border: 1px solid var(--mme-gray-200);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    padding: 8px 0;
+}
+
+.dropdown-item {
+    padding: 10px 16px;
+    font-size: 14px;
+    color: var(--mme-gray-900);
+    transition: background-color 0.15s ease;
+}
+
+.dropdown-item:hover {
+    background-color: var(--mme-gray-100);
+    color: var(--mme-primary);
+}
+
+/* Iconos minimalistas uniformes */
+.fa, .fas, .far, .fal, .fab {
+    color: var(--mme-gray-500);
+}
+
+/* Gráficos de Plotly corporativos */
+.js-plotly-plot {
+    border-radius: 8px;
+}
+
+.js-plotly-plot .plotly .modebar {
+    background: transparent !important;
+}
+
+.js-plotly-plot .plotly .modebar-btn {
+    color: var(--mme-gray-500) !important;
+}
+
+.js-plotly-plot .plotly .modebar-btn:hover {
+    background: var(--mme-gray-100) !important;
+    color: var(--mme-gray-700) !important;
+}
+
+/* Espaciado consistente */
+.mb-1 { margin-bottom: 0.25rem !important; }
+.mb-2 { margin-bottom: 0.5rem !important; }
+.mb-3 { margin-bottom: 1rem !important; }
+.mb-4 { margin-bottom: 1.5rem !important; }
+.mb-5 { margin-bottom: 3rem !important; }
+
+.mt-1 { margin-top: 0.25rem !important; }
+.mt-2 { margin-top: 0.5rem !important; }
+.mt-3 { margin-top: 1rem !important; }
+.mt-4 { margin-top: 1.5rem !important; }
+.mt-5 { margin-top: 3rem !important; }
+
+.p-3 { padding: 1rem !important; }
+.p-4 { padding: 1.5rem !important; }
+.p-5 { padding: 3rem !important; }
+
+/* Sombras corporativas sutiles */
+.shadow-sm {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+.shadow {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+}
+
+.shadow-lg {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Animaciones sutiles */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.4s ease-out;
+}
+
+/* Botón hamburguesa del sidebar con líneas blancas */
+#sidebar-toggle {
+    background-color: var(--mme-primary) !important;
+    border: none !important;
+    padding: 10px 12px !important;
+    border-radius: 8px !important;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+#sidebar-toggle:hover {
+    background-color: var(--mme-secondary) !important;
+    transform: scale(1.05);
+}
+
+/* Las tres líneas del hamburguesa en blanco */
+#sidebar-toggle .navbar-toggler-icon,
+#sidebar-toggle::before,
+#sidebar-toggle::after {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(255, 255, 255, 1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") !important;
+}
+
+/* Icono de tres líneas blancas personalizado */
+#sidebar-toggle svg,
+#sidebar-toggle i {
+    color: white !important;
+    filter: brightness(0) invert(1);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    body {
+        font-size: 13px;
+    }
+    
+    h1 { font-size: 1.75rem; }
+    h2 { font-size: 1.5rem; }
+    h3 { font-size: 1.25rem; }
+    
+    .card-body {
+        padding: 16px;
+    }
+    
+    .container,
+    .container-fluid {
+        padding-top: 16px;
+        padding-bottom: 16px;
+    }
+}
