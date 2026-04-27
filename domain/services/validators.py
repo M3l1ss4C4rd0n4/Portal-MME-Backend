@@ -21,7 +21,7 @@ class MetricValidators:
         # ========================================
         # PRECIOS ($/kWh)
         # ========================================
-        'PrecBolsNaci': (50, 400),      # Precio Bolsa Nacional
+        'PPPrecBolsNaci': (50, 400),     # Precio Promedio Ponderado Bolsa Nacional (oficial XM)
         'PrecEsca': (200, 900),          # Precio Escasez (aumenta en Fenómeno del Niño)
         'PrecEscaSup': (200, 900),       # Precio Escasez Superior
         'PrecEscaInf': (200, 900),       # Precio Escasez Inferior
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     
     # Test 3: Precio válido
     print("3. Precio bolsa válido:")
-    assert MetricValidators.validate('PrecBolsNaci', 180) == True
+    assert MetricValidators.validate('PPPrecBolsNaci', 180) == True
     print("   ✅ $180/kWh aceptado\n")
     
     # Test 4: Validate or none

@@ -23,6 +23,7 @@ from pydataxm.pydataxm import ReadDB
 from datetime import datetime, timedelta
 import time
 import logging
+import numpy as np
 import pandas as pd
 import argparse
 from infrastructure.database.manager import db_manager
@@ -34,7 +35,67 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-def convertir_unidades(df, metric, conversion_type):
+def calcular_ppp_ponderado(df_prec, df_gene, metric_name):
+    """
+    Calcula el Precio Promedio Ponderado (PPP) por generación.
+    Fórmula XM oficial: PPP = Σ(Precio_h × Gene_h) / Σ(Gene_h)
+    
+    Args:
+        df_prec: DataFrame con precios horarios (columns Values_Hour01-24)
+        df_gene: DataFrame con generación horaria (columns Values_Hour01-24)
+        metric_name: Nombre de la métrica para logging
+    
+    Returns:
+        Serie con el PPP para cada fila (misma longitud que df_prec)
+    """
+    hour_cols = [f'Values_Hour{i:02d}' for i in range(1, 25)]
+    prec_cols = [c for c in hour_cols if c in df_prec.columns]
+    gene_cols = [c for c in hour_cols if c in df_gene.columns]
+    
+    if not prec_cols or not gene_cols:
+        logging.warning(f"⚠️ {metric_name}: No se pueden calcular PPP — faltan columnas horarias")
+        return None
+    
+    # Alinear df_gene por fecha con df_prec
+    if 'Date' not in df_prec.columns or 'Date' not in df_gene.columns:
+        logging.warning(f"⚠️ {metric_name}: Falta columna Date para alinear precios con generación")
+        return None
+    
+    df_prec = df_prec.copy()
+    df_gene = df_gene.copy()
+    
+    # Normalizar fechas a datetime.date para merge
+    df_prec['Date_norm'] = pd.to_datetime(df_prec['Date']).dt.date
+    df_gene['Date_norm'] = pd.to_datetime(df_gene['Date']).dt.date
+    
+    # Merge para alinear filas por fecha
+    merged = df_prec[['Date_norm'] + prec_cols].merge(
+        df_gene[['Date_norm'] + gene_cols],
+        on='Date_norm',
+        how='left',
+        suffixes=('_prec', '_gene')
+    )
+    
+    if merged.empty:
+        logging.warning(f"⚠️ {metric_name}: No hay coincidencia de fechas entre precios y generación")
+        return None
+    
+    # Calcular PPP fila por fila
+    ppp_values = []
+    for _, row in merged.iterrows():
+        numerador = sum(row[f'{c}_prec'] * row[f'{c}_gene'] for c in gene_cols if f'{c}_gene' in row)
+        denominador = sum(row[f'{c}_gene'] for c in gene_cols if f'{c}_gene' in row)
+        
+        if denominador == 0 or pd.isna(denominador):
+            ppp_values.append(np.nan)
+        else:
+            ppp_values.append(numerador / denominador)
+    
+    # Mapear de vuelta al índice de df_prec (merge preserva el orden de df_prec por how='left')
+    return pd.Series(ppp_values, index=df_prec.index)
+
+
+def convertir_unidades(df, metric, conversion_type, obj_api=None):
     """
     Convertir unidades de datos crudos de XM a GWh o MW
     
@@ -43,6 +104,7 @@ def convertir_unidades(df, metric, conversion_type):
     - kWh_a_GWh: Divide por 1e6 (VoluUtil, CapaUtil)
     - horas_a_diario: Suma Values_Hour01-24 en kWh → GWh (para generación)
                       Promedio Values_Hour01-24 en kW → MW (para disponibilidad)
+                      PPP ponderado por generación (para precios)
     - sin_conversion: No aplica conversión (ya en unidades correctas)
     - sum_hours: Suma Values_Hour01-24 (sin división)
     """
@@ -101,16 +163,47 @@ def convertir_unidades(df, metric, conversion_type):
                     valor_despues = df['Value'].mean() if not df.empty else 0
                     logging.info(f"✅ {metric}: Promedio {len(existing_cols)} horas (kW→MW) → {valor_despues:.2f} MW promedio")
                 elif 'Prec' in metric:
-                    # Precios: Promediar valores horarios en $/kWh (sin conversión de unidades)
-                    df['Value'] = df[existing_cols].mean(axis=1)
-                    # Filtrar NaN
+                    # Precios: Calcular PPP (Precio Promedio Ponderado por generación)
+                    if obj_api is not None and 'Date' in df.columns:
+                        # Descargar Gene para las mismas fechas
+                        fechas = df['Date'].unique()
+                        fecha_min = pd.to_datetime(min(fechas))
+                        fecha_max = pd.to_datetime(max(fechas))
+                        
+                        logging.info(f"  🔄 Descargando Gene para PPP ({fecha_min.date()} a {fecha_max.date()})...")
+                        try:
+                            df_gene = obj_api.request_data('Gene', 'Sistema', fecha_min, fecha_max)
+                            if df_gene is not None and not df_gene.empty:
+                                ppp_series = calcular_ppp_ponderado(df, df_gene, metric)
+                                if ppp_series is not None:
+                                    df['Value'] = ppp_series
+                                    df = df.dropna(subset=['Value'])
+                                    valor_despues = df['Value'].mean() if not df.empty else 0
+                                    logging.info(f"✅ {metric}: PPP ponderado por generación → ${valor_despues:.2f}/kWh")
+                                else:
+                                    # Fallback a promedio simple
+                                    df['Value'] = df[existing_cols].mean(axis=1)
+                                    df = df.dropna(subset=['Value'])
+                                    logging.warning(f"⚠️ {metric}: PPP falló, usando promedio simple")
+                            else:
+                                # Fallback a promedio simple
+                                df['Value'] = df[existing_cols].mean(axis=1)
+                                df = df.dropna(subset=['Value'])
+                                logging.warning(f"⚠️ {metric}: Gene no disponible, usando promedio simple")
+                        except Exception as e:
+                            df['Value'] = df[existing_cols].mean(axis=1)
+                            df = df.dropna(subset=['Value'])
+                            logging.warning(f"⚠️ {metric}: Error descargando Gene ({e}), usando promedio simple")
+                    else:
+                        # Sin API disponible: promedio simple
+                        df['Value'] = df[existing_cols].mean(axis=1)
+                        df = df.dropna(subset=['Value'])
+                        logging.info(f"✅ {metric}: Promedio {len(existing_cols)} horas (sin ponderación Gene) → ${df['Value'].mean():.2f}/kWh")
+                    
                     filas_antes = len(df)
-                    df = df.dropna(subset=['Value'])
                     filas_despues = len(df)
                     if filas_antes != filas_despues:
                         logging.info(f"  ⚠️ Eliminadas {filas_antes - filas_despues} filas sin datos (NaN)")
-                    valor_despues = df['Value'].mean() if not df.empty else 0
-                    logging.info(f"✅ {metric}: Promedio {len(existing_cols)} horas → ${valor_despues:.2f}/kWh promedio")
                 else:
                     # Generación: Sumar valores en kWh → GWh
                     df['Value'] = df[existing_cols].sum(axis=1) / 1_000_000  # kWh → GWh
@@ -333,7 +426,7 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
         # Convertir unidades
         if conversion:
             logging.info(f"  🔄 Aplicando conversión: {conversion}")
-            df = convertir_unidades(df, metric, conversion)
+            df = convertir_unidades(df, metric, conversion, obj_api)
             if df is None or df.empty:
                 logging.error(f"❌ {metric}/{entity}: Conversión falló (DataFrame vacío)")
                 return 0
@@ -379,10 +472,12 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
                 if valor_gwh > 350:
                     logging.warning(f"⚠️  VALOR ALTO SOSPECHOSO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh (revisar)")
             
-            # VALIDACIÓN: Gene/Sistema debe estar en rango razonable
+            # VALIDACIÓN: Gene/Sistema debe estar en rango razonable.
+            # Umbral inferior = 60 GWh para tolerar domingos/festivos históricos (año 2000-2005)
+            # cuando Colombia tenía menor capacidad instalada (~88-100 GWh en días de muy baja demanda).
             if metric == 'Gene' and entity == 'Sistema':
-                if valor_gwh < 100:
-                    logging.error(f"❌ DATO PARCIAL RECHAZADO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh (esperado: 100-400 GWh/día)")
+                if valor_gwh < 60:
+                    logging.error(f"❌ DATO PARCIAL RECHAZADO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh (esperado: >60 GWh/día)")
                     continue
                 if valor_gwh > 400:
                     logging.warning(f"⚠️  VALOR ALTO SOSPECHOSO: {metric}/{entity} ({fecha}) = {valor_gwh:.2f} GWh")
@@ -403,9 +498,9 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
                     recurso = row.get(col_name)
                     if pd.notna(recurso):
                         recurso = str(recurso)
-                        # NORMALIZAR 'Sistema' → '_SISTEMA_' para evitar duplicados
+                        # Mantener 'Sistema' como recurso legítimo
                         if recurso.strip().lower() == 'sistema':
-                            recurso = '_SISTEMA_'
+                            recurso = 'Sistema'
                     break
             
             # FIX MAPEO EMBALSES: API devuelve nombres completos, necesitamos códigos
@@ -437,10 +532,9 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
                     logging.warning(f"⚠️  Código genérico/vacío RECHAZADO: {metric}/{entity} - recurso='{recurso}'")
                     continue  # Saltar este registro
             
-            # FIX DUPLICADOS: Para entidad=Sistema, si recurso=None, usar placeholder
-            # Esto evita que PostgreSQL inserte múltiples NULL en constraint UNIQUE
+            # Para entidad=Sistema, si recurso=None, usar 'Sistema' como recurso
             if entity == 'Sistema' and recurso is None:
-                recurso = '_SISTEMA_'
+                recurso = 'Sistema'
             
             # Detectar unidad correcta usando mapeo explícito
             from etl.config_metricas import UNIDADES_POR_METRICA
@@ -485,12 +579,12 @@ def poblar_metrica(obj_api, config, usar_timeout=True, timeout_seconds=60, fecha
                         if pd.notna(recurso):
                             recurso = str(recurso)
                             if recurso.strip().lower() == 'sistema':
-                                recurso = '_SISTEMA_'
+                                recurso = 'Sistema'
                         break
                 
-                # FIX: Para Sistema, usar placeholder
+                # Para Sistema, usar 'Sistema' como recurso
                 if entity == 'Sistema' and recurso is None:
-                    recurso = '_SISTEMA_'
+                    recurso = 'Sistema'
                 
                 # Extraer valores horarios
                 for h in range(1, 25):

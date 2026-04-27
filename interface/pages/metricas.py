@@ -94,7 +94,7 @@ METRICAS_POR_SECCION = {
     '💰 Precios': {
         'icon': 'fa-dollar-sign',
         'color': '#32CD32',
-        'metricas': ['PrecBolsNaci', 'PrecBolsNaciTX1', 'PPPrecBolsNaci', 'PrecTransBolsa',
+        'metricas': ['PPPrecBolsNaci', 'PrecBolsNaciTX1', 'PrecTransBolsa',
                      'PrecPromCont', 'PrecPromContRegu', 'PrecPromContNoRegu',
                      'PrecEsca', 'PrecEscaAct', 'PrecEscaMarg', 'PrecEscaPon',
                      'PrecOferDesp', 'PrecOferIdeal', 'MaxPrecOferNal',

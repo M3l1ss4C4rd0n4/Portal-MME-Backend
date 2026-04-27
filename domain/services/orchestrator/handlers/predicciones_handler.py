@@ -208,7 +208,7 @@ class PrediccionesHandlerMixin:
             self._get_historical_avg_30d, 'Gene', 'Sistema'
         )
         hist_precio_avg, hist_precio_dias = await asyncio.to_thread(
-            self._get_historical_avg_30d, 'PrecBolsNaci', 'Sistema'
+            self._get_historical_avg_30d, 'PPPrecBolsNaci', 'Sistema'
         )
         hist_emb_avg, hist_emb_dias = await asyncio.to_thread(self._get_embalses_avg_30d)
 

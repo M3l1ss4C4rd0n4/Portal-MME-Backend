@@ -6,9 +6,11 @@ from interface.components.kpi_card import crear_kpi_row
 from interface.components.chart_card import crear_page_header
 from core.constants import UIColors as COLORS
 from domain.services.metrics_service import MetricsService
+from domain.services.hydrology_service import HydrologyService
 
-# Inicializar servicio
+# Inicializar servicios
 metrics_service = MetricsService()
+hydrology_service = HydrologyService()
 
 register_page(
     __name__,
@@ -115,73 +117,36 @@ def obtener_metricas_hidricas():
     """
     Obtener métricas de reservas, aportes hídricos y generación total.
     
-    NUEVA ARQUITECTURA PARA FICHAS (2025-11-24):
-    - API XM como fuente PRIMARIA (tiempo real, datos actualizados)
-    - PostgreSQL como FALLBACK (si API no disponible)
-    - Conversión automática de unidades según fuente
-    
-    METODOLOGÍA OFICIAL XM:
-    1. Reservas Hídricas = (Volumen Útil / Capacidad Útil) * 100
-    2. Aportes Hídricos = (Promedio mensual Real / Promedio mensual Histórico) * 100
-    3. Generación SIN = Suma de generación diaria
+    UNIFICADO (2026-04-21):
+    - Usa HydrologyService (misma fuente que Portal de Dirección)
+    - Reservas: PorcVoluUtilDiar/Sistema (precalculado XM) → fallback manual
+    - Aportes: AporEner/Rio suma acumulada mensual / AporEnerMediHist/Rio suma acumulada
+    - Generación SIN: Suma de generación diaria
     """
     try:
         fecha_fin = date.today() - timedelta(days=1)
+        fecha_fin_str = fecha_fin.strftime('%Y-%m-%d')
         reserva_pct, reserva_gwh, fecha_reserva = None, None, None
         aporte_pct, aporte_gwh, fecha_aporte = None, None, None
         gen_gwh, fecha_gen = None, None
         
         # === 1. RESERVAS HÍDRICAS ===
-        # Buscar datos válidos (hasta 5 días atrás) - validar volumen > 10,000 GWh
-        for dias_atras in range(6):
-            fecha_busqueda = (fecha_fin - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-            
-            # Obtener volumen y capacidad desde API XM (primero) o PostgreSQL (fallback)
-            df_vol = obtener_datos_fichas_realtime('VoluUtilDiarEner', 'Embalse', fecha_busqueda, fecha_busqueda)
-            df_cap = obtener_datos_fichas_realtime('CapaUtilDiarEner', 'Embalse', fecha_busqueda, fecha_busqueda)
-            
-            if df_vol is not None and not df_vol.empty and df_cap is not None and not df_cap.empty:
-                # Valores en GWh (ya convertidos por obtener_datos_fichas_realtime)
-                vol_total_gwh = df_vol['valor_gwh'].sum()
-                cap_total_gwh = df_cap['valor_gwh'].sum()
-                
-                # VALIDACIÓN COMPLETITUD: contar embalses con volumen vs capacidad
-                # Rechazar si menos del 80% de embalses reportaron volumen
-                col_recurso_v = next((c for c in ['recurso', 'Embalse', 'Values_code'] if c in df_vol.columns), None)
-                col_recurso_c = next((c for c in ['recurso', 'Embalse', 'Values_code'] if c in df_cap.columns), None)
-                
-                if col_recurso_v and col_recurso_c:
-                    n_vol = df_vol[col_recurso_v].nunique()
-                    n_cap = df_cap[col_recurso_c].nunique()
-                    if n_cap > 0 and n_vol / n_cap < 0.80:
-                        print(f"Datos incompletos {fecha_busqueda}: n_vol={n_vol}, n_cap={n_cap}, ratio={n_vol/n_cap:.2f}")
-                        continue
-                
-                if cap_total_gwh > 0:
-                    reserva_pct = round((vol_total_gwh / cap_total_gwh) * 100, 2)
-                    reserva_gwh = round(vol_total_gwh, 2)
-                    fecha_reserva = datetime.strptime(fecha_busqueda, '%Y-%m-%d').date()
-                    print(f"Reservas: {reserva_pct}% ({reserva_gwh:,.2f} GWh) - {fecha_busqueda}{' (datos históricos)' if dias_atras > 0 else ''} [API XM ↔ PostgreSQL]")
-                    break
+        # Usar HydrologyService (intenta PorcVoluUtilDiar/Sistema primero)
+        _pct, _gwh, _fecha = hydrology_service.get_reservas_hidricas(fecha_fin_str)
+        if _pct is not None:
+            reserva_pct = round(_pct, 2)
+            reserva_gwh = _gwh
+            fecha_reserva = datetime.strptime(_fecha, '%Y-%m-%d').date() if _fecha else fecha_fin
+            print(f"Reservas: {reserva_pct}% ({reserva_gwh:,.2f} GWh) — {_fecha} [HydrologyService]")
         
         # === 2. APORTES HÍDRICOS ===
-        # Promedio del mes actual (día 1 hasta ayer)
-        fecha_inicio_mes = fecha_fin.replace(day=1).strftime('%Y-%m-%d')
-        fecha_fin_str = fecha_fin.strftime('%Y-%m-%d')
-        
-        df_aportes = obtener_datos_fichas_realtime('AporEner', 'Sistema', fecha_inicio_mes, fecha_fin_str)
-        df_media = obtener_datos_fichas_realtime('AporEnerMediHist', 'Sistema', fecha_inicio_mes, fecha_fin_str)
-        
-        if df_aportes is not None and not df_aportes.empty and df_media is not None and not df_media.empty:
-            # Valores en GWh (ya convertidos por obtener_datos_fichas_realtime)
-            aportes_promedio = df_aportes['valor_gwh'].mean()
-            media_promedio = df_media['valor_gwh'].mean()
-            
-            if media_promedio > 0:
-                aporte_pct = round((aportes_promedio / media_promedio) * 100, 2)
-                aporte_gwh = round(media_promedio, 2)  # Mostrar Media Histórica (como XM)
-                fecha_aporte = fecha_fin
-                print(f"Aportes: {aporte_pct}% (Real: {aportes_promedio:.2f} GWh, Hist: {media_promedio:.2f} GWh) [API XM ↔ PostgreSQL]")
+        # Usar HydrologyService (fórmula oficial XM: suma Rio / suma Rio media hist)
+        _aporte_pct, _aporte_gwh = hydrology_service.get_aportes_hidricos(fecha_fin_str)
+        if _aporte_pct is not None:
+            aporte_pct = round(_aporte_pct, 2)
+            aporte_gwh = round(_aporte_gwh, 2)
+            fecha_aporte = fecha_fin
+            print(f"Aportes: {aporte_pct}% ({aporte_gwh:.2f} GWh) — {fecha_fin_str} [HydrologyService]")
         
         # === 3. GENERACIÓN SIN ===
         # Buscar última fecha con datos

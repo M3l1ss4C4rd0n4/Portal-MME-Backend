@@ -29,12 +29,14 @@ logger = logging.getLogger(__name__)
 # ─── DB ───────────────────────────────────────────────────────────────────────
 
 def _get_conn():
-    return psycopg2.connect(
+    conn = psycopg2.connect(
         dbname='portal_energetico',
         user='postgres',
         host='localhost',
         port=5432,
+        options='-c search_path=subsidios,public',
     )
+    return conn
 
 
 def _query(sql: str, params=None):
@@ -63,12 +65,8 @@ def _scalar(sql: str, params=None):
 # ─── Authorization ────────────────────────────────────────────────────────────
 
 def _is_authorized(telegram_id: int) -> bool:
-    """Verifica si el usuario está autorizado en subsidios_usuarios_autorizados."""
-    count = _scalar(
-        "SELECT COUNT(*) FROM subsidios_usuarios_autorizados WHERE telegram_id = %s AND activo = TRUE",
-        (telegram_id,)
-    )
-    return count is not None and count > 0
+    """Acceso abierto a todos los usuarios."""
+    return True
 
 
 def _audit(telegram_id: int, nombre: str, comando: str, parametros: str = None):
@@ -420,7 +418,7 @@ def q_resoluciones_anio(anio: int = None) -> str:
                    COUNT(DISTINCT no_resolucion) as n,
                    SUM(valor_resolucion) as valor
             FROM subsidios_pagos
-            WHERE anio = %s
+            WHERE LEFT(anio_trimestre_resolucion, 4)::int = %s
             GROUP BY fondo, CASE WHEN area IS NULL OR area = 'None' THEN 'General' ELSE area END
             ORDER BY fondo, area
         """, (anio,))
@@ -438,16 +436,18 @@ def q_resoluciones_anio(anio: int = None) -> str:
         return '\n'.join(lines)
     else:
         rows = _query("""
-            SELECT anio, COUNT(DISTINCT no_resolucion) as n,
+            SELECT LEFT(anio_trimestre_resolucion, 4)::int as anio_res,
+                   COUNT(DISTINCT no_resolucion) as n,
                    SUM(valor_resolucion) as valor
             FROM subsidios_pagos
-            GROUP BY anio
-            ORDER BY anio DESC
+            WHERE anio_trimestre_resolucion IS NOT NULL
+            GROUP BY 1
+            ORDER BY 1 DESC
         """)
 
-        lines = [f"📊 *RESOLUCIONES POR AÑO*\n"]
+        lines = [f"📊 *RESOLUCIONES POR AÑO (expedición)*\n"]
         for r in rows:
-            lines.append(f"*{r['anio']}*: {r['n']} resoluciones ({_fmt_money(r['valor'])})")
+            lines.append(f"*{r['anio_res']}*: {r['n']} resoluciones ({_fmt_money(r['valor'])})")
 
         lines.append(f"\n💡 Para un año específico:")
         lines.append(f"`/resoluciones 2024`")
@@ -971,10 +971,6 @@ async def handle_subsidios_text(update: Update, context, message: str) -> bool:
     user = update.effective_user
     chat = update.effective_chat
 
-    # Solo para usuarios autorizados de subsidios
-    if not _is_authorized(user.id):
-        return False
-
     message_clean = message.strip()
 
     # Paso 1: Detectar qué acción corresponde
@@ -1045,12 +1041,7 @@ async def _safe_send(chat, text: str, keyboard=None):
 
 
 async def _check_auth(update):
-    """Verifica autorización. Si no autorizado, envía mensaje y retorna False."""
-    user = update.effective_user
-    if not _is_authorized(user.id):
-        await _safe_send(update.effective_chat, NOT_AUTH_MSG, _back_kb())
-        logger.warning(f"[SUBSIDIOS] Acceso denegado: {user.id} (@{user.username})")
-        return False
+    """Acceso abierto — siempre autorizado."""
     return True
 
 
@@ -1186,13 +1177,6 @@ async def cmd_buscar_empresa(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_subsidios_callback(query, user, chat, data: str, context):
     """Maneja callbacks de botones inline del módulo subsidios."""
     action = data.split(":", 1)[1] if ":" in data else data
-
-    if not _is_authorized(user.id):
-        try:
-            await query.edit_message_text(NOT_AUTH_MSG, parse_mode=ParseMode.MARKDOWN, reply_markup=_back_kb())
-        except Exception:
-            await _safe_send(chat, NOT_AUTH_MSG, _back_kb())
-        return
 
     _audit(user.id, _user_name(user), f'cb:{action}')
     await chat.send_action("typing")

@@ -572,16 +572,365 @@ def generate_price_chart() -> Tuple[Optional[str], str, str]:
 
 
 # ═══════════════════════════════════════════════════════════
+# Nuevas funciones para diseño XM (usando matplotlib)
+# ═══════════════════════════════════════════════════════════
+
+# Importaciones para las nuevas funciones
+import matplotlib
+matplotlib.use('Agg')  # Backend no-interactivo
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+def generate_demand_chart() -> Tuple[Optional[str], str, str]:
+    """
+    Gráfico de líneas con evolución de la demanda (últimos 30 días).
+    Muestra 3 líneas: Demanda Real, Regulada y No Regulada.
+    
+    Returns
+    -------
+    (filepath, caption, fecha_str)
+    """
+    try:
+        from infrastructure.database.connection import get_connection
+        
+        with get_connection() as conn:
+            # Usar MAX por día (valor máximo horario) y filtrar días incompletos
+            df = pd.read_sql("""
+                WITH daily_max AS (
+                    SELECT 
+                        fecha,
+                        MAX(CASE WHEN metrica = 'DemaReal' THEN valor_gwh END) as demanda_real,
+                        MAX(CASE WHEN metrica = 'DemaRealReg' THEN valor_gwh END) as demanda_reg,
+                        MAX(CASE WHEN metrica = 'DemaRealNoReg' THEN valor_gwh END) as demanda_no_reg
+                    FROM metrics 
+                    WHERE metrica IN ('DemaReal', 'DemaRealReg', 'DemaRealNoReg')
+                      AND fecha >= CURRENT_DATE - INTERVAL '45 days'
+                    GROUP BY fecha
+                ),
+                -- Calcular promedio de los últimos 10 días para detectar incompletos
+                stats AS (
+                    SELECT AVG(demanda_real) as avg_real
+                    FROM daily_max
+                    WHERE fecha >= CURRENT_DATE - INTERVAL '15 days'
+                      AND fecha < CURRENT_DATE - INTERVAL '2 days'
+                )
+                SELECT d.*
+                FROM daily_max d, stats s
+                WHERE d.demanda_real >= s.avg_real * 0.4  -- Filtrar días con < 40% del promedio
+                  AND d.demanda_real IS NOT NULL
+                ORDER BY d.fecha
+                LIMIT 30
+            """, conn)
+        
+        if df.empty or len(df) < 5:
+            logger.warning("generate_demand_chart: sin datos suficientes de demanda")
+            return None, "", ""
+        
+        ultima_fecha = df['fecha'].max()
+        logger.info(f"[CHARTS] Demanda: {len(df)} días, último completo: {ultima_fecha}")
+        
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        
+        # 3 líneas horizontales como en el modelo XM
+        ax.plot(df['fecha'], df['demanda_real'], 
+                color='#2c3e50', linewidth=2.5, label='Demanda Real', marker='o', markersize=3)
+        ax.plot(df['fecha'], df['demanda_reg'], 
+                color='#16a085', linewidth=2, label='Demanda Regulada', marker='s', markersize=3)
+        ax.plot(df['fecha'], df['demanda_no_reg'], 
+                color='#52c4b0', linewidth=2, label='Demanda No Regulada', marker='^', markersize=3)
+        
+        ax.set_ylabel('GWh', fontsize=9, color='#666')
+        ax.set_xlabel('Fecha', fontsize=9, color='#666')
+        
+        # Formato eje X
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))
+        plt.xticks(rotation=45, ha='right', fontsize=7)
+        
+        # Leyenda arriba
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), 
+                  ncol=3, frameon=False, fontsize=8)
+        
+        ax.grid(True, alpha=0.3, linestyle='-')
+        ax.set_axisbelow(True)
+        
+        # Límites
+        ax.set_ylim(bottom=0)
+        
+        # Formato spines
+        for spine in ['top', 'right']:
+            ax.spines[spine].set_visible(False)
+        
+        plt.tight_layout()
+        
+        filepath = str(CHARTS_DIR / f'demanda_evol_{date.today().isoformat()}.png')
+        fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        
+        caption = f"Evolución Demanda — Últimos 30 días"
+        fecha_str = ultima_fecha.strftime('%Y-%m-%d') if hasattr(ultima_fecha, 'strftime') else str(ultima_fecha)
+        
+        logger.info(f"[CHARTS] Demanda chart guardado: {filepath}")
+        return filepath, caption, fecha_str
+        
+    except Exception as e:
+        logger.error(f"Error generando gráfico de demanda: {e}", exc_info=True)
+        return None, "", ""
+
+
+def generate_price_multi_chart() -> Tuple[Optional[str], str, str]:
+    """
+    Gráfico de líneas con 3 precios: Escasez, Máximo Oferta, PPP.
+    Réplica del modelo XM.
+    
+    Returns
+    -------
+    (filepath, caption, fecha_str)
+    """
+    try:
+        from infrastructure.database.connection import get_connection
+        
+        with get_connection() as conn:
+            # Query para obtener los 3 precios (últimos 30 días completos)
+            df = pd.read_sql("""
+                WITH daily_prices AS (
+                    SELECT 
+                        fecha,
+                        MAX(CASE WHEN metrica = 'PrecEsca' THEN valor_gwh END) as precio_escasez,
+                        MAX(CASE WHEN metrica = 'MaxPrecOferNal' THEN valor_gwh END) as precio_max,
+                        MAX(CASE WHEN metrica = 'PPPrecBolsNaci' THEN valor_gwh END) as ppp_bolsa,
+                        MAX(CASE WHEN metrica = 'PrecBolsNaci' THEN valor_gwh END) as precio_bolsa
+                    FROM metrics 
+                    WHERE metrica IN ('PrecEsca', 'MaxPrecOferNal', 'PPPrecBolsNaci', 'PrecBolsNaci')
+                      AND fecha >= CURRENT_DATE - INTERVAL '45 days'
+                    GROUP BY fecha
+                    HAVING COUNT(DISTINCT metrica) >= 2  -- Al menos 2 métricas por día
+                )
+                SELECT * FROM daily_prices
+                ORDER BY fecha
+                LIMIT 30
+            """, conn)
+        
+        if df.empty or len(df) < 5:
+            logger.warning("generate_price_multi_chart: sin datos suficientes de precios")
+            return None, "", ""
+        
+        ultima_fecha = df['fecha'].max()
+        logger.info(f"[CHARTS] Precios multi: {len(df)} días, último: {ultima_fecha}")
+        
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        
+        # 3 líneas: Escasez (naranja), Máximo (azul), PPP (verde)
+        if df['precio_escasez'].notna().any():
+            ax.plot(df['fecha'], df['precio_escasez'], 
+                    color='#e67e22', linewidth=2.5, label='Precio de escasez ($/kWh)', marker='o', markersize=3)
+        
+        if df['precio_max'].notna().any():
+            ax.plot(df['fecha'], df['precio_max'], 
+                    color='#3498db', linewidth=2, label='Precio Máximo Diario ($/kWh)', marker='s', markersize=3)
+        
+        if df['ppp_bolsa'].notna().any():
+            ax.plot(df['fecha'], df['ppp_bolsa'], 
+                    color='#27ae60', linewidth=2, label='PPP Diario ($/kWh)', marker='^', markersize=3)
+        elif df['precio_bolsa'].notna().any():
+            # Fallback a PrecBolsNaci si no hay PPP
+            ax.plot(df['fecha'], df['precio_bolsa'], 
+                    color='#27ae60', linewidth=2, label='Precio Promedio Diario ($/kWh)', marker='^', markersize=3)
+        
+        ax.set_ylabel('COP/kWh', fontsize=9, color='#666')
+        ax.set_xlabel('Fecha', fontsize=9, color='#666')
+        
+        # Formato eje X
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))
+        plt.xticks(rotation=45, ha='right', fontsize=7)
+        
+        # Leyenda arriba como en el modelo XM
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.18), 
+                  ncol=3, frameon=False, fontsize=8)
+        
+        ax.grid(True, alpha=0.3, linestyle='-')
+        ax.set_axisbelow(True)
+        
+        # Formato spines
+        for spine in ['top', 'right']:
+            ax.spines[spine].set_visible(False)
+        
+        plt.tight_layout()
+        
+        filepath = str(CHARTS_DIR / f'precio_multi_{date.today().isoformat()}.png')
+        fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        
+        caption = f"Evolución Precios — Últimos 30 días"
+        fecha_str = ultima_fecha.strftime('%Y-%m-%d') if hasattr(ultima_fecha, 'strftime') else str(ultima_fecha)
+        
+        logger.info(f"[CHARTS] Precio multi chart guardado: {filepath}")
+        return filepath, caption, fecha_str
+        
+    except Exception as e:
+        logger.error(f"Error generando gráfico multi-precio: {e}", exc_info=True)
+        return None, "", ""
+
+
+# ═══════════════════════════════════════════════════════════
+# 6. APORTES HÍDRICOS — Volumen Útil con referencias históricas
+# ═══════════════════════════════════════════════════════════
+
+def generate_aportes_hidricos_chart() -> Tuple[Optional[str], str, str]:
+    """
+    Gráfico de líneas con evolución del volumen útil de embalses (últimos 90 días).
+    Muestra 3 líneas: 
+      - Volumen Útil diario (2026 - actual)
+      - Referencia (2025) - mismas fechas año anterior
+      - Referencia (2024) - dos años atrás
+    
+    Replica el estilo XM con 3 tonos de verde.
+    
+    Returns
+    -------
+    (filepath, caption, fecha_str)
+    """
+    try:
+        from infrastructure.database.connection import get_connection
+        
+        with get_connection() as conn:
+            # Consulta para obtener las 3 líneas de volumen útil
+            df = pd.read_sql("""
+                WITH fechas_actuales AS (
+                    SELECT DISTINCT fecha
+                    FROM metrics
+                    WHERE metrica = 'PorcVoluUtilDiar'
+                      AND fecha >= CURRENT_DATE - INTERVAL '90 days'
+                      AND fecha <= CURRENT_DATE
+                ),
+                actual_2026 AS (
+                    SELECT fecha, AVG(valor_gwh) * 100 as porcentaje
+                    FROM metrics
+                    WHERE metrica = 'PorcVoluUtilDiar'
+                      AND fecha >= CURRENT_DATE - INTERVAL '90 days'
+                    GROUP BY fecha
+                ),
+                referencia_2025 AS (
+                    SELECT 
+                        f.fecha,
+                        AVG(m.valor_gwh) * 100 as porcentaje
+                    FROM fechas_actuales f
+                    JOIN metrics m ON m.fecha = f.fecha - INTERVAL '1 year'
+                      AND m.metrica = 'PorcVoluUtilDiar'
+                    GROUP BY f.fecha
+                ),
+                referencia_2024 AS (
+                    SELECT 
+                        f.fecha,
+                        AVG(m.valor_gwh) * 100 as porcentaje
+                    FROM fechas_actuales f
+                    JOIN metrics m ON m.fecha = f.fecha - INTERVAL '2 years'
+                      AND m.metrica = 'PorcVoluUtilDiar'
+                    GROUP BY f.fecha
+                )
+                SELECT 
+                    a.fecha,
+                    a.porcentaje as volumen_util_2026,
+                    r25.porcentaje as ref_2025,
+                    r24.porcentaje as ref_2024
+                FROM actual_2026 a
+                LEFT JOIN referencia_2025 r25 ON r25.fecha = a.fecha
+                LEFT JOIN referencia_2024 r24 ON r24.fecha = a.fecha
+                ORDER BY a.fecha
+            """, conn)
+            
+            if df.empty:
+                logger.warning("[CHARTS] Sin datos de volumen útil")
+                return None, "", ""
+            
+            df['fecha'] = pd.to_datetime(df['fecha'])
+            ultima_fecha = df['fecha'].max()
+            fecha_str = ultima_fecha.strftime('%d/%m/%Y')
+            
+            # Datos actuales para el resumen
+            ultimo_valor = df.iloc[-1]['volumen_util_2026']
+            ref_2025_val = df.iloc[-1]['ref_2025'] if pd.notna(df.iloc[-1]['ref_2025']) else None
+            ref_2024_val = df.iloc[-1]['ref_2024'] if pd.notna(df.iloc[-1]['ref_2024']) else None
+            
+            # Crear figura matplotlib estilo XM
+            fig, ax = plt.subplots(figsize=(10, 5.5))
+            
+            # Colores distintivos: Actual (verde claro), 2025 (verde), 2024 (azul vibrante)
+            color_actual = '#90EE90'      # Verde muy claro
+            color_2025 = '#2E8B57'        # Verde medio
+            color_2024 = '#2196F3'        # Azul vibrante (más distinguible)
+            
+            # Trazar las 3 líneas
+            ax.plot(df['fecha'], df['volumen_util_2026'], 
+                   label='Volumen Útil diario', 
+                   color=color_actual, linewidth=2, alpha=0.9)
+            
+            if df['ref_2025'].notna().any():
+                ax.plot(df['fecha'], df['ref_2025'], 
+                       label='Referencia (2025)', 
+                       color=color_2025, linewidth=2, linestyle='-')
+            
+            if df['ref_2024'].notna().any():
+                ax.plot(df['fecha'], df['ref_2024'], 
+                       label='Referencia (2024)', 
+                       color=color_2024, linewidth=2, linestyle='-')
+            
+            # Líneas de referencia horizontales
+            ax.axhline(y=80, color='#ddd', linestyle='--', linewidth=0.8, alpha=0.7)
+            ax.axhline(y=60, color='#ddd', linestyle='--', linewidth=0.8, alpha=0.7)
+            ax.axhline(y=40, color='#ddd', linestyle='--', linewidth=0.8, alpha=0.7)
+            ax.axhline(y=20, color='#ddd', linestyle='--', linewidth=0.8, alpha=0.7)
+            
+            # Configuración de ejes
+            ax.set_ylim(0, 100)
+            ax.set_ylabel('Porcentaje (%)', fontsize=10, color='#666')
+            ax.set_xlabel('')
+            
+            # Formato eje X
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=10))
+            plt.xticks(rotation=45, ha='right', fontsize=8)
+            
+            # Leyenda arriba
+            ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), 
+                     ncol=3, frameon=False, fontsize=9)
+            
+            # Grid sutil
+            ax.grid(True, alpha=0.3, linestyle='-', axis='y')
+            ax.set_axisbelow(True)
+            
+            # Formato spines
+            for spine in ['top', 'right']:
+                ax.spines[spine].set_visible(False)
+            
+            plt.tight_layout()
+            
+            filepath = str(CHARTS_DIR / f'aportes_hidricos_{date.today().isoformat()}.png')
+            fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+            plt.close(fig)
+            
+            caption = f"Evolución Volumen Útil — Comparativo histórico"
+            
+            logger.info(f"[CHARTS] Aportes hídricos chart guardado: {filepath}")
+            return filepath, caption, fecha_str
+            
+    except Exception as e:
+        logger.error(f"Error generando gráfico de aportes hídricos: {e}", exc_info=True)
+        return None, "", ""
+
+
+# ═══════════════════════════════════════════════════════════
 # Generador combinado
 # ═══════════════════════════════════════════════════════════
 
 def generate_all_informe_charts() -> dict:
     """
-    Genera los 3 gráficos del informe ejecutivo.
+    Genera todos los gráficos del informe ejecutivo.
 
     Returns
     -------
-    dict  con claves 'generacion', 'embalses', 'precios'.
+    dict  con claves 'generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos'.
     Cada valor es (filepath | None, caption, fecha_str).
     """
     results = {}
@@ -589,6 +938,9 @@ def generate_all_informe_charts() -> dict:
         ('generacion', generate_generation_pie),
         ('embalses', generate_embalses_map),
         ('precios', generate_price_chart),
+        ('demanda', generate_demand_chart),
+        ('precio_multi', generate_price_multi_chart),
+        ('aportes_hidricos', generate_aportes_hidricos_chart),
     ]:
         try:
             results[key] = fn()

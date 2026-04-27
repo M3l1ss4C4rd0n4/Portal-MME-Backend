@@ -1,0 +1,367 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Docker Compose - Portal Energético MME
+# Versión: 2.0.0
+# Descripción: Orquestación completa de todos los servicios
+# ═══════════════════════════════════════════════════════════════════════════════
+
+version: '3.8'
+
+services:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # INFRAESTRUCTURA BASE
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: mme-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-portal_energetico}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - mme-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-portal_energetico}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: mme-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - mme-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # APLICACIONES PRINCIPALES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: production
+    container_name: mme-api
+    restart: unless-stopped
+    environment:
+      # Base de datos
+      USE_POSTGRES: "True"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-portal_energetico}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      # API
+      API_PORT: 8000
+      API_HOST: 0.0.0.0
+      # Secrets
+      API_KEY: ${API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      GNEWS_API_KEY: ${GNEWS_API_KEY}
+      # Configuración
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./logs/api:/app/logs
+      - ./data:/app/data:ro
+    ports:
+      - "${API_PORT:-8000}:8000"
+    networks:
+      - mme-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: production
+    container_name: mme-dashboard
+    restart: unless-stopped
+    command: gunicorn app:server -c gunicorn_config.py --bind 0.0.0.0:8050
+    environment:
+      # Base de datos
+      USE_POSTGRES: "True"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-portal_energetico}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      # Dashboard
+      DASH_DEBUG: "False"
+      DASH_PORT: 8050
+      # Secrets
+      API_KEY: ${API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      # Configuración
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./logs/dashboard:/app/logs
+      - ./data:/app/data:ro
+    ports:
+      - "${DASH_PORT:-8050}:8050"
+    networks:
+      - mme-network
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8050"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # TELEGRAM BOT
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: docker/telegram/Dockerfile
+    container_name: mme-telegram-bot
+    restart: unless-stopped
+    environment:
+      # Base de datos
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-portal_energetico}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      # Telegram
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ENABLED: "true"
+      # AI
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_BASE_URL: https://api.groq.com/openai/v1
+      AI_MODEL: ${AI_MODEL:-llama-3.3-70b-versatile}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
+      # Portal API (interno en Docker network)
+      PORTAL_BASE_URL: http://dashboard:8050
+      PORTAL_API_URL: http://api:8000
+      PORTAL_API_KEY: ${API_KEY}
+      # S3/MinIO (si aplica)
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET_CHARTS: ${S3_BUCKET_CHARTS:-whatsapp-charts}
+      S3_BUCKET_DASHBOARDS: ${S3_BUCKET_DASHBOARDS:-whatsapp-dashboards}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-default-secret-key}
+      RATE_LIMIT_MESSAGES: ${RATE_LIMIT_MESSAGES:-20}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEBUG: "False"
+      # Email
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_SERVER: ${SMTP_SERVER}
+      SMTP_PORT: ${SMTP_PORT}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME}
+      # Configuración
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./logs/telegram:/app/logs
+      - ./whatsapp_bot/informes:/app/informes
+    networks:
+      - mme-network
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CELERY - ASYNC TASKS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: production
+    container_name: mme-celery-worker
+    restart: unless-stopped
+    command: celery -A tasks worker --loglevel=info --concurrency=2 --max-tasks-per-child=1000
+    environment:
+      # Base de datos
+      USE_POSTGRES: "True"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-portal_energetico}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      # Secrets
+      API_KEY: ${API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      GNEWS_API_KEY: ${GNEWS_API_KEY}
+      # Email
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_SERVER: ${SMTP_SERVER}
+      SMTP_PORT: ${SMTP_PORT}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME}
+      VICEMINISTRO_EMAIL: ${VICEMINISTRO_EMAIL}
+      DIRECTOR_EMAIL: ${DIRECTOR_EMAIL}
+      # Telegram
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ENABLED: "true"
+      PORTAL_API_URL: http://api:8000
+      PORTAL_API_KEY: ${API_KEY}
+      # Configuración
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+      C_FORCE_ROOT: "true"  # Necesario para correr Celery como root en Docker
+    volumes:
+      - ./logs/celery:/app/logs/celery
+      - ./data:/app/data:ro
+    networks:
+      - mme-network
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: production
+    container_name: mme-celery-beat
+    restart: unless-stopped
+    command: celery -A tasks beat --loglevel=info
+    environment:
+      # Base de datos
+      USE_POSTGRES: "True"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-portal_energetico}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      # Secrets
+      API_KEY: ${API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      # Configuración
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+      C_FORCE_ROOT: "true"
+    volumes:
+      - ./logs/celery:/app/logs/celery
+      - celery_beat_data:/app/celerybeat
+    networks:
+      - mme-network
+    depends_on:
+      celery-worker:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MONITOREO (Opcional)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  flower:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: production
+    container_name: mme-flower
+    restart: unless-stopped
+    command: celery -A tasks flower --port=5555 --loglevel=info
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      PYTHONPATH: /app
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    networks:
+      - mme-network
+    depends_on:
+      - redis
+      - celery-worker
+    profiles:
+      - monitoring
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VOLÚMENES
+# ═════════════════════════════════════════════════════════════════════════════
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  celery_beat_data:
+    driver: local
+
+# ═════════════════════════════════════════════════════════════════════════════
+# REDES
+# ═════════════════════════════════════════════════════════════════════════════
+
+networks:
+  mme-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

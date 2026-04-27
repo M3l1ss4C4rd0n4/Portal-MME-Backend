@@ -381,7 +381,7 @@ class XMService:
     
     METRIC_ENTITY_MAP = {
         # Precios
-        'PrecBolsNaci': 'Sistema',
+        'PPPrecBolsNaci': 'Sistema',
         'PrecBolsCTG': 'Sistema',
         'PrecEsca': 'Sistema',
         'PrecEscaAct': 'Sistema',

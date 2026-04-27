@@ -80,6 +80,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Constantes compartidas — fuente única en core/constants.py
+try:
+    sys.path.insert(0, SERVER_DIR)
+    from core.constants import (
+        MODEL_DISPLAY_NAMES as _MODEL_DISPLAY_NAMES,
+        ANOMALY_SEVERITY_EMOJIS as _ANOMALY_SEV_EMOJIS,
+    )
+except ImportError:
+    _MODEL_DISPLAY_NAMES = {}
+    _ANOMALY_SEV_EMOJIS = {'crítico': '🔴', 'alerta': '🟠', 'normal': '🟢'}
+
+def _modelo_legible(modelo_bd: str) -> str:
+    return _MODEL_DISPLAY_NAMES.get(modelo_bd, modelo_bd)
+
 # ═══════════════════════════════════════════════════════════
 # Configuración
 # ═══════════════════════════════════════════════════════════
@@ -119,10 +133,15 @@ def track_telegram_user(user_id: int, username: str = None, first_name: str = No
     except Exception as e:
         logger.error(f"Error tracking usuario Telegram {user_id} en Redis: {e}")
 
-    # Persistir en PostgreSQL (best-effort, no bloquea)
+    # Persistir en PostgreSQL vía endpoint interno (best-effort, no bloquea)
     try:
-        from domain.services.notification_service import persist_telegram_user
-        persist_telegram_user(user_id, username, first_name)
+        _internal_url = f"{PORTAL_API_URL}/api/v1/internal/telegram-users"
+        with httpx.Client(timeout=5) as _client:
+            _client.post(
+                _internal_url,
+                json={"chat_id": user_id, "username": username, "nombre": first_name},
+                headers={"X-API-Key": PORTAL_API_KEY},
+            )
     except Exception as e:
         logger.debug(f"Error persistiendo usuario {user_id} en PostgreSQL: {e}")
 
@@ -132,33 +151,43 @@ def track_telegram_user(user_id: int, username: str = None, first_name: str = No
 # ═══════════════════════════════════════════════════════════
 
 async def call_orchestrator(session_id: str, intent: str, parameters: dict = None) -> dict:
-    """Llama al orquestador del Portal Energético via HTTP"""
+    """Llama al orquestador del Portal Energético via HTTP (con 1 reintento automático)"""
     payload = {
         "sessionId": session_id,
         "intent": intent,
         "parameters": parameters or {}
     }
     logger.info(f"[ORCH] → intent={intent} params={parameters or {}}")
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                ORCHESTRATOR_ENDPOINT,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-API-Key": PORTAL_API_KEY
-                }
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            logger.info(f"[ORCH] ← status={result.get('status')}")
-            return result
-    except httpx.TimeoutException:
-        logger.error("[ORCH] Timeout llamando al orquestador")
-        return {"status": "ERROR", "data": {}, "message": "Timeout del servicio"}
-    except Exception as e:
-        logger.error(f"[ORCH] Error: {e}")
-        return {"status": "ERROR", "data": {}, "message": str(e)}
+    last_err = None
+    for attempt in range(2):  # 1 intento + 1 reintento
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    ORCHESTRATOR_ENDPOINT,
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-API-Key": PORTAL_API_KEY
+                    }
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                logger.info(f"[ORCH] ← status={result.get('status')}")
+                return result
+        except httpx.TimeoutException:
+            logger.error("[ORCH] Timeout llamando al orquestador")
+            return {"status": "ERROR", "data": {}, "message": "Timeout del servicio"}
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            last_err = e
+            if attempt == 0:
+                logger.warning(f"[ORCH] Conexión fallida (intento {attempt+1}), reintentando... {e}")
+                await asyncio.sleep(1.5)
+            continue
+        except Exception as e:
+            logger.error(f"[ORCH] Error: {e}")
+            return {"status": "ERROR", "data": {}, "message": str(e)}
+    logger.error(f"[ORCH] Error tras reintentos: {last_err}")
+    return {"status": "ERROR", "data": {}, "message": str(last_err)}
 
 
 def get_session_id(user_id: int) -> str:
@@ -195,9 +224,8 @@ def render_menu(data: dict) -> tuple:
         for ind in indicadores:
             text += f"• {ind}\n"
 
-    # Nota de subsidios
+    # Subsidios
     text += "\n📋 *Subsidios:* Consulta la base de subsidios DDE."
-    text += "\n🔒 _Acceso limitado a personal autorizado._"
 
     keyboard = []
     for item in menu_items:
@@ -210,7 +238,7 @@ def render_menu(data: dict) -> tuple:
 
     # Botón de Subsidios al final
     keyboard.append([InlineKeyboardButton(
-        "📋 Subsidios (acceso restringido)", callback_data="intent:subsidios"
+        "📋 Subsidios", callback_data="intent:subsidios"
     )])
 
     return text, InlineKeyboardMarkup(keyboard)
@@ -382,6 +410,11 @@ def render_predicciones_resultado(data: dict, current_horizonte: str = None) -> 
                 if line2:
                     text += f"   {' · '.join(line2)}\n"
 
+                # Modelo usado para esta métrica
+                modelo_bd = pred.get('modelo', '')
+                if modelo_bd:
+                    text += f"   _🤖 {_modelo_legible(modelo_bd)}_\n"
+
                 text += "\n"
     elif isinstance(predicciones, str):
         text += predicciones
@@ -430,8 +463,6 @@ def render_anomalias(data: dict) -> tuple:
         text += "✅ *Todo normal* — sin anomalías significativas.\n"
         text += "Generación, precio y embalses dentro de rangos esperados.\n"
     else:
-        sev_emoji = {'crítico': '🔴', 'alerta': '🟠', 'normal': '🟢'}
-
         for a in anomalias:
             emoji_ind = a.get('emoji', '📊')
             nombre = a.get('indicador', '?')
@@ -445,7 +476,7 @@ def render_anomalias(data: dict) -> tuple:
 
             # FASE A: Línea 1 — Indicador + severidad
             sev_txt = sev.upper() if sev != 'normal' else 'Normal'
-            text += f"{sev_emoji.get(sev, '⚪')} {emoji_ind} *{nombre}* — {sev_txt}\n"
+            text += f"{_ANOMALY_SEV_EMOJIS.get(sev, '⚪')} {emoji_ind} *{nombre}* — {sev_txt}\n"
 
             # FASE A: Línea 2 — Actual vs promedio compacto
             if valor is not None and avg_hist is not None:
@@ -480,7 +511,7 @@ def render_anomalias(data: dict) -> tuple:
         for i, det in enumerate(detalle_completo):
             ind = det.get("indicador", "?")
             sev = det.get("severidad", "normal")
-            sev_e = {'crítico': '🔴', 'alerta': '🟠', 'normal': '🟢'}.get(sev, '⚪')
+            sev_e = _ANOMALY_SEV_EMOJIS.get(sev, '⚪')
             short = (ind.replace("Precio de Bolsa", "Precio")
                      .replace("Generación Total", "Generación")
                      .replace("Porcentaje de Embalses", "Embalses"))
@@ -514,10 +545,9 @@ def render_anomalia_detalle(det: dict) -> tuple:
     motivo = det.get("motivo_exclusion", "")
     comentario = det.get("comentario_confianza", "")
 
-    sev_emoji = {'crítico': '🔴', 'alerta': '🟠', 'normal': '🟢'}
     sev_txt = sev.upper() if sev != "normal" else "Normal"
 
-    text = f"{sev_emoji.get(sev, '⚪')} {emoji} *{nombre}* — {sev_txt}\n"
+    text = f"{_ANOMALY_SEV_EMOJIS.get(sev, '⚪')} {emoji} *{nombre}* — {sev_txt}\n"
     text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
     if valor is not None:
@@ -1089,12 +1119,15 @@ async def _safe_send(chat, text: str, keyboard=None):
             await chat.send_message(text, reply_markup=keyboard)
 
 
-async def send_orchestrated(chat, user, intent: str, parameters: dict = None):
+async def send_orchestrated(chat, user, intent: str, parameters: dict = None, context=None):
     """Llama al orquestador y envía la respuesta renderizada"""
     track_telegram_user(user.id, user.username, user.first_name)
     await chat.send_action("typing")
     result = await call_orchestrator(get_session_id(user.id), intent, parameters)
     text, keyboard = render_response(intent, result)
+    # Guardar texto para TTS si se llama desde handle_voice
+    if context is not None:
+        context.user_data["_voice_tts_text"] = text
     await _safe_send(chat, text, keyboard)
 
 
@@ -1241,36 +1274,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ── Subsidios: mostrar menú del módulo ──────────────────
         if intent == "subsidios":
-            if sub_authorized(user.id):
-                sub_audit(user.id, sub_user_name(user), '/subsidios', None)
-                txt = (
-                    "📋 *MÓDULO DE SUBSIDIOS*\n"
-                    "Base de Subsidios DDE — Ministerio de Minas y Energía\n\n"
-                    "Selecciona la consulta que deseas realizar:"
+            sub_audit(user.id, sub_user_name(user), '/subsidios', None)
+            txt = (
+                "📋 *MÓDULO DE SUBSIDIOS*\n"
+                "Base de Subsidios DDE — Ministerio de Minas y Energía\n\n"
+                "Selecciona la consulta que deseas realizar:"
+            )
+            try:
+                await query.edit_message_text(
+                    txt, parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=sub_menu_kb()
                 )
-                try:
-                    await query.edit_message_text(
-                        txt, parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=sub_menu_kb()
-                    )
-                except Exception:
-                    await sub_safe_send(chat, txt, sub_menu_kb())
-            else:
-                txt = (
-                    "🔒 *Acceso restringido*\n\n"
-                    "El módulo de Subsidios está disponible solo para "
-                    "personal autorizado del Ministerio.\n\n"
-                    "Si necesitas acceso, contacta al administrador."
-                )
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-                    "🔙 Menú principal", callback_data="intent:menu"
-                )]])
-                try:
-                    await query.edit_message_text(
-                        txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb
-                    )
-                except Exception:
-                    await _safe_send(chat, txt, kb)
+            except Exception:
+                await sub_safe_send(chat, txt, sub_menu_kb())
             return
 
         # Submenús que no necesitan llamar al orquestador
@@ -1475,7 +1491,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 from services.informe_charts import generate_all_informe_charts
                 charts = await asyncio.to_thread(generate_all_informe_charts)
-                for key in ['generacion', 'embalses', 'precios']:
+                for key in ['generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos']:
                     if key in charts:
                         filepath = charts[key][0]
                         if filepath:
@@ -1486,7 +1502,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Extraer datos estructurados del contexto para PDF completo
             ctx = informe_data.get("contexto_datos", {})
             _fichas = ctx.get("estado_actual", {}).get("fichas", [])
-            _noticias = ctx.get("noticias", {}).get("noticias", []) if isinstance(ctx.get("noticias"), dict) else []
+            # FIX: Las noticias están en prensa_del_dia, no en noticias
+            _prensa = ctx.get("prensa_del_dia", {})
+            _noticias = _prensa.get("noticias", []) if isinstance(_prensa, dict) else []
             _anomalias_raw = ctx.get("anomalias", {})
             _anomalias = _anomalias_raw.get("lista", []) if isinstance(_anomalias_raw, dict) else []
 
@@ -1518,35 +1536,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         })
             _predicciones = _predicciones_list if _predicciones_list else None
 
-            from domain.services.report_service import generar_pdf_informe
-            pdf_path = generar_pdf_informe(
-                informe_texto,
-                fecha_generacion=informe_data.get("fecha_generacion", ""),
-                generado_con_ia=informe_data.get("generado_con_ia", True),
-                chart_paths=chart_paths,
-                fichas=_fichas or None,
-                predicciones=_predicciones,
-                anomalias=_anomalias or None,
-                noticias=_noticias or None,
-                contexto_datos=ctx or None,
-            )
-            if pdf_path:
-                import os
-                from datetime import date as _date
+            # Generar PDF vía endpoint interno (sin import directo de report_service)
+            from datetime import date as _date
+            _pdf_url = f"{PORTAL_API_URL}/api/v1/internal/reports/pdf"
+            _pdf_payload = {
+                "informe_texto": informe_texto,
+                "fecha_generacion": informe_data.get("fecha_generacion", ""),
+                "generado_con_ia": informe_data.get("generado_con_ia", True),
+                "chart_paths": chart_paths or None,
+                "fichas": _fichas or None,
+                "predicciones": _predicciones,
+                "anomalias": _anomalias or None,
+                "noticias": _noticias or None,
+                "contexto_datos": ctx or None,
+            }
+            async with httpx.AsyncClient(timeout=120) as _pdf_client:
+                _pdf_resp = await _pdf_client.post(
+                    _pdf_url,
+                    json=_pdf_payload,
+                    headers={"X-API-Key": PORTAL_API_KEY},
+                )
+            if _pdf_resp.status_code == 200:
+                import io
                 filename = f"Informe_Ejecutivo_MME_{_date.today().isoformat()}.pdf"
-                with open(pdf_path, "rb") as pdf_file:
-                    await chat.send_document(
-                        document=pdf_file,
-                        filename=filename,
-                        caption="📊 Informe Ejecutivo del Sector Eléctrico — MME",
-                    )
-                # Limpiar archivo temporal
-                try:
-                    os.remove(pdf_path)
-                except OSError:
-                    pass
+                await chat.send_document(
+                    document=io.BytesIO(_pdf_resp.content),
+                    filename=filename,
+                    caption="📊 Informe Ejecutivo del Sector Eléctrico — MME",
+                )
                 logger.info(f"[PDF] Enviado a {user.id} (@{user.username})")
             else:
+                logger.error(f"[PDF] Error del endpoint: {_pdf_resp.status_code} {_pdf_resp.text[:200]}")
                 await _safe_send(
                     chat,
                     "❌ Error al generar el PDF. Intenta de nuevo.",
@@ -1706,19 +1726,249 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _safe_send(chat, text, kb)
 
 
-# ── Texto libre ───────────────────────────────────────────
+# ── Narración LLM (convierte texto estructurado → lenguaje hablado) ──
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _narrate_for_audio(text: str, api_key: str) -> str:
+    """Usa Groq LLM para convertir una respuesta estructurada en locución oral natural.
+    Si falla (timeout, error), devuelve el texto limpio original como fallback."""
+    from groq import AsyncGroq as _AsyncGroq
+    try:
+        client = _AsyncGroq(api_key=api_key, base_url="https://api.groq.com")
+        resp = await client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Eres el asistente de voz del sector energético colombiano del Ministerio de Minas. "
+                        "Tu tarea es convertir respuestas de texto estructuradas (con bullets, emojis, "
+                        "números, markdown) en una locución oral natural y fluida. "
+                        "Habla directamente al usuario en español colombiano formal. "
+                        "No uses símbolos especiales, guiones al inicio de línea, asteriscos, ni listas. "
+                        "Solo texto corrido, como si estuvieras respondiendo en una llamada telefónica. "
+                        "Incluye todos los datos relevantes (cifras, noticias, estados). "
+                        "Mantén los datos numéricos importantes pero intégralos de forma natural en la oración. "
+                        "Máximo 6 oraciones, sin cortar información importante."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": text[:4000]
+                }
+            ],
+            temperature=0.4,
+            max_tokens=500,
+        )
+        narration = resp.choices[0].message.content.strip()
+        logger.info(f"[VOZ-NARRACION] Texto narrado ({len(narration)} chars): '{narration[:80]}...'")
+        return narration
+    except Exception as e:
+        logger.warning(f"[VOZ-NARRACION] Falló narración LLM, usando texto limpio: {e}")
+        return text  # fallback: usar el texto limpio original
+
+
+# ── TTS helper ───────────────────────────────────────────
+
+def _text_to_voice_bytes_sync(text: str) -> bytes:
+    """Convierte texto a MP3 usando ElevenLabs (voz natural) con fallback a gTTS.
+    Devuelve los bytes del archivo MP3."""
+    import io
+    import re
+
+    # ElevenLabs soporta hasta ~5000 chars; gTTS fallback limita a 1000
+    ELEVENLABS_LIMIT = 3000
+    GTTS_LIMIT = 1000
+
+    # ── Intento 1: ElevenLabs (voz natural en español) ──
+    try:
+        from elevenlabs.client import ElevenLabs as _ElevenLabs
+        api_key = settings.ELEVENLABS_API_KEY
+        voice_id = settings.ELEVENLABS_VOICE_ID or "nPczCjzI2devNBz1zQrb"
+        if api_key:
+            texto_el = text[:ELEVENLABS_LIMIT]
+            el_client = _ElevenLabs(api_key=api_key)
+            try:
+                audio_gen = el_client.text_to_speech.convert(
+                    voice_id=voice_id,
+                    text=texto_el,
+                    model_id="eleven_multilingual_v2",
+                    output_format="mp3_44100_128",
+                )
+                audio_bytes = b"".join(audio_gen)
+                logger.info(f"[VOZ-TTS] ElevenLabs OK ({len(audio_bytes)} bytes)")
+                return audio_bytes
+            except Exception as el_inner_err:
+                err_txt = str(el_inner_err).lower()
+                # Si no alcanza cuota para texto largo, reintentar con versiones cortas
+                if "quota_exceeded" in err_txt or "credits" in err_txt:
+                    def _prioritize_key_sentences(full_text: str, target_len: int) -> str:
+                        """Recorta preservando frases con metricas (%, MW, GWh, COP, fechas, etc.)."""
+                        if len(full_text) <= target_len:
+                            return full_text
+
+                        # Separacion simple por frases, manteniendo orden natural.
+                        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', full_text.strip()) if s.strip()]
+                        if not sentences:
+                            return full_text[:target_len].strip()
+
+                        key_pattern = re.compile(
+                            r'(\d|%|mw|mwh|gwh|kw|cop|\$|twh|kwh|hoy|ayer|promedio|variaci[oó]n|demanda|generaci[oó]n)',
+                            re.IGNORECASE,
+                        )
+                        key_sentences = [s for s in sentences if key_pattern.search(s)]
+                        other_sentences = [s for s in sentences if s not in key_sentences]
+
+                        # Primero frases clave, luego contexto si cabe.
+                        ordered = key_sentences + other_sentences
+                        picked = []
+                        current_len = 0
+                        for s in ordered:
+                            add_len = len(s) + (1 if picked else 0)
+                            if current_len + add_len > target_len:
+                                continue
+                            picked.append(s)
+                            current_len += add_len
+
+                        if not picked:
+                            return full_text[:target_len].strip()
+
+                        # Reordenar segun aparicion original para no sonar desordenado.
+                        picked_set = set(picked)
+                        final_order = [s for s in sentences if s in picked_set]
+                        return " ".join(final_order).strip()
+
+                    # Reducir de forma progresiva para conservar la mayor cantidad
+                    # de contenido posible cuando falta poca cuota.
+                    progressive_factors = (0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.60, 0.50)
+                    tried_lengths = []
+                    for factor in progressive_factors:
+                        short_len = max(300, int(len(texto_el) * factor))
+                        if short_len in tried_lengths:
+                            continue
+                        tried_lengths.append(short_len)
+                        try:
+                            short_text = _prioritize_key_sentences(texto_el, short_len)
+                            if not short_text:
+                                continue
+                            audio_gen = el_client.text_to_speech.convert(
+                                voice_id=voice_id,
+                                text=short_text,
+                                model_id="eleven_multilingual_v2",
+                                output_format="mp3_44100_128",
+                            )
+                            audio_bytes = b"".join(audio_gen)
+                            logger.warning(
+                                f"[VOZ-TTS] ElevenLabs cuota limitada; audio casi completo OK (len={short_len}, bytes={len(audio_bytes)})"
+                            )
+                            return audio_bytes
+                        except Exception:
+                            continue
+                raise el_inner_err
+    except Exception as el_err:
+        logger.warning(f"[VOZ-TTS] ElevenLabs falló, usando gTTS: {el_err}")
+
+    # ── Fallback: gTTS (HTTP a Google, siempre disponible) ──
+    from gtts import gTTS
+    if len(text) > GTTS_LIMIT:
+        text = text[:GTTS_LIMIT]
+    tts = gTTS(text=text, lang="es", slow=False)
+    buf = io.BytesIO()
+    tts.write_to_fp(buf)
+    buf.seek(0)
+    logger.info(f"[VOZ-TTS] gTTS fallback OK")
+    return buf.read()
+
+
+async def _text_to_voice_bytes(text: str) -> bytes:
+    """Wrapper async para TTS (corre en threadpool para no bloquear event loop)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _text_to_voice_bytes_sync, text)
+
+
+# ── Voz (notas de audio) ─────────────────────────────────
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Transcribe nota de voz con Groq Whisper y delega al dispatcher completo."""
+    import io
+    from groq import AsyncGroq as _AsyncGroq
+
+    user  = update.effective_user
+    chat  = update.effective_chat
+    voice = update.message.voice
+
+    logger.info(f"[VOZ] {user.id} (@{user.username}) — duración: {voice.duration}s")
+    await chat.send_action("typing")
+
+    try:
+        # 1. Descargar el archivo .ogg enviado por Telegram
+        voice_file = await context.bot.get_file(voice.file_id)
+        ogg_bytes  = await voice_file.download_as_bytearray()
+
+        # 2. Transcribir con Groq Whisper (async para no bloquear el event loop)
+        # base_url explícita: el SDK añade /openai/v1 internamente, GROQ_BASE_URL ya lo contiene → evitar duplicado
+        groq_client   = _AsyncGroq(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com")
+        transcription = await groq_client.audio.transcriptions.create(
+            model    = "whisper-large-v3",
+            file     = ("audio.ogg", io.BytesIO(bytes(ogg_bytes)), "audio/ogg"),
+            language = "es",
+        )
+        texto = transcription.text.strip()
+
+        if not texto:
+            await chat.send_message("❌ No pude entender el audio, intenta de nuevo.")
+            return
+
+        logger.info(f"[VOZ-TRANSCRITA] {user.id}: '{texto[:120]}'")
+
+        # 3. Confirmar la transcripción al usuario
+        await chat.send_message(
+            f"🎙️ Entendí: _{texto}_",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        # 4. Procesar con el dispatcher completo (mismo routing que handle_text)
+        await _dispatch_message(update, context, texto)
+
+        # 5. Responder también en audio si se obtuvo una respuesta de texto
+        tts_text = context.user_data.pop("_voice_tts_text", None)
+        if tts_text:
+            # Limpiar Markdown para que TTS no lea asteriscos/guiones
+            import re as _re
+            tts_clean = _re.sub(r'[*_`~\[\]#]', '', tts_text).strip()
+            if tts_clean:
+                try:
+                    await chat.send_action("record_voice")
+                    # Convertir texto estructurado → locución oral natural via LLM
+                    tts_spoken = await _narrate_for_audio(tts_clean, settings.GROQ_API_KEY)
+                    audio_data = await _text_to_voice_bytes(tts_spoken)
+                    import io as _io
+                    await chat.send_voice(voice=_io.BytesIO(audio_data))
+                    logger.info(f"[VOZ-TTS] Respuesta en audio enviada a {user.id}")
+                except Exception as tts_err:
+                    logger.warning(f"[VOZ-TTS] No se pudo generar audio: {tts_err}")
+                    # Silencioso: el usuario ya recibió la respuesta en texto
+
+    except Exception as e:
+        logger.error(f"[VOZ-ERROR] {user.id}: {e}", exc_info=True)
+        await chat.send_message(
+            "❌ Error procesando el audio. Escríbeme tu pregunta directamente."
+        )
+
+
+# ── Dispatcher común (texto libre y voz) ─────────────────
+# Contiene TODO el routing. Llamado tanto desde handle_text como desde
+# handle_voice para que la voz tenga el mismo comportamiento que el texto.
+
+async def _dispatch_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
+    """Procesa un mensaje de texto (proveniente de teclado o de transcripción de voz)."""
     user = update.effective_user
     chat = update.effective_chat
-    message = update.message.text.strip()
 
     # ── Fallback router para comandos de subsidios ────────────────────
-    # Si Telegram NO envía la entidad BOT_COMMAND, el CommandHandler no
-    # matchea y el mensaje cae aquí.  Lo enrutamos manualmente.
     if message.startswith('/'):
         parts  = message.split(None, 1)
-        cmd    = parts[0][1:].split('@')[0].lower()   # quitar / y @bot
+        cmd    = parts[0][1:].split('@')[0].lower()
         arg_str = parts[1].strip() if len(parts) > 1 else None
 
         _SUB_CMDS = {
@@ -1769,7 +2019,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await sub_safe_send(chat, text, sub_back_kb())
             return
 
-        # Cualquier otro /comando no-subsidios → ignorar aquí
         logger.debug(f"[TEXT] Skipping non-subsidios command: {message}")
         return
 
@@ -1792,7 +2041,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["awaiting_custom_date"] = True
         return
 
-    # ¿Texto libre que corresponde a subsidios? (BD-based, no depende de memoria)
+    # ¿Texto libre que corresponde a subsidios?
     try:
         handled = await handle_subsidios_text(update, context, message)
         if handled:
@@ -1813,10 +2062,37 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text, kb = render_mas_informacion_submenu()
             await _safe_send(chat, text, kb)
         else:
-            await send_orchestrated(chat, user, intent)
+            await send_orchestrated(chat, user, intent, context=context)
         return
 
-    # FASE D: Todo lo demás → pregunta libre con dos pasos (datos + IA)
+    # ── Detección de intent por lenguaje natural (para voz principalmente) ──
+    # Evita que frases comunes caigan a pregunta_libre cuando hay un intent exacto.
+    _msg_lower = message.lower()
+    _detected_intent = None
+    if any(k in _msg_lower for k in ("noticia", "noticias", "news", "novedad", "novedades", "últimas noticias", "informacion del dia", "información del día")):
+        _detected_intent = "noticias_sector"
+    elif any(k in _msg_lower for k in ("estado actual", "estado del sistema", "cómo está el sistema", "como esta el sistema", "situación actual", "situacion actual", "resumen del sistema")):
+        _detected_intent = "estado_actual"
+    elif any(k in _msg_lower for k in ("predicci", "pronóstico", "pronostico", "forecast", "proyección", "proyeccion", "futuro")):
+        _detected_intent = "predicciones_sector"
+    elif any(k in _msg_lower for k in ("anomal", "alerta", "falla", "fallo", "irregularidad", "problema en el sistema")):
+        _detected_intent = "anomalias_sector"
+    elif any(k in _msg_lower for k in ("más información", "mas informacion", "informe ejecutivo", "informe completo", "más detalle", "mas detalle")):
+        _detected_intent = "mas_informacion"
+
+    if _detected_intent:
+        logger.info(f"[NLP-INTENT] '{message[:60]}' → {_detected_intent}")
+        if _detected_intent == "predicciones_sector":
+            text, kb = render_predicciones_submenu()
+            await _safe_send(chat, text, kb)
+        elif _detected_intent == "mas_informacion":
+            text, kb = render_mas_informacion_submenu()
+            await _safe_send(chat, text, kb)
+        else:
+            await send_orchestrated(chat, user, _detected_intent, context=context)
+        return
+
+    # Todo lo demás → pregunta libre
     await chat.send_action("typing")
     result = await call_orchestrator(get_session_id(user.id), "pregunta_libre", {"pregunta": message})
     if result.get("status") == "SUCCESS":
@@ -1826,7 +2102,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = f"❌ {result.get('message', 'Error al procesar tu pregunta')}"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menú", callback_data="intent:menu")]])
+    # Guardar para TTS (handle_voice lo lee si viene de audio)
+    context.user_data["_voice_tts_text"] = text
     await _safe_send(chat, text, kb)
+
+
+# ── Texto libre ───────────────────────────────────────────
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Delega al dispatcher común todo el routing."""
+    await _dispatch_message(update, context, update.message.text.strip())
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1901,11 +2186,12 @@ def main():
     # Módulo Subsidios
     register_subsidios_handlers(app)
 
-    # Callbacks y texto
+    # Callbacks, voz y texto
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))  # ← notas de voz
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("✅ Handlers registrados")
+    logger.info("✅ Handlers registrados (incluye voz)")
     logger.info("🚀 Iniciando polling...")
 
     app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])

@@ -82,6 +82,9 @@ class Settings(BaseSettings):
         description="AI Model"
     )
     
+    ELEVENLABS_API_KEY: str = Field(default="", description="ElevenLabs TTS API Key")
+    ELEVENLABS_VOICE_ID: str = Field(default="nPczCjzI2devNBz1zQrb", description="ElevenLabs Voice ID (default: Jorge, español)")
+
     OPENROUTER_API_KEY: str = Field(default="", description="OpenRouter API Key")
     OPENROUTER_BASE_URL: str = Field(
         default="https://openrouter.ai/api/v1",

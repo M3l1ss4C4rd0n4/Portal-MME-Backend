@@ -193,7 +193,7 @@ class LossesNTService:
         Obtiene Gene, DemaReal y P_STN para una fecha.
 
         Fuentes:
-        - Gene, DemaReal, PrecBolsNaci: tabla metrics (entidad='Sistema')
+        - Gene, DemaReal, PPPrecBolsNaci: tabla metrics (entidad='Sistema')
         - PerdidasEnerReg: tabla loss_metrics (metric_code='PerdidasEnerReg')
 
         Returns:
@@ -205,17 +205,17 @@ class LossesNTService:
             with self._db.get_connection() as conn:
                 cur = conn.cursor()
 
-                # ── Metrics: Gene, DemaReal, PrecBolsNaci ────────────
+                # ── Metrics: Gene, DemaReal, PPPrecBolsNaci ────────────
                 cur.execute(
                     """
                     SELECT
-                        MAX(CASE WHEN metrica = 'Gene'         THEN valor_gwh END),
-                        MAX(CASE WHEN metrica = 'DemaReal'     THEN valor_gwh END),
-                        MAX(CASE WHEN metrica = 'PrecBolsNaci' THEN valor_gwh END)
+                        MAX(CASE WHEN metrica = 'Gene'            THEN valor_gwh END),
+                        MAX(CASE WHEN metrica = 'DemaReal'        THEN valor_gwh END),
+                        MAX(CASE WHEN metrica = 'PPPrecBolsNaci'  THEN valor_gwh END)
                     FROM metrics
                     WHERE fecha::date = %s
                       AND entidad = 'Sistema'
-                      AND metrica IN ('Gene', 'DemaReal', 'PrecBolsNaci')
+                      AND metrica IN ('Gene', 'DemaReal', 'PPPrecBolsNaci')
                     """,
                     (fecha_str,),
                 )

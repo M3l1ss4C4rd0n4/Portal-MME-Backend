@@ -35,6 +35,16 @@ from api.v1.routes import (
     cu,
     simulation,
     reports,
+    internal,
+    energia_app,
+    # Portal dashboard endpoints (Fase 1)
+    presupuesto,
+    subsidios,
+    sector_snapshot,
+    contratos_or,
+    comunidades,
+    supervision_portal,
+    energia_dashboard,
 )
 
 # Router principal de v1
@@ -145,6 +155,71 @@ api_router_v1.include_router(
     reports.router,
     prefix="/reports",
     tags=["📄 Informes PDF"]
+)
+
+# 16. Endpoints internos (bot Telegram, Celery) — NO exponer al exterior
+api_router_v1.include_router(
+    internal.router,
+    prefix="/internal",
+    tags=["🔒 Internal"]
+)
+
+# 17. App móvil EnergIA (audio TTS + push notifications)
+api_router_v1.include_router(
+    energia_app.router,
+    prefix="/energia-app",
+    tags=["📱 App EnergIA"]
+)
+
+# ── Fase 1: Endpoints Portal Dirección EE ───────────────────────────────────
+
+# 18. Presupuesto DEE
+api_router_v1.include_router(
+    presupuesto.router,
+    prefix="/presupuesto",
+    tags=["📊 Portal — Presupuesto"]
+)
+
+# 19. Subsidios FSSRI/FOES
+api_router_v1.include_router(
+    subsidios.router,
+    prefix="/subsidios",
+    tags=["💵 Portal — Subsidios"]
+)
+
+# 20. Snapshot sector energético
+api_router_v1.include_router(
+    sector_snapshot.router,
+    prefix="/sector",
+    tags=["⚡ Portal — Sector Snapshot"]
+)
+
+# 21. Contratos OR (seguimiento desembolsos)
+api_router_v1.include_router(
+    contratos_or.router,
+    prefix="/contratos-or",
+    tags=["📋 Portal — Contratos OR"]
+)
+
+# 22. Comunidades energéticas
+api_router_v1.include_router(
+    comunidades.router,
+    prefix="/comunidades",
+    tags=["🌱 Portal — Comunidades"]
+)
+
+# 23. Supervisión contratos MinMinas (Sankey)
+api_router_v1.include_router(
+    supervision_portal.router,
+    prefix="/supervision",
+    tags=["🔍 Portal — Supervisión"]
+)
+
+# 24. Dashboard energía consolidado
+api_router_v1.include_router(
+    energia_dashboard.router,
+    prefix="/energia",
+    tags=["🔌 Portal — Energía Dashboard"]
 )
 
 __all__ = ["api_router_v1"]

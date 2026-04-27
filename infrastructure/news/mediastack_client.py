@@ -19,7 +19,7 @@ MEDIASTACK_URL = "http://api.mediastack.com/v1/news"
 
 # Keywords energéticas para filtro en la API
 ENERGY_KEYWORDS = (
-    "energy,electricity,power,oil,gas,mining,renewable,"
+    "energy,electricity,power,oil,gas+natural,mining,renewable,"
     "energía,eléctrico,embalses,tarifas,petróleo,minería,"
     "hidrocarburos,renovable,solar,eólico"
 )

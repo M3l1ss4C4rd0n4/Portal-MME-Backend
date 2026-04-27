@@ -55,6 +55,55 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     */
     
+    // ===== VIÑETAS INFORMATIVAS EN HOVER SOBRE CADA MÓDULO DEL SECTOR =====
+    setTimeout(function() {
+        const moduleIds = ['generacion', 'transmision', 'distribucion', 'comercializacion', 'restricciones', 'perdidas'];
+
+        moduleIds.forEach(function(id) {
+            const btn      = document.getElementById('module-' + id);
+            const tooltip  = document.getElementById('tooltip-' + id);
+            const overlay  = document.getElementById('overlay-' + id);
+            if (!btn || !tooltip) return;
+
+            // Mostrar viñeta + overlay
+            function showTooltip() {
+                if (tooltip) {
+                    tooltip.style.opacity    = '1';
+                    tooltip.style.visibility = 'visible';
+                    tooltip.style.transform  = 'translate(-50%, -50%) scale(1)';
+                    tooltip.style.pointerEvents = 'auto';
+                }
+                if (overlay) {
+                    overlay.style.opacity    = '1';
+                    overlay.style.visibility = 'visible';
+                }
+            }
+
+            // Ocultar viñeta + overlay
+            function hideTooltip() {
+                if (tooltip) {
+                    tooltip.style.opacity    = '0';
+                    tooltip.style.visibility = 'hidden';
+                    tooltip.style.transform  = 'translate(-50%, -50%) scale(0.9)';
+                    tooltip.style.pointerEvents = 'none';
+                }
+                if (overlay) {
+                    overlay.style.opacity    = '0';
+                    overlay.style.visibility = 'hidden';
+                }
+            }
+
+            btn.addEventListener('mouseenter', showTooltip);
+            btn.addEventListener('mouseleave', hideTooltip);
+
+            // Clic sobre overlay/viñeta también la cierra
+            if (overlay) overlay.addEventListener('click', hideTooltip);
+            if (tooltip) tooltip.addEventListener('mouseleave', hideTooltip);
+        });
+
+        console.log('✅ Viñetas de módulos configuradas');
+    }, 1200);
+
     // ===== MANEJO DEL MODAL DE INFORMACIÓN GENERAL (CU) =====
     // Usar un pequeño delay para asegurar que Dash haya renderizado todo
     setTimeout(function() {

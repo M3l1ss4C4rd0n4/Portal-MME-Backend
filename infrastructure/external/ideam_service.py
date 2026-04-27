@@ -74,6 +74,14 @@ ESTACIONES_EOLICA = {
     'municipios_prioritarios': ['URIBIA', 'MAICAO', 'RIOHACHA', 'MANAURE'],
 }
 
+# FASE 28: Alta Guajira — solo URIBIA, donde están los parques reales
+# Jepirachi (28.5 MW), Guajira I (205 MW), Guajira II (190 MW), Alpha (100 MW)
+# μ esperado > 4 m/s vs 2.53 m/s promedio toda La Guajira.
+ESTACIONES_EOLICA_PARQUES = {
+    'departamentos': ['LA GUAJIRA'],
+    'municipios': ['URIBIA'],
+}
+
 ESTACIONES_SOLAR = {
     # Nacional — Solar distribuido
     'departamentos': ['CESAR', 'LA GUAJIRA', 'ATLANTICO', 'BOLIVAR',
@@ -142,7 +150,8 @@ def fetch_ideam_data(
     if fecha_fin is None:
         fecha_fin = date.today()
 
-    # Build SoQL WHERE clause
+    # Build SoQL WHERE clause (filtro por departamento solamente — municipio
+    # se aplica en Python post-descarga para no degradar performance Socrata)
     depto_list = " OR ".join([f"departamento='{d}'" for d in departamentos])
     where_clause = (
         f"fechaobservacion >= '{fecha_inicio.isoformat()}T00:00:00.000' "
@@ -318,6 +327,7 @@ def fetch_and_aggregate(
     fecha_inicio: date,
     fecha_fin: date = None,
     timeout: int = 120,
+    municipios: List[str] = None,
 ) -> Optional[pd.DataFrame]:
     """
     Pipeline completo: fetch → validate → aggregate to daily.
@@ -337,6 +347,16 @@ def fetch_and_aggregate(
 
     if df_raw is None or df_raw.empty:
         return None
+
+    # FASE 28: post-filter por municipio en Python (evita query lenta en Socrata)
+    if municipios and 'municipio' in df_raw.columns:
+        muns_upper = [m.upper() for m in municipios]
+        mask = df_raw['municipio'].str.upper().isin(muns_upper)
+        df_raw = df_raw[mask]
+        logger.info(f"  🔍 Filtro municipio {municipios}: {mask.sum()} / {len(mask)} obs")
+        if df_raw.empty:
+            logger.warning(f"  ⚠️ Sin datos tras filtrar por municipio: {municipios}")
+            return None
 
     df_daily = agregar_diario_por_zona(df_raw, agg_method=cfg['agg_diaria'])
 

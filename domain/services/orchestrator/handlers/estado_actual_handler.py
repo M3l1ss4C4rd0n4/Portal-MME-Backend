@@ -91,7 +91,7 @@ class EstadoActualHandlerMixin:
             df_precio = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.metrics_service.get_metric_series,
-                    'PrecBolsNaci', hace_7_dias.isoformat(), ayer.isoformat()
+                    'PPPrecBolsNaci', hace_7_dias.isoformat(), ayer.isoformat()
                 ),
                 timeout=self.SERVICE_TIMEOUT
             )
@@ -271,14 +271,21 @@ class EstadoActualHandlerMixin:
         except Exception as e:
             logger.warning(f"Error calculando percentiles embalses: {e}")
 
-        if nivel_pct >= 70:
-            return "🟢 Nivel alto", "Referencia: umbral fijo ≥70%", 60.0
-        elif nivel_pct >= 50:
-            return "🟡 Nivel medio", "Referencia: umbral fijo 50-70%", 60.0
-        elif nivel_pct >= 30:
-            return "🟠 Nivel bajo", "Referencia: umbral fijo 30-50%", 60.0
+        # Umbrales fijos de respaldo (OFICIALES IDEAM/UNGRD - Colombia)
+        # Nivel ALTO (riesgo desbordamiento): >95% Crítico, 90-95% Alerta, 80-90% Vigilancia
+        # Nivel BAJO (riesgo desabastecimiento): <27% Crítico, 27-40% Alerta
+        if nivel_pct > 95:
+            return "🔴 Nivel crítico alto", "Referencia: >95% - Alerta Roja IDEAM. Riesgo de desbordamiento.", 60.0
+        elif nivel_pct >= 90:
+            return "🟠 Nivel alerta naranja", "Referencia: 90-95% - Preparar descargas preventivas.", 60.0
+        elif nivel_pct >= 80:
+            return "🟡 Nivel alerta amarilla", "Referencia: 80-90% - Vigilancia activa IDEAM.", 60.0
+        elif nivel_pct >= 40:
+            return "🟢 Nivel normal", "Referencia: 40-80% - Rango óptimo de operación.", 60.0
+        elif nivel_pct >= 27:
+            return "🟡 Nivel alerta seguimiento", "Referencia: 27-40% - Alerta de seguimiento.", 60.0
         else:
-            return "🔴 Nivel crítico", "Referencia: umbral fijo <30%", 60.0
+            return "🔴 Nivel crítico bajo", "Referencia: <27% - Alerta Roja IDEAM. Riesgo de racionamiento/apagón.", 60.0
 
     # ── Shared helpers utilizados por AnomaliaHandlerMixin vía MRO ──
 
@@ -291,29 +298,60 @@ class EstadoActualHandlerMixin:
     ) -> Tuple[Optional[float], Optional[str], Optional[float], int]:
         """
         Obtiene el último valor real y el promedio histórico 30d para una métrica/entidad.
+        
+        CORRECCIÓN: Usa valores diarios (MAX por día) para evitar mezclar datos horarios.
         Returns: (valor_actual, fecha_dato_str, avg_hist, dias_con_datos)
         """
         try:
-            df = self.metrics_service.get_metric_series_by_entity(
-                metric_id=metric_id, entity=entity,
-                start_date=fecha_desde.isoformat(), end_date=fecha_hasta.isoformat()
+            from infrastructure.database.manager import db_manager
+            
+            # Query corregida: Agrupar por día y tomar el valor máximo de cada día
+            # Esto evita mezclar datos horarios con diarios
+            query = """
+                WITH valores_diarios AS (
+                    SELECT 
+                        DATE(fecha) as dia,
+                        MAX(valor_gwh) as valor_maximo
+                    FROM metrics
+                    WHERE metrica = %s
+                      AND (%s IS NULL OR entidad = %s)
+                      AND fecha >= %s 
+                      AND fecha <= %s
+                      AND valor_gwh IS NOT NULL
+                    GROUP BY DATE(fecha)
+                )
+                SELECT dia as fecha, valor_maximo as valor
+                FROM valores_diarios
+                ORDER BY dia ASC
+            """
+            params = (
+                metric_id, 
+                entity, entity,
+                fecha_desde.isoformat(), 
+                fecha_hasta.isoformat()
             )
-            if df.empty or 'Value' not in df.columns:
+            
+            df = db_manager.query_df(query, params=params)
+            
+            if df is None or df.empty:
+                logger.warning(f"[GET_REAL_HIST] Sin datos para {metric_id}/{entity}")
                 return None, None, None, 0
-            df_clean = df.dropna(subset=['Value']).sort_values('Date')
-            if df_clean.empty:
-                return None, None, None, 0
-            valor_actual = float(df_clean['Value'].iloc[-1])
-            fecha_dato = df_clean['Date'].iloc[-1]
-            if hasattr(fecha_dato, 'strftime'):
-                fecha_dato = fecha_dato.strftime('%Y-%m-%d')
-            else:
-                fecha_dato = str(fecha_dato)[:10]
-            avg_hist = float(df_clean['Value'].mean())
-            dias = len(df_clean)
+                
+            # Obtener valor actual (último día)
+            valor_actual = float(df['valor'].iloc[-1])
+            fecha_dato = str(df['fecha'].iloc[-1])
+            
+            # Calcular promedio histórico sobre valores diarios
+            avg_hist = float(df['valor'].mean())
+            dias = len(df)
+            
+            logger.debug(f"[GET_REAL_HIST] {metric_id}: actual={valor_actual}, "
+                        f"promedio={avg_hist:.2f}, dias={dias}")
+            
             return valor_actual, fecha_dato, avg_hist, dias
+            
         except Exception as e:
-            logger.warning(f"Error leyendo {metric_id}/{entity}: {e}")
+            logger.warning(f"[GET_REAL_HIST] Error leyendo {metric_id}/{entity}: {e}")
             return None, None, None, 0
 
     def _get_embalses_real_e_historico(
@@ -647,10 +685,14 @@ class EstadoActualHandlerMixin:
                     estado = "Alerta"
                 _anom_key = 'Precio de Bolsa'
             elif 'Embalses' in ind_nombre:
+                # UMBRALES OFICIALES IDEAM/UNGRD (Colombia)
+                # Nivel ALTO (riesgo desbordamiento): >95% Crítico, 90-95% Alerta, 80-90% Vigilancia
+                # Nivel BAJO (riesgo desabastecimiento): <27% Crítico, 27-40% Alerta
+                # Normal: 40-80%
                 if valor is not None:
-                    if valor < 30:
+                    if valor < 27 or valor > 95:
                         estado = "Crítico"
-                    elif valor < 40 or valor > 85:
+                    elif valor < 40 or valor > 80:
                         estado = "Alerta"
                 _anom_key = 'Embalses'
 
@@ -753,9 +795,12 @@ class EstadoActualHandlerMixin:
         regiones_out = []
         for region, grp in df_known.groupby('region'):
             pct_prom = round(float(grp['pct'].mean()), 1)
-            if pct_prom < 30:
+            # Umbrales OFICIALES IDEAM/UNGRD
+            # Nivel ALTO: >95% Crítico, 90-95% Alerta, 80-90% Vigilancia
+            # Nivel BAJO: <27% Crítico, 27-40% Alerta
+            if pct_prom < 27 or pct_prom > 95:
                 estado = 'Crítico'
-            elif pct_prom < 40:
+            elif pct_prom < 40 or pct_prom > 80:
                 estado = 'Alerta'
             else:
                 estado = 'Normal'

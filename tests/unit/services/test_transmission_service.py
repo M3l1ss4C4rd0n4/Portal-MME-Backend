@@ -1,6 +1,6 @@
 """Tests para TransmissionService."""
 import pytest
-from domain.services.transmission_service import TransmissionService, _get_default_repo
+from domain.services.transmission_service import TransmissionService
 
 
 class TestTransmissionService:

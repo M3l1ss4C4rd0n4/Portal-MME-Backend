@@ -310,10 +310,79 @@ ML_MODELS = {
     "ENSEMBLE": "ensemble",
 }
 
+# Mapa canónico: nombre interno de BD → nombre legible para el usuario final
+# Fuente única de verdad — importar desde aquí en notification_service y telegram_polling
+MODEL_DISPLAY_NAMES: dict[str, str] = {
+    'ENSEMBLE_SECTOR_v1.0':       'Ensemble Prophet + SARIMA',
+    'ENSEMBLE_v1.0':              'Ensemble Prophet + SARIMA',
+    'RANDOMFOREST_v1.0':          'Random Forest (ML)',
+    'LGBM_APORTES_NASA_v1.0':     'LightGBM + datos satelitales NASA',
+    'LGBM_DIRECTO_TERMICA_v1.0':  'LightGBM (generación térmica)',
+    'LGBM_SOLAR_NASA_v2.0':       'LightGBM + irradiación solar NASA',
+    'LGBM_DIRECTO_EOLICA_v1.0':   'LightGBM + velocidad de viento IDEAM',
+    'STACKING_EOLICA_v1.0':       'Stacking LightGBM + XGBoost',
+    'DUAL_HORIZON_v1.0':          'LightGBM (corto plazo) + TCN (largo plazo)',
+    'LGBM_PRECIO_v1.0':           'Random Forest (precio de bolsa)',
+    'PROPHET_LARGO_PLAZO_v1.0':   'Prophet (largo plazo)',
+}
+
 ML_CONFIDENCE_LEVELS = {
     "LOW": 0.80,
     "MEDIUM": 0.90,
     "HIGH": 0.95,
+}
+
+# Umbrales de calidad MAPE — fuente única para email y Telegram
+# (label, color_hex, bg_hex)
+MAPE_THRESHOLDS: list[tuple] = [
+    (5.0,  'Buena',    '#2E7D32', '#E8F5E9'),
+    (15.0, 'Aceptable','#E65100', '#FFF3E0'),
+    (None, 'Revisar',  '#C62828', '#FFEBEE'),
+]
+
+def mape_quality(mape: float) -> tuple[str, str, str]:
+    """Retorna (label, color_hex, bg_hex) según el valor de MAPE."""
+    for threshold, label, color, bg in MAPE_THRESHOLDS:
+        if threshold is None or mape < threshold:
+            return label, color, bg
+    return 'Revisar', '#C62828', '#FFEBEE'
+
+
+# Emojis de severidad de anomalías — fuente única para email y Telegram
+ANOMALY_SEVERITY_EMOJIS: dict[str, str] = {
+    'crítico':  '🔴',
+    'critico':  '🔴',
+    'CRITICA':  '🔴',
+    'CRITICO':  '🔴',
+    'CRITICAL': '🔴',
+    'alerta':   '🟠',
+    'ALERTA':   '🟠',
+    'normal':   '🟢',
+    'NORMAL':   '🟢',
+}
+
+# Colores HTML de severidad para email (color_texto, bg)
+ANOMALY_SEVERITY_COLORS: dict[str, tuple[str, str]] = {
+    'crítico':  ('#C62828', '#FFEBEE'),
+    'critico':  ('#C62828', '#FFEBEE'),
+    'CRITICA':  ('#C62828', '#FFEBEE'),
+    'CRITICO':  ('#C62828', '#FFEBEE'),
+    'CRITICAL': ('#C62828', '#FFEBEE'),
+    'alerta':   ('#E65100', '#FFF3E0'),
+    'ALERTA':   ('#E65100', '#FFF3E0'),
+    'normal':   ('#F9A825', '#FFFDE7'),
+    'NORMAL':   ('#F9A825', '#FFFDE7'),
+}
+
+# Iconos (HTML entities) de métricas para email y Telegram (emoji equivalente)
+METRIC_ICONS_HTML: dict[str, str] = {
+    'GENE_TOTAL':  '&#9889;',
+    'Generaci':    '&#9889;',
+    'Hidr':        '&#128167;',
+    'PRECIO':      '&#128176;',
+    'Precio':      '&#128176;',
+    'EMBALSES':    '&#128167;',
+    'Porcentaje':  '&#128167;',
 }
 
 # ═══════════════════════════════════════════════════════════════

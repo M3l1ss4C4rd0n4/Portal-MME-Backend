@@ -278,26 +278,28 @@ def actualizar_store_cu(_n, fecha_inicio_str, fecha_fin_str):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Usar solo filas con datos completos (G_CREG_FORMULA) para KPIs de referencia
-        df_creg = df[df['notas'].str.contains('G_CREG_FORMULA', na=False)] if 'notas' in df.columns else df
-        df_ref = df_creg if not df_creg.empty else df
+        # Usar todos los datos disponibles para KPIs (CREG preferido, Bolsa como fallback)
+        df_ref = df  # incluye G_CREG_FORMULA y G_BOLSA_FALLBACK
 
-        vals_creg = df_ref['cu_total'].dropna()
-        cu_ultimo = vals_creg.iloc[-1] if not vals_creg.empty else 0
+        vals_ref = df_ref['cu_total'].dropna()
+        cu_ultimo = vals_ref.iloc[-1] if not vals_ref.empty else 0
         cu_promedio = df_ref['cu_total'].mean()
-        cu_max = df['cu_total'].max()   # máximo histórico incluye todos
+        cu_max = df['cu_total'].max()
         cu_min = df_ref['cu_total'].min()
 
-        # Fecha del último dato CREG disponible
-        if not vals_creg.empty:
-            idx_ultimo = vals_creg.index[-1]
+        # Fecha del último dato disponible e indicador de fuente
+        if not vals_ref.empty:
+            idx_ultimo = vals_ref.index[-1]
             fecha_ultimo_dato = str(df_ref.loc[idx_ultimo, 'fecha'])[:10]
+            ultima_nota = str(df_ref.loc[idx_ultimo, 'notas']) if 'notas' in df_ref.columns else ''
+            es_fallback = 'G_BOLSA_FALLBACK' in ultima_nota and 'G_CREG_FORMULA' not in ultima_nota
         else:
             fecha_ultimo_dato = ""
+            es_fallback = False
 
-        # Variación: usar los dos últimos días CREG con datos
-        if len(vals_creg) >= 2:
-            diff_pct = ((vals_creg.iloc[-1] - vals_creg.iloc[-2]) / vals_creg.iloc[-2]) * 100
+        # Variación: usar los dos últimos días disponibles
+        if len(vals_ref) >= 2:
+            diff_pct = ((vals_ref.iloc[-1] - vals_ref.iloc[-2]) / vals_ref.iloc[-2]) * 100
             var_dir = "up" if diff_pct > 0 else ("down" if diff_pct < 0 else "flat")
             var_text = f"{diff_pct:+.1f}%"
         else:
@@ -312,7 +314,7 @@ def actualizar_store_cu(_n, fecha_inicio_str, fecha_fin_str):
                 "color": "red",
                 "variacion": var_text,
                 "variacion_dir": var_dir,
-                "subtexto": f"Datos al {fecha_ultimo_dato}" if fecha_ultimo_dato else "",
+                "subtexto": (f"Datos al {fecha_ultimo_dato}" + (" (ref. bolsa)" if es_fallback else "")) if fecha_ultimo_dato else "",
             },
             {
                 "titulo": "Promedio Periodo",

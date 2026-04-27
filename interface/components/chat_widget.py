@@ -189,6 +189,25 @@ def _api_key() -> str:
         return os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
 
 
+def obtener_resumen_subsidios():
+    """
+    Consulta la BD de subsidios y retorna burbujas de chat con el resumen ejecutivo.
+    """
+    try:
+        from whatsapp_bot.subsidios_handler import q_deuda_total, q_estado_resoluciones, q_porcentaje_pagado
+        texto = q_deuda_total()
+        texto += "\n\n" + q_estado_resoluciones()
+        texto += "\n\n" + q_porcentaje_pagado()
+        footer = (
+            "\n\n---\n_Para consultas por empresa, deuda por fondo o resoluciones "
+            "por año, usa el chatbot de Telegram o escribe tu pregunta aquí._"
+        )
+        return [crear_mensaje_ia(texto + footer)]
+    except Exception as e:
+        logger.error(f"Error obteniendo subsidios: {e}")
+        return [crear_mensaje_ia("❌ No se pudo obtener información de subsidios. Intenta de nuevo más tarde.")]
+
+
 def obtener_noticias_chatbot():
     """
     Llama al orquestador con intent noticias_sector y retorna burbujas de chat estructuradas.
@@ -424,6 +443,15 @@ def crear_componente_chat():
                             size='sm',
                             outline=True,
                             n_clicks=0
+                        ),
+                        dbc.Button(
+                            [html.I(className="fas fa-file-invoice-dollar me-1"), "Subsidios"],
+                            id='chat-quick-subsidios',
+                            color='secondary',
+                            size='sm',
+                            outline=True,
+                            n_clicks=0,
+                            title="Consulta la base de subsidios DDE"
                         )
                     ], size='sm', style={'flexWrap': 'wrap', 'gap': '5px'})
                 ], style={'padding': '10px 15px', 'borderTop': '1px solid #e2e8f0'})
@@ -547,14 +575,15 @@ def manejar_ventana(n_minimize, n_fullscreen, current_style):
      Input('chat-quick-anomalias', 'n_clicks'),
      Input('chat-quick-resumen', 'n_clicks'),
      Input('chat-quick-alertas', 'n_clicks'),
-     Input('chat-quick-noticias', 'n_clicks')],
+     Input('chat-quick-noticias', 'n_clicks'),
+     Input('chat-quick-subsidios', 'n_clicks')],
     [State('chat-input', 'value'),
      State('chat-messages', 'children'),
      State('url', 'pathname'),
      State('store-datos-chatbot-generacion', 'data')],  # Store con datos actualizados
     prevent_initial_call=True
 )
-def manejar_mensajes(n_send, n_submit, n_analizar, n_anomalias, n_resumen, n_alertas, n_noticias,
+def manejar_mensajes(n_send, n_submit, n_analizar, n_anomalias, n_resumen, n_alertas, n_noticias, n_subsidios,
                      input_text, mensajes_actuales, current_pathname, datos_generacion_store):
     """
     Manejar envío de mensajes y respuestas del agente IA
@@ -671,7 +700,13 @@ DATOS ACTUALES:
         notifs = obtener_noticias_chatbot()
         mensajes.extend(notifs)
         return mensajes, '', ''
-    
+    elif trigger_id == 'chat-quick-subsidios':
+        mensajes = list(mensajes_actuales or [])
+        mensajes.append(crear_mensaje_usuario("📋 Consulta base de Subsidios DDE"))
+        burbujas = obtener_resumen_subsidios()
+        mensajes.extend(burbujas)
+        return mensajes, '', ''
+
     if not pregunta:
         return mensajes_actuales, input_text or '', ''
     

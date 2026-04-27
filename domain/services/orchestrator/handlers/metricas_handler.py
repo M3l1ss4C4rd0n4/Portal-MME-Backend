@@ -257,7 +257,7 @@ class MetricasHandlerMixin:
             df_prices = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.metrics_service.get_metric_series,
-                    'PrecBolsNaci',
+                    'PPPrecBolsNaci',
                     start_date.isoformat(),
                     end_date.isoformat()
                 ),

@@ -314,12 +314,26 @@ class InformeHandlerMixin:
             except Exception as e:
                 logger.warning(f"[INFORME] tabla_indicadores_clave falló (no crítico): {e}")
                 contexto['tabla_indicadores_clave'] = []
+            
+            # (f) ÍNDICES COMPUESTOS DE ESTRÉS Y SOSTENIBILIDAD
+            try:
+                contexto['indices_compuestos'] = self._build_indices_compuestos(
+                    _fichas,
+                    contexto.get('predicciones_mes', {}),
+                    _anomalias_lista,
+                )
+                logger.info(f"[INFORME] Índices compuestos calculados: {contexto['indices_compuestos']}")
+            except Exception as e:
+                logger.warning(f"[INFORME] indices_compuestos falló (no crítico): {e}")
+                contexto['indices_compuestos'] = self._indices_fallback()
 
-            # (e) Anomalías recientes de BD
+            # (e) Anomalías recientes de BD (solo alertas reales del SIN, no técnicas)
+            # NOTA: Se excluyen anomalías técnicas (TEST, DATOS_CONGELADOS) que solo
+            # interesan a desarrolladores, no a usuarios finales del informe ejecutivo
             try:
                 from infrastructure.database.manager import db_manager
                 _df_alertas = db_manager.query_df("""
-                    SELECT metrica, severidad, descripcion
+                    SELECT metrica, severidad, descripcion, detalle
                     FROM alertas_historial
                     WHERE fecha_evaluacion >= CURRENT_DATE - INTERVAL '1 day'
                       AND severidad NOT IN ('NORMAL', 'INFO')
@@ -329,21 +343,51 @@ class InformeHandlerMixin:
                     END
                     LIMIT 10
                 """)
+                
+                # Lista de métricas técnicas a excluir del informe ejecutivo
+                _metricas_tecnicas = {
+                    'TEST', 'DATOS_CONGELADOS', 'STALENESS', 'DATA_QUALITY',
+                    'CONNECTION_ERROR', 'SYNC_ERROR'
+                }
+                
                 if not _df_alertas.empty:
                     _seen_keys = set()
                     _alertas_bd = []
                     for _rec in _df_alertas.to_dict('records'):
+                        _metrica = str(_rec.get('metrica', '')).strip().upper()
+                        
+                        # FILTRO: Excluir métricas técnicas
+                        if any(_tec in _metrica for _tec in _metricas_tecnicas):
+                            logger.debug(f"[INFORME] Excluyendo alerta técnica: {_metrica}")
+                            continue
+                        
                         _key = (
-                            str(_rec.get('metrica', '')).strip().upper(),
+                            _metrica,
                             str(_rec.get('descripcion', '')).strip()[:80],
                         )
                         if _key not in _seen_keys:
                             _seen_keys.add(_key)
-                            _alertas_bd.append({
+                            
+                            # Intentar extraer más contexto del detalle JSON si existe
+                            _detalle_json = _rec.get('detalle', '{}')
+                            _valor_extra = None
+                            try:
+                                import json as _json
+                                _detalle_dict = _json.loads(_detalle_json) if isinstance(_detalle_json, str) else _detalle_json
+                                _valor_extra = _detalle_dict.get('valor') if isinstance(_detalle_dict, dict) else None
+                            except Exception:
+                                pass
+                            
+                            _alerta_bd = {
                                 'indicador': str(_rec.get('metrica', '')).strip(),
                                 'severidad': str(_rec.get('severidad', 'alerta')).lower(),
                                 'descripcion': str(_rec.get('descripcion', '')).strip(),
-                            })
+                            }
+                            if _valor_extra:
+                                _alerta_bd['valor_actual'] = _valor_extra
+                            
+                            _alertas_bd.append(_alerta_bd)
+                    
                     _existing_keys = {
                         (a.get('indicador', '').upper(), a.get('descripcion', '')[:80])
                         for a in contexto['anomalias'].get('lista', [])
@@ -354,7 +398,8 @@ class InformeHandlerMixin:
                     if _nuevas:
                         contexto['anomalias']['lista'].extend(_nuevas)
                         logger.info(
-                            f"[INFORME] +{len(_nuevas)} anomalías de BD inyectadas al contexto IA"
+                            f"[INFORME] +{len(_nuevas)} anomalías de BD inyectadas al contexto IA "
+                            f"({len(_df_alertas)} total, {len(_df_alertas) - len(_alertas_bd)} técnicas excluidas)"
                         )
             except Exception as e:
                 logger.warning(f"[INFORME] alertas_historial falló (no crítico): {e}")
@@ -362,6 +407,30 @@ class InformeHandlerMixin:
             contexto['anomalias']['total_anomalias'] = len(
                 contexto['anomalias'].get('lista', [])
             )
+            
+            # Extraer análisis multidimensional de los 3 indicadores clave (siempre, independiente de severidad)
+            # Esto se muestra en la primera página del PDF debajo del Resumen Ejecutivo
+            detalle_completo = contexto['anomalias'].get('detalle_completo', [])
+            analisis_multidimensional = []
+            for a in detalle_completo:
+                ind = a.get('indicador', '')
+                if ind in ['Generación Total', 'Precio de Bolsa', 'Embalses']:
+                    hibrido = a.get('analisis_hibrido', {})
+                    if hibrido:
+                        analisis_multidimensional.append({
+                            'indicador': ind,
+                            'emoji': a.get('emoji', ''),
+                            'valor_actual': a.get('valor_actual'),
+                            'unidad': a.get('unidad', ''),
+                            'severidad': a.get('severidad', 'normal'),
+                            'tendencia_7d': hibrido.get('tendencia_corto_plazo', {}),
+                            'percentiles': hibrido.get('percentiles_historicos', {}),
+                            'zscore': hibrido.get('zscore', {}),
+                            'yoy': a.get('yoy', {}),
+                        })
+            if analisis_multidimensional:
+                contexto['analisis_multidimensional'] = analisis_multidimensional
+                logger.info(f"[INFORME] Análisis multidimensional agregado para {len(analisis_multidimensional)} indicadores")
 
             # (f) Costo Unitario y Pérdidas No Técnicas
             try:
@@ -653,6 +722,32 @@ class InformeHandlerMixin:
                     "embalses": notas.get("umbrales_embalses", {}),
                     "anomalias": notas.get("umbrales_anomalias", {}),
                 }
+            
+            # Índices compuestos de estrés y sostenibilidad
+            indices = contexto.get("indices_compuestos", {})
+            if indices and indices.get('cis', {}).get('nivel') != 'NO DISPONIBLE':
+                contexto_ia["indices_estres"] = {
+                    "sostenibilidad_hidrica": {
+                        "valor": indices.get('ish', {}).get('valor', 0),
+                        "nivel": indices.get('ish', {}).get('nivel', 'SIN DATOS'),
+                        "emoji": indices.get('ish', {}).get('emoji', '⚪'),
+                    },
+                    "presion_mercado": {
+                        "valor": indices.get('ipm', {}).get('valor', 0),
+                        "nivel": indices.get('ipm', {}).get('nivel', 'SIN DATOS'),
+                        "emoji": indices.get('ipm', {}).get('emoji', '⚪'),
+                    },
+                    "estres_sistema": {
+                        "valor": indices.get('ies', {}).get('valor', 0),
+                        "nivel": indices.get('ies', {}).get('nivel', 'SIN DATOS'),
+                        "emoji": indices.get('ies', {}).get('emoji', '⚪'),
+                    },
+                    "calificacion_integral": {
+                        "valor": indices.get('cis', {}).get('valor', 0),
+                        "nivel": indices.get('cis', {}).get('nivel', 'NO DISPONIBLE'),
+                        "emoji": indices.get('cis', {}).get('emoji', '⚪'),
+                    },
+                }
             prensa = contexto.get("prensa_del_dia", {})
             if prensa:
                 noticias_trim = []
@@ -684,6 +779,10 @@ class InformeHandlerMixin:
                 "• embalses_detalle: nivel actual vs media histórica 2020–2025.\n"
                 "• variables_mercado: precio escasez, precio máx oferta nacional, "
                 "PPP precio bolsa y demanda regulada/no regulada (GWh/día del SIN).\n"
+                "• indices_estres: Índices DESCRIPTIVOS de contexto (NO son alertas operativas). "
+                "ISH=hidricidad, IPM=presión alcista de precios, IES=estrés integral, "
+                "CIS=calificación general 0-100. Úsalos solo para matizar la narrativa; "
+                "las decisiones operativas se basan en fichas y anomalías.\n"
                 "• embalses_regionales: nivel de llenado promedio por región hidrológica "
                 "(Antioquia, Centro, Huila, etc.) con % y estado semáforo.\n"
                 "• predicciones_mes: proyecciones 1 mes (promedio, rango, tendencia).\n"
@@ -699,7 +798,18 @@ class InformeHandlerMixin:
                 "R4 — NUNCA uses nombres de campos JSON, backticks, guiones bajos.\n\n"
                 "R5a — NUNCA inventes datos ni detalles que no estén en el JSON.\n\n"
                 "R5b — ANOMALÍAS: Si existen en el contexto, son OBLIGATORIAS en "
-                "sección 3.1. Cada una con causa probable e implicación operativa.\n\n"
+                "sección 3.1. Para cada anomalía: (a) indica la causa probable; "
+                "(b) evalúa si OTROS indicadores del JSON contradicen el riesgo — "
+                "si embalses ≥ 60% y térmica < 25%, NO uses lenguaje de crisis hídrica; "
+                "si generación y demanda están balanceadas, NO uses lenguaje de "
+                "desabastecimiento. (c) Usa siempre condicionales: 'si persiste', "
+                "'podría presionar', 'en ausencia de recuperación'. "
+                "(d) Si los indicadores muestran sistema sano en conjunto, está "
+                "EXPLICITAMENTE PERMITIDO escribir frases como 'no se observa impacto "
+                "operativo relevante actualmente' o 'las condiciones actuales no "
+                "representan riesgo inmediato de desabastecimiento'. "
+                "NUNCA afirmes causalidad directa entre una señal parcial y una crisis "
+                "sistémica sin respaldo del contexto integral.\n\n"
                 "R5c — NOTICIAS: Solo integra noticias si el contexto incluye "
                 "titulares Y son directamente relevantes al sector energético colombiano. "
                 "Si no hay noticias pertinentes, omite esa referencia por completo. "
@@ -1031,3 +1141,157 @@ class InformeHandlerMixin:
             lines.append("_⚠️ Informe generado sin IA (servicio no disponible)._")
 
         return "\n".join(lines)
+
+    # ═════════════════════════════════════════════════════════════════════════════
+    # ÍNDICES COMPUESTOS DE ESTRÉS Y SOSTENIBILIDAD (Quick Win #3)
+    # ═════════════════════════════════════════════════════════════════════════════
+    
+    def _build_indices_compuestos(self, fichas, predicciones_mes, anomalias):
+        """
+        Calcula índices compuestos de estrés y sostenibilidad del sistema.
+        
+        Índices:
+        - Índice de Estrés del Sistema (IES): Combina anomalías, embalses y predicciones
+        - Índice de Sostenibilidad Hídrica (ISH): Basado en niveles de embalses
+        - Índice de Presión de Mercado (IPM): Basado en precios y generación
+        - Calificación Integral del Sistema (CIS): Síntesis de todos los indicadores
+        """
+        indices = {
+            'ies': {'valor': 0, 'max': 100, 'nivel': 'NORMAL', 'emoji': '✅'},
+            'ish': {'valor': 0, 'max': 100, 'nivel': 'NORMAL', 'emoji': '✅'},
+            'ipm': {'valor': 0, 'max': 100, 'nivel': 'NORMAL', 'emoji': '✅'},
+            'cis': {'valor': 0, 'max': 100, 'nivel': 'ESTABLE', 'emoji': '✅'},
+            'componentes': {},
+        }
+        
+        # ── 1. Índice de Sostenibilidad Hídrica (ISH) ──
+        ish_score = 50  # Base neutral
+        embalse_ficha = next((f for f in fichas if 'embalse' in f.get('metrica', '').lower()), None)
+        if embalse_ficha:
+            try:
+                valor_emb = embalse_ficha.get('valor', 0)
+                if isinstance(valor_emb, str):
+                    valor_emb = float(valor_emb.replace('%', '').replace(',', '.'))
+                # Score: 0-30 = crítico, 31-50 = alerta, 51-70 = vigilancia, 71-100 = normal
+                ish_score = min(100, max(0, valor_emb))
+            except (ValueError, TypeError):
+                pass
+        
+        # Ajustar por anomalías de embalses
+        for anom in anomalias or []:
+            if 'embalse' in anom.get('indicador', '').lower():
+                sev = anom.get('severidad', '').lower()
+                if sev == 'crítico':
+                    ish_score -= 25
+                elif sev == 'alerta':
+                    ish_score -= 15
+                break
+        
+        indices['ish']['valor'] = max(0, min(100, ish_score))
+        indices['ish']['nivel'], indices['ish']['emoji'] = self._clasificar_indice(ish_score)
+        
+        # ── 2. Índice de Presión de Mercado (IPM) ──
+        # IPM mide PRESIÓN ALCISTA de precios: solo incrementos cuentan como estrés.
+        # Un precio que cae no es estrés operativo para el SIN (bug anterior: abs() hacía
+        # que precio bajando también elevara el índice).
+        # Baseline = 0 (sin presión). Score sube solo si precio > histórico.
+        ipm_score = 0  # Sin presión alcista por defecto
+        precio_ficha = next((f for f in fichas if 'precio' in f.get('metrica', '').lower()), None)
+        if precio_ficha:
+            try:
+                valor_precio = precio_ficha.get('valor', 0)
+                historico_precio = precio_ficha.get('historico_30d', {}).get('promedio', 0)
+                if historico_precio and historico_precio > 0 and valor_precio > historico_precio:
+                    # Solo presión alcista: % de incremento sobre el histórico
+                    incremento_pct = (valor_precio - historico_precio) / historico_precio * 100
+                    ipm_score = min(100, max(0, incremento_pct))
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass
+        
+        # Ajustar por anomalías de precios
+        for anom in anomalias or []:
+            ind_lower = anom.get('indicador', '').lower()
+            if 'precio' in ind_lower or 'bolsa' in ind_lower:
+                sev = anom.get('severidad', '').lower()
+                if sev == 'crítico':
+                    ipm_score += 30
+                elif sev == 'alerta':
+                    ipm_score += 15
+                break
+        
+        indices['ipm']['valor'] = max(0, min(100, ipm_score))
+        indices['ipm']['nivel'], indices['ipm']['emoji'] = self._clasificar_indice(ipm_score, invertido=True)
+        
+        # ── 3. Índice de Estrés del Sistema (IES) ──
+        # Combinación ponderada: 40% ISH + 35% IPM + 25% Anomalías
+        n_criticas = sum(1 for a in anomalias or [] if a.get('severidad') == 'crítico')
+        n_alertas = sum(1 for a in anomalias or [] if a.get('severidad') == 'alerta')
+        factor_anomalias = min(100, (n_criticas * 40) + (n_alertas * 20))
+        
+        ies_score = (0.40 * (100 - indices['ish']['valor'])) + \
+                    (0.35 * indices['ipm']['valor']) + \
+                    (0.25 * factor_anomalias)
+        
+        indices['ies']['valor'] = round(max(0, min(100, ies_score)), 1)
+        indices['ies']['nivel'], indices['ies']['emoji'] = self._clasificar_indice(ies_score, invertido=True)
+        
+        # ── 4. Calificación Integral del Sistema (CIS) ──
+        cis_score = (indices['ish']['valor'] * 0.5) + ((100 - indices['ipm']['valor']) * 0.3) + ((100 - indices['ies']['valor']) * 0.2)
+        indices['cis']['valor'] = round(cis_score, 1)
+        
+        if cis_score >= 75:
+            indices['cis']['nivel'] = 'ESTABLE'
+            indices['cis']['emoji'] = '✅'
+        elif cis_score >= 50:
+            indices['cis']['nivel'] = 'VIGILANCIA'
+            indices['cis']['emoji'] = '⚠️'
+        elif cis_score >= 25:
+            indices['cis']['nivel'] = 'PREOCUPANTE'
+            indices['cis']['emoji'] = '🔶'
+        else:
+            indices['cis']['nivel'] = 'CRÍTICO'
+            indices['cis']['emoji'] = '🔴'
+        
+        # Componentes para análisis detallado
+        indices['componentes'] = {
+            'anomalias_criticas': n_criticas,
+            'anomalias_alertas': n_alertas,
+            'factor_anomalias': round(factor_anomalias, 1),
+            'pesos_aplicados': {'ish': 0.40, 'ipm': 0.35, 'anomalias': 0.25},
+            'caracter': 'DESCRIPTIVO — no usado para disparar alertas operativas',
+        }
+        
+        return indices
+    
+    def _clasificar_indice(self, valor, invertido=False):
+        """Clasifica un valor de índice en nivel y emoji."""
+        if invertido:
+            # Alto valor = malo (estrés)
+            if valor >= 75:
+                return 'ALTO ESTRÉS', '🔴'
+            elif valor >= 50:
+                return 'MODERADO', '🟠'
+            elif valor >= 25:
+                return 'LEVE', '🟡'
+            else:
+                return 'NORMAL', '✅'
+        else:
+            # Alto valor = bueno (sostenibilidad)
+            if valor >= 75:
+                return 'ÓPTIMO', '✅'
+            elif valor >= 50:
+                return 'ADECUADO', '🟢'
+            elif valor >= 25:
+                return 'BAJO', '🟡'
+            else:
+                return 'CRÍTICO', '🔴'
+    
+    def _indices_fallback(self):
+        """Retorna valores por defecto cuando no se pueden calcular los índices."""
+        return {
+            'ies': {'valor': 0, 'max': 100, 'nivel': 'SIN DATOS', 'emoji': '⚪'},
+            'ish': {'valor': 0, 'max': 100, 'nivel': 'SIN DATOS', 'emoji': '⚪'},
+            'ipm': {'valor': 0, 'max': 100, 'nivel': 'SIN DATOS', 'emoji': '⚪'},
+            'cis': {'valor': 0, 'max': 100, 'nivel': 'NO DISPONIBLE', 'emoji': '⚪'},
+            'componentes': {'error': 'No se pudieron calcular los índices'},
+        }
