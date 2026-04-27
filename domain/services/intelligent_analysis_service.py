@@ -511,23 +511,23 @@ class IntelligentAnalysisService:
                             description=f"Demanda con variación atípica: {variacion_pct:+.1f}% vs promedio"
                         ))
             
-            # Precios de bolsa desde metrics (PrecBolsNaci)
+            # Precios de bolsa desde metrics (PPPrecBolsNaci)
             df_precios = await asyncio.to_thread(
                 self.metrics_service.get_metric_series,
-                'PrecBolsNaci',
+                'PPPrecBolsNaci',
                 ayer.isoformat(),
                 ayer.isoformat()
             )
-            
+
             if not df_precios.empty and 'Value' in df_precios.columns:
                 precio_hoy = df_precios['Value'].iloc[0]
                 status.kpis['precio_bolsa_cop_kwh'] = round(precio_hoy, 2)
-                
+
                 # Analizar volatilidad de precios (últimos 30 días)
                 hace_30_dias = hoy - timedelta(days=30)
                 df_precios_mes = await asyncio.to_thread(
                     self.metrics_service.get_metric_series,
-                    'PrecBolsNaci',
+                    'PPPrecBolsNaci',
                     hace_30_dias.isoformat(),
                     ayer.isoformat()
                 )

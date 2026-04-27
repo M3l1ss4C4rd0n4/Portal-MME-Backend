@@ -49,8 +49,8 @@ class CommercialService:
             return date.today() - pd.Timedelta(days=365), date.today()
 
     def get_stock_price(self, start_date: date, end_date: date) -> pd.DataFrame:
-        """Obtiene Precio Bolsa Nacional (Promedio) con detalle horario"""
-        return self._get_price_metric('PrecBolsNaci', 'Precio Bolsa Nacional', start_date, end_date)
+        """Obtiene Precio Promedio Ponderado Bolsa Nacional (PPP oficial XM)"""
+        return self._get_price_metric('PPPrecBolsNaci', 'Precio Bolsa Nacional (PPP)', start_date, end_date)
 
     def get_scarcity_price(self, start_date: date, end_date: date) -> pd.DataFrame:
         """Obtiene Precio Escasez con detalle horario"""
@@ -225,7 +225,7 @@ class CommercialService:
 
     def _get_metric_unit(self, metric_code: str) -> str:
         units = {
-            'PrecBolsNaci': 'COP/kWh',
+            'PPPrecBolsNaci': 'COP/kWh',
             'PrecBolsCTG': 'COP/kWh',
             'CONTRATO': 'kWh',
         }

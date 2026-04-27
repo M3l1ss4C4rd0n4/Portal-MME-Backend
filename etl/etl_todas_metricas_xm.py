@@ -57,7 +57,7 @@ METRICAS_POR_SECCION = {
     'Transmisión': ['DispoReal', 'DispoCome', 'DispoDeclarada', 'CargoUsoSTN', 'CargoUsoSTR'],
     'Restricciones': ['RestAliv', 'RestSinAliv', 'RentasCongestRestr', 'EjecGarantRestr', 
                       'DesvGenVariableDesp', 'DesvGenVariableRedesp'],
-    'Precios': ['PrecBolsNaci', 'PrecBolsNaciTX1', 'PPPrecBolsNaci', 'PrecTransBolsa',
+    'Precios': ['PPPrecBolsNaci', 'PrecBolsNaciTX1', 'PrecTransBolsa',
                 'PrecPromCont', 'PrecPromContRegu', 'PrecPromContNoRegu',
                 'PrecEsca', 'PrecEscaAct', 'PrecEscaMarg', 'PrecEscaPon',
                 'PrecOferDesp', 'PrecOferIdeal', 'MaxPrecOferNal',
@@ -80,7 +80,8 @@ METRICAS_POR_SECCION = {
                    'AportHidricoMens', 'VolUtilesMens', 'VolUtilAgre',
                    'AportPorRecur', 'VolUtilPorRecur', 'MediaHist', 'PromediosAlDia',
                    'SeriesHistAport', 'AporMedioBasin', 'VolUtilBasin', 'AporAfluen',
-                   'VolUtilAfluen', 'AporMedioAfluen', 'VolMedioAfluen', 'CotaEmbalse', 'NivelRio'],
+                   'VolUtilAfluen', 'AporMedioAfluen', 'VolMedioAfluen', 'CotaEmbalse', 'NivelRio',
+                   'PorcVoluUtilDiar'],
     'Combustibles': ['ConsCombustibleMBTU', 'EmisionesCO2', 'factorEmisionCO2e',
                      'ConsGasKPCE', 'ConsCarbon', 'ConsJetA1', 'ConsFuelOil', 'ConsGasNatural'],
     'Renovables': ['IrrPanel', 'IrrGlobal', 'TempPanel', 'TempAmbSolar'],
@@ -123,7 +124,7 @@ def detectar_conversion(metric_id, entity):
     # ── Consultar reglas centralizadas primero ──
     conv_enum = rules_get_conversion(metric_id)
     if conv_enum != ConversionType.NONE or metric_id in (
-        'PrecBolsNaci', 'PrecBolsNaciTX1', 'PrecOferDesp', 'PrecOferIdeal',
+        'PPPrecBolsNaci', 'PrecBolsNaciTX1', 'PrecOferDesp', 'PrecOferIdeal',
         'PrecEsca', 'PrecEscaAct', 'PrecEscaMarg', 'CostMargDesp',
         'PrecPromCont', 'MaxPrecOferNal', 'AporCaudal', 'AporCaudalMediHist',
         'VoluUtilDiarMasa', 'CapaUtilDiarMasa', 'CapEfecNeta', 'ConsCombustibleMBTU',

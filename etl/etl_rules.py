@@ -162,7 +162,7 @@ _r("DesvGenVariableDesp",section=Section.RESTRICCIONES,expected_unit="GWh",     
 _r("DesvGenVariableRedesp",section=Section.RESTRICCIONES,expected_unit="GWh",         conversion=ConversionType.WH_TO_GWH,     aggregation=AggregationType.DAILY_VALUE, valid_range=(0, 100), allow_negative=True, description="Desvío gen. variable redespacho")
 
 # ── Precios ─────────────────────────────────────────────────
-_r("PrecBolsNaci",      section=Section.PRECIOS,     expected_unit="$/kWh", conversion=ConversionType.NONE,          aggregation=AggregationType.HOURLY_AVG, valid_range=(0, 5000), description="Precio bolsa nacional")
+_r("PPPrecBolsNaci",    section=Section.PRECIOS,     expected_unit="$/kWh", conversion=ConversionType.NONE,          aggregation=AggregationType.DAILY_VALUE, valid_range=(0, 5000), description="Precio promedio ponderado bolsa nacional (oficial XM)")
 _r("PrecBolsNaciTX1",   section=Section.PRECIOS,     expected_unit="$/kWh", conversion=ConversionType.NONE,          aggregation=AggregationType.HOURLY_AVG, valid_range=(0, 5000), description="Precio bolsa TX1")
 _r("PrecOferDesp",      section=Section.PRECIOS,     expected_unit="$/kWh", conversion=ConversionType.NONE,          aggregation=AggregationType.HOURLY_AVG, valid_range=(0, 5000), entities=["Recurso"], description="Precio oferta despacho")
 _r("PrecOferIdeal",     section=Section.PRECIOS,     expected_unit="$/kWh", conversion=ConversionType.NONE,          aggregation=AggregationType.HOURLY_AVG, valid_range=(0, 5000), entities=["Recurso"], description="Precio oferta ideal")

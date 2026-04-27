@@ -279,7 +279,18 @@ class Settings(BaseSettings):
         default="",
         description="API Key de Groq"
     )
-    
+
+    # ElevenLabs TTS (app EnergIA)
+    ELEVENLABS_API_KEY: str = Field(default="", description="API Key de ElevenLabs TTS")
+    ELEVENLABS_VOICE_ID: str = Field(default="nPczCjzI2devNBz1zQrb", description="Voice ID ElevenLabs (Jorge, español)")
+
+    # OpenAI TTS (fallback de alta calidad cuando ElevenLabs se agota)
+    OPENAI_API_KEY: str = Field(default="", description="API Key de OpenAI (para TTS con tts-1-hd)")
+
+    # Firebase Cloud Messaging (push notifications app EnergIA)
+    FIREBASE_CREDENTIALS_PATH: str = Field(default="", description="Ruta al JSON de credenciales de Firebase Admin SDK")
+    API_BASE_URL: str = Field(default="http://localhost:8000", description="URL pública base de la API (usada por la app EnergIA para resolver audio_url)")
+
     GROQ_BASE_URL: str = Field(
         default="https://api.groq.com/openai/v1",
         description="URL base de Groq API"
@@ -487,8 +498,8 @@ class Settings(BaseSettings):
     )
     
     API_KEY: str = Field(
-        default="mme-portal-energetico-2026-secret-key",
-        description="API Key principal para autenticación"
+        default="",
+        description="API Key principal para autenticación (requerida en producción)"
     )
     
     API_KEYS_WHITELIST: str = Field(
@@ -657,6 +668,10 @@ def validate_configuration():
     """
     errors = []
     
+    # Validar API Key de autenticación
+    if not settings.API_KEY:
+        errors.append("❌ Falta API_KEY en .env (no debe quedar vacía)")
+
     # Validar que existe al menos una API key de IA
     if not settings.GROQ_API_KEY and not settings.OPENROUTER_API_KEY:
         errors.append("❌ Falta GROQ_API_KEY o OPENROUTER_API_KEY en .env")

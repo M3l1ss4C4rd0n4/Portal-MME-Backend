@@ -90,6 +90,8 @@ def mock_metrics_repository() -> Mock:
 @pytest.fixture
 def mock_transmission_repository() -> Mock:
     """Mock del TransmissionRepository"""
+    from datetime import datetime
+    today = datetime.now().strftime('%Y-%m-%d')
     repo = Mock()
     # Methods used by TransmissionService internally
     repo.get_latest_lines = Mock(return_value=pd.DataFrame({
@@ -99,9 +101,9 @@ def mock_transmission_repository() -> Mock:
         'LongitudTotal': [285.0, 285.0, 285.0],
         'CodigoOperador': ['ISA', 'CELSIA', 'EPM'],
         'Sistema': ['STN', 'STN', 'STR'],
-        'Fecha': pd.to_datetime(['2026-02-28'] * 3),
+        'Fecha': pd.to_datetime([today] * 3),
     }))
-    repo.get_latest_date = Mock(return_value='2026-02-28')
+    repo.get_latest_date = Mock(return_value=today)
     return repo
 
 

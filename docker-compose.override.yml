@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Docker Compose Override - Desarrollo
+# Este archivo extiende docker-compose.yml para desarrollo local
+# No se usa en producción
+# ═══════════════════════════════════════════════════════════════════════════════
+
+version: '3.8'
+
+services:
+  api:
+    build:
+      target: development
+    volumes:
+      # Mount del código para hot-reload
+      - ./api:/app/api
+      - ./domain:/app/domain
+      - ./infrastructure:/app/infrastructure
+      - ./core:/app/core
+      - ./tasks:/app/tasks
+      - ./etl:/app/etl
+    ports:
+      - "5678:5678"  # Puerto para debugging
+    environment:
+      - DEBUG=True
+      - RELOAD=True
+
+  dashboard:
+    build:
+      target: development
+    volumes:
+      - ./app.py:/app/app.py
+      - ./gunicorn_config.py:/app/gunicorn_config.py
+      - ./assets:/app/assets
+      - ./interface:/app/interface
+    environment:
+      - DASH_DEBUG=True
+
+  telegram-bot:
+    volumes:
+      - ./whatsapp_bot:/app
+      - ./domain:/app/server/domain
+      - ./infrastructure:/app/server/infrastructure
+      - ./core:/app/server/core
+    environment:
+      - DEBUG=True
+      - LOG_LEVEL=DEBUG
+
+  celery-worker:
+    volumes:
+      - ./tasks:/app/tasks
+      - ./domain:/app/domain
+      - ./infrastructure:/app/infrastructure
+      - ./etl:/app/etl
+    environment:
+      - LOG_LEVEL=DEBUG

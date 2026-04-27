@@ -35,7 +35,7 @@ UNIDADES_POR_METRICA = {
     'CapEfecNeta': 'MW',
     
     # Precios ($/kWh)
-    'PrecBolsNaci': '$/kWh',
+    'PPPrecBolsNaci': '$/kWh',
     'PrecBolsNaciTX1': '$/kWh',
     'PrecOferDesp': '$/kWh',
     'PrecOferIdeal': '$/kWh',
@@ -91,6 +91,13 @@ METRICAS_CONFIG = {
             'metric': 'CapaUtilDiarEner',
             'entity': 'Embalse',
             'conversion': 'kWh_a_GWh',  # API devuelve en kWh
+            'dias_history': 1826,  # 5 años (2020-2025)
+            'batch_size': 30  # 30 días por batch
+        },
+        {
+            'metric': 'PorcVoluUtilDiar',
+            'entity': 'Sistema',
+            'conversion': 'sin_conversion',  # XM ya lo entrega como fracción 0-1
             'dias_history': 1826,  # 5 años (2020-2025)
             'batch_size': 30  # 30 días por batch
         },
@@ -378,12 +385,12 @@ METRICAS_CONFIG = {
     # Métricas de Mercado (NUEVO - Complementarias - Validado 2025-12-03)
     'metricas_mercado': [
         {
-            'metric': 'PrecBolsNaci',
+            'metric': 'PPPrecBolsNaci',
             'entity': 'Sistema',
-            'conversion': 'horas_a_diario',  # Promedio horario $/kWh
+            'conversion': 'sin_conversion',  # XM entrega el PPP calculado directamente
             'dias_history': 1826,  # 5 años para análisis histórico precios
             'batch_size': 30,
-            'descripcion': 'Precio bolsa nacional'
+            'descripcion': 'Precio Promedio Ponderado Bolsa Nacional (oficial XM)'
         },
         {
             'metric': 'CostMargDesp',

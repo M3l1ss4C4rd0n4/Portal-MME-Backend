@@ -634,7 +634,7 @@ def _crear_tab_metodologia():
                         html.Tr([html.Td("Pérdidas STN"), html.Td("XM — API SIMEM"), html.Td("metrics (PerdidasSTN)")]),
                         html.Tr([html.Td("SDL total"), html.Td("CREG / config"), html.Td("core/config.py")]),
                         html.Tr([html.Td("SDL distribución"), html.Td("CREG / config"), html.Td("core/config.py")]),
-                        html.Tr([html.Td("Precio Bolsa"), html.Td("XM — API SIMEM"), html.Td("metrics (PrecBolsNaci)")]),
+                        html.Tr([html.Td("Precio Bolsa (PPP)"), html.Td("XM — API SIMEM"), html.Td("metrics (PPPrecBolsNaci)")]),
                     ]),
                 ], style={
                     'width': '100%', 'borderCollapse': 'collapse',

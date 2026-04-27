@@ -48,6 +48,7 @@ def get_connection():
         user='postgres',
         host='localhost',
         port=5432,
+        options='-c search_path=subsidios,public',
     )
 
 

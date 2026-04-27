@@ -16,7 +16,6 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
@@ -64,8 +63,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Pragma"] = "no-cache"
         return response
 
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
+def _get_real_ip(request: Request) -> str:
+    """Lee la IP real del cliente detrás de nginx (X-Real-IP > X-Forwarded-For > client.host)."""
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+# Rate limiter — usa IP real del cliente, no la de nginx (127.0.0.1)
+limiter = Limiter(key_func=_get_real_ip)
 
 
 @asynccontextmanager
@@ -248,7 +257,9 @@ async def root(request: Request) -> Dict[str, Any]:
 
 @app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
 async def custom_swagger_ui_html():
-    """Swagger UI personalizado con configuración optimizada"""
+    """Swagger UI — solo disponible si API_DOCS_ENABLED=true en .env"""
+    if not settings.API_DOCS_ENABLED:
+        return HTMLResponse(content="Not Found", status_code=404)
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html>
@@ -286,7 +297,9 @@ async def custom_swagger_ui_html():
 
 @app.get("/redoc", response_class=HTMLResponse, include_in_schema=False)
 async def custom_redoc_html():
-    """ReDoc personalizado con versión estable"""
+    """ReDoc — solo disponible si API_DOCS_ENABLED=true en .env"""
+    if not settings.API_DOCS_ENABLED:
+        return HTMLResponse(content="Not Found", status_code=404)
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html>

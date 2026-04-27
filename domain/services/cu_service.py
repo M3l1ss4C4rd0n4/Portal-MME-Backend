@@ -216,7 +216,7 @@ class CUService:
             WHERE fecha::date = %s
               AND entidad = 'Sistema'
               AND metrica IN (
-                  'Gene', 'DemaCome', 'PrecBolsNaci',
+                  'Gene', 'DemaCome', 'PPPrecBolsNaci',
                   'RestAliv', 'RestSinAliv', 'PerdidasEner',
                   'PrecPromContRegu', 'CompContEnerReg'
               )
@@ -240,7 +240,7 @@ class CUService:
                 elif metrica == 'DemaCome':
                     result['dema_gwh'] = float(valor)
                     conteo += 1
-                elif metrica == 'PrecBolsNaci':
+                elif metrica == 'PPPrecBolsNaci':
                     result['precio_bolsa'] = float(valor)
                     conteo += 1
                 elif metrica == 'RestAliv':

@@ -78,7 +78,7 @@ class LibreNoticiasHandlerMixin:
                 df_precio = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.metrics_service.get_metric_series,
-                        'PrecBolsNaci', start_date.isoformat(), end_date.isoformat()
+                        'PPPrecBolsNaci', start_date.isoformat(), end_date.isoformat()
                     ),
                     timeout=self.SERVICE_TIMEOUT
                 )
@@ -314,7 +314,9 @@ class LibreNoticiasHandlerMixin:
                     "resumen": n["resumen_corto"],
                     "url": n["url"],
                     "fuente": n["fuente"],
+                    "source_url": n.get("source_url") or "",
                     "fecha": n["fecha_publicacion"],
+                    "imagen": n.get("imagen") or n.get("image") or "",
                 }
                 for n in top
             ]
@@ -332,6 +334,7 @@ class LibreNoticiasHandlerMixin:
                         "url": n["url"],
                         "fuente": n["fuente"],
                         "fecha": n["fecha_publicacion"],
+                        "imagen": n.get("imagen") or n.get("image") or "",
                     }
                     for n in otras
                 ]

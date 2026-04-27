@@ -267,7 +267,29 @@ def evaluar_fuente(conn, fuente, cfg):
     y_real = df_merge['valor'].values
     y_pred = df_merge['predicho'].values
 
-    mape_expost = mean_absolute_percentage_error(y_real, y_pred)  # type: ignore[arg-type]
+    # ── Para Eólica: filtrar días con generación muy baja (<0.10 GWh) ──
+    # En días sin viento la generación cae a 0.01-0.09 GWh. El MAPE explota
+    # (ej: real=0.05, pred=0.40 → MAPE=700%) aunque el error absoluto sea
+    # pequeño. μ Eólica=0.41 GWh/día → umbral 0.10 GWh = ~25% de la media.
+    smape_notas = None
+    if fuente == 'Eólica':
+        mask_validos = y_real >= 0.10
+        n_excluidos = (~mask_validos).sum()
+        if n_excluidos > 0 and mask_validos.sum() >= MIN_DIAS_OVERLAP:
+            y_real_mape = y_real[mask_validos]
+            y_pred_mape = y_pred[mask_validos]
+            print(f"  ℹ️  Eólica: {n_excluidos} días <0.10 GWh excluidos del MAPE (días sin viento)")
+        else:
+            y_real_mape, y_pred_mape = y_real, y_pred
+        # SMAPE simétrico como métrica complementaria (rangos 0-1, no explota con ceros)
+        smape_val = float(np.mean(
+            2 * np.abs(y_pred - y_real) / (np.abs(y_pred) + np.abs(y_real) + 1e-8)
+        ))
+        smape_notas = f"SMAPE={smape_val:.3f} ({smape_val:.1%}); dias_viento_bajo_excluidos={n_excluidos}"
+    else:
+        y_real_mape, y_pred_mape = y_real, y_pred
+
+    mape_expost = mean_absolute_percentage_error(y_real_mape, y_pred_mape)  # type: ignore[arg-type]
     rmse_expost = float(np.sqrt(mean_squared_error(y_real, y_pred)))  # type: ignore[arg-type]
 
     # MAPE/RMSE de entrenamiento (del batch más reciente)
@@ -288,6 +310,7 @@ def evaluar_fuente(conn, fuente, cfg):
         'mape_train': mape_train,
         'rmse_train': rmse_train,
         'modelo': modelo,
+        'notas': smape_notas,
     }, None
 
 
@@ -439,6 +462,8 @@ def main():
 
         # Guardar en BD
         notas_str = "; ".join(alertas) if alertas else "OK"
+        if resultado.get('notas'):
+            notas_str = resultado['notas'] + ("; " + notas_str if notas_str != "OK" else "")
         guardar_evaluacion(conn, resultado, notas_str)
 
         resumen.append({

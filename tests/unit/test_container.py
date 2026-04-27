@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import Mock
 
 from core.container import DependencyContainer
-from domain.interfaces.repositories import IMetricsRepository
+from domain.interfaces.repositories import IMetricsRepository, ITransmissionRepository
 
 
 class TestDependencyContainer:
@@ -15,57 +15,70 @@ class TestDependencyContainer:
     @pytest.fixture
     def container(self):
         """Container limpio para cada test."""
-        return DependencyContainer()
+        c = DependencyContainer()
+        yield c
+        c.reset()
     
-    def test_register_and_resolve(self, container):
-        """Test registro y resolución básica."""
+    def test_container_instantiation(self, container):
+        """Test que el container se puede instanciar."""
+        assert container is not None
+    
+    def test_override_and_get_metrics_repository(self, container):
+        """Test que override_metrics_repository() inyecta el mock correctamente."""
         # Arrange
         mock_repo = Mock(spec=IMetricsRepository)
-        container.register(IMetricsRepository, mock_repo)
+        container.override_metrics_repository(mock_repo)
         
         # Act
-        result = container.resolve(IMetricsRepository)
+        result = container.get_metrics_repository()
         
         # Assert
         assert result is mock_repo
     
-    def test_register_singleton(self, container):
-        """Test registro de singleton."""
+    def test_override_transmission_repository(self, container):
+        """Test que override_transmission_repository() inyecta el mock correctamente."""
+        mock_repo = Mock(spec=ITransmissionRepository)
+        container.override_transmission_repository(mock_repo)
+        
+        assert container.get_transmission_repository() is mock_repo
+    
+    def test_reset_clears_all_overrides(self, container):
+        """Test que reset() limpia todas las dependencias inyectadas."""
         # Arrange
         mock_repo = Mock(spec=IMetricsRepository)
-        container.register_singleton(IMetricsRepository, mock_repo)
+        container.override_metrics_repository(mock_repo)
+        assert container._metrics_repository is mock_repo
         
         # Act
-        result1 = container.resolve(IMetricsRepository)
-        result2 = container.resolve(IMetricsRepository)
+        container.reset()
         
-        # Assert
+        # Assert: vuelve a None — siguiente get() creará instancia real
+        assert container._metrics_repository is None
+    
+    def test_singleton_behavior_after_override(self, container):
+        """Test que el getter devuelve la misma instancia en llamadas sucesivas."""
+        mock_repo = Mock(spec=IMetricsRepository)
+        container.override_metrics_repository(mock_repo)
+        
+        result1 = container.get_metrics_repository()
+        result2 = container.get_metrics_repository()
+        
         assert result1 is result2 is mock_repo
     
-    def test_resolve_not_registered(self, container):
-        """Test resolución de interfaz no registrada."""
-        # Act & Assert
-        with pytest.raises(KeyError):
-            container.resolve(IMetricsRepository)
-    
-    def test_try_resolve_not_registered(self, container):
-        """Test try_resolve de interfaz no registrada."""
-        # Act
-        result = container.try_resolve(IMetricsRepository)
+    def test_reset_restores_lazy_init(self, container):
+        """Test que después de reset, un override nuevo funciona limpio."""
+        mock_a = Mock(spec=IMetricsRepository)
+        mock_b = Mock(spec=IMetricsRepository)
         
-        # Assert
-        assert result is None
-    
-    def test_is_registered(self, container):
-        """Test verificación de registro."""
-        # Arrange
-        mock_repo = Mock()
-        container.register(IMetricsRepository, mock_repo)
+        container.override_metrics_repository(mock_a)
+        assert container.get_metrics_repository() is mock_a
         
-        # Act & Assert
-        assert container.is_registered(IMetricsRepository) is True
-        assert container.is_registered(str) is False
+        container.reset()
+        container.override_metrics_repository(mock_b)
+        assert container.get_metrics_repository() is mock_b
 
 
 if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
     pytest.main([__file__, "-v"])
