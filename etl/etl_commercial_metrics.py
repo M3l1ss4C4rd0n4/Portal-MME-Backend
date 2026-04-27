@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # --- Configuración -----------------------------------------------------------
 
 COMMERCIAL_METRICS = {
-    'PrecBolsNaci':  '$/kWh',
+    'PPPrecBolsNaci': '$/kWh',
     'PrecEsca':      '$/kWh',
     'PrecEscaAct':   '$/kWh',
     'PrecEscaSup':   '$/kWh',

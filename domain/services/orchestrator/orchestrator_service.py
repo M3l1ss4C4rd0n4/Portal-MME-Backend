@@ -33,6 +33,7 @@ from domain.services.orchestrator.handlers.cu_pnt_handler import CuPntHandlerMix
 from domain.services.orchestrator.handlers.metricas_handler import MetricasHandlerMixin
 from domain.services.orchestrator.handlers.informe_handler import InformeHandlerMixin
 from domain.services.orchestrator.handlers.libre_noticias_handler import LibreNoticiasHandlerMixin
+from domain.services.orchestrator.handlers.subsidios_handler import SubsidiosHandlerMixin
 from domain.services.orchestrator.utils.serializers import sanitize_numpy_types
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class ChatbotOrchestratorService(
     MetricasHandlerMixin,
     InformeHandlerMixin,
     LibreNoticiasHandlerMixin,
+    SubsidiosHandlerMixin,
 ):
     """
     Orquestador central para el chatbot.
@@ -257,6 +259,16 @@ class ChatbotOrchestratorService(
             "simular": self._handle_simulacion,
             "escenario": self._handle_simulacion,
             "que_pasa_si": self._handle_simulacion,
+
+            # ── Subsidios energéticos — 8 módulos ──────────────────────
+            "subsidios_deuda_total":   self._handle_subsidios_deuda_total,
+            "subsidios_deuda_empresa": self._handle_subsidios_deuda_empresa,
+            "subsidios_trimestre":     self._handle_subsidios_trimestre,
+            "subsidios_resoluciones":  self._handle_subsidios_resoluciones,
+            "subsidios_estado":        self._handle_subsidios_estado,
+            "subsidios_pct_pagado":    self._handle_subsidios_pct_pagado,
+            "subsidios_deuda_fondo":   self._handle_subsidios_deuda_fondo,
+            "subsidios_pagado_anio":   self._handle_subsidios_pagado_anio,
         }
         return intent_map.get(intent.lower())
 

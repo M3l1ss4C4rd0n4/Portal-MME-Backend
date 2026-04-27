@@ -73,7 +73,7 @@ class PredictionsService:
         end_date: Optional[str] = None
     ) -> pd.DataFrame:
         """Obtiene predicciones almacenadas para una métrica"""
-        return self.repo.get_predictions(metric_id, start_date, end_date)  # type: ignore[arg-type]
+        return self.repo.get_predictions(metric_id, start_date=start_date, end_date=end_date)  # type: ignore[arg-type]
     
     # ═══════════════════════════════════════════════════════════
     # NUEVOS MÉTODOS DE PREDICCIÓN ML
@@ -138,7 +138,7 @@ class PredictionsService:
             prediction_df = self._forecast_arima(historical_df, horizon_days, confidence_level)
 
         elif model_type == "ensemble":
-            prediction_df = self._forecast_ensemble(historical_df, horizon_days, confidence_level)
+            prediction_df = self._forecast_ensemble(historical_df, horizon_days, confidence_level, fuente=metric_id)
 
         else:
             raise ValueError(f"Tipo de modelo no soportado: {model_type}")
@@ -433,61 +433,132 @@ class PredictionsService:
         logger.info(f"[ARIMA] Predicción completada: {len(result)} días")
         return result.reset_index(drop=True)
     
+    def _get_mape_pesos(self, fuente: Optional[str]) -> Dict[str, float]:
+        """
+        Carga el último MAPE ex-post de Prophet y ARIMA para una fuente desde
+        predictions_quality_history y retorna pesos inversos normalizados.
+
+        Si no hay datos en BD, retorna pesos iguales (0.5 / 0.5).
+        Pesos inversos: si MAPE_prophet < MAPE_arima, Prophet pesa más.
+        """
+        _default = {'prophet': 0.5, 'arima': 0.5}
+        if fuente is None:
+            return _default
+        try:
+            from infrastructure.database.manager import db_manager
+            df = db_manager.query_df("""
+                SELECT modelo, mape_expost
+                FROM sector_energetico.predictions_quality_history
+                WHERE fuente = %(fuente)s
+                  AND mape_expost IS NOT NULL
+                  AND mape_expost < 1.0
+                ORDER BY fecha_evaluacion DESC
+                LIMIT 20
+            """, {'fuente': fuente})
+            if df is None or df.empty:
+                return _default
+
+            # Mapear nombres de modelo largo a 'prophet' o 'arima'
+            def _tipo(modelo: str) -> Optional[str]:
+                m = modelo.lower()
+                if 'prophet' in m:
+                    return 'prophet'
+                if 'arima' in m or 'sarima' in m:
+                    return 'arima'
+                return None
+
+            mapes: Dict[str, float] = {}
+            for _, row in df.iterrows():
+                tipo = _tipo(str(row['modelo']))
+                if tipo and tipo not in mapes:
+                    mapes[tipo] = float(row['mape_expost'])
+
+            if len(mapes) < 2:
+                return _default  # Solo hay un modelo con historia → pesos iguales
+
+            # Pesos inversos: w_i = (1/mape_i) / sum(1/mape_j)
+            inv = {k: 1.0 / max(v, 1e-6) for k, v in mapes.items()}
+            total = sum(inv.values())
+            pesos = {k: round(v / total, 4) for k, v in inv.items()}
+            logger.info(
+                "[Ensemble] Pesos dinámicos para %s: prophet=%.3f arima=%.3f "
+                "(MAPE prophet=%.2f%% arima=%.2f%%)",
+                fuente, pesos.get('prophet', 0.5), pesos.get('arima', 0.5),
+                mapes.get('prophet', 0) * 100, mapes.get('arima', 0) * 100,
+            )
+            return pesos
+        except Exception as e:
+            logger.debug("[Ensemble] No se pudieron cargar pesos dinámicos para %s: %s", fuente, e)
+            return _default
+
     def _forecast_ensemble(
-        self, 
-        historical_df: pd.DataFrame, 
-        horizon_days: int, 
-        confidence_level: float
+        self,
+        historical_df: pd.DataFrame,
+        horizon_days: int,
+        confidence_level: float,
+        fuente: Optional[str] = None,
     ) -> pd.DataFrame:
         """
-        Predicción ensemble (promedio de Prophet + ARIMA).
-        
+        Predicción ensemble (Prophet + ARIMA) con pesos inversos al MAPE ex-post.
+
         Args:
             historical_df: DataFrame con 'date' y 'value'
             horizon_days: Días a predecir
             confidence_level: Nivel de confianza
-        
+            fuente: Código de fuente para buscar pesos en predictions_quality_history
+
         Returns:
             DataFrame con: date, value, lower, upper
         """
         logger.info("[Ensemble] Ejecutando predicción con múltiples modelos...")
-        
-        predictions = []
-        
+
+        predictions: Dict[str, pd.DataFrame] = {}
+
         # Prophet
         if PROPHET_AVAILABLE:
             try:
-                pred_prophet = self._forecast_prophet(historical_df, horizon_days, confidence_level)
-                predictions.append(pred_prophet)
+                predictions['prophet'] = self._forecast_prophet(historical_df, horizon_days, confidence_level)
                 logger.info("[Ensemble] Prophet ejecutado exitosamente")
             except Exception as e:
                 logger.warning(f"[Ensemble] Prophet falló: {e}")
-        
+
         # ARIMA
         if ARIMA_AVAILABLE:
             try:
-                pred_arima = self._forecast_arima(historical_df, horizon_days, confidence_level)
-                predictions.append(pred_arima)
+                predictions['arima'] = self._forecast_arima(historical_df, horizon_days, confidence_level)
                 logger.info("[Ensemble] ARIMA ejecutado exitosamente")
             except Exception as e:
                 logger.warning(f"[Ensemble] ARIMA falló: {e}")
-        
-        # Validar que al menos un modelo funcionó
-        if len(predictions) == 0:
+
+        if not predictions:
             raise RuntimeError("Todos los modelos fallaron. Verificar datos y librerías instaladas.")
-        
-        # Si solo hay un modelo, retornarlo directamente
+
         if len(predictions) == 1:
             logger.warning("[Ensemble] Solo un modelo disponible, retornando resultado directo")
-            return predictions[0]
-        
-        # Promediar predicciones
-        ensemble_result = predictions[0].copy()
+            return next(iter(predictions.values()))
+
+        # ── Pesos inversos al MAPE ex-post de producóin ──────────────────
+        pesos_bd = self._get_mape_pesos(fuente)
+        pesos_efectivos = {
+            modelo: pesos_bd.get(modelo, 1.0 / len(predictions))
+            for modelo in predictions
+        }
+        # Re-normalizar en caso de que falte un modelo
+        total_peso = sum(pesos_efectivos.values())
+        pesos_efectivos = {k: v / total_peso for k, v in pesos_efectivos.items()}
+
+        # ── Combinar ponderado ────────────────────────────────────────────
+        ensemble_result = next(iter(predictions.values())).copy()
         for col in ['value', 'lower', 'upper']:
-            values = [pred[col].values for pred in predictions]
-            ensemble_result[col] = np.mean(values, axis=0)
-        
-        logger.info(f"[Ensemble] Promedio de {len(predictions)} modelos completado")
+            ensemble_result[col] = sum(
+                pesos_efectivos[modelo] * predictions[modelo][col].values
+                for modelo in predictions
+            )
+
+        logger.info(
+            "[Ensemble] Combinación ponderada completada: %s",
+            {m: f"{w:.3f}" for m, w in pesos_efectivos.items()},
+        )
         return ensemble_result
     
     # ═══════════════════════════════════════════════════════════
@@ -643,35 +714,128 @@ class PredictionsService:
                      'yhat_upper': 'intervalo_superior'}
         )
 
-    def _get_historical_data_for_fuente(self, fuente: str) -> pd.DataFrame:
+    def _get_historical_data_for_fuente(self, fuente: str, days_back: int = 730) -> pd.DataFrame:
         """
-        Obtiene datos históricos de la BD para una fuente específica.
-        Consulta la tabla predictions existente como histórico de referencia.
+        Obtiene datos históricos REALES de la BD para una fuente específica.
+
+        Mapeo fuente → query:
+          - Tecnologías de generación  → metrics JOIN catalogos (tipo de planta)
+          - Métricas sectoriales       → metrics directa (metrica + aggregación)
+          - CU_DIARIO                  → cu_daily
+
+        Raise ValueError si no hay datos suficientes (< 30 días reales).
+        Ya NO usa la tabla predictions como histórico (ciclo vicioso).
         """
+        # ── Mapeo fuente → configuración de query ──────────────────────────
+        _TIPO_CATALOGO = {
+            'Hidráulica': 'HIDRAULICA',
+            'Térmica':    'TERMICA',
+            'Eólica':     'EOLICA',
+            'Solar':      'SOLAR',
+            'Biomasa':    'COGENERADOR',
+        }
+        _METRICA_CFG = {
+            # fuente: (metrica_xm, agg_fn, entidad_fija_o_None)
+            'GENE_TOTAL':        ('Gene',             'SUM', 'Sistema'),
+            'DEMANDA':           ('DemaReal',          'SUM', None),
+            'PRECIO_BOLSA':      ('PPPrecBolsNaci',     'AVG', 'Sistema'),
+            'PRECIO_ESCASEZ':    ('PrecEsca',          'AVG', None),
+            'APORTES_HIDRICOS':  ('AporEner',          'SUM', None),
+            'EMBALSES':          ('CapaUtilDiarEner',  'SUM', 'Sistema'),
+            'EMBALSES_PCT':      ('PorcVoluUtilDiar',  'AVG', 'Sistema'),
+            'PERDIDAS':          ('PerdidasEner',      'SUM', None),
+            'PERDIDAS_TOTALES':  ('PerdidasEner',      'SUM', None),
+        }
+
+        fecha_hasta = datetime.now().date()
+        fecha_desde = (datetime.now() - timedelta(days=days_back)).date()
+
         try:
-            df = self.repo.get_predictions_for_metric(fuente)
+            from infrastructure.database.manager import db_manager
+
+            if fuente in _TIPO_CATALOGO:
+                # ── Generación por tecnología ──────────────────────────────
+                tipo = _TIPO_CATALOGO[fuente]
+                df = db_manager.query_df("""
+                    SELECT m.fecha, SUM(m.valor_gwh) AS valor
+                    FROM sector_energetico.metrics m
+                    INNER JOIN sector_energetico.catalogos c ON m.recurso = c.codigo
+                    WHERE c.tipo = %(tipo)s
+                      AND m.metrica = 'Gene'
+                      AND m.fecha BETWEEN %(desde)s AND %(hasta)s
+                      AND m.valor_gwh > 0
+                    GROUP BY m.fecha
+                    ORDER BY m.fecha
+                """, {'tipo': tipo, 'desde': str(fecha_desde), 'hasta': str(fecha_hasta)})
+
+            elif fuente == 'CU_DIARIO':
+                # ── Costo Unitario ─────────────────────────────────────────
+                df = db_manager.query_df("""
+                    SELECT fecha, cu_gwh AS valor
+                    FROM sector_energetico.cu_daily
+                    WHERE fecha BETWEEN %(desde)s AND %(hasta)s
+                      AND cu_gwh IS NOT NULL
+                    ORDER BY fecha
+                """, {'desde': str(fecha_desde), 'hasta': str(fecha_hasta)})
+
+            elif fuente in _METRICA_CFG:
+                # ── Métricas sectoriales ───────────────────────────────────
+                metrica, agg_fn, entidad = _METRICA_CFG[fuente]
+                params: Dict[str, Any] = {
+                    'metrica': metrica,
+                    'desde': str(fecha_desde),
+                    'hasta': str(fecha_hasta),
+                }
+                if entidad:
+                    params['entidad'] = entidad
+                    df = db_manager.query_df(f"""
+                        SELECT fecha, {agg_fn}(valor_gwh) AS valor
+                        FROM sector_energetico.metrics
+                        WHERE metrica = %(metrica)s
+                          AND fecha BETWEEN %(desde)s AND %(hasta)s
+                          AND entidad = %(entidad)s
+                          AND valor_gwh > 0
+                        GROUP BY fecha ORDER BY fecha
+                    """, params)
+                else:
+                    df = db_manager.query_df(f"""
+                        SELECT fecha, {agg_fn}(valor_gwh) AS valor
+                        FROM sector_energetico.metrics
+                        WHERE metrica = %(metrica)s
+                          AND fecha BETWEEN %(desde)s AND %(hasta)s
+                          AND valor_gwh > 0
+                        GROUP BY fecha ORDER BY fecha
+                    """, params)
+            else:
+                raise ValueError(f"Fuente '{fuente}' sin mapeo de datos históricos definido")
+
             if df is not None and not df.empty:
-                df = df.rename(columns={
-                    'fecha_prediccion': 'fecha',
-                    'valor_gwh_predicho': 'valor',
-                })
                 df['fecha'] = pd.to_datetime(df['fecha'])
                 df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
-                return df[['fecha', 'valor']].dropna().sort_values('fecha')
-        except Exception as e:
-            logger.debug("No se pudo obtener histórico de predictions para %s: %s", fuente, e)
+                df = df.dropna().sort_values('fecha').reset_index(drop=True)
+                if len(df) >= 30:
+                    logger.info("[LongTerm] %s: %d días reales obtenidos (%s → %s)",
+                                fuente, len(df),
+                                df['fecha'].iloc[0].date(), df['fecha'].iloc[-1].date())
+                    return df[['fecha', 'valor']]
 
-        # Fallback: generar serie sintética con tendencia plana
-        logger.warning("[LongTerm] Usando serie sintética para %s (sin histórico en BD)", fuente)
-        fechas = pd.date_range(end=datetime.now(), periods=365, freq='D')
-        np.random.seed(abs(hash(fuente)) % 2**31)
-        valores = 100 + np.random.randn(365).cumsum() * 0.5
-        return pd.DataFrame({'fecha': fechas, 'valor': valores})
+            logger.warning("[LongTerm] %s: datos reales insuficientes (%d filas) — sin fallback sintético",
+                           fuente, 0 if df is None else len(df))
+            raise ValueError(
+                f"Datos históricos reales insuficientes para '{fuente}' "
+                f"(obtenidos: {0 if df is None else len(df)}, mínimo: 30)"
+            )
+
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error("[LongTerm] Error obteniendo histórico real para %s: %s", fuente, e)
+            raise ValueError(f"No se pudo obtener histórico real para '{fuente}': {e}") from e
 
     def save_long_term_predictions(
         self,
         fuentes: list = None,  # type: ignore[assignment]
-        horizonte_dias: int = 365,
+        horizonte_dias: int = 90,
     ) -> dict:
         """
         Genera y persiste predicciones de largo plazo para todas las fuentes.

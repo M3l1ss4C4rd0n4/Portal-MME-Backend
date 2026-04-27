@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 BOT_BROADCAST_URL = "http://localhost:8001/api/broadcast-alert"
 BOT_TIMEOUT = 60
 
-# ── Cooldown: no reenviar la misma alerta dentro de este período ──
-ALERT_COOLDOWN_HOURS = 6
+# ── Cooldown: no reenviar la misma alerta más de una vez por día ──
+ALERT_COOLDOWN_HOURS = 24  # valor de respaldo; en práctica se usa TTL hasta medianoche
 
 
 def _clean_markdown_for_telegram(text: str) -> str:
@@ -117,6 +117,10 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
 
         for alerta in alertas[:5]:
             try:
+                # Convertir tipos numpy a Python nativos para que psycopg2 los acepte
+                # (pandas devuelve numpy.float64/int64 que psycopg2 no adapta y rompe el INSERT)
+                _valor_raw = alerta.get('valor', 0)
+                _valor_py = float(_valor_raw) if _valor_raw is not None else 0.0
                 cur.execute("""
                     INSERT INTO alertas_historial 
                     (fecha_evaluacion, metrica, severidad, descripcion, 
@@ -127,13 +131,18 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
                         notificacion_whatsapp_enviada = GREATEST(
                             alertas_historial.notificacion_whatsapp_enviada,
                             EXCLUDED.notificacion_whatsapp_enviada
-                        )
+                        ),
+                        fecha_generacion = CASE
+                            WHEN EXCLUDED.notificacion_whatsapp_enviada = TRUE
+                            THEN NOW()
+                            ELSE alertas_historial.fecha_generacion
+                        END
                 """, (
                     date.today(),
-                    alerta.get('categoria', alerta.get('metrica', 'SISTEMA')),
-                    alerta.get('severidad', 'ALERTA'),
-                    alerta.get('titulo', alerta.get('descripcion', '')),
-                    alerta.get('valor', 0),
+                    str(alerta.get('categoria', alerta.get('metrica', 'SISTEMA'))),
+                    str(alerta.get('severidad', 'ALERTA')),
+                    str(alerta.get('titulo', alerta.get('descripcion', ''))),
+                    _valor_py,
                     json.dumps(alerta, ensure_ascii=False, default=str),
                     enviados > 0
                 ))
@@ -181,17 +190,33 @@ def _check_stale_data():
         for metrica, max_dias_repetidos in metricas_criticas:
             cur.execute("""
                 WITH daily_totals AS (
-                    SELECT fecha, SUM(valor_gwh) as total
-                    FROM metrics 
-                    WHERE metrica = %s 
-                    AND fecha >= CURRENT_DATE - INTERVAL '10 days'
+                    -- ROUND a 1 decimal evita falsos positivos por precisión binaria
+                    SELECT fecha, ROUND(SUM(valor_gwh)::numeric, 1) AS total
+                    FROM metrics
+                    WHERE metrica = %s
+                      AND fecha >= CURRENT_DATE - INTERVAL '10 days'
                     GROUP BY fecha
                     ORDER BY fecha DESC
                     LIMIT 10
+                ),
+                ranked AS (
+                    SELECT fecha, total,
+                           ROW_NUMBER() OVER (ORDER BY fecha DESC) AS rn
+                    FROM daily_totals
+                ),
+                latest AS (
+                    SELECT total FROM ranked WHERE rn = 1
                 )
-                SELECT COUNT(*) as dias_iguales
-                FROM daily_totals
-                WHERE total = (SELECT total FROM daily_totals ORDER BY fecha DESC LIMIT 1)
+                -- Contar solo días CONSECUTIVOS desde el más reciente con igual total.
+                -- Si hay un día diferente en el medio, los anteriores no cuentan.
+                SELECT COUNT(*)
+                FROM ranked r, latest l
+                WHERE r.total = l.total
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ranked r2, latest l2
+                      WHERE r2.rn < r.rn
+                        AND r2.total <> l2.total
+                  )
             """, (metrica,))
 
             row = cur.fetchone()
@@ -222,36 +247,36 @@ def _check_stale_data():
 
 def _alerta_ya_notificada(titulo: str, horas: int = ALERT_COOLDOWN_HOURS) -> bool:
     """
-    Verifica si una alerta con el mismo título ya fue notificada
-    dentro de las últimas `horas` horas, para evitar spam.
+    Verifica si una alerta con el mismo título ya fue notificada hoy.
+    Usa Redis como fuente de verdad (atómico, compartido por todos los workers).
+    El TTL se calcula hasta medianoche para garantizar máximo 1 envío por día.
     """
     try:
-        from core.config import settings
-        import psycopg2
-
-        conn_params = {
-            'host': settings.POSTGRES_HOST, 'port': settings.POSTGRES_PORT,
-            'database': settings.POSTGRES_DB, 'user': settings.POSTGRES_USER
-        }
-        if settings.POSTGRES_PASSWORD:
-            conn_params['password'] = settings.POSTGRES_PASSWORD
-        conn = psycopg2.connect(**conn_params)
-        cur = conn.cursor()
-        cur.execute(
-            f"""
-            SELECT COUNT(*) FROM alertas_historial
-            WHERE descripcion = %s
-              AND fecha_generacion >= NOW() - INTERVAL '{int(horas)} hours'
-            """,
-            (titulo,),
-        )
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return count > 0
+        import redis as _redis
+        _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
+        _key = 'alert_cooldown:' + titulo.replace(' ', '_')[:120]
+        return bool(_r.get(_key))
     except Exception as e:
-        logger.warning(f"Error verificando cooldown de alerta: {e}")
+        logger.warning(f"Error verificando cooldown de alerta (Redis): {e}")
         return False  # En caso de error, permitir enviar
+
+
+def _activar_cooldown_alerta(titulo: str, horas: int = ALERT_COOLDOWN_HOURS) -> None:
+    """Registra en Redis que esta alerta ya fue notificada hoy (TTL hasta medianoche)."""
+    try:
+        import redis as _redis
+        from datetime import datetime
+        _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
+        _key = 'alert_cooldown:' + titulo.replace(' ', '_')[:120]
+        # TTL = segundos restantes hasta las 00:00 del día siguiente
+        _now = datetime.now()
+        _midnight = (_now.replace(hour=0, minute=0, second=0, microsecond=0)
+                     + timedelta(days=1))
+        _ttl = max(int((_midnight - _now).total_seconds()), 3600)
+        _r.setex(_key, _ttl, '1')
+        logger.debug(f"Cooldown activado hasta medianoche: {_key} (TTL={_ttl}s)")
+    except Exception as e:
+        logger.warning(f"Error activando cooldown en Redis: {e}")
 
 
 @shared_task(name='tasks.anomaly_tasks.check_anomalies', bind=True, max_retries=2)
@@ -264,8 +289,10 @@ def check_anomalies(self):
         de severidad CRÍTICO (urgencias reales que el Viceministro debe conocer).
       - Las alertas de severidad ALERTA se registran en BD y logs pero NO
         se envían como notificación push.
-      - Cooldown de 6 horas: si la misma alerta ya fue notificada recientemente,
-        no se reenvía para evitar spam.
+      - Cooldown diario: si la misma alerta ya fue notificada hoy (TTL hasta
+        medianoche), no se reenvía — máximo 1 notificación por alerta por día.
+      - Métricas evaluadas: demanda (presión), aportes hídricos, embalses (%),
+        precio bolsa vs escasez, margen operativo (%), estrés térmico (%).
       - El informe diario (8:00 AM) sí incluye TODAS las anomalías detectadas.
     """
     try:
@@ -281,6 +308,7 @@ def check_anomalies(self):
             sistema.evaluar_embalses(horizonte=7)
             sistema.evaluar_precio_bolsa(horizonte=7)
             sistema.evaluar_balance_energetico(horizonte=7)
+            sistema.evaluar_estres_termico(horizonte=7)
         finally:
             sistema.close()
 
@@ -300,16 +328,21 @@ def check_anomalies(self):
             if _cu:
                 cu_val = _cu.get('cu_total', 0)
                 if cu_val > 600:
+                    # CU es un indicador ECONÓMICO, no operativo.
+                    # Severidad máxima = ALERTA para evitar confusión con riesgo de
+                    # desabastecimiento. NUNCA genera CRÍTICO operativo.
                     alertas_criticas.append({
-                        'titulo': f'CU_EXTREMO: {cu_val:.0f} COP/kWh',
+                        'titulo': f'💲 CU elevado: {cu_val:.0f} COP/kWh [indicador económico]',
                         'categoria': 'Costo Unitario',
-                        'severidad': 'CRÍTICO',
+                        'severidad': 'ALERTA',  # Máx ALERTA — no riesgo operativo SIN
                         'descripcion': (
                             f'El Costo Unitario alcanzó {cu_val:.2f} COP/kWh '
-                            f'(umbral crítico: >600). Posible estrés tarifario.'
+                            f'(umbral de seguimiento: >600). '
+                            f'INDICADOR ECONÓMICO — No implica riesgo de desabastecimiento. '
+                            f'Refleja presión tarifaria, combustibles o decisiones regulatorias.'
                         ),
                     })
-                    logger.warning(f"🔴 [ANOMALÍAS] CU CRÍTICO: {cu_val:.2f} COP/kWh")
+                    logger.warning(f"💲 [ANOMALÍAS] CU elevado (económico): {cu_val:.2f} COP/kWh")
                 elif cu_val > 400:
                     alertas_criticas.append({
                         'titulo': f'CU_ELEVADO: {cu_val:.0f} COP/kWh',
@@ -421,6 +454,10 @@ def check_anomalies(self):
             # Actualizar BD con estado de envío (garantizar flag = TRUE)
             _registrar_alerta_bd(alertas_nuevas, max(1, enviados))
 
+            # Activar cooldown Redis para cada alerta enviada (atómico, cross-worker)
+            for _a in alertas_nuevas:
+                _activar_cooldown_alerta(_a.get('titulo', _a.get('descripcion', '')))
+
             logger.info(f"📤 [ANOMALÍAS] Broadcast completado: {enviados} usuarios notificados")
         elif alertas_criticas:
             logger.info(
@@ -492,9 +529,7 @@ def send_daily_summary():
         )
 
         API_BASE = "http://localhost:8000"
-        API_KEY = os.getenv(
-            'API_KEY', 'mme-portal-energetico-2026-secret-key'
-        )
+        API_KEY = os.getenv('API_KEY')
         HDR = {"Content-Type": "application/json", "X-API-Key": API_KEY}
 
         def _api_call(intent, params=None, timeout=120):
@@ -524,6 +559,7 @@ def send_daily_summary():
         fecha_generacion = datetime.now().strftime('%Y-%m-%d %H:%M')
 
         d_informe = _api_call('informe_ejecutivo')
+        _contexto_datos = d_informe.get('contexto_datos') if d_informe else None
         if d_informe:
             informe_texto = d_informe.get('informe')
             generado_con_ia = d_informe.get('generado_con_ia', False)
@@ -563,14 +599,26 @@ def send_daily_summary():
                 timeout=60,
             )
             if d_pred and d_pred.get('predicciones'):
+                # Enriquecer estadísticas con IC próximos 7 días (rango corto, más preciso)
+                _preds = d_pred.get('predicciones', [])
+                _estadisticas = d_pred.get('estadisticas', {})
+                _preds_sorted = sorted(_preds, key=lambda p: p.get('fecha', ''))
+                _near = _preds_sorted[:7] if len(_preds_sorted) >= 7 else _preds_sorted
+                _ic_infs = [p['intervalo_inferior'] for p in _near if p.get('intervalo_inferior') is not None]
+                _ic_sups = [p['intervalo_superior'] for p in _near if p.get('intervalo_superior') is not None]
+                if _ic_infs and _ic_sups:
+                    _estadisticas['ic_inferior_gwh'] = round(
+                        sum(_ic_infs) / len(_ic_infs), 1)
+                    _estadisticas['ic_superior_gwh'] = round(
+                        sum(_ic_sups) / len(_ic_sups), 1)
                 predicciones_lista.append({
                     'fuente': d_pred.get('fuente', metric_label),
                     'fuente_label': metric_label,
                     'horizonte_dias': d_pred.get('horizonte_dias', 30),
-                    'estadisticas': d_pred.get('estadisticas', {}),
+                    'estadisticas': _estadisticas,
                     'modelo': d_pred.get('modelo', ''),
                     'conclusiones': d_pred.get('conclusiones', []),
-                    'predicciones': d_pred.get('predicciones', []),
+                    'predicciones': _preds,
                 })
                 logger.info(
                     f"[RESUMEN DIARIO] Predicciones {metric_id}: "
@@ -579,6 +627,125 @@ def send_daily_summary():
         # Compatibilidad: predicciones_data = primera métrica (o vacío)
         predicciones_data = predicciones_lista[0] if predicciones_lista else {}
 
+        # Enriquecer con MAPE ex-post real y fecha_generacion desde BD
+        if predicciones_lista:
+            try:
+                from infrastructure.database.manager import db_manager as _db_mgr
+                df_qual = _db_mgr.query_df("""
+                    SELECT DISTINCT ON (fuente)
+                           fuente, mape_expost, mape_train,
+                           fecha_evaluacion::date AS fecha_eval
+                    FROM predictions_quality_history
+                    WHERE mape_expost IS NOT NULL
+                      AND mape_expost < 1.0
+                    ORDER BY fuente, fecha_evaluacion DESC
+                """)
+                if not df_qual.empty:
+                    qual_map = df_qual.set_index('fuente').to_dict('index')
+                    for _item in predicciones_lista:
+                        _fkey = _item.get('fuente', '')
+                        if _fkey in qual_map:
+                            _item['mape_expost'] = round(
+                                float(qual_map[_fkey]['mape_expost']) * 100.0, 2)
+                            _item['fecha_mape'] = str(qual_map[_fkey]['fecha_eval'])
+                    logger.info("[RESUMEN DIARIO] MAPE ex-post enriquecido en predicciones")
+            except Exception as _qe:
+                logger.warning(f"[RESUMEN DIARIO] No se pudo obtener quality history: {_qe}")
+
+            # Enriquecer con fecha de última generación del modelo
+            try:
+                _fuentes = [_i.get('fuente', '') for _i in predicciones_lista if _i.get('fuente')]
+                if _fuentes:
+                    df_gen = _db_mgr.query_df("""
+                        SELECT fuente, MAX(fecha_generacion) AS ultima_gen
+                        FROM predictions
+                        WHERE fuente = ANY(%s)
+                        GROUP BY fuente
+                    """, (_fuentes,))
+                    if not df_gen.empty:
+                        gen_map = df_gen.set_index('fuente')['ultima_gen'].to_dict()
+                        for _item in predicciones_lista:
+                            _fkey = _item.get('fuente', '')
+                            if _fkey in gen_map and gen_map[_fkey] is not None:
+                                _item['fecha_generacion_modelo'] = (
+                                    gen_map[_fkey].strftime('%d/%m/%Y %H:%M')
+                                    if hasattr(gen_map[_fkey], 'strftime')
+                                    else str(gen_map[_fkey])[:16]
+                                )
+                        logger.info("[RESUMEN DIARIO] Fecha generación modelo enriquecida")
+            except Exception as _ge:
+                logger.warning(f"[RESUMEN DIARIO] No se pudo obtener fecha_generacion: {_ge}")
+
+        # Enriquecer con comparación interanual (mismo período año anterior)
+        # AporEner y CapaUtilDiarEner tienen datos desde 2020; se mapean a
+        # fuentes APORTES_HIDRICOS y EMBALSES_PCT respectivamente.
+        _INTERANUAL_MAP = {
+            'EMBALSES_PCT': {
+                'metrica': 'CapaUtilDiarEner',
+                'entidad': 'Sistema',    # solo total sistema, evita doble conteo con filas por embalse
+                'label': 'Embalses año anterior',
+                'factor': 1.0,           # mostrar en GWh (valor real, sin conversión falsa a %)
+                'unidad': 'GWh',
+            },
+            'APORTES_HIDRICOS': {
+                'metrica': 'AporEner',
+                'entidad': None,         # sin filtro por entidad
+                'label': 'Aportes año anterior',
+                'factor': 1.0,
+                'unidad': 'GWh/d',
+            },
+        }
+        if predicciones_lista:
+            try:
+                from infrastructure.database.manager import db_manager as _db_mgr2
+                for _item in predicciones_lista:
+                    _fkey = _item.get('fuente', '')
+                    if _fkey not in _INTERANUAL_MAP:
+                        continue
+                    _cfg = _INTERANUAL_MAP[_fkey]
+                    _entidad_filter = (
+                        "AND entidad = %(entidad)s" if _cfg.get('entidad') else ""
+                    )
+                    _df_ia = _db_mgr2.query_df(f"""
+                        WITH
+                        curr AS (
+                            SELECT AVG(daily) AS avg_curr
+                            FROM (
+                                SELECT fecha, SUM(valor_gwh) AS daily
+                                FROM metrics
+                                WHERE metrica = %(metrica)s
+                                  {_entidad_filter}
+                                  AND fecha BETWEEN CURRENT_DATE - 30 AND CURRENT_DATE
+                                GROUP BY fecha
+                            ) t
+                        ),
+                        prev AS (
+                            SELECT AVG(daily) AS avg_prev
+                            FROM (
+                                SELECT fecha, SUM(valor_gwh) AS daily
+                                FROM metrics
+                                WHERE metrica = %(metrica)s
+                                  {_entidad_filter}
+                                  AND fecha BETWEEN CURRENT_DATE - 395 AND CURRENT_DATE - 335
+                                GROUP BY fecha
+                            ) t
+                        )
+                        SELECT curr.avg_curr, prev.avg_prev FROM curr, prev
+                    """, {'metrica': _cfg['metrica'], 'entidad': _cfg.get('entidad', '')})
+                    if not _df_ia.empty:
+                        avg_c = _df_ia['avg_curr'].iloc[0]
+                        avg_p = _df_ia['avg_prev'].iloc[0]
+                        if avg_c and avg_p and float(avg_p) > 0:
+                            f = _cfg['factor']
+                            var_ia = (float(avg_c) - float(avg_p)) / float(avg_p) * 100.0
+                            _item['variacion_interanual'] = round(var_ia, 1)
+                            _item['valor_interanual_ref'] = round(float(avg_p) * f, 1)
+                            _item['valor_interanual_curr'] = round(float(avg_c) * f, 1)
+                            _item['unidad_interanual'] = _cfg.get('unidad', 'GWh')
+                logger.info("[RESUMEN DIARIO] Comparación interanual calculada")
+            except Exception as _ie:
+                logger.warning(f"[RESUMEN DIARIO] No se pudo calcular interanual: {_ie}")
+
         # 2c. Noticias del sector
         noticias = []
         d_news = _api_call('noticias_sector', timeout=60)
@@ -586,53 +753,91 @@ def send_daily_summary():
             noticias = d_news.get('noticias', [])
             logger.info(f"[RESUMEN DIARIO] Noticias obtenidas: {len(noticias)}")
 
-        # 2d. Anomalías recientes (últimas 24h desde BD) — con dedup
+        # 2d. Anomalías recientes - PRIORIZAR orquestador sobre BD
+        # NOTA: Las anomalías del orquestador tienen mejor contexto (YoY, valor actual,
+        # desviación, impacto operativo). Las de BD son fallback y se filtran para
+        # excluir alertas técnicas que no interesan al usuario final.
         anomalias = []
         try:
-            from infrastructure.database.manager import db_manager
-            df_anom = db_manager.query_df("""
-                SELECT metrica, severidad, descripcion, valor_promedio,
-                       fecha_evaluacion
-                FROM alertas_historial
-                WHERE fecha_evaluacion >= CURRENT_DATE - INTERVAL '1 day'
-                ORDER BY fecha_evaluacion DESC
-            """)
-            if not df_anom.empty:
-                # Deduplicar por (metrica, descripcion), conservar mayor severidad
-                _sev_order = {'CRITICA': 3, 'CRITICO': 3, 'CRITICAL': 3,
-                              'ALERTA': 2, 'WARNING': 2,
-                              'NORMAL': 1, 'INFO': 0}
-                seen: dict = {}  # clave -> registro
-                for rec in df_anom.to_dict('records'):
-                    key = (
-                        str(rec.get('metrica', '')).strip().upper(),
-                        str(rec.get('descripcion', '')).strip().upper(),
+            # OPCIÓN 1: Usar anomalías del orquestador (preferidas)
+            if _contexto_datos:
+                _anom_orq = _contexto_datos.get('anomalias', {})
+                if isinstance(_anom_orq, dict):
+                    _lista_orq = _anom_orq.get('lista', [])
+                else:
+                    _lista_orq = _anom_orq if isinstance(_anom_orq, list) else []
+                
+                if _lista_orq:
+                    anomalias = _lista_orq[:5]  # Top 5
+                    logger.info(
+                        f"[RESUMEN DIARIO] Usando {len(anomalias)} anomalías del ORQUESTADOR "
+                        f"(con YoY y contexto completo)"
                     )
-                    prev = seen.get(key)
-                    if prev is None:
-                        seen[key] = rec
-                    else:
-                        prev_rank = _sev_order.get(
-                            str(prev.get('severidad', '')).upper(), 1)
-                        cur_rank = _sev_order.get(
-                            str(rec.get('severidad', '')).upper(), 1)
-                        if cur_rank > prev_rank:
+            
+            # OPCIÓN 2: Fallback a BD solo si orquestador no tiene anomalías
+            if not anomalias:
+                from infrastructure.database.manager import db_manager
+                df_anom = db_manager.query_df("""
+                    SELECT metrica, severidad, descripcion, valor_promedio,
+                           fecha_evaluacion
+                    FROM alertas_historial
+                    WHERE fecha_evaluacion >= CURRENT_DATE - INTERVAL '1 day'
+                    ORDER BY fecha_evaluacion DESC
+                """)
+                if not df_anom.empty:
+                    # FILTRO: Excluir métricas técnicas (mismo filtro que orquestador)
+                    _metricas_tecnicas = {
+                        'TEST', 'DATOS_CONGELADOS', 'STALENESS', 'DATA_QUALITY',
+                        'CONNECTION_ERROR', 'SYNC_ERROR'
+                    }
+                    
+                    # Deduplicar por (metrica, descripcion), conservar mayor severidad
+                    _sev_order = {'CRITICA': 3, 'CRITICO': 3, 'CRITICAL': 3,
+                                  'ALERTA': 2, 'WARNING': 2,
+                                  'NORMAL': 1, 'INFO': 0}
+                    seen: dict = {}
+                    for rec in df_anom.to_dict('records'):
+                        _metrica = str(rec.get('metrica', '')).strip().upper()
+                        
+                        # Excluir métricas técnicas
+                        if any(_tec in _metrica for _tec in _metricas_tecnicas):
+                            continue
+                        
+                        key = (
+                            _metrica,
+                            str(rec.get('descripcion', '')).strip().upper(),
+                        )
+                        prev = seen.get(key)
+                        if prev is None:
                             seen[key] = rec
-                # Ordenar por severidad desc y tomar top 5
-                deduped = sorted(
-                    seen.values(),
-                    key=lambda r: _sev_order.get(
-                        str(r.get('severidad', '')).upper(), 1),
-                    reverse=True,
-                )[:5]
-                # Quitar columna auxiliar antes de pasar a downstream
-                for r in deduped:
-                    r.pop('fecha_evaluacion', None)
-                anomalias = deduped
-                logger.info(
-                    f"[RESUMEN DIARIO] Anomalías recientes: "
-                    f"{len(df_anom)} raw → {len(anomalias)} dedup"
-                )
+                        else:
+                            prev_rank = _sev_order.get(
+                                str(prev.get('severidad', '')).upper(), 1)
+                            cur_rank = _sev_order.get(
+                                str(rec.get('severidad', '')).upper(), 1)
+                            if cur_rank > prev_rank:
+                                seen[key] = rec
+                    
+                    # Ordenar por severidad desc y tomar top 5
+                    deduped = sorted(
+                        seen.values(),
+                        key=lambda r: _sev_order.get(
+                            str(r.get('severidad', '')).upper(), 1),
+                        reverse=True,
+                    )[:5]
+                    
+                    # Quitar columna auxiliar antes de pasar a downstream
+                    for r in deduped:
+                        r.pop('fecha_evaluacion', None)
+                    
+                    anomalias = deduped
+                    _excluidas = len(df_anom) - len([r for r in df_anom.to_dict('records') 
+                                                     if not any(_tec in str(r.get('metrica', '')).upper() 
+                                                                for _tec in _metricas_tecnicas)])
+                    logger.info(
+                        f"[RESUMEN DIARIO] Anomalías de BD (filtradas): "
+                        f"{len(df_anom)} raw → {len(anomalias)} válidas ({_excluidas} técnicas excluidas)"
+                    )
         except Exception as e:
             logger.warning(f"[RESUMEN DIARIO] Error leyendo anomalías: {e}")
 
@@ -643,7 +848,7 @@ def send_daily_summary():
         try:
             from whatsapp_bot.services.informe_charts import generate_all_informe_charts
             charts = generate_all_informe_charts()
-            for key in ('generacion', 'embalses', 'precios'):
+            for key in ('generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos'):
                 path = charts.get(key, (None,))[0]
                 if path and os.path.isfile(path):
                     chart_paths.append(path)
@@ -654,9 +859,6 @@ def send_daily_summary():
         # ══════════════════════════════════════════════
         # 4. Generar PDF (narrativa + gráficos)
         # ══════════════════════════════════════════════
-        # Extraer contexto_datos del informe (incluye semáforo, gen por fuente, etc.)
-        _contexto_datos = d_informe.get('contexto_datos') if d_informe else None
-
         pdf_path = None
         try:
             pdf_path = generar_pdf_informe(
@@ -793,9 +995,10 @@ def send_daily_summary():
             informe_texto,
             noticias=noticias,
             fichas=fichas,
-            predicciones=predicciones_lista if isinstance(predicciones_lista, dict) else (predicciones_data if isinstance(predicciones_data, dict) else None),
+            predicciones=predicciones_lista or predicciones_data or None,
             anomalias=anomalias,
             generado_con_ia=generado_con_ia,
+            indices_compuestos=_contexto_datos.get('indices_compuestos') if _contexto_datos else None,
         )
 
         result = ns_broadcast(

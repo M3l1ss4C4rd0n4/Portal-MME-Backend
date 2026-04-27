@@ -19,8 +19,11 @@ class HydrologyService:
 
     def get_reservas_hidricas(self, fecha: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
         """
-        Calcula las reservas hídricas del SIN para una fecha específica.
-        Delega en la función unificada de cálculo de volumen útil.
+        Obtiene las reservas hídricas del SIN para una fecha específica.
+        
+        ESTRATEGIA (orden de prioridad):
+        1. Usar PorcVoluUtilDiar/Sistema (valor precalculado por XM) — fuente más confiable
+        2. Fallback: calcular manualmente con VoluUtilDiarEner/CapaUtilDiarEner
         
         Args:
             fecha: Fecha en formato 'YYYY-MM-DD'
@@ -29,11 +32,100 @@ class HydrologyService:
             tuple: (porcentaje, valor_GWh, fecha_datos) o (None, None, None) si hay error
                    fecha_datos es la fecha real del último dato disponible en BD (YYYY-MM-DD)
         """
+        # ── ESTRATEGIA 1: Valor precalculado por XM (PorcVoluUtilDiar/Sistema) ──
+        pct_xm, fecha_xm = self._get_porc_volu_util_sistema(fecha)
+        if pct_xm is not None:
+            # Obtener volumen en GWh del mismo día para mantener compatibilidad
+            vol_gwh, _ = self._get_volumen_util_gwh(fecha_xm or fecha)
+            logger.info(f"✅ Reservas (XM precalculado): {pct_xm:.2f}% — fecha {fecha_xm}")
+            return pct_xm, vol_gwh, fecha_xm
+        
+        # ── ESTRATEGIA 2: Cálculo manual (fallback) ──
+        logger.info("⚠️ PorcVoluUtilDiar/Sistema no disponible, usando cálculo manual")
         resultado = self.calcular_volumen_util_unificado(fecha)
         if resultado:
             return resultado['porcentaje'], resultado['volumen_gwh'], resultado.get('fecha_datos')
         else:
             return None, None, None
+
+    def _get_porc_volu_util_sistema(self, fecha: str) -> Tuple[Optional[float], Optional[str]]:
+        """
+        Consulta PorcVoluUtilDiar a nivel Sistema en PostgreSQL.
+        XM publica esta métrica ya calculada; es la fuente de verdad oficial.
+        
+        El valor se almacena como fracción decimal (0–1) en valor_gwh.
+        
+        Returns:
+            tuple: (porcentaje 0-100, fecha_dato) o (None, None)
+        """
+        try:
+            from infrastructure.database.repositories.metrics_repository import MetricsRepository
+            repo = MetricsRepository()
+            
+            # Buscar el dato más reciente hasta la fecha solicitada (hasta 7 días atrás)
+            fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
+            for dias_atras in range(7):
+                fecha_busqueda = fecha_obj - pd.Timedelta(days=dias_atras)
+                fecha_str = fecha_busqueda.strftime('%Y-%m-%d')
+                
+                query = """
+                    SELECT valor_gwh, fecha::date as fecha_dato
+                    FROM metrics
+                    WHERE metrica = 'PorcVoluUtilDiar'
+                      AND entidad = 'Sistema'
+                      AND recurso = 'Sistema'
+                      AND fecha::date = %s
+                    ORDER BY fecha DESC
+                    LIMIT 1
+                """
+                df = repo.execute_dataframe(query, (fecha_str,))
+                
+                if df is not None and not df.empty:
+                    valor_frac = float(df['valor_gwh'].iloc[0])
+                    fecha_dato = str(df['fecha_dato'].iloc[0])[:10]
+                    # XM publica datos de forma incremental — un valor < 20% en el día corriente
+                    # indica datos parciales (pocas horas). Se omite y se busca el día anterior.
+                    if valor_frac >= 0.20:
+                        pct = round(valor_frac * 100, 2)
+                        logger.info(f"📊 PorcVoluUtilDiar/Sistema: {pct:.2f}% (frac={valor_frac:.4f}) en {fecha_dato}")
+                        return pct, fecha_dato
+                    elif valor_frac > 0:
+                        logger.warning(
+                            f"PorcVoluUtilDiar parcial detectado ({valor_frac:.4f} = {valor_frac*100:.2f}%) "
+                            f"en {fecha_dato} — buscando día anterior."
+                        )
+
+            logger.debug(f"PorcVoluUtilDiar/Sistema no encontrado en ventana 7d desde {fecha}")
+            return None, None
+            
+        except Exception as e:
+            logger.warning(f"Error consultando PorcVoluUtilDiar/Sistema: {e}")
+            return None, None
+
+    def _get_volumen_util_gwh(self, fecha: str) -> Tuple[Optional[float], Optional[str]]:
+        """
+        Obtiene el volumen útil total en GWh para una fecha.
+        Usado para complementar el porcentaje de XM con el valor absoluto.
+        """
+        try:
+            from infrastructure.database.repositories.metrics_repository import MetricsRepository
+            repo = MetricsRepository()
+            
+            query = """
+                SELECT SUM(valor_gwh) as vol_total
+                FROM metrics
+                WHERE metrica = 'VoluUtilDiarEner'
+                  AND entidad = 'Embalse'
+                  AND recurso != '_SISTEMA_'
+                  AND fecha::date = %s
+            """
+            df = repo.execute_dataframe(query, (fecha,))
+            if df is not None and not df.empty and df['vol_total'].iloc[0] is not None:
+                return round(float(df['vol_total'].iloc[0]), 2), fecha
+            return None, None
+        except Exception as e:
+            logger.warning(f"Error consultando volumen útil GWh: {e}")
+            return None, None
 
     def get_aportes_hidricos(self, fecha: str) -> Tuple[Optional[float], Optional[float]]:
         """
@@ -308,9 +400,9 @@ class HydrologyService:
             query = """
                 SELECT 
                     codigo as embalse,
-                    CAST(valor_numerico as FLOAT) as capacidad_util_gwh,
-                    atributo1 as rio,
-                    atributo2 as region
+                    CAST(capacidad as FLOAT) as capacidad_util_gwh,
+                    nombre as rio,
+                    region
                 FROM catalogos
                 WHERE catalogo = 'ListadoEmbalses'
                 AND codigo IS NOT NULL

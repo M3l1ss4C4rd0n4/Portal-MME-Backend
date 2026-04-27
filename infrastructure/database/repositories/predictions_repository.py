@@ -172,17 +172,32 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
         Reemplaza la query directa que existía en seguimiento_predicciones.py.
         """
         query = """
-        SELECT fuente, modelo, 
-               COUNT(*) as dias_predichos,
-               MIN(fecha_prediccion) as fecha_inicio,
-               MAX(fecha_prediccion) as fecha_fin,
-               ROUND(AVG(mape)::numeric, 4) as mape_entrenamiento,
-               ROUND(AVG(rmse)::numeric, 2) as rmse_entrenamiento,
-               ROUND(AVG(confianza)::numeric, 2) as confianza,
-               MAX(fecha_generacion) as ultima_generacion
-        FROM predictions
-        GROUP BY fuente, modelo
-        ORDER BY fuente
+        WITH base AS (
+            SELECT fuente, modelo,
+                   COUNT(*) as dias_predichos,
+                   MIN(fecha_prediccion) as fecha_inicio,
+                   MAX(fecha_prediccion) as fecha_fin,
+                   ROUND(AVG(mape)::numeric, 4) as mape_train,
+                   ROUND(AVG(rmse)::numeric, 2) as rmse_entrenamiento,
+                   ROUND(AVG(confianza)::numeric, 2) as confianza,
+                   MAX(fecha_generacion) as ultima_generacion
+            FROM predictions
+            GROUP BY fuente, modelo
+        ),
+        latest_expost AS (
+            SELECT DISTINCT ON (fuente, modelo) fuente, modelo, mape_expost
+            FROM predictions_quality_history
+            WHERE mape_expost IS NOT NULL
+            ORDER BY fuente, modelo, fecha_evaluacion DESC
+        )
+        SELECT b.fuente, b.modelo, b.dias_predichos, b.fecha_inicio, b.fecha_fin,
+               b.mape_train,
+               b.rmse_entrenamiento, b.confianza, b.ultima_generacion,
+               le.mape_expost,
+               COALESCE(le.mape_expost, b.mape_train) as mape_efectivo
+        FROM base b
+        LEFT JOIN latest_expost le ON b.fuente = le.fuente AND b.modelo = le.modelo
+        ORDER BY b.fuente
         """
         try:
             return self.execute_dataframe(query)

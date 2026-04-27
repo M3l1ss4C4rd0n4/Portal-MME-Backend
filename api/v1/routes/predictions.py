@@ -519,7 +519,7 @@ async def cache_flush(
     ),
 )
 async def generate_long_term(
-    horizonte_dias: int = Query(default=365, ge=91, le=365, description="Días a predecir (91–365)"),
+    horizonte_dias: int = Query(default=90, ge=30, le=365, description="Días a predecir (30–365)"),
     fuentes: Optional[List[str]] = Query(default=None, description="Fuentes a generar (None = todas)"),
     api_key: str = Depends(get_api_key),
 ) -> dict:

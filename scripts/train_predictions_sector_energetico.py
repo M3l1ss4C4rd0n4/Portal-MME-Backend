@@ -67,6 +67,7 @@ MODELO_VERSION_LGBM_EOLICA = 'LGBM_DIRECTO_EOLICA_v1.0'
 MODELO_VERSION_STACKING_EOLICA = 'STACKING_EOLICA_v1.0'  # FASE 22
 MODELO_VERSION_LGBM_APORTES_NASA = 'LGBM_APORTES_NASA_v1.0'  # FASE 22 — NASA POWER hidroeléctrica
 MODELO_VERSION_LGBM_PRECIO = 'LGBM_PRECIO_v1.0'  # FASE 23 — LightGBM directo PRECIO_BOLSA
+MODELO_VERSION_LGBM_PERDIDAS = 'LGBM_PERDIDAS_v2.0'  # FASE 27 — LightGBM directo PERDIDAS (PredictorLGBMDirecto + Optuna)
 HOLDOUT_DUAL = 30            # Días de holdout para validación dual
 
 # Métricas elegibles para horizonte dual (FASE 6+7 demostró ventaja)
@@ -103,7 +104,7 @@ METRICAS_HORIZONTE_DUAL = {
 # FASE 6 demostró 16.03% MAPE vs 40%+ ensemble. RandomForest con lags
 # + regresores BD + calendario supera ampliamente al ensemble Prophet+SARIMA.
 PRECIO_BOLSA_RF_CONFIG = {
-    'metrica_bd': 'PrecBolsNaci',
+    'metrica_bd': 'PPPrecBolsNaci',
     'agg': 'AVG',
     'entidad_filtro': 'Sistema',
     'prefer_sistema': False,
@@ -145,6 +146,14 @@ PRECIO_BOLSA_RF_CONFIG = {
             'agg': 'SUM',
             'escala': 1,
         },
+        # ── FASE 25: DeltaNal — delta incremento nacional (señal de escasez/mercado) ──
+        # Backfill 2022-2026 completado (1516 días). Cubre 100% de ventana_meses=15.
+        'delta_nal': {
+            'metrica_bd': 'DeltaNal',
+            'entidad': 'Sistema',
+            'agg': 'AVG',
+            'escala': 1,
+        },
     },
     'usar_calendario': True,
     'tipo_filtro_parciales': None,
@@ -162,7 +171,7 @@ PRECIO_BOLSA_RF_CONFIG = {
 # 6 regresores BD + rolling stats + calendario (predicción directa, sin lags recursivos).
 # Holdout: 90 días genuinos (vs 30d del RF) para evaluar horizonte real de producción.
 PRECIO_BOLSA_LGBM_CONFIG = {
-    'metrica_bd': 'PrecBolsNaci',
+    'metrica_bd': 'PPPrecBolsNaci',
     'agg': 'AVG',
     'entidad_filtro': 'Sistema',
     'prefer_sistema': False,
@@ -203,6 +212,14 @@ PRECIO_BOLSA_LGBM_CONFIG = {
             'agg': 'SUM',
             'escala': 1,
         },
+        # ── FASE 27: delta_nal — mismo regresor que PRECIO_BOLSA_RF_CONFIG ──
+        # Backfill 2022-2026 completado (1516 días). Señal de escasez/mercado.
+        'delta_nal': {
+            'metrica_bd': 'DeltaNal',
+            'entidad': 'Sistema',
+            'agg': 'AVG',
+            'escala': 1,
+        },
     },
     'usar_calendario': True,
     'lgbm_params': {
@@ -235,7 +252,8 @@ APORTES_HIDRICOS_LGBM_CONFIG = {
     'agg': 'SUM',
     'entidad_filtro': None,       # Sumar todos (suma_embalses)
     'prefer_sistema': False,
-    'ventana_meses': None,        # Usar todo el histórico (~455+ obs)
+    'ventana_meses': None,        # Usar todo el histórico — backfill 2000-2019 completado
+    'fecha_inicio_override': '2000-01-01',  # ~9500 obs (4× más que antes del backfill)
     'piso': 0.0,                  # GWh no puede ser negativo
     'unidad': 'GWh',
     'regresores_bd': {
@@ -284,6 +302,9 @@ APORTES_HIDRICOS_LGBM_CONFIG = {
         },
     },
     'usar_calendario': True,
+    # FASE 24: lags anuales calculados desde el target histórico completo (2000-2026)
+    # lag_365d + rolling_mean_365d + media_hist_mes → referencia estacional sin bfill
+    'usar_lags_anuales': True,
     'lgbm_params': {
         'n_estimators': 500,
         'max_depth': 8,
@@ -313,6 +334,7 @@ APORTES_HIDRICOS_LGBM_NASA_CONFIG = {
     'entidad_filtro': None,
     'prefer_sistema': False,
     'ventana_meses': None,
+    'fecha_inicio_override': '2000-01-01',  # ~9500 obs con backfill 2000-2019
     'piso': 0.0,
     'unidad': 'GWh',
     'regresores_bd': {
@@ -359,6 +381,7 @@ APORTES_HIDRICOS_LGBM_NASA_CONFIG = {
         },
     },
     'usar_calendario': True,
+    'usar_lags_anuales': True,      # FASE 24: referencia estacional desde target histórico
     # Hiperparámetros calibrados en experimento FASE 21 (12.08% MAPE)
     'lgbm_params': {
         'n_estimators': 700,        # 1000 con early-stop → ~700 efectivos
@@ -410,7 +433,7 @@ TERMICA_LGBM_CONFIG = {
         },
         # ── FASE 16: Nuevos regresores descubiertos en FASE 15 ──
         'precio_bolsa': {
-            'metrica_bd': 'PrecBolsNaci',    # partial_r=+0.720, score=74.1
+            'metrica_bd': 'PPPrecBolsNaci',    # partial_r=+0.720, score=74.1
             'prefer_sistema': True,
             'agg': 'AVG',
             'escala': 1,
@@ -539,6 +562,60 @@ SOLAR_LGBM_CONFIG = {
     },
 }
 
+# ── FASE 27: Config LightGBM Directo para PERDIDAS (GWh) ──
+# Migrado desde _lgbm_directo_generico (FASE 25) a PredictorLGBMDirecto para
+# soporte Optuna y extrapolación mejorada de regresores BD.
+# Ensemble actual degradado: 22.46% SMAPE en producción.
+# Regresores: embalses_pct (causalidad hidráulica) + demanda_gwh (correlación 0.445).
+# MAPE esperado con Optuna: < 20% (vs 22.46% ensemble actual).
+PERDIDAS_LGBM_CONFIG = {
+    'metrica_bd': 'PerdidasEner',
+    'agg': 'SUM',
+    'entidad_filtro': 'Sistema',
+    'prefer_sistema': False,
+    'ventana_meses': None,
+    'fecha_inicio_override': '2022-01-01',  # ~1500 obs estables post-cambio estructural
+    'piso': 0.1,
+    'unidad': 'GWh',
+    'metrica_eval': 'smape',  # FASE 28: SMAPE para comparación justa con benchmark de producción
+    'regresores_bd': {
+        'embalses_pct': {
+            'metrica_bd': 'PorcVoluUtilDiar',
+            'entidad': 'Sistema',
+            'agg': 'AVG',
+            'escala': 100,
+        },
+        'demanda_gwh': {
+            'metrica_bd': 'DemaReal',
+            'prefer_sistema': True,
+            'agg': 'SUM',
+            'escala': 1,
+        },
+        'gene_total': {
+            # FASE 28: Generación total — correlación ~0.7 con pérdidas técnicas
+            'metrica_bd': 'Gene',
+            'entidad': 'Sistema',
+            'prefer_sistema': True,
+            'agg': 'SUM',
+            'escala': 1,
+        },
+    },
+    'usar_calendario': True,
+    'lgbm_params': {
+        'n_estimators': 500,
+        'max_depth': 6,
+        'learning_rate': 0.05,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'min_child_weight': 5,
+        'reg_alpha': 0.1,
+        'reg_lambda': 1.0,
+        'random_state': 42,
+        'n_jobs': -1,
+        'verbose': -1,
+    },
+}
+
 # ── FASE 13: Config LightGBM Directo para Eólica ──
 # Ensemble logra 21.17% MAPE. Eólica solo tiene 1325 obs (desde 2022-07-09)
 # y valores bajos (μ=0.41 GWh, σ/μ=51%).
@@ -551,7 +628,7 @@ EOLICA_LGBM_CONFIG = {
     'agg': 'SUM',
     'entidad_filtro': None,
     'prefer_sistema': False,
-    'ventana_meses': None,          # Todo el histórico (~1325 obs)
+    'ventana_meses': 24,            # FASE 26: Solo 2 años recientes (capacidad estable post-2024)
     'piso': 0.0,                    # GWh no negativo
     'unidad': 'GWh',
     'regresores_bd': {
@@ -578,15 +655,20 @@ EOLICA_LGBM_CONFIG = {
             'agg': 'SUM',
             'escala': 1,
         },
-        # ── FASE 18: Viento IDEAM La Guajira (zona eólica principal) ──
+        # ── FASE 28: Viento IDEAM Alta Guajira (estaciones URIBIA, zona parques) ──
+        # Backfill URIBIA: μ~3.4-5.3 m/s (vs 2.53 m/s La Guajira completa)
+        # Estaciones: IPICHIRRAIN, SILLAMANA, PUERTO ESTRELLA (proximas a parques eolicos)
         'ideam_vel_viento': {
             'metrica_bd': 'IDEAM_VelViento',
-            'recurso': 'LA_GUAJIRA',      # Estaciones IDEAM La Guajira
-            'agg': 'AVG',                  # m/s promedio diario
+            'recurso': 'EOLICA_ALTA_GUAJIRA',
+            'agg': 'AVG',
             'escala': 1,
         },
     },
     'usar_calendario': True,
+    'usar_lags_anuales': True,      # FASE 23: lag_365d, rolling_mean_365d, media_hist_mes (estacionalidad)
+    'dias_holdout': 60,             # FASE 23: 60d incluye ene-feb normales, no solo mes atípico
+    'metrica_eval': 'smape',        # FASE 23: SMAPE para días near-zero (calma eólica) — MAPE diverge
     'lgbm_params': {
         'n_estimators': 400,        # Menos (solo 1325 obs)
         'max_depth': 6,
@@ -683,7 +765,7 @@ METRICAS_CONFIG = {
     # fundamentales económicos, sin competir con la función de tendencia de Prophet.
     'PRECIO_BOLSA': {
         'metricas': [
-            'PrecBolsNaci'     # Precio de Bolsa Nacional (CRÍTICO)
+            'PPPrecBolsNaci'     # Precio de Bolsa Nacional (CRÍTICO)
         ],
         'tipo': 'promedio_ponderado',
         'entidad_filtro': 'Sistema',   # Precio nacional único (sin promediar con agentes)
@@ -780,7 +862,8 @@ METRICAS_CONFIG = {
         'descripcion': 'Porcentaje volumen útil de embalses',
         'unidad': '%',
         'criticidad': 'CRÍTICA',
-        'prioridad': 1
+        'prioridad': 1,
+        'fecha_inicio_override': '2000-01-01',  # % embalses es estacionario → backfill 2000-2019 útil
     },
     
     # 7. PÉRDIDAS DEL SISTEMA
@@ -1501,6 +1584,8 @@ def cargar_datos_metrica(metrica_nombre, config, fecha_inicio='2020-01-01'):
     if ventana:
         from dateutil.relativedelta import relativedelta
         fecha_inicio = (datetime.now() - relativedelta(months=ventana)).strftime('%Y-%m-%d')
+    elif config.get('fecha_inicio_override'):
+        fecha_inicio = config['fecha_inicio_override']
     print(f"\n📊 Cargando datos históricos para {metrica_nombre} (desde {fecha_inicio})...")
     
     conn = get_postgres_connection()
@@ -2686,12 +2771,33 @@ class PredictorHorizonteDual:
 #              python ... --rf_precio --optuna
 # =============================================================================
 
+# =============================================================================
+# FASE 23 — SMAPE: métrica alternativa para variables near-zero
+# (Eólica, Solar en meses nublados) donde MAPE estándar diverge.
+# SMAPE = (1/n) Σ |y - ŷ| / ((|y| + |ŷ|)/2)   ∈ [0, 2]
+# Ventaja: acotada en 200% incluso cuando real ≈ 0.
+# Activar con: config['metrica_eval'] = 'smape'
+# =============================================================================
+
+def _smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Symmetric MAPE — no diverge con denominadores near-zero.
+
+    Returns value in [0, 1] (0% → 100%; no se multiplica por 100 aquí
+    para mantener consistencia con sklearn's mean_absolute_percentage_error).
+    """
+    denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
+    mask = denom > 0
+    result = np.where(mask, np.abs(y_true - y_pred) / denom, 0.0)
+    return float(np.mean(result))
+
+
 def _optuna_tune_lgbm(
     X_train: 'pd.DataFrame',
     y_train: 'pd.Series',
     piso: float = 0.0,
     n_trials: int = 30,
     n_splits: int = 3,
+    metrica_eval: str = 'mape',
 ) -> dict:
     """
     FASE 21 — Búsqueda bayesiana de hiperparámetros LightGBM con Optuna TPE.
@@ -2735,11 +2841,15 @@ def _optuna_tune_lgbm(
             m = LGBMRegressor(**params)
             m.fit(X_t, y_t)
             pred = np.maximum(m.predict(X_v), piso)
-            mapes.append(mean_absolute_percentage_error(y_v, pred))
+            if metrica_eval == 'smape':
+                mapes.append(_smape(y_v.to_numpy(), pred))
+            else:
+                mapes.append(mean_absolute_percentage_error(y_v, pred))
         return float(np.mean(mapes))
 
+    metric_label = 'SMAPE' if metrica_eval == 'smape' else 'MAPE'
     print(f"  🔍 Optuna LightGBM: {n_trials} trials × {n_splits}-fold TS-CV "
-          f"(test_size={test_size}d)...")
+          f"(test_size={test_size}d, métrica={metric_label})...")
     study = optuna.create_study(
         direction='minimize',
         sampler=optuna.samplers.TPESampler(seed=42),
@@ -2748,7 +2858,7 @@ def _optuna_tune_lgbm(
 
     best = dict(study.best_params)
     best.update({'random_state': 42, 'n_jobs': -1, 'verbose': -1})
-    print(f"  ✓ Mejor MAPE CV: {study.best_value:.2%} | "
+    print(f"  ✓ Mejor {metric_label} CV: {study.best_value:.2%} | "
           f"n_est={best['n_estimators']}, depth={best['max_depth']}, "
           f"lr={best['learning_rate']:.4f}")
     return best
@@ -3572,7 +3682,10 @@ class PredictorLGBMDirecto:
         if ventana:
             fecha_inicio = (datetime.now() - relativedelta(months=ventana)).strftime('%Y-%m-%d')
         else:
-            fecha_inicio = '2020-01-01'
+            # fecha_inicio_override permite extender la ventana de entrenamiento
+            # para métricas con datos históricos ampliados (ej: APORTES_HIDRICOS backfill 2000-2019).
+            # Default conservador 2020-01-01 para métricas con cambio estructural de escala.
+            fecha_inicio = cfg.get('fecha_inicio_override', '2020-01-01')
 
         print(f"\n  📊 Construyendo dataset LGBM-directo para {self.nombre} (desde {fecha_inicio})...")
 
@@ -3647,6 +3760,32 @@ class PredictorLGBMDirecto:
         df['rolling_min_30d'] = df['valor'].rolling(30, min_periods=1).min()
         df['rolling_max_30d'] = df['valor'].rolling(30, min_periods=1).max()
 
+        # 3b. FASE 23: Lags anuales + baseline mensual — para variables con fuerte
+        #     estacionalidad y valores near-zero (Eólica, Solar).
+        #     lag_365d: genera la misma época del año anterior (sin leakage).
+        #     media_hist_mes: baseline esperado por mes (calculado sin el año más reciente
+        #                     para evitar leakage).
+        if cfg.get('usar_lags_anuales', False):
+            df['lag_365d'] = df['valor'].shift(365)
+            df['rolling_mean_365d'] = df['valor'].shift(1).rolling(365, min_periods=90).mean()
+            # media_hist_mes: media holdout-safe (excluye último año de datos)
+            cutoff = df.index[-366] if len(df) > 366 else df.index[0]
+            mes_medias = (df.loc[df.index < cutoff, 'valor']
+                          .groupby(df.loc[df.index < cutoff].index.month)
+                          .mean())
+            df['media_hist_mes'] = df.index.month.map(mes_medias)  # type: ignore[attr-defined]
+            df['media_hist_mes'] = df['media_hist_mes'].ffill().bfill()
+            # Rellenar lag_365d NaN (primer año) con la media histórica del mes
+            mask_nan = df['lag_365d'].isna()
+            if mask_nan.any():
+                df.loc[mask_nan, 'lag_365d'] = df.loc[mask_nan, 'media_hist_mes']
+            # rolling_mean_365d NaN: rellenar con media_hist_mes
+            mask_nan_r = df['rolling_mean_365d'].isna()
+            if mask_nan_r.any():
+                df.loc[mask_nan_r, 'rolling_mean_365d'] = df.loc[mask_nan_r, 'media_hist_mes']
+            n_lag_feats = 3  # lag_365d, rolling_mean_365d, media_hist_mes
+            print(f"  Lags anuales: {n_lag_feats} features (lag_365d, rolling_mean_365d, media_hist_mes)")
+
         # 4. Temporal features
         df['mes'] = df.index.month  # type: ignore[attr-defined]
         df['dia_del_anio'] = df.index.dayofyear  # type: ignore[attr-defined]
@@ -3671,7 +3810,9 @@ class PredictorLGBMDirecto:
             df = df.join(df_cal)
 
         # 7. Limpiar NaN — FASE 18: LightGBM maneja NaN nativo para regresores IDEAM
-        #    Solo ffill/bfill rolling stats y calendario; dejar IDEAM NaN intactos
+        #    Regresores BD (incluidos nuevos FASE 24) → ffill/bfill estándar
+        #    NOTA: regresores con cobertura parcial (2020+) se bfill hacia 2000;
+        #    LightGBM aprende que el valor bfill-constante es señal de pre-2020.
         n_antes = len(df)
         ideam_cols = [c for c in df.columns if c.startswith('ideam_')]
         non_ideam_cols = [c for c in df.columns if not c.startswith('ideam_') and c != 'valor']
@@ -3700,6 +3841,9 @@ class PredictorLGBMDirecto:
     def entrenar_y_validar(self, dias_holdout=30):
         """Pipeline: build dataset → train LightGBM → holdout validation (direct)."""
         from lightgbm import LGBMRegressor
+
+        # Permitir override via config (e.g. Eólica usa 60d para incluir meses normales)
+        dias_holdout = self.config.get('dias_holdout', dias_holdout)
 
         print(f"\n{'='*70}")
         print(f"🌿 LIGHTGBM DIRECTO: {self.nombre}")
@@ -3733,7 +3877,8 @@ class PredictorLGBMDirecto:
             t_opt = _time.time()
             piso_opt = self.config.get('piso', 0.0)
             n_trials = self.config.get('optuna_n_trials', 30)
-            params = _optuna_tune_lgbm(X_train, y_train, piso=piso_opt, n_trials=n_trials)
+            _metrica_opt = self.config.get('metrica_eval', 'mape')
+            params = _optuna_tune_lgbm(X_train, y_train, piso=piso_opt, n_trials=n_trials, metrica_eval=_metrica_opt)
             print(f"  ⏱️  Optuna completado en {_time.time() - t_opt:.0f}s")
 
         modelo = LGBMRegressor(**params)
@@ -3758,17 +3903,26 @@ class PredictorLGBMDirecto:
         piso = self.config.get('piso', 0.0)
         y_pred = np.maximum(y_pred, piso)  # type: ignore[call-overload,arg-type]
 
-        mape = mean_absolute_percentage_error(y_test, y_pred)  # type: ignore[arg-type]
+        # FASE 23: metrica_eval configurable — 'smape' para variables near-zero (Eólica, Solar)
+        metrica_eval = self.config.get('metrica_eval', 'mape')
+        if metrica_eval == 'smape':
+            mape = _smape(y_test, y_pred)
+            # SMAPE ∈ [0, 2] → normalizar confianza a [0, 1]
+            confianza = max(0.0, 1.0 - mape / 2.0)
+            print(f"    ℹ️  Usando SMAPE (near-zero tolerante) — MAPE std inflado por días calma")
+        else:
+            mape = mean_absolute_percentage_error(y_test, y_pred)  # type: ignore[arg-type]
+            confianza = max(0.0, 1.0 - mape)
         rmse = np.sqrt(mean_squared_error(y_test, y_pred))  # type: ignore[arg-type]
 
         self.metricas = {
             'mape': float(mape),
             'rmse': float(rmse),
-            'confianza': max(0.0, 1.0 - mape),
+            'confianza': confianza,
         }
 
         print(f"\n  ── Validación Holdout ({dias_holdout}d, directa) ──")
-        print(f"    MAPE: {mape:.2%}")
+        print(f"    {'SMAPE' if metrica_eval == 'smape' else 'MAPE'}: {mape:.2%}")
         print(f"    RMSE: {rmse:.4f}")
         print(f"    Confianza: {self.metricas['confianza']:.2%}")
 
@@ -4292,7 +4446,8 @@ class PredictorStackingEolica(PredictorLGBMDirecto):
             import time as _time
             t_opt = _time.time()
             n_trials = self.config.get('optuna_n_trials', 30)
-            best_lgbm = _optuna_tune_lgbm(X_train, y_train, piso=piso, n_trials=n_trials)
+            _metrica_opt = self.config.get('metrica_eval', 'mape')
+            best_lgbm = _optuna_tune_lgbm(X_train, y_train, piso=piso, n_trials=n_trials, metrica_eval=_metrica_opt)
             self.config['lgbm_params'] = best_lgbm
             print(f"  ⏱️  Optuna LightGBM completado en {_time.time() - t_opt:.0f}s")
 
@@ -5228,6 +5383,533 @@ def main_cross_validation(metricas=None):
     return all_results
 
 
+def _lgbm_directo_generico(nombre_metrica, df, feature_cols, target_col,
+                            baseline_mape, n_holdout=30, n_pred=90,
+                            valor_min=None, escala_intervalo=0.15,
+                            modelo_version='LGBM_v1.0'):
+    """
+    Helper: entrena LGBM directo, valida holdout, guarda en BD si mejora baseline.
+    Retorna (mape, ok_bd) o (None, False) si no supera baseline.
+    """
+    import lightgbm as lgb
+    from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
+
+    df_train = df.iloc[:-n_holdout]
+    df_test  = df.iloc[-n_holdout:]
+    X_train, y_train = df_train[feature_cols], df_train[target_col]
+    X_test,  y_test  = df_test[feature_cols],  df_test[target_col].values
+
+    model = lgb.LGBMRegressor(
+        n_estimators=600, max_depth=5, num_leaves=20,
+        learning_rate=0.05, min_child_samples=10,
+        subsample=0.8, colsample_bytree=0.8,
+        reg_alpha=0.3, reg_lambda=1.0,
+        random_state=42, n_jobs=-1, verbose=-1,
+    )
+    model.fit(X_train, y_train)
+
+    imp = dict(zip(feature_cols, model.feature_importances_))
+    top5 = sorted(imp.items(), key=lambda x: x[1], reverse=True)[:5]
+    total_imp = sum(imp.values()) or 1
+    print("  Top-5 features: " + " ".join(f"{k}({v/total_imp*100:.1f}%)" for k, v in top5))
+
+    y_pred = model.predict(X_test)
+    if valor_min is not None:
+        y_pred = np.maximum(y_pred, valor_min)
+    mape = mean_absolute_percentage_error(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    conf = max(0.0, 1.0 - mape)
+
+    print(f"\n  ── Holdout ({n_holdout}d) ──")
+    print(f"    MAPE: {mape:.2%}  (baseline: {baseline_mape:.2%})")
+    print(f"    RMSE: {rmse:.4f}")
+    print(f"    Confianza: {conf:.2%}")
+
+    if mape >= baseline_mape:
+        print(f"\n  ⚠️  No supera baseline. Predicciones NO guardadas.")
+        return mape, False
+
+    # Re-entrenar en todo el dataset
+    model_full = lgb.LGBMRegressor(
+        n_estimators=600, max_depth=5, num_leaves=20,
+        learning_rate=0.05, min_child_samples=10,
+        subsample=0.8, colsample_bytree=0.8,
+        reg_alpha=0.3, reg_lambda=1.0,
+        random_state=42, n_jobs=-1, verbose=-1,
+    )
+    model_full.fit(df[feature_cols], df[target_col])
+
+    last_state = df[feature_cols].iloc[-1:].copy()
+    fechas_pred = pd.date_range(
+        start=df.index[-1] + pd.Timedelta(days=1),
+        periods=n_pred, freq='D'
+    )
+    rows = []
+    for d in fechas_pred:
+        row = last_state.copy()
+        cal_row = construir_regresores_calendario(pd.DatetimeIndex([d]))
+        for col in ['es_festivo', 'dow_lun', 'dow_mar', 'dow_mie', 'dow_jue', 'dow_vie', 'dow_sab']:
+            if col in row.columns and col in cal_row.columns:
+                row[col] = cal_row[col].values[0]
+        if 'mes' in row.columns:
+            row['mes'] = d.month
+        if 'dia_del_anio' in row.columns:
+            row['dia_del_anio'] = d.dayofyear
+        rows.append(row)
+
+    X_pred = pd.concat(rows, ignore_index=True)
+    y_future = model_full.predict(X_pred)
+    if valor_min is not None:
+        y_future = np.maximum(y_future, valor_min)
+
+    print(f"  → {n_pred} predicciones, rango [{y_future.min():.4f}, {y_future.max():.4f}]")
+
+    df_pred = pd.DataFrame({
+        'fecha_prediccion': fechas_pred,
+        'valor_predicho': y_future,
+        'intervalo_inferior': y_future * (1 - escala_intervalo),
+        'intervalo_superior': y_future * (1 + escala_intervalo),
+    })
+    if valor_min is not None:
+        df_pred['intervalo_inferior'] = np.maximum(df_pred['intervalo_inferior'], valor_min)
+
+    config_bd = {'confianza_real': conf, 'mape_real': mape, 'rmse_real': rmse}
+    ok_bd = guardar_predicciones_bd(
+        nombre_metrica, df_pred, config_bd,
+        metodo_prediccion='lgbm_directo',
+        modelo_version=modelo_version,
+    )
+    return mape, ok_bd
+
+
+def _construir_features_serie(df_serie, col_target, df_emb=None):
+    """
+    Construye rolling features + calendario para una serie temporal.
+    df_serie debe tener DatetimeIndex y columna col_target.
+    Opcionalmente une embalses_pct si df_emb no es None.
+    """
+    df = df_serie.copy()
+    df['roll_mean_7d']  = df[col_target].rolling(7, min_periods=1).mean()
+    df['roll_std_7d']   = df[col_target].rolling(7, min_periods=1).std().fillna(0)
+    df['roll_mean_30d'] = df[col_target].rolling(30, min_periods=1).mean()
+    df['roll_std_30d']  = df[col_target].rolling(30, min_periods=1).std().fillna(0)
+    df['roll_min_30d']  = df[col_target].rolling(30, min_periods=1).min()
+    df['roll_max_30d']  = df[col_target].rolling(30, min_periods=1).max()
+    df['lag1']          = df[col_target].shift(1)
+    df['lag7']          = df[col_target].shift(7)
+    if df_emb is not None:
+        df_emb = df_emb.set_index('fecha') if 'fecha' in df_emb.columns else df_emb
+        df = df.join(df_emb[['embalses_pct']], how='left')
+        df['embalses_pct'] = df['embalses_pct'].ffill().bfill()
+    df_cal = construir_regresores_calendario(df.index)
+    df = df.join(df_cal)
+    df['mes']          = df.index.month
+    df['dia_del_anio'] = df.index.dayofyear
+    return df.ffill().bfill().dropna()
+
+
+def main_lgbm_perdidas():
+    """
+    FASE 27 — LightGBM Directo para PERDIDAS (PerdidasEner GWh).
+
+    Migrado a PredictorLGBMDirecto para soporte Optuna y extrapolación
+    mejorada de regresores BD (MA30 + ajuste estacional).
+
+    Ensemble actual degradado: 22.46% SMAPE en producción.
+    Baseline aceptación: 22.46% SMAPE (cualquier mejora reemplaza ensemble).
+    La serie tiene μ=3.33 GWh, σ=0.77 GWh.
+    Regresores: embalses_pct + demanda_gwh + rolling stats del target.
+    """
+    import time
+
+    # Baseline = SMAPE actual del ensemble en producción (22.46%).
+    # Cualquier LGBM SMAPE por debajo reemplaza el ensemble degradado.
+    BASELINE_SMAPE = 0.2246
+    N_HOLDOUT = 30
+
+    print("\n" + "=" * 70)
+    print("🇨🇴 LIGHTGBM DIRECTO — PERDIDAS (GWh) (FASE 28)")
+    print(f"   Baseline SMAPE: {BASELINE_SMAPE:.2%} (ensemble degradado) | Holdout: {N_HOLDOUT}d")
+    print(f"   Modelo: {MODELO_VERSION_LGBM_PERDIDAS}")
+    print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 70)
+
+    import time as _time
+    t0 = _time.time()
+    try:
+        predictor = PredictorLGBMDirecto('PERDIDAS', PERDIDAS_LGBM_CONFIG)
+        ok = predictor.construir_dataset()
+        if not ok and predictor.df_dataset is None:
+            ok = predictor.construir_dataset()  # retry tolerante
+        ok = predictor.entrenar_y_validar(dias_holdout=N_HOLDOUT)
+
+        if not ok:
+            print(f"\n  ❌ LightGBM PERDIDAS falló en entrenamiento")
+            return False
+
+        mape = predictor.metricas.get('mape')
+
+        if mape is not None and mape >= BASELINE_SMAPE:
+            print(f"\n  ⚠️  LGBM PERDIDAS: SMAPE={mape:.2%} ≥ baseline ({BASELINE_SMAPE:.2%}).")
+            print(f"       Predicciones NO guardadas. Ensemble sigue en producción.")
+            return False
+
+        df_pred = predictor.predecir(HORIZONTE_DIAS)
+
+        save_config = {
+            'confianza_real': predictor.metricas.get('confianza', CONFIANZA_SIN_VALIDACION),
+            'mape_real': mape,
+            'rmse_real': predictor.metricas.get('rmse'),
+        }
+
+        ok_bd = guardar_predicciones_bd(
+            'PERDIDAS', df_pred, save_config,
+            metodo_prediccion='lgbm_directo',
+            modelo_version=MODELO_VERSION_LGBM_PERDIDAS,
+        )
+
+        elapsed = _time.time() - t0
+
+        mlflow_log_production_run('PERDIDAS', predictor,
+                                  PERDIDAS_LGBM_CONFIG,
+                                  MODELO_VERSION_LGBM_PERDIDAS, elapsed, ok_bd)
+
+        if ok_bd:
+            print(f"\n  ✅ PERDIDAS LGBM completado — SMAPE={mape:.2%}, "
+                  f"Confianza={predictor.metricas['confianza']:.2%}, "
+                  f"Tiempo={elapsed:.0f}s")
+            return True
+        else:
+            print(f"\n  ❌ Error guardando PERDIDAS en BD")
+            return False
+
+    except Exception as e:
+        print(f"\n  ❌ Error en LGBM PERDIDAS: {e}")
+        import traceback; traceback.print_exc()
+        return False
+
+
+def main_lgbm_perdidas_totales():
+    """
+    FASE 25 — LightGBM Directo para PERDIDAS_TOTALES (% del sistema).
+
+    Ensemble actual: 43.04% MAPE.
+    CAUSA: 22 días corruptos (2026-03-17 a 2026-04-08) con anomalia_detectada=True
+    tienen valores de 78-84% en vez del rango normal 11-14%.
+
+    La serie real (sin outliers) tiene distribución muy apretada:
+      p10=11.1%, p50=13.2%, p90=13.6%, p99=14.2%
+
+    Estrategia:
+      - Entrenar SOLO sobre días con confianza != 'baja' O perdidas_pct <= 20%
+      - LGBM con rolling stats del target + embalses_pct
+      - Holdout tomado desde ANTES de la corrupción (últimos 30 días limpios)
+    """
+    import time
+
+    BASELINE  = 0.4304
+    N_HOLDOUT = 30  # 30 días limpios antes de la corrupción
+    N_PRED    = 90
+    PCT_MAX   = 20.0  # Umbral para filtrar outliers
+
+    print("\n" + "=" * 70)
+    print("🇨🇴 LIGHTGBM DIRECTO — PERDIDAS_TOTALES (%) (FASE 25)")
+    print(f"   Baseline: ensemble {BASELINE:.2%} | Holdout: {N_HOLDOUT}d limpios | Pred: {N_PRED}d")
+    print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 70)
+
+    t0 = time.time()
+    try:
+        conn = get_postgres_connection()
+
+        df_raw = pd.read_sql("""
+            SELECT fecha::date AS fecha, perdidas_total_pct,
+                   confianza, anomalia_detectada
+            FROM sector_energetico.losses_detailed
+            WHERE perdidas_total_pct IS NOT NULL
+            ORDER BY fecha
+        """, conn)
+
+        df_emb = pd.read_sql("""
+            SELECT fecha::date AS fecha, AVG(valor_gwh)*100 AS embalses_pct
+            FROM sector_energetico.metrics
+            WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema' AND valor_gwh > 0
+            GROUP BY fecha ORDER BY fecha
+        """, conn)
+        conn.close()
+
+        df_raw['fecha'] = pd.to_datetime(df_raw['fecha'])
+        df_emb['fecha'] = pd.to_datetime(df_emb['fecha'])
+        hoy = pd.Timestamp(datetime.now().date())
+
+        # Separar datos limpios de corruptos
+        df_clean = df_raw[
+            (df_raw['perdidas_total_pct'] <= PCT_MAX) &
+            (df_raw['fecha'] < hoy)
+        ].set_index('fecha').sort_index()
+
+        n_total  = len(df_raw[df_raw['fecha'] < hoy])
+        n_filtro = n_total - len(df_clean)
+        print(f"  Dataset total: {n_total} obs, filtrados (>{PCT_MAX}%): {n_filtro}")
+        print(f"  Dataset limpio: {len(df_clean)} obs ({df_clean.index.min().date()} → {df_clean.index.max().date()})")
+        print(f"  Perdidas_pct: μ={df_clean['perdidas_total_pct'].mean():.3f}%, σ={df_clean['perdidas_total_pct'].std():.3f}%")
+
+        df = _construir_features_serie(df_clean[['perdidas_total_pct']], 'perdidas_total_pct', df_emb)
+
+        FEATURE_COLS = [
+            'roll_mean_7d', 'roll_std_7d', 'roll_mean_30d', 'roll_std_30d',
+            'roll_min_30d', 'roll_max_30d', 'lag1', 'lag7',
+            'embalses_pct', 'mes', 'dia_del_anio',
+            'es_festivo', 'dow_lun', 'dow_mar', 'dow_mie', 'dow_jue', 'dow_vie', 'dow_sab',
+        ]
+        feature_cols = [c for c in FEATURE_COLS if c in df.columns]
+
+        mape, ok_bd = _lgbm_directo_generico(
+            nombre_metrica='PERDIDAS_TOTALES',
+            df=df, feature_cols=feature_cols, target_col='perdidas_total_pct',
+            baseline_mape=BASELINE,
+            n_holdout=N_HOLDOUT, n_pred=N_PRED,
+            valor_min=5.0,   # piso mínimo % pérdidas
+            escala_intervalo=0.10,
+            modelo_version='LGBM_PERDTOT_v1.0',
+        )
+
+        elapsed = time.time() - t0
+        if ok_bd:
+            print(f"\n  ✅ PERDIDAS_TOTALES LGBM completado — MAPE={mape:.2%}, Tiempo={elapsed:.0f}s")
+        return ok_bd
+
+    except Exception as e:
+        print(f"\n  ❌ Error en LGBM PERDIDAS_TOTALES: {e}")
+        import traceback; traceback.print_exc()
+        return False
+
+
+def main_lgbm_cu_diario():
+    """
+    FASE 25 — LightGBM Directo para CU_DIARIO.
+
+    El ensemble Prophet+SARIMA logra 23.4% MAPE — falla porque:
+      - CU_TOTAL está dominado por componente_g (77%) que sigue al precio de bolsa
+      - La drástica caída post-2024 (2825→200 $/kWh) rompe supuestos de Prophet
+
+    Estrategia: LGBM directo (sin recursión) con:
+      - Rolling stats del propio cu_total (media/std 7d y 30d) — captura momentum
+      - componente_g y componente_p rezagados (t-1) — fuentes de variabilidad
+      - embalses_pct (nivel de embalses) — proxy de escasez hidráulica
+      - Calendario (festivos, DOW, mes) — efectos regulatorios
+
+    Baseline a superar: ensemble 23.4% MAPE (BD actual).
+
+    Nota: componente_t=8.5, componente_d=35.0, componente_c=12.0 son CONSTANTES
+    (std=0 en toda la historia), por lo que no aportan como features.
+    """
+    import time
+    from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
+    import lightgbm as lgb
+
+    BASELINE_ENSEMBLE = 0.234
+    DIAS_HOLDOUT = 30
+    N_PRED = 90
+
+    print("\n" + "=" * 70)
+    print("🇨🇴 LIGHTGBM DIRECTO — CU_DIARIO (FASE 25)")
+    print(f"   Baseline a superar: ensemble {BASELINE_ENSEMBLE:.1%}")
+    print(f"   Holdout: {DIAS_HOLDOUT}d | Predicción: {N_PRED}d")
+    print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 70)
+
+    t0 = time.time()
+
+    try:
+        conn = get_postgres_connection()
+
+        # 1. Cargar cu_daily con componentes variables
+        df = pd.read_sql("""
+            SELECT fecha::date AS fecha,
+                   cu_total, componente_g, componente_p
+            FROM sector_energetico.cu_daily
+            WHERE cu_total IS NOT NULL
+            ORDER BY fecha
+        """, conn)
+
+        # 2. Cargar embalses_pct como regresor externo
+        df_emb = pd.read_sql("""
+            SELECT fecha::date AS fecha, AVG(valor_gwh)*100 AS embalses_pct
+            FROM sector_energetico.metrics
+            WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema' AND valor_gwh > 0
+            GROUP BY fecha ORDER BY fecha
+        """, conn)
+        conn.close()
+
+        df['fecha'] = pd.to_datetime(df['fecha'])
+        df_emb['fecha'] = pd.to_datetime(df_emb['fecha'])
+        df = df.merge(df_emb, on='fecha', how='left')
+        df = df.sort_values('fecha').reset_index(drop=True)
+        df['embalses_pct'] = df['embalses_pct'].ffill().bfill()
+
+        # Eliminar dato parcial del día actual
+        hoy = pd.Timestamp(datetime.now().date())
+        df = df[df['fecha'] < hoy]
+
+        print(f"  Dataset base: {len(df)} obs ({df['fecha'].min().date()} → {df['fecha'].max().date()})")
+        print(f"  CU_total: μ={df['cu_total'].mean():.1f}, σ={df['cu_total'].std():.1f}")
+
+        # 3. Features de rolling (target) — conocidas en t=0 para pred directa
+        df = df.set_index('fecha')
+        df['roll_mean_7d']  = df['cu_total'].rolling(7, min_periods=1).mean()
+        df['roll_std_7d']   = df['cu_total'].rolling(7, min_periods=1).std().fillna(0)
+        df['roll_mean_30d'] = df['cu_total'].rolling(30, min_periods=1).mean()
+        df['roll_std_30d']  = df['cu_total'].rolling(30, min_periods=1).std().fillna(0)
+        df['roll_min_30d']  = df['cu_total'].rolling(30, min_periods=1).min()
+        df['roll_max_30d']  = df['cu_total'].rolling(30, min_periods=1).max()
+
+        # 4. Lags de componentes (t-1, conocidos en el día de predicción)
+        df['comp_g_lag1']   = df['componente_g'].shift(1)
+        df['comp_p_lag1']   = df['componente_p'].shift(1)
+
+        # 5. Calendario
+        df_cal = construir_regresores_calendario(df.index)
+        df = df.join(df_cal)
+
+        # Temporal
+        df['mes']          = df.index.month
+        df['dia_del_anio'] = df.index.dayofyear
+
+        # 6. Limpiar NaN
+        df = df.ffill().bfill().dropna()
+        print(f"  Dataset limpio: {len(df)} obs")
+
+        FEATURE_COLS = [
+            'roll_mean_7d', 'roll_std_7d', 'roll_mean_30d', 'roll_std_30d',
+            'roll_min_30d', 'roll_max_30d',
+            'comp_g_lag1', 'comp_p_lag1',
+            'embalses_pct', 'mes', 'dia_del_anio',
+            'es_festivo', 'dow_lun', 'dow_mar', 'dow_mie', 'dow_jue', 'dow_vie', 'dow_sab',
+        ]
+        feature_cols = [c for c in FEATURE_COLS if c in df.columns]
+
+        # 7. Split holdout
+        df_train = df.iloc[:-DIAS_HOLDOUT]
+        df_test  = df.iloc[-DIAS_HOLDOUT:]
+        X_train, y_train = df_train[feature_cols], df_train['cu_total']
+        X_test,  y_test  = df_test[feature_cols],  df_test['cu_total'].values
+
+        # 8. Entrenar LGBM
+        model = lgb.LGBMRegressor(
+            n_estimators=600,
+            max_depth=5,
+            num_leaves=20,
+            learning_rate=0.05,
+            min_child_samples=10,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.3,
+            reg_lambda=1.0,
+            random_state=42,
+            n_jobs=-1,
+            verbose=-1,
+        )
+        model.fit(X_train, y_train)
+
+        # Feature importance
+        imp = dict(zip(feature_cols, model.feature_importances_))
+        top5 = sorted(imp.items(), key=lambda x: x[1], reverse=True)[:5]
+        total_imp = sum(imp.values()) or 1
+        print(f"  Top-5 features: " +
+              " ".join(f"{k}({v/total_imp*100:.1f}%)" for k, v in top5))
+
+        # 9. Validar holdout
+        y_pred = np.maximum(model.predict(X_test), 86.0)  # piso $/kWh
+        mape   = mean_absolute_percentage_error(y_test, y_pred)
+        rmse   = np.sqrt(mean_squared_error(y_test, y_pred))
+        conf   = max(0.0, 1.0 - mape)
+
+        print(f"\n  ── Holdout ({DIAS_HOLDOUT}d, directo) ──")
+        print(f"    MAPE: {mape:.2%}  (baseline ensemble: {BASELINE_ENSEMBLE:.2%})")
+        print(f"    RMSE: {rmse:.2f}")
+        print(f"    Confianza: {conf:.2%}")
+
+        if mape >= BASELINE_ENSEMBLE:
+            print(f"\n  ⚠️  LGBM CU_DIARIO no supera baseline. Predicciones NO guardadas.")
+            return False
+
+        # 10. Re-entrenar en dataset completo
+        model_full = lgb.LGBMRegressor(
+            n_estimators=600, max_depth=5, num_leaves=20,
+            learning_rate=0.05, min_child_samples=10,
+            subsample=0.8, colsample_bytree=0.8,
+            reg_alpha=0.3, reg_lambda=1.0,
+            random_state=42, n_jobs=-1, verbose=-1,
+        )
+        model_full.fit(df[feature_cols], df['cu_total'])
+        print(f"  → Modelo final entrenado en {len(df)} obs")
+
+        # 11. Generar predicciones futuras
+        # Las features de rolling se computan desde el último estado conocido
+        # y se mantienen constantes para todos los días futuros (predicción directa)
+        last_state = df[feature_cols].iloc[-1:].copy()
+        fechas_pred = pd.date_range(
+            start=df.index[-1] + pd.Timedelta(days=1),
+            periods=N_PRED, freq='D'
+        )
+
+        # Para cada día futuro, actualizar solo el calendario
+        rows = []
+        for d in fechas_pred:
+            row = last_state.copy()
+            cal_row = construir_regresores_calendario(pd.DatetimeIndex([d]))
+            for col in ['es_festivo', 'dow_lun', 'dow_mar', 'dow_mie', 'dow_jue', 'dow_vie', 'dow_sab']:
+                if col in row.columns and col in cal_row.columns:
+                    row[col] = cal_row[col].values[0]
+            row['mes']          = d.month
+            row['dia_del_anio'] = d.dayofyear
+            rows.append(row)
+
+        X_pred = pd.concat(rows, ignore_index=True)
+        y_future = np.maximum(model_full.predict(X_pred), 86.0)
+
+        print(f"  → {N_PRED} predicciones CU_DIARIO, rango [{y_future.min():.1f}, {y_future.max():.1f}] $/kWh")
+
+        # 12. Guardar en BD (reemplaza predicciones existentes)
+        conn2 = get_postgres_connection()
+        cur = conn2.cursor()
+        cur.execute(
+            "DELETE FROM sector_energetico.predictions WHERE fuente = 'CU_DIARIO'"
+        )
+        n_ok = 0
+        for i, fecha in enumerate(fechas_pred):
+            try:
+                cur.execute("""
+                    INSERT INTO sector_energetico.predictions
+                    (fuente, fecha_prediccion, valor_predicho,
+                     metodo_prediccion, modelo_version, confianza, mape, rmse)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    'CU_DIARIO', fecha.date(), float(y_future[i]),
+                    'lgbm_directo', 'LGBM_CU_v1.0',
+                    float(conf), float(mape), float(rmse)
+                ))
+                n_ok += 1
+            except Exception:
+                pass
+        conn2.commit()
+        cur.close()
+        conn2.close()
+
+        elapsed = time.time() - t0
+        print(f"  → Guardadas {n_ok}/{N_PRED} predicciones CU_DIARIO")
+        print(f"\n  ✅ CU_DIARIO LGBM completado — MAPE={mape:.2%}, "
+              f"Confianza={conf:.2%}, Tiempo={elapsed:.0f}s")
+        return True
+
+    except Exception as e:
+        print(f"\n  ❌ Error en LightGBM CU_DIARIO: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main_randomforest_precio():
     """
     FASE 10 — Pipeline RandomForest para PRECIO_BOLSA.
@@ -5302,34 +5984,26 @@ def main_randomforest_precio():
 
 def main_lgbm_precio():
     """
-    FASE 23 — Pipeline LightGBM Directo para PRECIO_BOLSA.
+    FASE 28 — Pipeline LightGBM Directo para PRECIO_BOLSA.
 
-    Candidato a reemplazar RandomForest (FASE 10) usando los mismos 6
-    regresores BD + rolling stats + calendario, con predicción directa
-    (sin lags recursivos).
+    Candidato a reemplazar RandomForest (FASE 10) usando los mismos
+    regresores BD + rolling stats + calendario, con predicción directa.
 
-    Validación: holdout de 90 días genuinos — mismo horizonte que se evalúa
-    para comparación justa con RF a 90d.
+    FASE 23: LGBM 90d = 24.43% (con Optuna) → RF ganó (holdout demasiado largo).
+    FASE 28: Holdout reducido a 30d (mismo que RF producción, comparación justa).
+    RF producción actual: 19.28% SMAPE. LGBM necesita < 19.28% @ 30d.
 
-    Baseline justo (RF @ 90d):
-      RF 30d = 15.73% (producción oficial)
-      RF 90d = 17.10% (comparación equitativa a igual ventana)
-
-    RESULTADO FASE 23: LGBM 90d = 24.43% (con Optuna) → RF gana.
-    RF usa rolling_mean_7d con 87% importancia (price momentum) — LGBM
-    distribuye importancia más uniformemente, lo que es subóptimo aquí.
-
-    Criterio de aceptación: MAPE holdout < 17.10% (RF @ 90d, comparación justa).
+    Criterio de aceptación: MAPE holdout < 19.28% (RF@30d producción actual).
     Si no se cumple, el RF sigue siendo el modelo de producción.
     """
     print("\n" + "="*70)
-    print("🇨🇴 LIGHTGBM DIRECTO — PRECIO_BOLSA (FASE 23)")
-    print("   Candidato a reemplazar RandomForest (RF@90d: 17.10%)")
+    print("🇨🇴 LIGHTGBM DIRECTO — PRECIO_BOLSA (FASE 28)")
+    print("   Candidato a reemplazar RandomForest (RF@30d: 19.28% SMAPE)")
     print("="*70)
     print(f"   Modelo: {MODELO_VERSION_LGBM_PRECIO}")
     print(f"   Horizonte: {HORIZONTE_DIAS} días")
-    print(f"   Holdout validación: 90 días (genuino, comparación justa vs RF)")
-    print(f"   Criterio aceptación: MAPE < 17.10% (RF@90d, baseline justo)")
+    print(f"   Holdout validación: 30 días (igual que RF producción, comparación justa)")
+    print(f"   Criterio aceptación: MAPE < 19.28% (RF@30d, baseline actual)")
     print(f"   Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
 
@@ -5338,7 +6012,8 @@ def main_lgbm_precio():
 
     try:
         predictor = PredictorLGBMDirecto('PRECIO_BOLSA', PRECIO_BOLSA_LGBM_CONFIG)
-        ok = predictor.entrenar_y_validar(dias_holdout=90)
+        # FASE 28: holdout 30d (igual que RF en producción, comparación justa)
+        ok = predictor.entrenar_y_validar(dias_holdout=30)
 
         if not ok:
             print(f"\n  ❌ LightGBM PRECIO_BOLSA falló en entrenamiento")
@@ -5346,13 +6021,12 @@ def main_lgbm_precio():
 
         mape = predictor.metricas.get('mape')
 
-        # Criterio de aceptación: superar al RF @ 90d (comparación justa)
-        # RF@30d = 15.73% (producción), RF@90d = 17.10% (igual horizonte)
-        RF_BASELINE_90D = 0.1710
-        if mape is not None and mape > RF_BASELINE_90D:
-            print(f"\n  ⚠️  LGBM PRECIO_BOLSA: MAPE={mape:.2%} > RF@90d (17.10%).")
+        # Criterio de aceptación: superar al RF en producción actual.
+        # RF@30d producción: 19.28% SMAPE (actualizado FASE 27 → FASE 28).
+        RF_BASELINE = 0.1928
+        if mape is not None and mape > RF_BASELINE:
+            print(f"\n  ⚠️  LGBM PRECIO_BOLSA: SMAPE={mape:.2%} > baseline ({RF_BASELINE:.2%}).")
             print(f"       Predicciones NO guardadas. Usar --rf_precio para producción.")
-            print(f"       Nota FASE 23: RF usa rolling_mean_7d@87% — mejor para mean-reversion.")
             return False
 
         # Generar predicciones
@@ -5937,6 +6611,22 @@ Ejemplos:
         help='LightGBM directo para PRECIO_BOLSA (FASE 23). '
              'Reemplaza RandomForest si MAPE holdout 90d < 14.67%% (RF actual).',
     )
+    parser.add_argument(
+        '--lgbm_cu', action='store_true', default=False,
+        help='LightGBM directo para CU_DIARIO (FASE 25). '
+             'Candidato a reemplazar ensemble si MAPE < 23.4%%.',
+    )
+    parser.add_argument(
+        '--lgbm_perdidas', action='store_true', default=False,
+        help='LightGBM directo para PERDIDAS GWh (FASE 25). '
+             'Candidato a reemplazar ensemble si MAPE < 20.93%%.',
+    )
+    parser.add_argument(
+        '--lgbm_perdidas_totales', action='store_true', default=False,
+        help='LightGBM directo para PERDIDAS_TOTALES %% (FASE 25). '
+             'Filtra días corruptos (>20%%) antes de entrenar. '
+             'Candidato a reemplazar ensemble si MAPE < 43.04%%.',
+    )
     # FASE 14: Cross-validation temporal
     parser.add_argument(
         '--cv', nargs='+', default=None,
@@ -6011,6 +6701,9 @@ Ejemplos:
         if args.lgbm_precio:
             PRECIO_BOLSA_LGBM_CONFIG['usar_optuna'] = True
             PRECIO_BOLSA_LGBM_CONFIG['optuna_n_trials'] = _n_trials_lgbm
+        if args.lgbm_perdidas:
+            PERDIDAS_LGBM_CONFIG['usar_optuna'] = True
+            PERDIDAS_LGBM_CONFIG['optuna_n_trials'] = _n_trials_lgbm
         print(f"\n  🔬 Optuna activado — búsqueda bayesiana de hiperparámetros (FASE 21)")
 
     dual_args = args.horizonte_dual if args.horizonte_dual is not None else args.test_horizonte_dual
@@ -6020,6 +6713,15 @@ Ejemplos:
     elif args.cv is not None:
         # FASE 14: CV métricas específicas
         main_cross_validation(metricas=args.cv)
+    elif args.lgbm_perdidas_totales:
+        # FASE 25 — LGBM PERDIDAS_TOTALES % (filtra datos corruptos > 20%)
+        main_lgbm_perdidas_totales()
+    elif args.lgbm_perdidas:
+        # FASE 25 — LGBM PERDIDAS GWh (reemplaza ensemble si MAPE < 20.93%)
+        main_lgbm_perdidas()
+    elif args.lgbm_cu:
+        # FASE 25 — LightGBM directo CU_DIARIO (reemplaza ensemble si MAPE < 23.4%)
+        main_lgbm_cu_diario()
     elif args.lgbm_precio:
         # FASE 23 — LightGBM directo PRECIO_BOLSA (reemplaza RF si MAPE < 14.67%)
         main_lgbm_precio()

@@ -44,6 +44,9 @@ class DatabaseManager(IDatabaseManager):
             if conn and not conn.closed:
                 try:
                     conn.reset()
+                    with conn.cursor() as _c:
+                        _c.execute('RESET search_path')
+                    conn.commit()
                 except Exception:
                     pass
             pool.putconn(conn)
@@ -194,6 +197,34 @@ class DatabaseManager(IDatabaseManager):
             logger.error(f"Error en execute_many: {e}")
             raise
     
+    def get_database_stats(self) -> Dict[str, Any]:
+        """
+        Obtiene estadísticas generales de la base de datos.
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM metrics")
+                total_registros = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(DISTINCT metrica) FROM metrics")
+                metricas_unicas = cursor.fetchone()[0]
+                cursor.execute("SELECT MIN(fecha), MAX(fecha) FROM metrics")
+                fecha_min, fecha_max = cursor.fetchone()
+                return {
+                    'total_registros': total_registros,
+                    'metricas_unicas': metricas_unicas,
+                    'fecha_minima': fecha_min,
+                    'fecha_maxima': fecha_max
+                }
+        except Exception as e:
+            logger.error(f"Error estadísticas: {e}")
+            return {
+                'total_registros': 0,
+                'metricas_unicas': 0,
+                'fecha_minima': None,
+                'fecha_maxima': None
+            }
+
     def table_exists(self, table_name: str) -> bool:
         """
         Verifica si una tabla existe.

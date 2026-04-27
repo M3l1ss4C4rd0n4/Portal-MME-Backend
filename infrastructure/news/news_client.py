@@ -27,7 +27,7 @@ ENERGY_QUERIES = [
 
 DEFAULT_QUERY = (
     "energía OR eléctrico OR electricidad OR embalses OR tarifas "
-    "OR minería OR hidrocarburos OR gas OR renovables OR eólico "
+    "OR minería OR hidrocarburos OR \"gas natural\" OR renovables OR eólico "
     "OR solar OR interconexión OR transmisión Colombia"
 )
 

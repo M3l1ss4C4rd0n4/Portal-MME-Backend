@@ -1,6 +1,6 @@
 """Tests para DistributionService."""
 import pytest
-from domain.services.distribution_service import DistributionService, _get_default_repo, _get_xm_service
+from domain.services.distribution_service import DistributionService
 
 
 class TestDistributionService:

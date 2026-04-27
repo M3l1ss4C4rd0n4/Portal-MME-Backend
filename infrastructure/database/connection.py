@@ -40,7 +40,11 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
                     'database': settings.POSTGRES_DB,
                     'user': settings.POSTGRES_USER,
                     'connect_timeout': 10,
-                    'options': '-c statement_timeout=30000',
+                    'options': (
+                        '-c statement_timeout=30000'
+                        ' -c search_path=sector_energetico,subsidios,supervision,'
+                        'comunidades,presupuesto,contratos_or,public'
+                    ),
                 }
                 if settings.POSTGRES_PASSWORD:
                     conn_params['password'] = settings.POSTGRES_PASSWORD
@@ -97,12 +101,34 @@ class PostgreSQLConnectionManager:
                 conn.rollback()
             raise RuntimeError(f"Error de conexión PostgreSQL: {e}")
         finally:
-            if conn and not conn.closed:
+            if conn is None:
+                return
+            if conn.closed:
+                # Conexión muerta — descartar del pool en vez de reciclar
                 try:
-                    conn.reset()
+                    pool.putconn(conn, close=True)
                 except Exception:
                     pass
-            pool.putconn(conn)
+                return
+            try:
+                conn.reset()  # rollback si hay transacción abierta
+                with conn.cursor() as _cur:
+                    # Restaurar search_path al valor configurado.
+                    # RESET search_path volvería al default de Postgres ("$user",public),
+                    # deshaciendo la opción de startup del pool.
+                    _cur.execute(
+                        "SET search_path TO "
+                        "sector_energetico, subsidios, supervision, "
+                        "comunidades, presupuesto, contratos_or, public"
+                    )
+                conn.commit()
+                pool.putconn(conn)
+            except Exception:
+                # Estado desconocido — descartar en vez de reciclar conexión rota
+                try:
+                    pool.putconn(conn, close=True)
+                except Exception:
+                    pass
 
 
 # Instancia global

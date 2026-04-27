@@ -20,6 +20,8 @@ class TestHydrologyService:
     def test_get_reservas_hidricas_returns_tuple(self):
         """Test: get_reservas_hidricas retorna tuple válido"""
         service = HydrologyService()
+        # Mock _get_porc_volu_util_sistema to return None (fallback to manual calc)
+        service._get_porc_volu_util_sistema = Mock(return_value=(None, None))
         # Mock the internal method to avoid DB access
         service.calcular_volumen_util_unificado = Mock(return_value={
             'porcentaje': 50.0,
@@ -86,6 +88,8 @@ class TestHydrologyService:
     def test_service_handles_none_result(self):
         """Test: Servicio maneja correctamente resultado None"""
         service = HydrologyService()
+        # Mock _get_porc_volu_util_sistema to return None (fallback to manual calc)
+        service._get_porc_volu_util_sistema = Mock(return_value=(None, None))
         # When calcular_volumen_util_unificado returns None, get_reservas_hidricas returns (None, None, None)
         service.calcular_volumen_util_unificado = Mock(return_value=None)
         
@@ -100,6 +104,8 @@ class TestHydrologyService:
     def test_get_reservas_multiple_dates(self, fecha):
         """Test: Servicio funciona con diferentes fechas"""
         service = HydrologyService()
+        # Mock _get_porc_volu_util_sistema to return None (fallback to manual calc)
+        service._get_porc_volu_util_sistema = Mock(return_value=(None, None))
         service.calcular_volumen_util_unificado = Mock(return_value={
             'porcentaje': 50.0,
             'volumen_gwh': 1000,

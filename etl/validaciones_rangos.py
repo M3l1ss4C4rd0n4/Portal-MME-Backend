@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 VALID_RANGES = {
     # Precios y Costos (TX1 = Pesos Colombianos por MWh)
-    'PrecBolsNaci': (0, 2000),      # Precio Bolsa Nacional (TX1)
+    'PPPrecBolsNaci': (0, 2000),    # Precio Promedio Ponderado Bolsa Nacional (oficial XM)
     'PrecBolsFron': (0, 2000),      # Precio Bolsa Frontera (TX1)
     'PrecOfeComb': (0, 2000),       # Precio Oferta Combustible (TX1)
     'PrecCombGas': (0, 2000),       # Precio Combustible Gas (TX1)
@@ -70,7 +70,7 @@ def validar_rango_metrica(
         (df_limpio, estadisticas)
         
     Ejemplo:
-        df_clean, stats = validar_rango_metrica(df, 'PrecBolsNaci')
+        df_clean, stats = validar_rango_metrica(df, 'PPPrecBolsNaci')
         print(f"Registros eliminados: {stats['registros_eliminados']}")
     """
     if metrica not in VALID_RANGES:

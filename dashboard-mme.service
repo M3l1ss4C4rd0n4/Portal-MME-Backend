@@ -3,18 +3,17 @@ Description=Dashboard Portal Energético MME
 After=network.target
 
 [Service]
-Type=notify
+Type=simple
 User=admonctrlxm
 Group=admonctrlxm
 WorkingDirectory=/home/admonctrlxm/server
 Environment="PATH=/home/admonctrlxm/server/venv/bin:/home/admonctrlxm/.local/bin:/usr/bin"
 ExecStart=/home/admonctrlxm/server/venv/bin/gunicorn -c gunicorn_config.py app:server
 ExecReload=/bin/kill -s HUP $MAINPID
-ExecStop=/bin/kill -s TERM $MAINPID
-KillMode=mixed
-TimeoutStopSec=5
+KillMode=control-group
+TimeoutStopSec=30
 PrivateTmp=true
-Restart=always
+Restart=on-failure
 RestartSec=10
 
 # Límites de recursos

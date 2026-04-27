@@ -61,7 +61,7 @@ register_page(
 FUENTES_MAPPING = {
     'GENE_TOTAL':       {'metrica': 'Gene',            'agg': 'SUM', 'entidad': 'Sistema', 'unidad': 'GWh',  'label': 'Generación Total'},
     'DEMANDA':          {'metrica': 'DemaReal',         'agg': 'SUM', 'prefer_sistema': True, 'unidad': 'GWh', 'label': 'Demanda Real'},
-    'PRECIO_BOLSA':     {'metrica': 'PrecBolsNaci',     'agg': 'AVG', 'entidad': 'Sistema', 'unidad': 'COP/kWh', 'label': 'Precio de Bolsa'},
+    'PRECIO_BOLSA':     {'metrica': 'PPPrecBolsNaci',    'agg': 'AVG', 'entidad': 'Sistema', 'unidad': 'COP/kWh', 'label': 'Precio de Bolsa (PPP)'},
     'PRECIO_ESCASEZ':   {'metrica': 'PrecEsca',         'agg': 'AVG', 'unidad': 'COP/kWh', 'label': 'Precio de Escasez'},
     'APORTES_HIDRICOS': {'metrica': 'AporEner',          'agg': 'SUM', 'unidad': 'GWh', 'label': 'Aportes Hídricos'},
     'EMBALSES':         {'metrica': 'CapaUtilDiarEner',  'agg': 'SUM', 'entidad': 'Sistema', 'unidad': 'GWh', 'label': 'Embalses (Cap. Útil)'},
@@ -75,6 +75,27 @@ FUENTES_MAPPING = {
     'Solar':            {'tipo_catalogo': 'SOLAR',      'unidad': 'GWh/día', 'label': 'Gen. Solar'},
     'Biomasa':          {'tipo_catalogo': 'COGENERADOR','unidad': 'GWh/día', 'label': 'Gen. Biomasa'},
 }
+
+# Mapa: nombre interno BD → nombre legible para el usuario
+MODEL_DISPLAY_NAMES = {
+    'ENSEMBLE_SECTOR_v1.0':          'Prophet + SARIMA',
+    'ENSEMBLE_v1.0':                 'Prophet + SARIMA',
+    'RANDOMFOREST_v1.0':             'Random Forest',
+    'LGBM_APORTES_NASA_v1.0':        'LightGBM + NASA POWER',
+    'LGBM_DIRECTO_TERMICA_v1.0':     'LightGBM directo',
+    'LGBM_SOLAR_NASA_v2.0':          'LightGBM + NASA satélite',
+    'LGBM_DIRECTO_EOLICA_v1.0':      'LightGBM + IDEAM viento',
+    'STACKING_EOLICA_v1.0':          'Stacking (LightGBM + XGBoost)',
+    'DUAL_HORIZON_v1.0':             'LightGBM (corto) + TCN (largo)',
+    'LGBM_PRECIO_v1.0':              'LightGBM directo',
+    'PROPHET_LARGO_PLAZO_v1.0':      'Prophet largo plazo',
+}
+
+
+def modelo_legible(modelo_bd: str) -> str:
+    """Convierte nombre interno de BD a nombre legible para el usuario."""
+    return MODEL_DISPLAY_NAMES.get(modelo_bd, modelo_bd)
+
 
 # Metadatos visuales por fuente (icono, color, nombre completo del modelo, features)
 FUENTES_META = {
@@ -363,14 +384,15 @@ def cargar_resumen_inicial(_):
     total_metricas = df['fuente'].nunique()
     total_modelos = df['modelo'].nunique()
     total_predicciones = int(df['dias_predichos'].sum())
-    mape_promedio = df['mape_entrenamiento'].mean()
+    # Usar mape_efectivo = expost cuando existe, train como fallback
+    mape_promedio = df['mape_efectivo'].mean()
     calidad_label, calidad_color = clasificar_mape(mape_promedio)
     
     # Métrica mejor y peor
-    best_row = df.loc[df['mape_entrenamiento'].idxmin()]
-    worst_row = df.loc[df['mape_entrenamiento'].idxmax()]
-    best_mape = float(best_row['mape_entrenamiento'])
-    worst_mape = float(worst_row['mape_entrenamiento'])
+    best_row = df.loc[df['mape_efectivo'].idxmin()]
+    worst_row = df.loc[df['mape_efectivo'].idxmax()]
+    best_mape = float(best_row['mape_efectivo'])
+    worst_mape = float(worst_row['mape_efectivo'])
 
     resumen_kpis = crear_kpi_row([
         {
@@ -395,7 +417,7 @@ def cargar_resumen_inicial(_):
             'color': 'green',
         },
         {
-            'titulo': 'MAPE Promedio',
+            'titulo': 'MAPE Real (ex-post)',
             'valor': f'{mape_promedio*100:.1f}',
             'unidad': '%',
             'icono': 'fas fa-bullseye',
@@ -423,7 +445,7 @@ def cargar_resumen_inicial(_):
     # ── LISTA COMPACTA PARA PANEL IZQUIERDO ──
     # Deduplicar por fuente: preferir el horizonte 90d; si no existe, el menor MAPE
     df_izq = (
-        df.sort_values('mape_entrenamiento', na_position='last')
+        df.sort_values('mape_efectivo', na_position='last')
           .drop_duplicates(subset=['fuente'], keep='first')
           .reset_index(drop=True)
     )
@@ -432,11 +454,14 @@ def cargar_resumen_inicial(_):
         fuente = row['fuente']
         cfg_izq = FUENTES_MAPPING.get(fuente, {})
         meta_izq = FUENTES_META.get(fuente, {})
-        mape_v = float(row['mape_entrenamiento']) if pd.notna(row['mape_entrenamiento']) else None
+        # Priorizar mape_expost (real en producción); fallback a mape_train
+        mape_v = float(row['mape_efectivo']) if pd.notna(row.get('mape_efectivo')) else None
+        es_expost = pd.notna(row.get('mape_expost'))
         calidad_izq, badge_izq = clasificar_mape(mape_v)
         color_borde_izq = meta_izq.get('color', '#3498db')
         icono_izq = meta_izq.get('icono', '📊')
-        mape_txt_izq = f"{mape_v*100:.1f}%" if mape_v else "N/A"
+        mape_txt_izq = (f"{mape_v*100:.1f}%" if mape_v else "N/A")
+        mape_label_izq = "MAPE real " if es_expost else "MAPE holdout "
         mape_color_izq = ('#e74c3c' if (mape_v or 0) > 0.1
                           else '#f39c12' if (mape_v or 0) > 0.05
                           else '#27ae60')
@@ -457,7 +482,7 @@ def cargar_resumen_inicial(_):
                             ),
                         ], className='d-flex align-items-center justify-content-between mb-1'),
                         html.Div([
-                            html.Span("MAPE ", className='text-muted',
+                            html.Span(mape_label_izq, className='text-muted',
                                       style={'fontSize': '0.7rem'}),
                             html.Span(mape_txt_izq, className='fw-bold',
                                       style={'fontSize': '0.75rem',
@@ -531,7 +556,7 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
         alerta = dbc.Alert(f"No hay predicciones para {label}.", color="warning")
         return html.Div(alerta)
     
-    modelo = df_pred['modelo'].iloc[0]
+    modelo = modelo_legible(df_pred['modelo'].iloc[0])
     mape_train = df_pred['mape_train'].iloc[0]
     rmse_train = df_pred['rmse_train'].iloc[0]
     confianza = df_pred['confianza'].iloc[0]
@@ -602,19 +627,20 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
                 'color': 'purple',
             },
             {
-                'titulo': 'MAPE Entren.',
-                'valor': f"{float(mape_train)*100:.2f}" if mape_train else "N/A",
-                'unidad': '%',
-                'icono': 'fas fa-graduation-cap',
-                'color': 'blue',
-            },
-            {
-                'titulo': 'MAPE Ex-Post',
+                'titulo': 'MAPE Real',
                 'valor': f"{mape_expost*100:.2f}" if mape_expost is not None else "—",
                 'unidad': '%' if mape_expost is not None else '',
                 'icono': 'fas fa-check-double',
                 'color': _BADGE_TO_KPI_COLOR.get(color_ep, 'blue'),
-                'subtexto': calidad_ep,
+                'subtexto': calidad_ep if mape_expost is not None else 'Sin datos reales aún',
+            },
+            {
+                'titulo': 'MAPE Holdout',
+                'valor': f"{float(mape_train)*100:.2f}" if mape_train else "N/A",
+                'unidad': '%',
+                'icono': 'fas fa-graduation-cap',
+                'color': 'blue',
+                'subtexto': '30d histórico',
             },
             {
                 'titulo': 'RMSE Ex-Post',
@@ -701,7 +727,7 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
     
     grafica_pred_vs_real = crear_chart_card_custom(
         titulo=f"Predicción vs Realidad — {label}",
-        subtitulo=f"Modelo: {modelo} · Horizonte {horizonte_dias} días",
+        subtitulo=f"Modelo: {modelo} · Horizonte {horizonte_dias} días",  # modelo ya es legible
         children=dcc.Graph(figure=fig, config={'displayModeBar': True}),
     )
     
@@ -856,7 +882,7 @@ def cargar_historial_calidad(_):
         cfg = FUENTES_MAPPING.get(row['fuente'], {})
         records.append({
             'Métrica': cfg.get('label', row['fuente']),
-            'Modelo': row.get('modelo', ''),
+            'Modelo': modelo_legible(row.get('modelo', '')),
             'Evaluación': str(row['fecha_evaluacion'])[:16] if pd.notna(row.get('fecha_evaluacion')) else '',
             'Periodo': f"{row.get('fecha_desde', '')} → {row.get('fecha_hasta', '')}",
             'Días Overlap': row.get('dias_overlap', 0),

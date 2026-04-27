@@ -149,6 +149,8 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
                     vals.append(None)
                 elif isinstance(val, str):
                     vals.append(val)
+                elif hasattr(val, 'item'):  # numpy scalar (np.float64, np.int64, etc.)
+                    vals.append(None if pd.isnull(val) else val.item())
                 else:
                     try:
                         if pd.isnull(val):
@@ -160,6 +162,10 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
             rows.append(tuple(vals))
 
         psycopg2.extras.execute_batch(cur, insert_sql, rows, page_size=500)
+        # Restore search_path to database default before returning the
+        # connection to the shared pool — conn.reset() only rolls back
+        # transactions, it does NOT send RESET ALL.
+        cur.execute("RESET search_path")
 
     conn.commit()
     logger.info(f"  ✅ {schema}.{table}: {len(rows)} filas cargadas")
@@ -211,22 +217,26 @@ def etl_comunidades() -> None:
 
 def etl_presupuesto() -> None:
     """Carga Acuerdos de Gestión DEE 2026.xlsx → schema presupuesto."""
-    xlsx_path = BASE_DIR / 'data' / 'ejecucion presupuestal' / 'Acuerdos de Gestión DEE 2026.xlsx'
+    xlsx_path = BASE_DIR / 'data' / 'ejecucion_presupuestal' / 'Acuerdos de Gestión DEE 2026.xlsx'
     logger.info(f"=== ETL PRESUPUESTO: {xlsx_path.name} ===")
 
-    # Resumen por proyecto/fondo (header on row index 2)
-    df_res = pd.read_excel(xlsx_path, sheet_name='resumen', header=2)
+    # Resumen por proyecto/fondo (header en fila 3, índice 0-based)
+    df_res = pd.read_excel(xlsx_path, sheet_name='resumen', header=3)
     df_res = df_res.dropna(how='all')
-    # Rename first column to 'proyecto'
-    cols_res = list(df_res.columns)
-    cols_res[0] = 'proyecto'
-    df_res.columns = cols_res
+    # Eliminar columnas sin nombre
+    df_res = df_res.loc[:, ~df_res.columns.str.startswith('Unnamed')]
 
     # Compromisos total mensual (header on row index 1, data rows 2-6)
     df_comp = pd.read_excel(xlsx_path, sheet_name='Compromisostotal', header=1)
     df_comp = df_comp.dropna(how='all').dropna(axis=1, how='all')
+    # Eliminar columnas sin nombre (columnas basura del Excel)
+    df_comp = df_comp.loc[:, ~df_comp.columns.str.startswith('Unnamed')]
 
     with connection_manager.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS presupuesto.resumen CASCADE;")
+            cur.execute("DROP TABLE IF EXISTS presupuesto.compromisos_mensual CASCADE;")
+        conn.commit()
         load_dataframe(conn, 'presupuesto', 'resumen', df_res)
         load_dataframe(conn, 'presupuesto', 'compromisos_mensual', df_comp)
 
@@ -252,6 +262,39 @@ def etl_contratos_or() -> None:
     logger.info("=== contratos_or: completado ===")
 
 
+# ─── ETL Subsidios ────────────────────────────────────────────────────────────
+
+def etl_subsidios() -> None:
+    """Carga 2026-02-17 Info Subs y Cont - Info tablero.xlsx → schema subsidios."""
+    xlsx_path = (BASE_DIR / 'data' / 'onedrive' /
+                 '2026-02-17 Info Subs y Cont - Info tablero (1).xlsx')
+    logger.info(f"=== ETL SUBSIDIOS: {xlsx_path.name} ===")
+
+    # Hoja5 tiene el histórico consolidado con Deficit acumulado
+    df = pd.read_excel(xlsx_path, sheet_name='Hoja5', header=0)
+    df = df.dropna(how='all')
+
+    # Seleccionar y renombrar columnas clave
+    columnas = {
+        'Año': 'anio',
+        'Subsidios (SIN+ZNI)': 'subsidios',
+        'Contribuciones': 'contribuciones',
+        'Déficit Año': 'deficit_anual',
+        'Deficit acumulado': 'deficit_acumulado',
+        'Apropiación PGN': 'apropiacion_pgn',
+        'Recursos Faltantes Año': 'recursos_faltantes',
+    }
+    df = df[list(columnas.keys())].rename(columns=columnas)
+    # Filtrar solo filas con año válido
+    df = df[df['anio'].notna()]
+    df['anio'] = df['anio'].astype(int)
+
+    with connection_manager.get_connection() as conn:
+        load_dataframe(conn, 'subsidios', 'deficit_historico', df)
+
+    logger.info("=== subsidios: completado ===")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 HANDLERS = {
@@ -259,6 +302,7 @@ HANDLERS = {
     'comunidades': etl_comunidades,
     'presupuesto': etl_presupuesto,
     'contratos_or': etl_contratos_or,
+    'subsidios': etl_subsidios,
 }
 
 

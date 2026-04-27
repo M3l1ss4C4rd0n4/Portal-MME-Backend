@@ -157,7 +157,7 @@ def validate_value_in_range(value: float, min_val: float, max_val: float, metric
 
 # Rangos válidos basados en análisis de XM Sinergox
 VALID_RANGES = {
-    'PrecBolsNaci': (0, 2000),           # TX1
+    'PPPrecBolsNaci': (0, 2000),         # Precio Promedio Ponderado Bolsa Nacional
     'DemaReal': (0, 500),                # GWh diario
     'DemaCome': (0, 500),                # GWh diario
     'Gene': (0, 500),                    # GWh por recurso

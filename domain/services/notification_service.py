@@ -24,6 +24,7 @@ import httpx
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
+from core.constants import MODEL_DISPLAY_NAMES, MAPE_THRESHOLDS, mape_quality, ANOMALY_SEVERITY_EMOJIS, ANOMALY_SEVERITY_COLORS, METRIC_ICONS_HTML
 
 # Cargar .env para que os.getenv() encuentre SMTP y otras vars
 # (en producción las vars vienen del EnvironmentFile de systemd; en terminal/tests
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 def _pg_params() -> dict:
     """Obtiene parámetros de conexión PostgreSQL."""
+    _SP = (
+        "sector_energetico,subsidios,supervision,"
+        "comunidades,presupuesto,contratos_or,public"
+    )
     try:
         from core.config import settings
         params = {
@@ -44,6 +49,7 @@ def _pg_params() -> dict:
             'port': settings.POSTGRES_PORT,
             'database': settings.POSTGRES_DB,
             'user': settings.POSTGRES_USER,
+            'options': f'-c search_path={_SP}',
         }
         if settings.POSTGRES_PASSWORD:
             params['password'] = settings.POSTGRES_PASSWORD
@@ -57,6 +63,7 @@ def _pg_params() -> dict:
             'database': os.getenv('POSTGRES_DB', 'portal_energetico'),
             'user': os.getenv('POSTGRES_USER', 'postgres'),
             'password': os.getenv('POSTGRES_PASSWORD', ''),
+            'options': f'-c search_path={_SP}',
         }
 
 
@@ -724,6 +731,7 @@ def build_daily_email_html(
     predicciones: dict | None = None,
     anomalias: list | None = None,
     generado_con_ia: bool = True,
+    indices_compuestos: dict | None = None,
 ) -> str:
     """
     Construye HTML premium del email diario combinando:
@@ -800,6 +808,10 @@ def build_daily_email_html(
     pred_section_title = 'Proyecciones a 1 Mes'  # default, se actualiza abajo
     pred_modelo_label = ''
 
+    def _modelo_legible(modelo_bd: str) -> str:
+        """Convierte nombre interno de BD a nombre legible para el usuario."""
+        return MODEL_DISPLAY_NAMES.get(modelo_bd, modelo_bd)
+
     # Normalizar: aceptar un dict (legacy) o una lista de dicts (multi-métrica)
     _pred_list = []
     if isinstance(predicciones, list):
@@ -823,15 +835,8 @@ def build_daily_email_html(
         )
 
     # Iconos y unidades por tipo de métrica
-    _METRIC_ICONS = {
-        'GENE_TOTAL': '&#9889;',
-        'Generaci': '&#9889;',
-        'Hidr': '&#128167;',
-        'PRECIO': '&#128176;',
-        'Precio': '&#128176;',
-        'EMBALSES': '&#128167;',
-        'Porcentaje': '&#128167;',
-    }
+    # Iconos de métricas — centralizados en core.constants
+    _METRIC_ICONS = METRIC_ICONS_HTML
 
     for pred_item in _pred_list:
         if not pred_item or not pred_item.get('estadisticas'):
@@ -842,7 +847,7 @@ def build_daily_email_html(
         fuente = pred_item.get('fuente', 'General')
         modelo = pred_item.get('modelo', '')
         if modelo and not pred_modelo_label:
-            pred_modelo_label = modelo
+            pred_modelo_label = _modelo_legible(modelo)
 
         # Calcular tendencia comparando primera semana vs última semana
         if len(preds_data_list) >= 14:
@@ -912,6 +917,63 @@ def build_daily_email_html(
             tend, t_color, t_bg, arrow,
         )
 
+        # Fila de intervalo de confianza (próximos 7 días, ~86% confianza)
+        ic_inf = stats.get('ic_inferior_gwh')
+        ic_sup = stats.get('ic_superior_gwh')
+        if ic_inf is not None and ic_sup is not None:
+            if 'precio' in fuente_lower or 'bolsa' in fuente_lower:
+                ic_inf_fmt = f"{ic_inf:,.1f} COP/kWh"
+                ic_sup_fmt = f"{ic_sup:,.1f} COP/kWh"
+            elif 'embalse' in fuente_lower or 'EMBALSES' in fuente:
+                ic_inf_fmt = f"{ic_inf:.1f}%"
+                ic_sup_fmt = f"{ic_sup:.1f}%"
+            else:
+                ic_inf_fmt = f"{ic_inf:.1f} GWh"
+                ic_sup_fmt = f"{ic_sup:.1f} GWh"
+            pred_1m_rows += (
+                '<tr>'
+                '<td style="padding:4px 14px 6px;font-size:11px;color:#888;" colspan="2">'
+                '&#127919; Rango pr&oacute;x. 7 d&iacute;as (IC ~86%)</td>'
+                '<td style="padding:4px 14px 6px;" colspan="2">'
+                '<span style="font-size:11px;color:#546E7A;font-weight:500;">'
+                + ic_inf_fmt + ' &ndash; ' + ic_sup_fmt
+                + '</span></td></tr>'
+            )
+
+        # Fila de calidad del modelo (MAPE ex-post real)
+        mape_expost = pred_item.get('mape_expost')
+        if mape_expost is not None:
+            mape_label, mape_color, mape_bg = mape_quality(mape_expost)
+            fecha_mape = pred_item.get('fecha_mape', '')
+            fecha_mape_html = (
+                f' <span style="font-size:10px;color:#999;">({fecha_mape})</span>'
+                if fecha_mape else ''
+            )
+            pred_1m_rows += (
+                '<tr>'
+                '<td style="padding:4px 14px 10px;border-bottom:1px solid #f0f0f0;'
+                'font-size:11px;color:#888;" colspan="2">'
+                '&#128202; Precisi&oacute;n del modelo' + fecha_mape_html + '</td>'
+                '<td style="padding:4px 14px 10px;border-bottom:1px solid #f0f0f0;" colspan="2">'
+                '<span style="display:inline-block;padding:2px 8px;border-radius:12px;'
+                'font-size:11px;font-weight:600;color:' + mape_color + ';background:' + mape_bg + ';">'
+                'Error real: ' + f'{mape_expost:.2f}%' + ' &mdash; ' + mape_label
+                + '</span></td></tr>'
+            )
+
+        # Fila de fecha de generación del modelo
+        fecha_gen_modelo = pred_item.get('fecha_generacion_modelo')
+        if fecha_gen_modelo:
+            _modelo_nombre = _modelo_legible(modelo) if modelo else ''
+            _modelo_suffix = (' &mdash; ' + _modelo_nombre) if _modelo_nombre else ''
+            pred_1m_rows += (
+                '<tr>'
+                '<td style="padding:2px 14px 8px;border-bottom:1px solid #f0f0f0;'
+                'font-size:10px;color:#bbb;" colspan="4">'
+                '&#128336; Modelo entrenado el: '
+                '<span style="color:#999;font-weight:500;">' + fecha_gen_modelo + _modelo_suffix + '</span>'
+                '</td></tr>'
+            )
     # Título de sección
     if len(_pred_list) >= 3:
         pred_section_title = 'Proyecciones a 1 Mes — 3 M' + chr(233) + 'tricas Clave'
@@ -949,18 +1011,12 @@ def build_daily_email_html(
             sev = anom.get('severidad', 'ALERTA')
             desc = anom.get('descripcion', '')
             metrica = anom.get('metrica', '')
-            if sev in ('CRITICA', 'CRITICO', 'CRITICAL'):
-                r_color = '#C62828'
-                r_bg = '#FFEBEE'
-                r_label = 'CR' + chr(205) + 'TICO'
-            elif sev == 'ALERTA':
-                r_color = '#E65100'
-                r_bg = '#FFF3E0'
-                r_label = 'ALERTA'
-            else:
-                r_color = '#F9A825'
-                r_bg = '#FFFDE7'
-                r_label = 'AVISO'
+            r_color, r_bg = ANOMALY_SEVERITY_COLORS.get(sev, ('#F9A825', '#FFFDE7'))
+            r_label = (
+                'CR' + chr(205) + 'TICO' if sev in ('CRITICA', 'CRITICO', 'CRITICAL')
+                else sev.upper() if sev.upper() in ('ALERTA',)
+                else 'AVISO'
+            )
             risk_items += (
                 '<tr><td style="padding:12px 14px;border-bottom:1px solid #f5f5f5;">'
                 '<table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
@@ -1048,7 +1104,6 @@ def build_daily_email_html(
         p.append('<tr><td colspan="4" style="background:#F5F7FA;padding:14px 16px;'
                  'font-size:14px;font-weight:700;color:#333;">'
                  '&#128200; ' + pred_section_title
-                 + (' <span style="font-size:11px;color:#888;font-weight:400;">(' + modelo_label + ')</span>' if modelo_label else '')
                  + '</td></tr>')
         p.append('<tr style="background:#FAFAFA;">')
         p.append('<td style="padding:8px 14px;font-size:11px;color:#888;font-weight:600;">INDICADOR</td>')
@@ -1068,6 +1123,160 @@ def build_daily_email_html(
              '&#9888;&#65039; Riesgos y Anomal' + chr(237) + 'as</td></tr>')
     p.append(risk_items)
     p.append('</table></td></tr>')
+
+    # ════════ Índices Compuestos del Sistema ════════
+    if indices_compuestos:
+        _IDX_COLORS = {
+            'ÓPTIMO': '#1B5E20', 'ADECUADO': '#2E7D32', 'NORMAL': '#2E7D32', 'ESTABLE': '#2E7D32',
+            'LEVE': '#7CB342', 'BAJO': '#E65100', 'MODERADO': '#E65100', 'VIGILANCIA': '#E65100',
+            'PREOCUPANTE': '#BF360C', 'ALTO ESTR\u00c9S': '#B71C1C',
+            'CR\u00cdTICO': '#B71C1C',
+        }
+        _IDX_BG = {
+            'ÓPTIMO': '#C8E6C9', 'ADECUADO': '#E8F5E9', 'NORMAL': '#E8F5E9', 'ESTABLE': '#E8F5E9',
+            'LEVE': '#F9FBE7', 'BAJO': '#FFF3E0', 'MODERADO': '#FFF3E0', 'VIGILANCIA': '#FFF3E0',
+            'PREOCUPANTE': '#FBE9E7', 'ALTO ESTR\u00c9S': '#FFEBEE',
+            'CR\u00cdTICO': '#FFEBEE',
+        }
+        # (sigla, qué mide, textos por nivel {nivel: (descripción, impacto, acción)})
+        _IDX_META = {
+            'ISH': {
+                'titulo': 'Disponibilidad de agua en embalses para generaci\u00f3n el\u00e9ctrica',
+                'niveles': {
+                    '\u00d3PTIMO':      ('Los embalses est\u00e1n en niveles hist\u00f3ricamente altos. Hay amplia reserva h\u00eddrica.',
+                                         'El sistema opera con gran margen de seguridad. La hidroenerg\u00eda puede cubrir la demanda sin apoyos t\u00e9rmicos.',
+                                         'Mantener la gesti\u00f3n actual. Aprovechar excedentes para optimizar costos.'),
+                    'ADECUADO':         ('Los embalses tienen reservas suficientes para cubrir la demanda en el corto plazo.',
+                                         'Bajo riesgo operativo. Los precios de bolsa se mantienen estables.',
+                                         'Monitorear la tendencia. Si los aportes h\u00eddricos bajan, revisar despacho t\u00e9rmico.'),
+                    'BAJO':             ('Los embalses est\u00e1n por debajo de niveles normales. La reserva h\u00eddrica es insuficiente.',
+                                         'Presi\u00f3n al alza en precios de bolsa. Mayor dependencia de generaci\u00f3n t\u00e9rmica costosa.',
+                                         'Activar planes de contingencia t\u00e9rmica. Revisar restricciones de exportaci\u00f3n de energ\u00eda.'),
+                    'CR\u00cdTICO':     ('Los embalses est\u00e1n en niveles cr\u00edticos. Riesgo real de racionamiento.',
+                                         'El sistema enfrenta riesgo de desabastecimiento. Los precios de bolsa pueden dispararse.',
+                                         'Declarar alerta de escasez. Activar protocolos de emergencia y coordinaci\u00f3n con el regulador.'),
+                },
+            },
+            'IPM': {
+                'titulo': 'Presi\u00f3n que ejercen los precios del mercado el\u00e9ctrico mayorista',
+                'niveles': {
+                    'NORMAL':           ('Los precios de bolsa est\u00e1n dentro de rangos hist\u00f3ricos normales. No hay presi\u00f3n econ\u00f3mica.',
+                                         'Costos de generaci\u00f3n estables. Los usuarios regulados no enfrentar\u00e1n incrementos abruptos.',
+                                         'Sin acci\u00f3n inmediata. Continuar monitoreo de aportes h\u00eddricos y oferta t\u00e9rmica.'),
+                    'LEVE':             ('Los precios muestran una tendencia al alza moderada, a\u00fan dentro de rangos manejables.',
+                                         'Leve incremento en el costo de prestaci\u00f3n del servicio. M\u00e1rgenes comercializadores bajo presi\u00f3n.',
+                                         'Verificar causas (deficits h\u00eddricos, mantenimientos). Preparar alertas a agentes del mercado.'),
+                    'MODERADO':         ('Los precios de bolsa est\u00e1n por encima de lo normal. El mercado muestra tensi\u00f3n.',
+                                         'Efecto directo en tarifas reguladas si persiste. Riesgo de incumplimiento en contratos a precio fijo.',
+                                         'Emitir circular a comercializadores. Revisar opciones de gesti\u00f3n de demanda y respuesta activa.'),
+                    'ALTO ESTR\u00c9S': ('Los precios de bolsa est\u00e1n en niveles excepcionalmente altos. Crisis de precios en el mercado.',
+                                         'Impacto directo en tarifas a usuarios. Riesgo de crisis financiera en comercializadores deficitarios.',
+                                         'Intervenci\u00f3n regulatoria urgente. Activar mecanismos de precio l\u00edmite y mesas de trabajo con CREG.'),
+                },
+            },
+            'IES': {
+                'titulo': 'Nivel de estr\u00e9s operativo del sistema el\u00e9ctrico nacional',
+                'niveles': {
+                    'NORMAL':           ('El sistema opera con normalidad. No hay indicios de sobrecarga o vulnerabilidades cr\u00edticas.',
+                                         'La confiabilidad del servicio es alta. El riesgo de fallas en cascada es m\u00ednimo.',
+                                         'Mantener vigilancia rutinaria. Sin acciones especiales requeridas.'),
+                    'LEVE':             ('El sistema presenta algunas se\u00f1ales de estr\u00e9s: anomal\u00edas aisladas o m\u00e1rgenes ajustados.',
+                                         'La confiabilidad se mantiene, pero con menor margen de maniobra ante imprevistos.',
+                                         'Revisar planes de mantenimiento preventivo. Identificar los indicadores que est\u00e1n generando el estr\u00e9s.'),
+                    'MODERADO':         ('El sistema acumula m\u00faltiples indicadores en estado de alerta. La presi\u00f3n operativa es significativa.',
+                                         'Riesgo elevado ante eventos imprevistos (salida de una planta grande, ola de calor). Menor resiliencia.',
+                                         'Activar coordinaci\u00f3n operativa entre XM y generadores. Diferir mantenimientos no urgentes.'),
+                    'ALTO ESTR\u00c9S': ('El sistema est\u00e1 bajo estr\u00e9s severo con m\u00faltiples indicadores cr\u00edticos simult\u00e1neos.',
+                                         'Alta probabilidad de fallas si ocurre cualquier contingencia adicional. Estabilidad del sistema en riesgo.',
+                                         'Activar sala de crisis operativa. Notificar al MinMinas y a la CREG. Preparar protocolos de carga controlada.'),
+                },
+            },
+            'CIS': {
+                'titulo': 'Calificaci\u00f3n integral que resume el estado general del sistema el\u00e9ctrico',
+                'niveles': {
+                    'ESTABLE':          ('Todos los indicadores principales est\u00e1n en verde. El sistema opera con condiciones \u00f3ptimas.',
+                                         'Bajo riesgo en todas las dimensiones: h\u00eddrica, econ\u00f3mica y operativa.',
+                                         'Sin acciones urgentes. Aprovechar la coyuntura para planear mantenimientos mayores.'),
+                    'VIGILANCIA':       ('El sistema es estable pero uno o m\u00e1s indicadores muestran tendencias a monitorear.',
+                                         'Riesgo moderado. La situaci\u00f3n puede evolucionar negativamente si no se gestiona.',
+                                         'Aumentar frecuencia de monitoreo. Identificar el indicador que jala el \u00edndice hacia abajo.'),
+                    'PREOCUPANTE':      ('Varios indicadores est\u00e1n deteriorados. El sistema se acerca a condiciones de riesgo alto.',
+                                         'El deterioro combinado puede amplificar los efectos negativos. Tarifa, confiabilidad y reservas en tensi\u00f3n.',
+                                         'Escalar a nivel directivo. Convocar comit\u00e9 de seguimiento y preparar nota t\u00e9cnica para el despacho ministerial.'),
+                    'CR\u00cdTICO':     ('El sistema enfrenta una crisis multidimensional con varios indicadores en rojo simult\u00e1neamente.',
+                                         'Riesgo real de afectaci\u00f3n masiva del servicio. Impacto econ\u00f3mico y reputacional alto para el sector.',
+                                         'Activar el Comit\u00e9 de Crisis del Sector Energ\u00e9tico. Coordinaci\u00f3n inmediata con Presidencia de la Rep\u00fablica.'),
+                },
+            },
+        }
+        _idx_defs = [
+            ('ish', 'ISH', 'Disponibilidad H\u00eddrica', '&#128167;'),
+            ('ipm', 'IPM', 'Presi\u00f3n de Mercado', '&#128176;'),
+            ('ies', 'IES', 'Estr\u00e9s del Sistema', '&#9888;&#65039;'),
+            ('cis', 'CIS', 'Estado General', '&#127775;'),
+        ]
+        idx_cards = ''
+        for key, sigla, nombre_corto, icon in _idx_defs:
+            entry = indices_compuestos.get(key, {})
+            valor = entry.get('valor', 0)
+            nivel = str(entry.get('nivel', 'NORMAL')).upper()
+            color = _IDX_COLORS.get(nivel, '#555555')
+            bg = _IDX_BG.get(nivel, '#F5F5F5')
+            meta = _IDX_META.get(sigla, {})
+            titulo_largo = meta.get('titulo', nombre_corto)
+            textos = meta.get('niveles', {}).get(nivel, ('', '', ''))
+            descripcion_str, impacto_str, accion_str = textos if len(textos) == 3 else ('', '', '')
+            idx_cards += (
+                '<td style="width:25%;padding:5px;vertical-align:top;">'
+                '<div style="background:' + bg + ';border-radius:10px;'
+                'border:2px solid ' + color + ';padding:14px 10px;">'
+                # Valor + sigla
+                '<div style="text-align:center;margin-bottom:8px;">'
+                '<div style="font-size:18px;margin-bottom:2px;">' + icon + '</div>'
+                '<div style="font-size:22px;font-weight:700;color:' + color + ';line-height:1;">' + f'{valor:.0f}' + '</div>'
+                '<div style="font-size:10px;font-weight:700;color:#333;margin:2px 0;">' + sigla + '</div>'
+                '<div style="padding:2px 8px;border-radius:4px;display:inline-block;'
+                'background:' + color + ';color:#fff;font-size:9px;font-weight:600;">' + nivel + '</div>'
+                '</div>'
+                # Qué mide
+                '<div style="font-size:9px;font-weight:600;color:#333;border-top:1px solid ' + color + '20;padding-top:6px;margin-top:2px;">'
+                '\u00bfQu\u00e9 mide?</div>'
+                '<div style="font-size:9px;color:#444;margin-bottom:6px;line-height:1.3;">' + titulo_largo + '</div>'
+                # Situación actual
+                '<div style="font-size:9px;font-weight:600;color:#333;">'
+                'Situaci\u00f3n actual:</div>'
+                '<div style="font-size:9px;color:#444;margin-bottom:6px;line-height:1.3;">' + descripcion_str + '</div>'
+                # Impacto
+                '<div style="font-size:9px;font-weight:600;color:#333;">'
+                'Impacto en el sistema:</div>'
+                '<div style="font-size:9px;color:#444;margin-bottom:6px;line-height:1.3;">' + impacto_str + '</div>'
+                # Acción recomendada
+                '<div style="font-size:9px;font-weight:600;color:' + color + ';background:' + color + '15;'
+                'border-radius:4px;padding:4px 6px;line-height:1.3;">'
+                '&#128204; Acci\u00f3n: ' + accion_str + '</div>'
+                '</div></td>'
+            )
+        p.append('<tr><td style="padding:20px 26px 8px;">')
+        p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
+                 'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
+        p.append('<tr><td style="background:#EDE7F6;padding:14px 16px;'
+                 'font-size:14px;font-weight:700;color:#4527A0;">'
+                 '&#128201; \u00cdndices del Sistema El\u00e9ctrico Nacional</td></tr>')
+        p.append('<tr><td style="padding:12px 10px;">')
+        p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%">')
+        p.append('<tr>' + idx_cards + '</tr>')
+        _comp = indices_compuestos.get('componentes', {})
+        _n_crit = _comp.get('anomalias_criticas', 0)
+        _n_alert = _comp.get('anomalias_alertas', 0)
+        p.append(
+            '</table>'
+            '<div style="font-size:10px;color:#666;margin-top:8px;text-align:center;">'
+            'Cada indicador tiene escala 0&#8211;100 (mayor = mejor condici\u00f3n) &middot; '
+            + str(_n_crit) + ' alerta(s) cr\u00edtica(s) + '
+            + str(_n_alert) + ' alerta(s) moderada(s) computadas'
+            '</div>'
+        )
+        p.append('</td></tr></table></td></tr>')
 
     # ════════ Noticias del sector ════════
     if noticias:

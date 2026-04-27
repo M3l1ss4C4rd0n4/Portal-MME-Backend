@@ -11,6 +11,7 @@ Se consultan varios feeds RSS con queries especializadas
 en el sector energético / minero de Colombia.
 """
 
+import html
 import logging
 import re
 from email.utils import parsedate_to_datetime
@@ -33,6 +34,11 @@ RSS_QUERIES = [
     "Ministerio Minas Energía Colombia CREG XM",
     # Tarifas / usuario
     "tarifas energía Colombia racionamiento",
+    # Temas estratégicos para el MME
+    "Ecopetrol Colombia noticias hidrocarburos",
+    "transición energética Colombia hidrógeno verde",
+    "minería ilegal Colombia litio cobre",
+    "fenómeno del niño Colombia energía eléctrica",
 ]
 
 _BASE_URL = (
@@ -118,25 +124,44 @@ async def fetch_google_news_rss(
                             pub_date = pub_el.text[:25]
 
                     source_name = ""
+                    source_domain_url = ""
                     if source_el is not None and source_el.text:
                         source_name = source_el.text.strip()
+                        source_domain_url = source_el.attrib.get("url", "")
 
-                    # Google News description es HTML con enlaces
+                    # Google News description es HTML con enlaces.
+                    # El primer <a href="..."> contiene la URL real del artículo.
                     description = ""
+                    real_url = ""
                     if desc_el is not None and desc_el.text:
-                        # Limpiar HTML
-                        description = re.sub(r"<[^>]+>", "", desc_el.text)
+                        raw_desc_html = desc_el.text
+                        # Extraer URL real del primer enlace
+                        href_match = re.search(
+                            r'<a\s+href=["\']([^"\']+)["\']', raw_desc_html, re.I
+                        )
+                        if href_match:
+                            candidate = href_match.group(1)
+                            # Sólo usar si es URL de la fuente real (no news.google.com)
+                            if "news.google.com" not in candidate:
+                                real_url = candidate
+                        # Limpiar HTML y decodificar entidades (&nbsp; → espacio)
+                        description = re.sub(r"<[^>]+>", "", raw_desc_html)
+                        description = html.unescape(description)
                         description = description.strip()[:300]
 
                     link = ""
                     if link_el is not None and link_el.text:
                         link = link_el.text.strip()
 
+                    # Preferir URL real sobre el redirect de Google News
+                    final_url = real_url or link
+
                     all_articles.append({
                         "title": clean_title,
                         "description": description,
-                        "url": link,
+                        "url": final_url,
                         "source": source_name,
+                        "source_url": source_domain_url,
                         "publishedAt": pub_date,
                         "country": "co",
                     })

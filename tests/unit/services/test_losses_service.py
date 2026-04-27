@@ -1,6 +1,6 @@
 """Tests para LossesService."""
 import pytest
-from domain.services.losses_service import LossesService, _get_default_repo, _get_metrics_service
+from domain.services.losses_service import LossesService
 
 
 class TestLossesService:
