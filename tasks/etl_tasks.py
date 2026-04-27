@@ -297,3 +297,178 @@ def calcular_cu_diario(self):
     except Exception as exc:
         logger.error(f"💰 Error en calcular_cu_diario: {exc}")
         raise self.retry(exc=exc)
+
+
+@app.task(bind=True, max_retries=2, default_retry_delay=600, name='tasks.etl_tasks.regenerar_predicciones')
+def regenerar_predicciones(self):
+    """
+    Re-genera predicciones de corto (90d) y largo plazo (365d) con datos frescos.
+
+    Ejecuta los dos scripts ETL de entrenamiento en subproceso y luego regenera
+    las predicciones de largo plazo vía PredictionsService.save_long_term_predictions().
+
+    Programado domingos 02:00 AM — el ETL incremental corre */6h y garantiza
+    que la BD de métricas está actualizada.
+    """
+    import subprocess
+    inicio = datetime.now()
+    logger.info("🔮 [regenerar_predicciones] Iniciando regeneración semanal")
+
+    resumen = {
+        'script_sector': None,
+        'script_postgres': None,
+        'largo_plazo': None,
+        'monitor_quality': None,
+        'duracion_seg': 0,
+    }
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    python_bin = os.path.join(base_dir, 'venv', 'bin', 'python')
+    if not os.path.exists(python_bin):
+        python_bin = 'python3'
+
+    # 1. Re-entrena predicciones sectoriales (DEMANDA, PRECIOS, EMBALSES, etc.)
+    script_sector = os.path.join(base_dir, 'scripts', 'train_predictions_sector_energetico.py')
+    try:
+        proc = subprocess.run(
+            [python_bin, script_sector],
+            capture_output=True, text=True, timeout=1800, cwd=base_dir
+        )
+        resumen['script_sector'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
+        if proc.returncode != 0:
+            logger.error(f"[regenerar_predicciones] sector stderr: {proc.stderr[-1000:]}")
+        else:
+            logger.info("[regenerar_predicciones] sector: OK")
+    except subprocess.TimeoutExpired:
+        resumen['script_sector'] = 'timeout'
+        logger.error("[regenerar_predicciones] script_sector excedió 30 min")
+    except Exception as e:
+        resumen['script_sector'] = f'exception: {e}'
+        logger.error(f"[regenerar_predicciones] script_sector: {e}")
+
+    # 2. Re-entrena predicciones de generación por tecnología (Hidráulica, Solar, etc.)
+    script_postgres = os.path.join(base_dir, 'scripts', 'train_predictions_postgres.py')
+    try:
+        proc = subprocess.run(
+            [python_bin, script_postgres],
+            capture_output=True, text=True, timeout=1800, cwd=base_dir
+        )
+        resumen['script_postgres'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
+        if proc.returncode != 0:
+            logger.error(f"[regenerar_predicciones] postgres stderr: {proc.stderr[-1000:]}")
+        else:
+            logger.info("[regenerar_predicciones] postgres: OK")
+    except subprocess.TimeoutExpired:
+        resumen['script_postgres'] = 'timeout'
+        logger.error("[regenerar_predicciones] script_postgres excedió 30 min")
+    except Exception as e:
+        resumen['script_postgres'] = f'exception: {e}'
+        logger.error(f"[regenerar_predicciones] script_postgres: {e}")
+
+    # 3. Re-genera predicciones de largo plazo (Prophet 365d) con PredictionsService
+    try:
+        from domain.services.predictions_service_extended import PredictionsService
+        svc = PredictionsService()
+        largo_resumen = svc.save_long_term_predictions()
+        ok_count = sum(1 for v in largo_resumen.values() if v > 0)
+        resumen['largo_plazo'] = f'ok {ok_count}/{len(largo_resumen)} fuentes'
+        logger.info(f"[regenerar_predicciones] largo_plazo: {resumen['largo_plazo']}")
+    except Exception as e:
+        resumen['largo_plazo'] = f'exception: {e}'
+        logger.error(f"[regenerar_predicciones] largo_plazo: {e}")
+
+    # 4. Actualiza métricas de calidad ex-post
+    script_quality = os.path.join(base_dir, 'scripts', 'monitor_predictions_quality.py')
+    try:
+        proc = subprocess.run(
+            [python_bin, script_quality],
+            capture_output=True, text=True, timeout=300, cwd=base_dir
+        )
+        resumen['monitor_quality'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
+        logger.info(f"[regenerar_predicciones] monitor_quality: {resumen['monitor_quality']}")
+    except Exception as e:
+        resumen['monitor_quality'] = f'exception: {e}'
+        logger.error(f"[regenerar_predicciones] monitor_quality: {e}")
+
+    resumen['duracion_seg'] = round((datetime.now() - inicio).total_seconds())
+    logger.info(f"🔮 [regenerar_predicciones] Completado en {resumen['duracion_seg']}s: {resumen}")
+    return resumen
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=300)
+def sync_sharepoint_xlsx(self, nombres: list = None, forzar: bool = False):
+    """
+    Descarga los archivos Excel desde SharePoint del Ministerio,
+    detecta cambios por hash SHA-256 y actualiza la base de datos PostgreSQL
+    con la información de los archivos que hayan cambiado.
+
+    Archivos configurados (ver etl/etl_sharepoint_sync.py):
+      - Matriz_Subsidios_DEE     → tablas subsidios_pagos / empresas / mapa
+      - Matriz_Ejecucion_2026    → schema presupuesto
+      - Matriz_Subsidios_KPIs    → schema subsidios_kpis
+      - Seguimiento_Contratos_CE → schema contratos_or
+
+    Args:
+        nombres: Lista de nombres específicos a sincronizar (None = todos los activos).
+        forzar:  Si True, ejecuta el ETL aunque el archivo no haya cambiado en disco.
+    """
+    logger.info("📥 [sync_sharepoint_xlsx] Iniciando sincronización SharePoint → BD")
+    try:
+        import sys
+        import os
+        _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _base not in sys.path:
+            sys.path.insert(0, _base)
+
+        from etl.etl_sharepoint_sync import run_sync
+
+        resultados = run_sync(nombres=nombres, forzar=forzar)
+
+        exitosos = sum(1 for r in resultados if r["error"] is None)
+        etl_ejecutados = sum(1 for r in resultados if r["etl_ejecutado"])
+        fallidos = [r for r in resultados if r["error"]]
+
+        resumen = {
+            "status": "success" if not fallidos else "partial",
+            "timestamp": datetime.now().isoformat(),
+            "archivos_procesados": len(resultados),
+            "exitosos": exitosos,
+            "etl_ejecutados": etl_ejecutados,
+            "fallidos": [{"nombre": r["nombre"], "error": r["error"]} for r in fallidos],
+        }
+        logger.info("📥 [sync_sharepoint_xlsx] Completado: %s", resumen)
+        return resumen
+
+    except Exception as exc:
+        logger.error("❌ [sync_sharepoint_xlsx] Error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+# ── Actualización programada de noticias ──────────────────────────────────
+# Se ejecuta 3 veces al día (7 AM, 12 PM, 7 PM) para garantizar que el
+# slider de noticias del portal siempre muestre titulares frescos.
+# ──────────────────────────────────────────────────────────────────────────
+
+@app.task(
+    name='tasks.etl_tasks.refresh_news_cache',
+    bind=True,
+    base=SafeETLTask,
+)
+def refresh_news_cache(self):
+    """
+    Invalida el caché de noticias en Redis para forzar una recarga fresca
+    en la próxima visita al portal. Se ejecuta 3 veces al día vía Celery Beat.
+    """
+    try:
+        from infrastructure.cache.redis_client import get_redis_client
+        client = get_redis_client()
+        deleted = client.delete("news:enriched_news")
+        logger.info(
+            "[REFRESH_NEWS] Cache de noticias invalidado (%s). "
+            "Próxima visita recargará noticias frescas.",
+            "clave eliminada" if deleted else "clave no existía",
+        )
+        return {"status": "success", "cache_invalidated": bool(deleted)}
+    except Exception as exc:
+        logger.error("[REFRESH_NEWS] Error invalidando cache: %s", exc)
+        raise self.retry(exc=exc)

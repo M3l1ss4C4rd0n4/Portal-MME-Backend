@@ -29,7 +29,7 @@ app = Celery(
     'portal_mme',
     broker='redis://localhost:6379/0',
     backend='redis://localhost:6379/1',
-    include=['tasks.etl_tasks', 'tasks.anomaly_tasks']
+    include=['tasks.etl_tasks', 'tasks.anomaly_tasks', 'tasks.push_tasks']
 )
 
 # Configuración adicional
@@ -66,11 +66,37 @@ app.conf.beat_schedule = {
         'task': 'tasks.anomaly_tasks.send_daily_summary',
         'schedule': crontab(hour=8, minute=0),  # Diario a las 8 AM
     },
+    # Informe EnergIA app: push FCM a las 8:05 AM (5 min después del resumen)
+    'energia-app-informe-8am': {
+        'task': 'tasks.push_tasks.enviar_informe_diario_push',
+        'schedule': crontab(hour=8, minute=5),  # Diario a las 8:05 AM
+    },
     # Cálculo del Costo Unitario (CU) diario a las 10:00 AM
     # (espera a que RestAliv y PerdidasEner estén disponibles — lag ~2 días)
     'calcular-cu-diario': {
         'task': 'tasks.etl_tasks.calcular_cu_diario',
         'schedule': crontab(hour=10, minute=0),  # Diario a las 10 AM
+    },
+    # Re-entrenamiento cada 3 días (lunes/jueves/domingo) a las 02:00 AM
+    # Corre DESPUÉS del ETL incremental (*/6h) para garantizar datos frescos en BD.
+    # Ejecuta: train_predictions_sector + train_predictions_postgres + largo_plazo Prophet + monitor_quality
+    # Cambiado de semanal (domingo) a cada 3 días para aprovechar el histórico 2000-2019 extendido.
+    'regenerar-predicciones-cada-3-dias': {
+        'task': 'tasks.etl_tasks.regenerar_predicciones',
+        'schedule': crontab(hour=2, minute=0, day_of_week='0,3,6'),  # Dom/Mié/Sáb 02:00 AM
+    },
+    # Sincronización automática Excel SharePoint → data/ → PostgreSQL
+    # Descarga archivos, detecta cambios por hash y actualiza la BD.
+    # Horario: 7:00 AM diario (laboral, antes del inicio de la jornada).
+    'sync-sharepoint-xlsx-diario': {
+        'task': 'tasks.etl_tasks.sync_sharepoint_xlsx',
+        'schedule': crontab(hour=7, minute=0),  # Diario 7:00 AM
+    },
+    # Actualización de noticias del portal 3 veces al día
+    # Mañana (7:00), mediodía (12:00) y noche (19:00)
+    'refresh-news-3x-dia': {
+        'task': 'tasks.etl_tasks.refresh_news_cache',
+        'schedule': crontab(hour='7,12,19', minute=0),
     },
 }
 
