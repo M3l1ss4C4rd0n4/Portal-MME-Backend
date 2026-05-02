@@ -230,3 +230,4 @@ data/local-maven-temp.zip
 # Graphify cache
 graphify-out/cache/
 graphify-out/*.json
+graphify-out/GRAPH_REPORT.md
