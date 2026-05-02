@@ -1,17 +1,3 @@
-"""
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                           COMPONENTES MME - LIBRERÍA                          ║
-║                                                                               ║
-║  Librería de componentes reutilizables para el Portal Energético             ║
-║  Organizada por categorías: layout, data_display, feedback, inputs, nav      ║
-║                                                                               ║
-║  Uso:                                                                          ║
-║     from interface.components import kpi_card, chart_card                    ║
-║     from interface.components.feedback import toast, skeleton                ║
-║                                                                               ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-"""
-
 # Componentes de Data Display
 from .data_display.kpi_card import kpi_card, kpi_row, kpi_loading_card, kpi_error_card
 from .data_display.chart_card import chart_card, chart_card_loading, chart_card_error, chart_card_empty
