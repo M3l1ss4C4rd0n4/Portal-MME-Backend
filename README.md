@@ -503,14 +503,13 @@ Además de la API REST y el Dashboard, el monolito contiene:
 - **ETL duplicado** — `scripts/completar_tablas_incompletas.py` repite la misma lógica para `commercial_metrics`, `loss_metrics` y `restriction_metrics`.
 - **Servicios deprecated** — Confirmados: `geo_service.py`, `orchestrator_service.py`, `predictions_service.py`.
 
-### Documentación técnica generada
+### Documentación técnica
 
-La documentación detallada del grafo vive en `/home/admonctrlxm/documentacion-tecnica/`:
-- `server_ARCHITECTURE.md`
-- `server_DATA_FLOW.md`
-- `server_SERVICES_DEPS.md`
-- `server_TECH_DEBT.md`
-- `server_CLEANUP_PROPOSAL.md`
+- **`PROPUESTA_MAESTRA.md`** (repo portal) — Roadmap completo, deuda técnica, ADRs
+- **`AGENTS.md`** — Reglas y convenciones para agentes de desarrollo
+- **`SKILL_PACK_COMPACTO.md`** — Operativo diario: jerarquía de verdad, comandos, ejemplos
+- **`RUNBOOK_PRODUCCION.md`** — Procedimientos operativos críticos
+- **Grafo de dependencias:** `graphify-out/graph-global.json` (6.184 nodos, 14.012 aristas)
 
 ---
 
