@@ -226,3 +226,7 @@ data/gradle-*
 data/kgp-*
 data/local-maven-*
 data/local-maven-temp.zip
+
+# Graphify cache
+graphify-out/cache/
+graphify-out/*.json
