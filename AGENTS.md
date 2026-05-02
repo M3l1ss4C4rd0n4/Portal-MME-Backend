@@ -503,3 +503,26 @@ result = await conn.fetch(f"SELECT * FROM users WHERE id = {user_id}")  # SQL In
 ---
 
 *Documento actualizado: 31 de marzo de 2026 — Stats: 350 py files, 52 endpoints, 347/354 tests*
+
+---
+
+## 📚 Skill Pack para Agentes
+
+### Skill Compacto (siempre cargar)
+`SKILL_PACK_COMPACTO.md` — 90 segundos de lectura. Contiene:
+- Jerarquía de Verdad (N1-N4)
+- 10 Reglas Absolutas
+- Ciclo de Diagnóstico (CDA)
+- Señales de ALTO
+- Test de necesidad de .md
+- Comandos esenciales
+- Checklist de calidad
+- Ejemplos reales de errores de agentes previos
+
+### Skill Detallado (bajo demanda)
+`SKILL_PACK_DETALLADO.md` — Referencia completa por skill numerado.
+
+### Scripts Ejecutables
+`scripts/agent-tools/`:
+- `verify_table.py` — Snapshot de tabla PostgreSQL (métodos A-D)
+- `check_cycles.py` — Detección de ciclos estáticos y lógicos
