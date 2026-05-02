@@ -333,7 +333,7 @@ class InformeHandlerMixin:
             try:
                 from infrastructure.database.manager import db_manager
                 _df_alertas = db_manager.query_df("""
-                    SELECT metrica, severidad, descripcion, detalle
+                    SELECT metrica, severidad, descripcion, json_completo::text AS detalle
                     FROM alertas_historial
                     WHERE fecha_evaluacion >= CURRENT_DATE - INTERVAL '1 day'
                       AND severidad NOT IN ('NORMAL', 'INFO')

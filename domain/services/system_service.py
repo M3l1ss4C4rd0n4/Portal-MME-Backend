@@ -50,9 +50,9 @@ def verificar_salud_sistema() -> Dict[str, Any]:
         
         # 3. Verificar tablas principales
         cursor.execute("""
-            SELECT table_name 
+            SELECT table_name, table_schema
             FROM information_schema.tables 
-            WHERE table_schema = 'public'
+            WHERE table_schema IN ('public', 'sector_energetico')
         """)
         tablas = [row[0] for row in cursor.fetchall()]
         
@@ -67,7 +67,7 @@ def verificar_salud_sistema() -> Dict[str, Any]:
         resultado['checks']['tables_found'] = len(tablas)
         
         # 4. Verificar cantidad de registros
-        cursor.execute("SELECT COUNT(*) FROM metrics")
+        cursor.execute("SELECT COUNT(*) FROM sector_energetico.metrics")
         total_registros = cursor.fetchone()[0]
         resultado['checks']['total_records'] = total_registros
         
@@ -77,7 +77,7 @@ def verificar_salud_sistema() -> Dict[str, Any]:
         # 5. Verificar frescura de los datos
         cursor.execute("""
             SELECT MAX(fecha) as fecha_max
-            FROM metrics
+            FROM sector_energetico.metrics
             WHERE metrica = 'Gene' AND entidad = 'Sistema' AND recurso = 'Sistema'
         """)
         
