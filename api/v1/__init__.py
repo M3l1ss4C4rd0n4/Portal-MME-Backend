@@ -1,22 +1,3 @@
-"""
-API v1 del Portal Energético MME
-
-Agrupa todos los routers de la versión 1 de la API:
-- Generación eléctrica
-- Hidrología y embalses
-- Transmisión
-- Distribución
-- Sistema (demanda, precios)
-- Comercial
-- Pérdidas de energía
-- Restricciones operativas
-- Métricas energéticas
-- Predicciones ML
-
-Autor: Arquitectura Dashboard MME
-Fecha: 5 de febrero de 2026
-"""
-
 from fastapi import APIRouter
 
 from api.v1.routes import (

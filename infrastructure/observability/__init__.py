@@ -1,14 +1,3 @@
-"""
-Infrastructure Observability Module
-
-Módulo de observabilidad para el Portal Energético MME.
-Incluye:
-- Métricas Prometheus
-- Health Checks
-- Distributed Tracing (Jaeger)
-- Alertas
-"""
-
 from .metrics.collector import MetricsCollector, metrics_collector
 from .health.health_checker import HealthChecker, health_checker
 from .tracing.tracer import Tracer, tracer
