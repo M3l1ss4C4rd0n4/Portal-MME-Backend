@@ -219,3 +219,10 @@ data/*.csv
 # Módulos experimentales (no listos para producción)
 infrastructure/cqrs/
 infrastructure/event_sourcing/
+
+# EnergIA build artifacts (large binaries)
+data/*.zip
+data/gradle-*
+data/kgp-*
+data/local-maven-*
+data/local-maven-temp.zip

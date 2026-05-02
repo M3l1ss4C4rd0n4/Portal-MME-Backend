@@ -465,6 +465,55 @@ sudo logrotate -f /etc/logrotate.d/mme-server
 
 ---
 
+## Notas de Arquitectura (Validadas por Grafo — 2026-05-01)
+
+> Estas notas complementan la documentación anterior con datos validados mediante Graphify (análisis estático del grafo de código).
+
+### Métricas reales del codebase
+
+| Métrica | Valor |
+|---|---|
+| Archivos analizados | 394 |
+| Nodos en grafo | 6.021 |
+| Aristas (conexiones) | 13.887 |
+| Comunidades detectadas | 244 |
+| Aristas INFERRED | 47% (~6.476) |
+| Aristas EXTRACTED | 53% (~7.411) |
+
+### God Nodes validados
+
+| Nodo | Aristas totales | EXTRACTED | INFERRED | Nota |
+|---|---|---|---|---|
+| `PostgreSQLConnectionManager` | 256 | 2 (0.8%) | 254 (99.2%) | Hub real de conexiones DB. Las INFERRED son imports reales no extraídos por AST. |
+| `MetricsService` | 219 | ~13 (6%) | ~206 (94%) | Servicio central. Posible doble conteo de imports (hipótesis no confirmada). |
+| `GenerationService` | 217 | — | — | Servicio de generación eléctrica, altamente conectado. |
+
+### Subproyectos embebidos detectados
+
+Además de la API REST y el Dashboard, el monolito contiene:
+
+- **`whatsapp_bot/`** — 522 nodos en el grafo. Bot de WhatsApp/Telegram con handlers, AI integration y lógica de subsidios. **Es casi tan grande como la API principal.**
+- **`energia_app/`** — App móvil React Native (Android/iOS).
+- **`experiments/`** — Experimentos ML (XGBoost, SARIMA, LightGBM).
+- **`scripts/`** — 43 scripts de utilidad, algunos con lógica ETL duplicada.
+
+### Deuda técnica validada por el grafo
+
+- **`core/container.py`** — 575 nodos, cohesión 0.01. God file de inyección de dependencias. Requiere división en módulos temáticos.
+- **ETL duplicado** — `scripts/completar_tablas_incompletas.py` repite la misma lógica para `commercial_metrics`, `loss_metrics` y `restriction_metrics`.
+- **Servicios deprecated** — Confirmados: `geo_service.py`, `orchestrator_service.py`, `predictions_service.py`.
+
+### Documentación técnica generada
+
+La documentación detallada del grafo vive en `/home/admonctrlxm/documentacion-tecnica/`:
+- `server_ARCHITECTURE.md`
+- `server_DATA_FLOW.md`
+- `server_SERVICES_DEPS.md`
+- `server_TECH_DEBT.md`
+- `server_CLEANUP_PROPOSAL.md`
+
+---
+
 ## Contacto
 
 - **Desarrollador Principal:** [Tu nombre/email]

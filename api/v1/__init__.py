@@ -45,6 +45,7 @@ from api.v1.routes import (
     comunidades,
     supervision_portal,
     energia_dashboard,
+    fenoge,
 )
 
 # Router principal de v1
@@ -220,6 +221,13 @@ api_router_v1.include_router(
     energia_dashboard.router,
     prefix="/energia",
     tags=["🔌 Portal — Energía Dashboard"]
+)
+
+# 25. Fenoge — comunidades energéticas programa Fenoge 1.0 y 1.1
+api_router_v1.include_router(
+    fenoge.router,
+    prefix="/fenoge",
+    tags=["🌿 Portal — Fenoge"]
 )
 
 __all__ = ["api_router_v1"]

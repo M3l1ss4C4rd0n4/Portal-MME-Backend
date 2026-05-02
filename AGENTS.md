@@ -98,6 +98,14 @@ result = container.resolve(INombreService)  # No existe este método
 1. Cada servicio tiene su propio getter: `get_nombre_service()`
 2. Repositorios se inyectan en constructores de servicios
 3. NO usar `container.resolve()` - no existe
+
+### Nota de Arquitectura (Grafo 2026-05-01)
+
+`core/container.py` es un **god file** (575 nodos en el grafo, cohesión 0.01). Cualquier modificación al container debe:
+- Evaluar si el nuevo servicio puede vivir en un factory separado.
+- Evitar aumentar el acoplamiento total del archivo.
+- Verificar que no se rompan imports en `scripts/`, `api/`, `whatsapp_bot/` ni `tests/`.
+- Si refactorizas, hacerlo por etapas: un tipo de factory a la vez (servicios → repositorios → externos).
 4. Los getters crean instancias lazy (singleton por request)
 
 ---
