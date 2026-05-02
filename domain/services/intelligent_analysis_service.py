@@ -49,21 +49,25 @@ class TrendDirection(str, Enum):
     UNKNOWN = "unknown"
 
 
-# Umbrales de anomalías por métrica
+# Umbrales oficiales XM/UPME/MinEnergía/IDEAM
+# Embalses: >80% Normal | 70-80% Estable | 60-70% Alerta temprana | 50-60% Alerta alta | <50% Crítico
+# Aportes:  >=120% Muy favorable | 100-120% Normal | 90-100% Vigilancia | 70-90% Déficit | <70% Crítico
 THRESHOLDS = {
     "reservas_hidricas": {
-        "critical_low": 30.0,
-        "warning_low": 40.0,
-        "optimal_min": 50.0,
-        "optimal_max": 85.0,
+        "critical_low": 50.0,    # < 50% → CRÍTICO
+        "warning_low": 60.0,     # 50-60% → ALERTA ALTA
+        "alert_low": 70.0,       # 60-70% → ALERTA TEMPRANA
+        "optimal_min": 70.0,
+        "optimal_max": 80.0,     # >= 80% → NORMAL
         "warning_high": 95.0,
         "critical_high": 98.0
     },
     "aportes_hidricos": {
-        "critical_low": 50.0,
-        "warning_low": 70.0,
-        "optimal_min": 80.0,
-        "optimal_max": 120.0,
+        "critical_low": 70.0,    # < 70% → CRÍTICO
+        "warning_low": 90.0,     # 70-90% → DÉFICIT HÍDRICO
+        "alert_low": 100.0,      # 90-100% → VIGILANCIA
+        "optimal_min": 100.0,
+        "optimal_max": 120.0,    # >= 120% → MUY FAVORABLE
         "warning_high": 150.0,
         "critical_high": 200.0
     },

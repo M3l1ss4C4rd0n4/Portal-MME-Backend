@@ -158,13 +158,63 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                 row_vol = cur.fetchone()
                 embalse_gwh = float(row_vol[0]) if row_vol and row_vol[0] else None
 
+                # ── Tendencias 7 días (momentum) ──────────────────────────
+                # Compara valor actual vs promedio de los 7 días anteriores.
+                # Umbrales aprobados: embalses ±1pp, precio/generación/aportes ±5%
+                cur.execute("""
+                    SELECT
+                        AVG(CASE WHEN metrica='Gene'             THEN valor_gwh END) AS gene_7d,
+                        AVG(CASE WHEN metrica='PPPrecBolsNaci'   THEN valor_gwh END) AS precio_7d,
+                        AVG(CASE WHEN metrica='PorcVoluUtilDiar' THEN valor_gwh END) AS emb_7d,
+                        AVG(CASE WHEN metrica='AporEner'         THEN valor_gwh END) AS apor_7d,
+                        AVG(CASE WHEN metrica='AporEnerMediHist' THEN valor_gwh END) AS apor_hist_7d
+                    FROM sector_energetico.metrics
+                    WHERE entidad='Sistema' AND recurso='Sistema'
+                      AND metrica IN ('Gene','PPPrecBolsNaci','PorcVoluUtilDiar','AporEner','AporEnerMediHist')
+                      AND fecha >= %s::date - INTERVAL '7 days'
+                      AND fecha < %s::date
+                """, [fecha_gene, fecha_gene])
+                t7 = cur.fetchone()
+                gene_7d     = float(t7[0]) if t7 and t7[0] else None
+                precio_7d   = float(t7[1]) if t7 and t7[1] else None
+                emb_7d_raw  = float(t7[2]) if t7 and t7[2] else None
+                apor_7d     = float(t7[3]) if t7 and t7[3] else None
+                apor_h_7d   = float(t7[4]) if t7 and t7[4] else None
+
         # % embalse viene como fracción (0-1) desde la BD
         pct_embalses = round(pct_emb_raw * 100, 2)
+
+        # ── Cálculo de tendencias ─────────────────────────────────────────
+        def _tendencia_pct(actual, ref_7d, umbral):
+            """Retorna dirección y cambio porcentual relativo vs media 7d."""
+            if actual is None or ref_7d is None or ref_7d == 0:
+                return {"direccion": "desconocida", "cambio7d": None, "label": "S/D"}
+            cambio = ((actual - ref_7d) / abs(ref_7d)) * 100
+            if cambio > umbral:
+                label = "ALTA"
+            elif cambio < -umbral:
+                label = "BAJA"
+            else:
+                label = "ESTABLE"
+            return {"direccion": label.lower(), "cambio7d": round(cambio, 1), "label": label}
+
+        def _tendencia_pp(actual_pct, ref_pct_7d, umbral_pp):
+            """Tendencia en puntos porcentuales (para embalses y aportes%)."""
+            if actual_pct is None or ref_pct_7d is None:
+                return {"direccion": "desconocida", "cambio7d": None, "label": "S/D"}
+            cambio = actual_pct - ref_pct_7d
+            if cambio > umbral_pp:
+                label = "ALTA"
+            elif cambio < -umbral_pp:
+                label = "BAJA"
+            else:
+                label = "ESTABLE"
+            return {"direccion": label.lower(), "cambio7d": round(cambio, 2), "label": label}
 
         if pct_embalses < 50:
             estado_sin, color_sin = "CRÍTICO", "#EF4444"
         elif pct_embalses < 60:
-            estado_sin, color_sin = "SITUACIÓN DELICADA", "#F97316"
+            estado_sin, color_sin = "ALERTA ALTA", "#F97316"
         elif pct_embalses < 70:
             estado_sin, color_sin = "ALERTA TEMPRANA", "#F59E0B"
         elif pct_embalses < 80:
@@ -175,6 +225,18 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
         # pct mensual (metodología XM): acumulado mes / acumulado histórico
         aportes_pct = round((aportes_mtd / hist_mtd) * 100, 2) \
             if aportes_mtd and hist_mtd and hist_mtd > 0 else None
+
+        # ── Tendencias: variables auxiliares ─────────────────────────────
+        emb_7d_pct  = round(emb_7d_raw * 100, 2) if emb_7d_raw else None
+        apor_pct_7d = round((apor_7d / apor_h_7d) * 100, 2) \
+                      if apor_7d and apor_h_7d and apor_h_7d > 0 else None
+
+        tendencias = {
+            "embalses":   _tendencia_pp(pct_embalses,  emb_7d_pct,   1.0),
+            "precio":     _tendencia_pct(precio,        precio_7d,    5.0),
+            "generacion": _tendencia_pct(generacion,    gene_7d,      5.0),
+            "aportes":    _tendencia_pp(aportes_pct,    apor_pct_7d,  5.0),
+        }
 
         # Capacidad útil total del sistema (GWh)
         capacidad_gwh = round(embalse_gwh / pct_emb_raw, 2) \
@@ -195,6 +257,7 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                 "dailyActualGwh": round(aportes, 2),
                 "dailyHistGwh":   round(aportes_h, 2),
             },
+            "tendencias":          tendencias,
             "ultimaActualizacion": _fmt_fecha(ultima),
             "ultimaEjecucionETL":  _fmt_fecha_hora(ultima_etl),
             "fechaGeneracion":     _fmt_fecha(fecha_gene),
