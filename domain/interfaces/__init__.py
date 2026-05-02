@@ -1,17 +1,3 @@
-"""
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                        DOMAIN INTERFACES (PORTS)                              ║
-║                                                                               ║
-║  Arquitectura Hexagonal - Puertos para invertir dependencias                 ║
-║  Domain NO depende de Infrastructure, sino de estas abstracciones            ║
-║                                                                               ║
-║  Referencias:                                                                 ║
-║  - Clean Architecture (Robert C. Martin)                                      ║
-║  - Hexagonal Architecture (Alistair Cockburn)                                ║
-║  - Dependency Inversion Principle (SOLID)                                     ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-"""
-
 # Importar todas las interfaces para facilitar su uso
 from domain.interfaces.repositories import (
     IMetricsRepository,

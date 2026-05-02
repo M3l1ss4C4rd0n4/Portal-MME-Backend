@@ -1,11 +1,3 @@
-"""
-Módulo de seguridad para el Portal Energético MME.
-
-Proporciona:
-- Validación de entradas SQL y protección contra inyección
-- Gestión segura de secretos via Vault
-"""
-
 from .sql_validator import (
     validate_table_name,
     validate_column_name,
