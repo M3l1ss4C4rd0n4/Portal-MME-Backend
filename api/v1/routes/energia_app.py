@@ -528,7 +528,7 @@ async def download_deps_patch(api_key: str = Depends(get_api_key)):
 @router.get("/dev/ppn-energia", include_in_schema=False)
 async def download_ppn_energia(api_key: str = Depends(get_api_key)):
     """Endpoint temporal - modelo Porcupine wake word 'energía' para Android."""
-    path = "/home/admonctrlxm/server/energia_app/android/app/src/main/assets/energia_es_android.ppn"
+    path = "/home/admonctrlxm/server/data/energia_es_android.ppn"
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Archivo no disponible")
     return FileResponse(
