@@ -132,6 +132,9 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                 """)
                 dept_avg_rows = cur.fetchall()
 
+                cur.execute("SELECT MAX(fecha_carga) FROM comunidades.base")
+                ts_cem = cur.fetchone()[0]
+
         def _f(v):
             return float(v) if v is not None else None
 
@@ -221,6 +224,7 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
             "puntos":             puntos,
             "porMunicipio":       por_municipio,
             "deptAvgs":           dept_avgs,
+            "ultima_actualizacion": ts_cem.strftime("%d/%m/%Y, %H:%M") if ts_cem else None,
         })
     except Exception as e:
         logger.error("[comunidades/mapa] %s", e)

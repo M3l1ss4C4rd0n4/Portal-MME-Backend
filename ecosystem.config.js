@@ -10,7 +10,8 @@ module.exports = {
       script: '/home/admonctrlxm/server/venv/bin/gunicorn',
       args: [
         'api.main:app',
-        '--workers', '4',
+        // OPTIMIZADO: Reducido de 4 a 2 workers para ahorrar ~1.5GB de RAM
+        '--workers', '2',
         '--threads', '4',
         '--worker-class', 'uvicorn.workers.UvicornWorker',
         '--bind', '127.0.0.1:8000',
@@ -21,6 +22,8 @@ module.exports = {
         '--error-logfile', 'logs/api-error.log',
         '--log-level', 'info',
       ].join(' '),
+      // Limitar memoria para forzar reciclaje de workers
+      max_memory_restart: '800M',
       cwd: '/home/admonctrlxm/server',
       interpreter: 'none',
       watch: false,

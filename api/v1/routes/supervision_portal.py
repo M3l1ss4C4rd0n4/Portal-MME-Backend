@@ -193,10 +193,14 @@ async def get_supervision_dashboard(
                 """)
                 total = int((cur.fetchone() or [0])[0])
 
+                cur.execute("SELECT MAX(fecha_carga) FROM supervision.contratos")
+                ts_sup = cur.fetchone()[0]
+
         def _f(v):
             return float(v) if v is not None else None
 
         return JSONResponse({
+            "ultima_actualizacion":    ts_sup.strftime("%d/%m/%Y, %H:%M") if ts_sup else None,
             "nContratos":              int(k[0] or 0),
             "nProyectos":              int(k[1] or 0),
             "enEjecucion":             int(k[2] or 0),

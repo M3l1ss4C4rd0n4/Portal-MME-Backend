@@ -167,7 +167,8 @@ class TransmissionRepository(BaseRepository, ITransmissionRepository):
             DELETE FROM lineas_transmision 
             WHERE fecha_registro < NOW() - INTERVAL '%s days'
         """
-        result = self.execute_query(query, (days_to_keep,))    
+        return self.execute_non_query(query, (days_to_keep,))
+
     # Métodos adicionales para cumplir con ITransmissionRepository
     
     def get_all_lines(self) -> pd.DataFrame:

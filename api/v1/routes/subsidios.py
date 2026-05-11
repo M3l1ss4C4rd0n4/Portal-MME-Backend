@@ -35,29 +35,25 @@ async def get_subsidios_kpis(request: Request, api_key: str = Depends(get_api_ke
                 """)
                 deficit = float(cur.fetchone()[0] or 0)
 
-                # KPIs año 2025
+                # KPIs por año — fuente oficial: hoja 'KPI'S Subsidios' del Excel
                 cur.execute("""
-                    SELECT
-                        COUNT(DISTINCT no_resolucion)  AS resoluciones,
-                        SUM(valor_resolucion)          AS valor_asignado,
-                        SUM(saldo_pendiente)           AS pendiente,
-                        SUM(valor_pagado)              AS pagado
-                    FROM subsidios.subsidios_pagos
-                    WHERE LEFT(anio_trimestre_resolucion, 4)::int = 2025
+                    SELECT anio, n_resoluciones, valor_asignado, valor_pendiente
+                    FROM subsidios.kpis_resumen
+                    WHERE anio IN (2025, 2026)
+                    ORDER BY anio
                 """)
-                row25 = cur.fetchone()
+                kpis_rows = {r[0]: r for r in cur.fetchall()}
 
-                # KPIs año 2026
-                cur.execute("""
-                    SELECT
-                        COUNT(DISTINCT no_resolucion)  AS resoluciones,
-                        SUM(valor_resolucion)          AS valor_asignado,
-                        SUM(saldo_pendiente)           AS pendiente,
-                        SUM(valor_pagado)              AS pagado
-                    FROM subsidios.subsidios_pagos
-                    WHERE LEFT(anio_trimestre_resolucion, 4)::int = 2026
-                """)
-                row26 = cur.fetchone()
+                def _kpi_row(anio):
+                    r = kpis_rows.get(anio)
+                    if r:
+                        asig = float(r[2] or 0)
+                        pend = float(r[3] or 0)
+                        return (int(r[1] or 0), asig, pend, asig - pend)
+                    return (0, None, None, None)
+
+                row25 = _kpi_row(2025)
+                row26 = _kpi_row(2026)
 
                 # Histórico por año y fondo
                 cur.execute("""
@@ -75,10 +71,14 @@ async def get_subsidios_kpis(request: Request, api_key: str = Depends(get_api_ke
                 cols_h = [d[0] for d in cur.description]
                 historico = [dict(zip(cols_h, r)) for r in cur.fetchall()]
 
+                cur.execute("SELECT MAX(fecha) FROM subsidios.subsidios_import_log")
+                ts_sub = cur.fetchone()[0]
+
         def _f(v):
             return float(v) if v is not None else None
 
         return JSONResponse({
+            "ultima_actualizacion": ts_sub.strftime("%d/%m/%Y, %H:%M") if ts_sub else None,
             "deficitAcumulado": deficit,
             "anio2025": {
                 "resoluciones": int(row25[0] or 0),
@@ -216,9 +216,11 @@ async def get_deficit_historico(request: Request, api_key: str = Depends(get_api
         with _cm.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT anio, fondo, deficit
+                    SELECT anio, subsidios, contribuciones,
+                           deficit_anual, deficit_acumulado,
+                           apropiacion_pgn, recursos_faltantes
                     FROM subsidios.deficit_historico
-                    ORDER BY anio, fondo
+                    ORDER BY anio
                 """)
                 cols = [d[0] for d in cur.description]
                 rows = [dict(zip(cols, r)) for r in cur.fetchall()]

@@ -14,7 +14,7 @@
             "titulo_arcgis": "Matriz Subsidios DEE Supervisión",
             "descripcion": "Matriz de subsidios de la Dirección de Energía Eléctrica – DEE Supervisión (SharePoint Ministerio)",
             "tags": "subsidios, DEE, supervisión, onedrive, MME",
-            "item_id_existente": null,
+            "item_id_existente": "f9214ec6df1f4356b1ebac1236febf7a",
             "columnas_coordenadas": null,
             "activo": true
         },
@@ -58,7 +58,7 @@
             "titulo_arcgis": "Matriz Subsidios - Pagos",
             "descripcion": "Hoja 'pagos' de la Matriz de Subsidios (SharePoint Ministerio)",
             "tags": "subsidios, pagos, onedrive, MME",
-            "item_id_existente": null,
+            "item_id_existente": "e3e7b41cde7f4438a136ba2c15decf06",
             "columnas_coordenadas": null,
             "activo": true
         },
@@ -69,7 +69,7 @@
             "titulo_arcgis": "Ejecución Presupuestal 2026 - Resumen",
             "descripcion": "Hoja 'resumen' de la Matriz de Ejecución Presupuestal 2026 (SharePoint Ministerio)",
             "tags": "presupuesto, ejecución, 2026, onedrive, MME",
-            "item_id_existente": null,
+            "item_id_existente": "d1edea10aada4bc2b4c624945aad4cdc",
             "columnas_coordenadas": null,
             "activo": true
         },

@@ -1,0 +1,18 @@
+# Python venv and caches
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+htmlcov/
+
+# Data and backups
+data/
+backups/
+assets/
+*.zip
+*.csv
+*.xlsx
+*.parquet
+
+# Docker and config
+docker/

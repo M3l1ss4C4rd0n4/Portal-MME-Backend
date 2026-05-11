@@ -1,528 +1,222 @@
-# AGENTS.md - Server Backend MME
+# AGENTS.md — Server Backend MME
 
-## Guía para Agentes de Desarrollo
+> **Última actualización:** 2026-05-02  
+> **Framework:** SKILL_PACK_V4.1.md (Field Medic Framework — Jerarquía de Verdad + CDA + Ciclos + Hardware Physics)
+> **Ubicación:** `/home/admonctrlxm/server/SKILL_PACK_V4.1.md`  
+> **También:** `/home/admonctrlxm/portal-direccion-mme/SKILL_PACK_V4.1.md` (misma versión)  
 
-Información crítica para agentes de IA y desarrolladores del backend del Portal Dirección MME.
+## 🚨 PASO 0: LEER EL SKILL PACK COMPLETO
+
+**ANTES de cualquier acción en este proyecto, leer COMPLETAMENTE:**
+
+```
+/home/admonctrlxm/server/SKILL_PACK_V4.1.md
+```
+
+**NO resumir. NO memorizar selectivamente. LEER COMPLETO.**
+
+El framework NO es sugerencia. Es el **contrato** operacional.
+
+**¿Por qué V4.1 y no SKILL_PACK_CLAUDE.md?**
+- V4.1 incluye: Jerarquía de Verdad con pesos, CDA 7-fases, detección de ciclos (estáticos Y lógicos), verificación de datos con Método A/B/C/D por tamaño tabla, cálculo de riesgo con `bc`, trampa ANALYZE, diff textual de PDF
+- SKILL_PACK_CLAUDE.md era un draft incompleto. Kimi intentó un shortcut y falló.
 
 ---
 
-## 🚨 REGLAS CRÍTICAS
+## Stack
 
-### 1. NUNCA modificar sin:
-- Backup verificable
-- Confirmación explícita del usuario
-- `python -m py_compile archivo.py` sin errores
+- Python 3.11 + FastAPI + Dash (legacy dashboard)
+- PostgreSQL vía asyncpg — usar `get_pool()` de `core/database/pool.py`
+- Redis (caché)
+- Celery + Celery Beat (tareas async + scheduling — RIESGO ALTO)
+- Systemd (4 servicios: `api-mme`, `dashboard-mme`, `whatsapp-bot`, `telegram-polling`)
+- Producción: `https://api.portaldireccionee.minenergia.gov.co`
 
-### 2. SIEMPRE verificar dependencias:
-```bash
-grep -r "nombre_funcion" --include="*.py" .
-```
+## Ecosistema Completo
 
-### 3. NUNCA tocar código en producción sin coordinar
+Este repo es el **backend**. El **frontend** vive en `/home/admonctrlxm/portal-direccion-mme/` con su propio `AGENTS.md`.
+Cualquier cambio que afecte ambos (API contracts, DB schema, deploy coordinado) requiere leer AMBOS AGENTS.md.
 
-### 4. SIEMPRE ejecutar tests después de cambios:
-```bash
-pytest tests/ -v --tb=short
-```
+| Proyecto | Ruta | Stack | AGENTS.md |
+|---|---|---|---|
+| Backend (este) | `/home/admonctrlxm/server/` | Python 3.11 + FastAPI + Dash | Este archivo |
+| Frontend | `/home/admonctrlxm/portal-direccion-mme/` | Next.js 15 + React 19 | `portal-direccion-mme/AGENTS.md` |
+| WhatsApp Bot | `/home/admonctrlxm/server/whatsapp_bot/` | FastAPI (puerto 8001) | Este archivo |
 
----
+## Servicios Systemd (4 servicios activos)
 
-## 📁 Estructura del Proyecto
+| Servicio | Propósito | Puertos | Restricción |
+|---|---|---|---|
+| `api-mme.service` | API principal FastAPI | 8000 | Tocar solo con backup + `systemctl status` pre/post |
+| `dashboard-mme.service` | Dash legacy | — | Mismo que arriba |
+| `whatsapp-bot.service` | Bot WhatsApp | 8001 | **NO tocar venv anidado** — ver Decisiones Congeladas abajo |
+| `telegram-polling.service` | Bot Telegram | — | Mismo que arriba |
 
-### Convenciones Python
+## Roadmap y Decisiones Congeladas
 
-```
-server/
-├── api/                      # FastAPI routes
-│   ├── main.py              # Entry point
-│   └── v1/routes/           # Endpoints
-│
-├── core/                    # Core infrastructure
-│   ├── container.py         # Dependency injection
-│   ├── config.py            # Configuration
-│   └── app_factory.py       # Dash app factory
-│
-├── domain/                  # Business logic
-│   ├── services/            # Domain services
-│   │   ├── __init__.py
-│   │   └── nombre_service.py
-│   ├── models/              # Pydantic models
-│   ├── schemas/             # DTOs
-│   └── interfaces/          # Abstract base classes
-│
-├── infrastructure/          # External adapters
-│   ├── database/           # PostgreSQL repositories
-│   ├── cache/              # Redis
-│   ├── external/           # XM, OneDrive, IDEAM clients
-│   └── logging/            # Logging setup
-│
-├── etl/                     # ETL scripts
-│   └── etl_nombre.py
-│
-└── tests/                   # Tests
-    ├── unit/
-    └── integration/
-```
+**Fuente de verdad:** `/home/admonctrlxm/portal-direccion-mme/PROPUESTA_MAESTRA.md`.
 
-### Nomenclatura
+Decisiones explícitamente **PAUSED** (NO tocar sin coordinación con equipo humano):
+- **DT-009 — Unificar `whatsapp_bot/venv/`**: El venv anidado del bot está hardcodeado en múltiples servicios systemd (`whatsapp-bot.service`, `telegram-polling.service`). La PROPUESTA_MAESTRA marca esta tarea como **PAUSED** porque requiere coordinación con el equipo de WhatsApp. Un agente que intente "limpiar el venv" o "unificar entornos" romperá los bots en producción.
+- **DT-003 — Extraer WhatsApp Bot**: 522 nodos en el grafo, comparte DB e infraestructura con la API principal. Marcado como trabajo futuro (2-3 semanas). NO extraer sin plan escrito de múltiples fases.
+- **Refactorizar `core/container.py` sin plan**: 575 nodos, cohesión 0.01. Solo extracción gradual con factories separadas (ver Skill 2.3 del SKILL_PACK).
 
-- **Archivos:** `snake_case.py`
-- **Clases:** `PascalCase`
-- **Funciones/variables:** `snake_case`
-- **Constantes:** `UPPER_CASE`
-- **Privados:** `_leading_underscore`
+Si un agente sugiere cualquiera de las acciones de arriba, mostrarle esta sección y **PAUSAR**.
 
 ---
 
-## 🔧 Dependency Injection (Container)
+## God Files y God Services — Señal de ALTO Automática
 
-### Patrón Correcto
-
-```python
-# core/container.py
-class DependencyContainer:
-    def get_nombre_service(self) -> NombreService:
-        repo = self.get_repository()
-        return NombreService(repo)
-
-# Uso correcto
-from core.container import container
-service = container.get_nombre_service()
-
-# ❌ INCORRECTO - No usar container.resolve()
-result = container.resolve(INombreService)  # No existe este método
-```
-
-### Reglas del Container
-
-1. Cada servicio tiene su propio getter: `get_nombre_service()`
-2. Repositorios se inyectan en constructores de servicios
-3. NO usar `container.resolve()` - no existe
-
-### Nota de Arquitectura (Grafo 2026-05-01)
-
-`core/container.py` es un **god file** (575 nodos en el grafo, cohesión 0.01). Cualquier modificación al container debe:
-- Evaluar si el nuevo servicio puede vivir en un factory separado.
-- Evitar aumentar el acoplamiento total del archivo.
-- Verificar que no se rompan imports en `scripts/`, `api/`, `whatsapp_bot/` ni `tests/`.
-- Si refactorizas, hacerlo por etapas: un tipo de factory a la vez (servicios → repositorios → externos).
-4. Los getters crean instancias lazy (singleton por request)
+| Archivo | Líneas / Nodos | Restricción |
+|---|---|---|
+| `core/container.py` | 575 nodos, cohesión 0.01 | PROHIBIDO modificar directamente. Crear factory en archivo separado. |
+| `domain/services/report_service.py` | 1.850 líneas | `pdftotext` diff obligatorio. No refactorizar lógica sin tests de integración. |
+| `domain/services/executive_report_service.py` | 1.618 líneas | `pdftotext` diff obligatorio. |
+| `domain/services/cu_service.py` | 1.010 líneas | Mock de XM obligatorio. |
+| `domain/services/losses_nt_service.py` | 1.199 líneas | Validación contra cálculo manual. |
+| `domain/services/simulation_service.py` | 748 líneas | Seed fijo en tests. |
+| `domain/services/predictions_service_extended.py` | 698 líneas | Fixture de modelo. |
 
 ---
 
-## 🗄️ Base de Datos
-
-### Connection Pool
-
-```python
-# ✅ CORRECTO
-from core.database.pool import get_pool
-
-pool = get_pool()
-async with pool.acquire() as conn:
-    result = await conn.fetch("SELECT * FROM tabla")
-
-# ❌ INCORRECTO - Nunca crear pool nuevo
-from psycopg2 import pool
-my_pool = pool.SimpleConnectionPool(...)  # NO hacer esto
-```
-
-### Variables de Entorno (.env)
+## Comandos de Baseline (N1 — ejecutar al inicio de cualquier tarea)
 
 ```bash
-PGHOST=localhost
-PGPORT=5432
-PGDATABASE=portal_energetico
-PGUSER=mme_user
-PGPASSWORD=<password>
-
-REDIS_URL=redis://localhost:6379/0
+cd /home/admonctrlxm/server
+pytest tests/ -q --tb=no
+curl -s http://localhost:8000/health | head -1
+sudo systemctl status api-mme --no-pager | grep "Active"
 ```
 
 ---
 
-## 📝 Logging
+## Tablas de Alta Vigilancia
 
-### Configuración
+| Tabla | Tamaño aprox. | Método seguro | Restricción |
+|---|---|---|---|
+| `metrics_hourly` | ~32 GB | D (stat proxy exclusivo) | PROHIBIDO `COUNT(*)`, `string_agg`, `TABLESAMPLE` |
+| Cualquier otra | Verificar con `pg_relation_size` | A/B/C/D según resultado | Ver Skill 9 del SKILL_PACK |
 
-```python
-from infrastructure.logging.logger import get_logger
-
-logger = get_logger(__name__)
-
-# ✅ CORRECTO - Usar estructurado
-logger.info("Proceso completado", registros=len(data), tiempo_ms=elapsed)
-logger.error("Error conectando BD", error=str(e), reintentos=retries)
-
-# ❌ INCORRECTO - Usar print
-print(f"Proceso completado: {len(data)} registros")  # NO hacer esto
-```
-
-### Niveles de Log
-
-- `DEBUG`: Información detallada para desarrollo
-- `INFO`: Eventos normales del sistema
-- `WARNING`: Advertencias, no críticas
-- `ERROR`: Errores que afectan operación
-- `CRITICAL`: Errores que detienen el sistema
+**SIEMPRE ejecutar `pg_relation_size('tabla')` antes de cualquier query sobre datos.**
 
 ---
 
-## ⚠️ Manejo de Excepciones
-
-### Patrón Correcto
-
-```python
-# ✅ CORRECTO - Específico primero, genérico al final
-try:
-    result = await operation()
-except DatabaseConnectionError as e:
-    logger.error("Error conexión BD", error=str(e))
-    raise ServiceUnavailableException()
-except ValidationError as e:
-    logger.warning("Datos inválidos", errors=e.errors())
-    raise BadRequestException()
-except Exception as e:
-    logger.exception("Error inesperado")
-    raise InternalServerError()
-
-# ❌ INCORRECTO - Solo genérico
-try:
-    result = await operation()
-except Exception as e:  # Captura todo, difícil debuggear
-    logger.exception("Error")
-```
-
-### Excepciones Personalizadas
-
-```python
-# domain/exceptions.py
-class DomainException(Exception):
-    """Base para excepciones del dominio"""
-    pass
-
-class ServiceUnavailableException(DomainException):
-    pass
-
-class BadRequestException(DomainException):
-    pass
-```
-
----
-
-## 🔌 API FastAPI
-
-### Estructura de Endpoint
-
-```python
-# api/v1/routes/ejemplo.py
-from fastapi import APIRouter, Depends, HTTPException
-from api.dependencies import get_ejemplo_service
-from domain.services.ejemplo_service import EjemploService
-
-router = APIRouter(prefix="/ejemplo", tags=["ejemplo"])
-
-@router.get("/")
-async def list_ejemplos(
-    service: EjemploService = Depends(get_ejemplo_service)
-):
-    try:
-        result = await service.get_all()
-        return {"data": result, "status": "success"}
-    except Exception as e:
-        logger.exception("Error listando ejemplos")
-        raise HTTPException(status_code=500, detail=str(e))
-```
-
-### Dependencies
-
-```python
-# api/dependencies.py
-from core.container import container
-from domain.services.ejemplo_service import EjemploService
-
-def get_ejemplo_service() -> EjemploService:
-    return container.get_ejemplo_service()
-```
-
----
-
-## 🔄 ETL Pipeline
-
-### Estructura de Script ETL
-
-```python
-# etl/etl_ejemplo.py
-from infrastructure.logging.logger import get_logger
-
-logger = get_logger(__name__)
-
-class ETLEjemplo:
-    def __init__(self):
-        self.db_pool = get_pool()
-        self.xm_client = XMClient()
-    
-    async def extract(self):
-        """Extraer datos de fuente"""
-        logger.info("Extrayendo datos...")
-        # ...
-    
-    async def transform(self, data):
-        """Transformar datos"""
-        logger.info(f"Transformando {len(data)} registros...")
-        # ...
-    
-    async def load(self, data):
-        """Cargar a BD"""
-        logger.info("Cargando a BD...")
-        # ...
-    
-    async def run(self):
-        """Ejecutar pipeline completo"""
-        try:
-            data = await self.extract()
-            transformed = await self.transform(data)
-            await self.load(transformed)
-            logger.info("ETL completado exitosamente")
-        except Exception as e:
-            logger.exception("ETL falló")
-            raise
-
-# Entry point
-if __name__ == "__main__":
-    etl = ETLEjemplo()
-    asyncio.run(etl.run())
-```
-
-### Scheduling (Celery)
-
-```python
-# tasks/etl_tasks.py
-from celery import shared_task
-from etl.etl_ejemplo import ETLEjemplo
-
-@shared_task
-def run_etl_ejemplo():
-    etl = ETLEjemplo()
-    asyncio.run(etl.run())
-
-# Configuración en celery_config.py
-beat_schedule = {
-    'etl-ejemplo': {
-        'task': 'tasks.etl_tasks.run_etl_ejemplo',
-        'schedule': crontab(hour='*/6', minute=0),
-    },
-}
-```
-
----
-
-## 🧪 Testing
-
-### Tests Unitarios
-
-```python
-# tests/unit/services/test_ejemplo_service.py
-import pytest
-from unittest.mock import Mock, patch
-from domain.services.ejemplo_service import EjemploService
-
-@pytest.fixture
-def service():
-    repo = Mock()
-    return EjemploService(repo)
-
-async def test_get_all(service):
-    # Arrange
-    service.repo.get_all.return_value = ["item1", "item2"]
-    
-    # Act
-    result = await service.get_all()
-    
-    # Assert
-    assert len(result) == 2
-    service.repo.get_all.assert_called_once()
-```
-
-### Ejecutar Tests
+## Scripts de Agent Tools
 
 ```bash
-# Todos los tests
-pytest tests/ -v
+# Snapshot de tabla con método correcto (A/B/C/D automático)
+python3 /home/admonctrlxm/server/scripts/agent-tools/verify_table.py [nombre_tabla]
 
-# Tests específicos
-pytest tests/unit/services/test_cu_service.py -v
-
-# Con cobertura
-pytest tests/ --cov=server --cov-report=html
+# Detección de ciclos estáticos y lógicos
+python3 /home/admonctrlxm/server/scripts/agent-tools/check_cycles.py domain.ServicioA domain.ServicioB
 ```
 
 ---
 
-## 🚀 Despliegue
+## Reglas Absolutas de Este Proyecto
 
-### Systemd Services
+| # | Regla | Por qué | Skill |
+|---|---|---|---|
+| 1 | `core/container.py` (575 nodos) → PROHIBIDO modificar directamente | God file (Multiply risk) | Skill 8 |
+| 2 | Ciclos → Detectar estáticos Y lógicos ANTES de extraer | Bloquea refactorización | Skill 1.3 |
+| 3 | ETL en Celery Beat → Dry-run + aprobación obligatoria | Riesgo ×3.0 | Skill 9.2 |
+| 4 | Tablas >1GB → `pg_relation_size` primero. Método C/D correcto | Protege producción | Skill 9 |
+| 5 | `metrics_hourly` (~32GB) → Método D exclusivo | Query completa = bloquea servidor | Skill 9 |
+| 6 | God services (>1000 líneas) → `pdftotext` diff si output PDF | Diff binario miente | Skill 2.4 |
+| 7 | SQL dinámico → `sql_validator.py` obligatorio, NO concatenación | SQL injection | - |
+| 8 | `.service` systemd → backup + verify status pre/post | Crash en producción | - |
+| 9 | Riesgo multiplicatorio → `echo "X * Y * Z" \| bc -l`, NUNCA mental | LLMs mienten >3 factores | Skill 2.1 |
+| 10 | ANALYZE en tabla >10GB → PAUSAR y pedir permiso humano | Pico CPU 5-15s | Skill 9.2 |
+| 11 | Crear .md → pasar test Skill 11 primero | Evita basura documental | Skill 11 |
+| 12 | **CONFIAR EN /tmp/diag_*.md, NO EN MEMORIA** | Contexto se agota | Skill 0 |
+| 13 | Código sin tests → NO tocar en producción (riesgo ×2.0) | Breaking changes silenciosos | - |
+
+---
+
+## Jerarquía de Verdad (NIVEL 1-4 con Pesos)
+
+Cuando tomes decisiones de cambio, usa este sistema de confianza:
+
+| Nivel | Fuente | Peso | Ejemplo |
+|---|---|---|---|
+| 1 | pytest PASA | +0.40 | Tests ejecutados ✅ |
+| 1 | curl /health = 200 | +0.25 | Servicio respondiendo ✅ |
+| 1 | SELECT COUNT(*) coincide | +0.25 | Datos consistentes ✅ |
+| 2 | grep -B5 -A5 | +0.30 | AST confirma uso real ✅ |
+| 3 | Graphify EXTRACTED | +0.20 | Aristas verificadas ✅ |
+| 3 | Graphify INFERRED | +0.08 | Aristas inferidas (poca confianza) ⚠️ |
+| 4 | Supuestos | 0.00 | "Probablemente no se usa" (no confiar) ❌ |
+
+**REGLA CRÍTICA:** Peso acumulado ≥ 0.7 para ejecutar sin aprobación adicional.
+
+Ver SKILL_PACK_V4.1.md Principio Fundamental para tabla completa.
+
+---
+
+## Deuda Técnica Activa (NO asumir que está corregida)
+
+- **7 tests fallando**: `test_container.py` (5) + `test_transmission_service.py` (2) — baseline conocido, no regresión
+- Servicios marcados "deprecated" que tienen imports activos: verificar con grep antes de eliminar
+- 65 archivos con `print()` en lugar de logger
+
+---
+
+## Ciclos de Dependencia (CRÍTICO ANTES DE REFACTORIZAR)
+
+Hay DOS tipos. Detectar AMBOS:
+
+### Ciclo Estático (Import Cycle)
+```bash
+python3 -c "from domain.services.A import A; from domain.services.B import B; print('OK')"
+# Si falla ImportError → CICLO ESTÁTICO CONFIRMADO
+```
+
+### Ciclo Lógico (Dependency Injection — Container)
+```bash
+# Verificar que Container NO inyecta A→B→A
+grep -n "ServiceA" core/container.py | grep -i "ServiceB"
+# Debe retornar vacío o solo comments
+```
+
+Tratamiento: Crear interfaz, aplicar Dependency Inversion (Skill 1.3a/b en SKILL_PACK_V4.1.md)
+
+---
+
+## PostgreSQL/Datos >1 GB: Métodos A/B/C/D
+
+ANTES de tocar datos, obtener tamaño:
 
 ```bash
-# Ver estado
-sudo systemctl status api-mme
-sudo systemctl status dashboard-mme
-
-# Restart
-sudo systemctl restart api-mme
-sudo systemctl restart dashboard-mme
-
-# Logs
-sudo journalctl -u api-mme --no-pager -n 50
-sudo journalctl -u dashboard-mme --no-pager -n 50
+psql -d portal_energetico -t -A -c "SELECT pg_relation_size('tabla')"
 ```
 
-### Celery
+| Tamaño | Método | Confianza | Qué hacer |
+|---|---|---|---|
+| < 100 MB | A | 100% | Checksum completo (SELECT md5) |
+| 100 MB - 1 GB | B | 99% | Checksum (puede tardar 10-30s) |
+| 1 - 10 GB | C | 85% | Stat proxy + TABLESAMPLE |
+| > 10 GB | D | 70% | Stat proxy SOLO (PROHIBIDO COUNT) |
+
+Ver SKILL_PACK_V4.1.md SKILL 9 para comandos exactos y trampa ANALYZE.
+
+---
+
+## Cálculo de Riesgo (Multiplicadores — Skill 2.1)
+
+NUNCA calcular en tu cabeza. Usar `bc` (LLMs mienten >3 factores):
 
 ```bash
-# Worker
-celery -A tasks worker --loglevel=info --concurrency=4
-
-# Beat (scheduler)
-celery -A tasks beat --loglevel=info
-
-# Monitoreo
-flower -A tasks --port=5555
+# Ejemplo: Sin tests (2.0) × tabla >1GB (1.5) × ETL Beat (3.0)
+echo "2.0 * 1.5 * 3.0" | bc -l
+# Output: 9.0 (> 8.0 = ROJO ABSOLUTO)
 ```
 
----
+**Interpretación:**
+- **<1.0** = Verde. Ejecutar.
+- **1.0-2.5** = Verde + registrar
+- **2.5-5.0** = Amarillo (plan obligatorio)
+- **5.0-8.0** = Naranja (plan + verificación)
+- **8.0-15.0** = ROJO (plan + aprobación)
+- **>15.0** = ROJO OSCURO (subdividir)
 
-## 🐛 Debugging
-
-### Python Debugger
-
-```python
-import pdb; pdb.set_trace()  # Breakpoint
-
-# Comandos:
-# n - next line
-# s - step into
-# c - continue
-# p variable - print variable
-# q - quit
-```
-
-### Logs en Tiempo Real
-
-```bash
-# Todos los logs
-tail -f logs/*.log
-
-# Específico
-tail -f logs/gunicorn_error.log
-tail -f logs/celery/worker-1.log
-```
-
----
-
-## 📦 Dependencias
-
-### requirements.txt
-
-```bash
-# Agregar nueva dependencia
-echo "nueva-lib==1.2.3" >> requirements.txt
-pip install nueva-lib==1.2.3
-
-# Actualizar todas
-pip install -r requirements.txt --upgrade
-```
-
-### Dependencias Críticas (NO actualizar sin pruebas)
-
-- `fastapi`: Framework API
-- `dash`: Dashboard legacy
-- `sqlalchemy`: ORM
-- `psycopg2-binary`: PostgreSQL driver
-- `celery`: Tareas async
-
----
-
-## 🔒 Seguridad
-
-### Variables de Entorno Sensibles
-
-```python
-# ✅ CORRECTO - Usar desde .env
-import os
-password = os.getenv("PGPASSWORD")
-
-# ❌ INCORRECTO - Nunca hardcodear
-password = "admin123"  # ¡PELIGRO!
-```
-
-### SQL Injection Prevention
-
-```python
-# ✅ CORRECTO - Parametrizado
-result = await conn.fetch("SELECT * FROM users WHERE id = $1", user_id)
-
-# ❌ INCORRECTO - Concatenación
-result = await conn.fetch(f"SELECT * FROM users WHERE id = {user_id}")  # SQL Injection!
-```
-
----
-
-## ⚠️ Deuda Técnica Conocida
-
-### Servicios Deprecated (serán eliminados en V5)
-
-- `geo_service.py` - Sin implementación
-- `orchestrator_service.py` - Vacío
-- `predictions_service.py` - Consolidado en extended
-
-### Mejoras Pendientes
-
-- 65 archivos con `print()` → migrar a logger
-- 187 archivos con `except Exception` genérico → específicos
-- Tests de integración parciales (`test_integracion_fase7.py`, `test_hardening_fase8.py`) → ampliar cobertura
-- 0 tests e2e → implementar
-- 7 tests fallando: `test_container.py` (5) + `test_transmission_service.py` (2) → corregir
-
----
-
-## 📚 Recursos
-
-- [FastAPI Docs](https://fastapi.tiangolo.com/)
-- [SQLAlchemy 2.0](https://docs.sqlalchemy.org/)
-- [Celery Docs](https://docs.celeryproject.org/)
-- [Dash Docs](https://dash.plotly.com/)
-
----
-
-## 📞 Contacto
-
-- **Desarrollador Principal:** [Tu nombre/email]
-- **Infraestructura:** Equipo TI MinMinas
-
----
-
-*Documento actualizado: 31 de marzo de 2026 — Stats: 350 py files, 52 endpoints, 347/354 tests*
-
----
-
-## 📚 Skill Pack para Agentes
-
-### Skill Compacto (siempre cargar)
-`SKILL_PACK_COMPACTO.md` — 90 segundos de lectura. Contiene:
-- Jerarquía de Verdad (N1-N4)
-- 10 Reglas Absolutas
-- Ciclo de Diagnóstico (CDA)
-- Señales de ALTO
-- Test de necesidad de .md
-- Comandos esenciales
-- Checklist de calidad
-- Ejemplos reales de errores de agentes previos
-
-### Skill Detallado (bajo demanda)
-`SKILL_PACK_DETALLADO.md` — Referencia completa por skill numerado.
-
-### Scripts Ejecutables
-`scripts/agent-tools/`:
-- `verify_table.py` — Snapshot de tabla PostgreSQL (métodos A-D)
-- `check_cycles.py` — Detección de ciclos estáticos y lógicos
+Ver SKILL_PACK_V4.1.md Skill 2.1 para tabla completa.

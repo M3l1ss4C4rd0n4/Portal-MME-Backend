@@ -12,8 +12,9 @@ backlog = 2048
 # Worker processes
 # Dash es stateful — demasiados workers causan pérdida de contexto
 # y saturan PostgreSQL sin connection pooling.
-# Con 8 vCPU: 5 workers es el balance óptimo para Dash.
-workers = 5
+# OPTIMIZADO: Reducido de 5 a 3 workers para ahorrar ~2.4GB de RAM
+# Con 8 vCPU y 15GB RAM: 3 workers es el balance óptimo para Dash.
+workers = 3
 worker_class = "gthread"
 threads = 2
 worker_connections = 1000
