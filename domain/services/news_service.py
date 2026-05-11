@@ -21,6 +21,7 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from infrastructure.news.news_client import NewsClient
 from infrastructure.news.mediastack_client import MediastackClient
 from infrastructure.news.google_news_rss import fetch_google_news_rss
+from infrastructure.news.larepublica_rss import fetch_larepublica_rss
 from infrastructure.cache.redis_client import redis_get_json, redis_set_json
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,21 @@ KEYWORDS_NOISE = [
     # Otros falsos positivos comunes
     "perro", "gato", "mascota", "navidad", "halloween",
     "carrera atlética", "maratón", "ciclismo",
+    # Automotriz sin infraestructura energética
+    "tesla", "general motors", "ford motor", "bmw", "mercedes benz",
+    "ventas de vehículos", "ventas de autos", "mercado automotriz",
+    "unidades vendidas", "record de ventas",
+    # Macroeconomía sin vínculo energético directo
+    "subir tasas", "bajar tasas", "tasa de interés",
+    "inflación meta", "banco central europeo", "reserva federal",
+    "dólar sube", "dólar baja", "tipo de cambio",
+    "deuda neta", "déficit fiscal", "pib trimestral",
+    # Comercio exterior genérico sin energía
+    "flores", "café colombiano", "exportación de flores",
+    "exportación de banano", "turismo receptor",
+    # Tech / startup sin energía
+    "inteligencia artificial", "startup", "unicornio tecnológico",
+    "criptomoneda", "bitcoin", "blockchain", "nft",
 ]
 
 # Patrones que cancelan falsos positivos de KEYWORDS_HIGH
@@ -173,6 +189,14 @@ FALSE_POSITIVE_PATTERNS = [
     r"eclipse\s+anular",
     r"carro\s+(?:de|para)\s+juguete",
     r"bicicleta\s+eléctrica\s+(?:robada|hurtada)",
+    # Ventas de vehículos sin relación con infraestructura eléctrica
+    r"tesla\s+(?:protagoniza|récord|ventas|entrega|modelo)",
+    r"\d[\d.]+\s+vehículos?\s+eléctricos?\s+(?:vendidos?|entregados?)",
+    r"salto\s+récord.{0,30}vehículos?\s+eléctricos?",
+    # Tasas / macro sin energía en el título
+    r"subir\s+tasas\s+no",
+    r"tasas?\s+de\s+interés\s+(?:sube|baja|reduce|aumenta)",
+    r"banco\s+central\s+(?:sube|baja|mantiene)\s+tasa",
 ]
 
 
@@ -186,26 +210,36 @@ def _passes_relevance_gate(title: str, description: str) -> bool:
     return any(kw in text for kw in KEYWORDS_GATE)
 
 
+def _is_hard_blocked(title: str, description: str) -> bool:
+    """
+    Bloqueo duro: artículos que coinciden con FALSE_POSITIVE_PATTERNS
+    o que tienen términos de ruido prominentes en el TÍTULO se descartan
+    completamente, sin importar otros bonos (fuente, frescura, imagen).
+    """
+    title_lower = title.lower()
+    text_lower = f"{title} {description}".lower()
+    # Patrón regex en título o descripción
+    if any(re.search(pat, text_lower) for pat in FALSE_POSITIVE_PATTERNS):
+        return True
+    # Ruido en el propio título (no basta que esté en la descripción)
+    noise_in_title = sum(1 for kw in KEYWORDS_NOISE if kw in title_lower)
+    if noise_in_title >= 1:
+        return True
+    return False
+
+
 def _compute_score(title: str, description: str,
                    country: Optional[str] = None) -> int:
     """Calcula score de relevancia para una noticia (revisión bibliográfica)."""
     text = f"{title} {description}".lower()
     score = 0
 
-    # Chequear falsos positivos primero
-    is_false_positive = any(
-        re.search(pat, text) for pat in FALSE_POSITIVE_PATTERNS
-    )
-
-    # +2 por keywords de alto impacto (ignorar si es falso positivo)
-    if not is_false_positive:
-        high_hits = sum(1 for kw in KEYWORDS_HIGH if kw in text)
-        if high_hits >= 2:
-            score += 3
-        elif high_hits >= 1:
-            score += 1
-    else:
-        score -= 2  # penalizar falsos positivos
+    # +2 por keywords de alto impacto
+    high_hits = sum(1 for kw in KEYWORDS_HIGH if kw in text)
+    if high_hits >= 2:
+        score += 3
+    elif high_hits >= 1:
+        score += 1
 
     # +1-2 por Keywords de gobierno/regulador
     govt_hits = sum(1 for kw in KEYWORDS_GOVT if kw in text)
@@ -367,7 +401,7 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-def _find_similar_article(titulo: str, seen_articles: List[dict], umbral: float = 0.20) -> Optional[int]:
+def _find_similar_article(titulo: str, seen_articles: List[dict], umbral: float = 0.25) -> Optional[int]:
     """
     Busca si existe un artículo ya visto con título semánticamente similar.
     Usa Jaccard sobre palabras significativas + regla de mínimo 3 palabras
@@ -384,8 +418,8 @@ def _find_similar_article(titulo: str, seen_articles: List[dict], umbral: float 
         inter = len(words_new & words_existing)
         union = len(words_new | words_existing)
         jaccard = inter / union if union > 0 else 0.0
-        # Duplicado si: Jaccard >= umbral O comparten 3+ palabras significativas
-        if jaccard >= umbral or inter >= 3:
+        # Duplicado si: Jaccard >= umbral O comparten 2+ palabras significativas
+        if jaccard >= umbral or inter >= 2:
             return idx
     return None
 
@@ -472,6 +506,17 @@ class NewsService:
         except Exception as e:
             logger.warning(f"[NEWS_SERVICE] Error Google RSS: {e}")
 
+        # ── La República RSS (fuente cuaternaria — revista económica prioritaria) ──
+        try:
+            lr_raw = await fetch_larepublica_rss()
+            for art in lr_raw:
+                all_normalized.append(art)
+            logger.info(
+                f"[NEWS_SERVICE] La República RSS aportó {len(lr_raw)} artículos"
+            )
+        except Exception as e:
+            logger.warning(f"[NEWS_SERVICE] Error La República RSS: {e}")
+
         return all_normalized
 
     def _score_and_rank(
@@ -499,6 +544,11 @@ class NewsService:
             if norm_url:
                 seen_urls.add(norm_url)
 
+            # ── BLOQUEO DURO: falsos positivos por título ──
+            if _is_hard_blocked(titulo, art.get("resumen", "")):
+                rejected_gate += 1
+                continue
+
             # ── PUERTA DE RELEVANCIA ──
             # El artículo DEBE mencionar al menos 1 término energético.
             if not _passes_relevance_gate(titulo, art.get("resumen", "")):
@@ -511,21 +561,27 @@ class NewsService:
                 art.get("pais"),
             )
 
-            # ── BONUS POR FRESCURA ──
-            # Artículos recientes tienen prioridad sobre los antiguos
+            # +2 por fuente premium solicitada por el Viceministro
+            if art.get("origen_api") == "larepublica_rss":
+                score += 2
+
+            # ── BONUS POR FRESCURA (criterio dominante) ──
+            # La frescura es el factor más importante tras pasar la puerta.
             fecha_str = art.get("fecha", "")
             if fecha_str and len(fecha_str) >= 10:
                 try:
                     fecha_art = datetime.strptime(fecha_str[:10], "%Y-%m-%d").date()
                     dias_antiguedad = (datetime.now().date() - fecha_art).days
                     if dias_antiguedad <= 0:
-                        score += 3   # Hoy
+                        score += 6   # Hoy — prioridad absoluta
                     elif dias_antiguedad == 1:
-                        score += 2   # Ayer
+                        score += 3   # Ayer
+                    elif dias_antiguedad == 2:
+                        score += 1   # Anteayer
                     elif dias_antiguedad <= 7:
-                        score += 1   # Última semana
-                    elif dias_antiguedad > 14:
-                        score -= 2   # Más de 2 semanas: penalizar
+                        score -= 3   # 3-7 días: penalizar
+                    else:
+                        score -= 6   # Más de 1 semana: penalizar fuerte
                 except (ValueError, TypeError):
                     pass
 

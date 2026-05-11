@@ -90,7 +90,7 @@ def _pg_type(series: pd.Series) -> str:
     return 'TEXT'
 
 
-def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bool = True) -> int:
+def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bool = True, commit: bool = True) -> int:
     """
     Carga un DataFrame en schema.table.
     Crea la tabla si no existe, trunca si truncate=True.
@@ -167,7 +167,8 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
         # transactions, it does NOT send RESET ALL.
         cur.execute("RESET search_path")
 
-    conn.commit()
+    if commit:
+        conn.commit()
     logger.info(f"  ✅ {schema}.{table}: {len(rows)} filas cargadas")
     return len(rows)
 
@@ -198,7 +199,7 @@ def etl_supervision() -> None:
 
 def etl_comunidades() -> None:
     """Carga Resumen_Implementación.xlsx → schema comunidades."""
-    xlsx_path = BASE_DIR / 'data' / 'base de datos comunidades energeticas' / 'Resumen_Implementación.xlsx'
+    xlsx_path = BASE_DIR / 'data' / 'base_de_datos_comunidades_energeticas' / 'Resumen_Implementación.xlsx'
     logger.info(f"=== ETL COMUNIDADES: {xlsx_path.name} ===")
 
     # Base: main registry of communities

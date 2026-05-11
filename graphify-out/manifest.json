@@ -1,7 +1,7 @@
 {
   "/home/admonctrlxm/server/gunicorn_config.py": {
-    "mtime": 1774932879.180333,
-    "hash": "97c27d34e973156be7dd2b1fad17ec78"
+    "mtime": 1777917918.514,
+    "hash": "fa73b7ec5061134e7ce4ed7c229f9d97"
   },
   "/home/admonctrlxm/server/app.py": {
     "mtime": 1769693197.5198817,
@@ -16,16 +16,12 @@
     "hash": "fa6dfa9848dc4b94843f85c4a58adc2c"
   },
   "/home/admonctrlxm/server/ecosystem.config.js": {
-    "mtime": 1776948182.076333,
-    "hash": "06b13e01b4a1254b50be18c0af29960c"
+    "mtime": 1777918156.443,
+    "hash": "e6ba9ccc89c713c42b2beab150838b57"
   },
   "/home/admonctrlxm/server/wsgi.py": {
     "mtime": 1769652718.6128254,
     "hash": "5c29ed3c0dccd2c8ec66f428fa00a8d4"
-  },
-  "/home/admonctrlxm/server/scripts/diagnostico_bot_min.py": {
-    "mtime": 1772818190.370331,
-    "hash": "843d94914b5f21e11e0bb46d08cff290"
   },
   "/home/admonctrlxm/server/scripts/recalcular_ppp_precio_bolsa.py": {
     "mtime": 1776914995.971333,
@@ -35,21 +31,9 @@
     "mtime": 1774041957.202331,
     "hash": "e09f2e19a5947fdd8293c781b51848e5"
   },
-  "/home/admonctrlxm/server/scripts/fix_except_exception.py": {
-    "mtime": 1774062436.215331,
-    "hash": "44cedecbd9d0d0ca38914ad1c2cb741b"
-  },
   "/home/admonctrlxm/server/scripts/importar_fenoge.py": {
     "mtime": 1777607562.031,
     "hash": "125d73517810af8cd2c9b38159dffe21"
-  },
-  "/home/admonctrlxm/server/scripts/fix_except_exception_v2.py": {
-    "mtime": 1774062453.561331,
-    "hash": "95c052a46075bc44e26d19c8be16dcec"
-  },
-  "/home/admonctrlxm/server/scripts/validate_subsidios.py": {
-    "mtime": 1772760694.873331,
-    "hash": "18386d1842318cc2b04e246c96848021"
   },
   "/home/admonctrlxm/server/scripts/alertas_energeticas.py": {
     "mtime": 1776474587.237333,
@@ -67,25 +51,9 @@
     "mtime": 1776043292.343333,
     "hash": "336317250c67df6908fde9a933b31079"
   },
-  "/home/admonctrlxm/server/scripts/test_predictions_integration.py": {
-    "mtime": 1770668081.2571115,
-    "hash": "9b6991f320878cbad98364ba3942cf85"
-  },
   "/home/admonctrlxm/server/scripts/backtest_alertas.py": {
     "mtime": 1776461258.869333,
     "hash": "a271919a09403bca9e896ca29ad797a2"
-  },
-  "/home/admonctrlxm/server/scripts/validar_sistema_completo.py": {
-    "mtime": 1772818190.375331,
-    "hash": "42a11ea49bd21cc8a0a94817a111827a"
-  },
-  "/home/admonctrlxm/server/scripts/test_alertas_e2e.py": {
-    "mtime": 1772932990.277331,
-    "hash": "ece8fc92b2169e9fcc66bf3189ebd060"
-  },
-  "/home/admonctrlxm/server/scripts/descargar_porcvoluutil_sistema.py": {
-    "mtime": 1776793449.081333,
-    "hash": "68b1931a0fcbc8f398fd4b67d7ac710a"
   },
   "/home/admonctrlxm/server/scripts/validate_stability_phase2.py": {
     "mtime": 1774022190.167331,
@@ -123,10 +91,6 @@
     "mtime": 1770049402.8484948,
     "hash": "b859018a20689a6f68b78454b0c1f877"
   },
-  "/home/admonctrlxm/server/scripts/test_api_manual.py": {
-    "mtime": 1772818190.374331,
-    "hash": "f4ce69832c2e6bb82782b8e3801a50d6"
-  },
   "/home/admonctrlxm/server/scripts/train_predictions_postgres.py": {
     "mtime": 1772937278.272331,
     "hash": "f8c12f136fa735f7847c5541eaf3d4ff"
@@ -134,10 +98,6 @@
   "/home/admonctrlxm/server/scripts/monitor_predictions_quality.py": {
     "mtime": 1776043292.343333,
     "hash": "403c8911872b513fb31dde1f65754b7d"
-  },
-  "/home/admonctrlxm/server/scripts/track_quality_progress.py": {
-    "mtime": 1774051383.627331,
-    "hash": "0dadfb2b7ce070573c549d17bcccd2ad"
   },
   "/home/admonctrlxm/server/scripts/backfill_maestro.py": {
     "mtime": 1774162465.914331,
@@ -148,8 +108,8 @@
     "hash": "1b3dd3f50920498acdd5db456e95a240"
   },
   "/home/admonctrlxm/server/scripts/completar_tablas_incompletas.py": {
-    "mtime": 1772818190.386331,
-    "hash": "2160e77cb70afa1c9c45d453e4edc9fc"
+    "mtime": 1777739127.805,
+    "hash": "aa9746a12112fad86c57066c91afc762"
   },
   "/home/admonctrlxm/server/scripts/validate_testing_phase3.py": {
     "mtime": 1774024322.856331,
@@ -195,22 +155,6 @@
     "mtime": 1774162052.270331,
     "hash": "3b0a3fbc013e4ed32ab861913103cd34"
   },
-  "/home/admonctrlxm/server/scripts/_inspeccion2.py": {
-    "mtime": 1774157839.629331,
-    "hash": "99b4acae33988d3fd75d57042fea96c5"
-  },
-  "/home/admonctrlxm/server/scripts/inspeccion_bd.py": {
-    "mtime": 1774156864.073331,
-    "hash": "b3d3b00ff2d2a819191df52f621df1e5"
-  },
-  "/home/admonctrlxm/server/scripts/test_xm_api_live.py": {
-    "mtime": 1769898056.5664158,
-    "hash": "f708a1dbe4fd09e6e9bd1cf77523851b"
-  },
-  "/home/admonctrlxm/server/scripts/importar_validaciones.py": {
-    "mtime": 1777510762.48,
-    "hash": "718046c39601700eaab9d4d2cf80fb71"
-  },
   "/home/admonctrlxm/server/scripts/arcgis/actualizar_desde_onedrive.py": {
     "mtime": 1772818190.435331,
     "hash": "68ab71fac9e55c3bfd4ca9bc12976ed8"
@@ -223,9 +167,17 @@
     "mtime": 1772818190.406331,
     "hash": "afa491c37c35ef5e2a5f762dc4e428cc"
   },
+  "/home/admonctrlxm/server/scripts/agent-tools/check_cycles.py": {
+    "mtime": 1777744313.804,
+    "hash": "1d0711ac3fba4436b496bb493d8340f7"
+  },
+  "/home/admonctrlxm/server/scripts/agent-tools/verify_table.py": {
+    "mtime": 1777744270.851,
+    "hash": "463b4fe5df36d715f59eceea33967823"
+  },
   "/home/admonctrlxm/server/api/__init__.py": {
-    "mtime": 1770153540.8643477,
-    "hash": "8bf69f5ed751458ec720588b2a4758d1"
+    "mtime": 1777739838.307,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/api/dependencies.py": {
     "mtime": 1774939005.690333,
@@ -236,8 +188,8 @@
     "hash": "8e4e838b6570323076cf36e8aa17e569"
   },
   "/home/admonctrlxm/server/api/v1/__init__.py": {
-    "mtime": 1777608361.747,
-    "hash": "eab992877783cdfbbc09f17419cf5688"
+    "mtime": 1777739793.176,
+    "hash": "b1b37f420e9650fd1dce9ca5c7ae7591"
   },
   "/home/admonctrlxm/server/api/v1/schemas/restrictions.py": {
     "mtime": 1770353871.9029715,
@@ -256,8 +208,8 @@
     "hash": "3b308adc1194f0efac6df7e5c590d106"
   },
   "/home/admonctrlxm/server/api/v1/schemas/__init__.py": {
-    "mtime": 1770353871.9029715,
-    "hash": "bf407d389d2390ac9510f1102b1ff1cb"
+    "mtime": 1777739814.817,
+    "hash": "b86f2b6cf0b24fe789dc80bbe57ab048"
   },
   "/home/admonctrlxm/server/api/v1/schemas/commercial.py": {
     "mtime": 1770353871.9019716,
@@ -300,8 +252,8 @@
     "hash": "246e9f03a42ebb5d0b1c61edb35899fc"
   },
   "/home/admonctrlxm/server/api/v1/routes/presupuesto.py": {
-    "mtime": 1777135758.143333,
-    "hash": "fb00c0366aa690d3bd78af392c638579"
+    "mtime": 1778339866.658,
+    "hash": "8c3946f8823f1b58826a62e3a30f9ce6"
   },
   "/home/admonctrlxm/server/api/v1/routes/restrictions.py": {
     "mtime": 1772816316.035331,
@@ -316,8 +268,8 @@
     "hash": "0bc04fbf351bc4e15ea646af67cc38d3"
   },
   "/home/admonctrlxm/server/api/v1/routes/supervision_portal.py": {
-    "mtime": 1777345958.958,
-    "hash": "90b4c498398c044b9950e3182cff10c0"
+    "mtime": 1778127094.936,
+    "hash": "1a0cb43302c8a903f4b65ab2687b5916"
   },
   "/home/admonctrlxm/server/api/v1/routes/system.py": {
     "mtime": 1772816316.036331,
@@ -328,8 +280,8 @@
     "hash": "923090b0a3f25d87ccfbc1fa439416b8"
   },
   "/home/admonctrlxm/server/api/v1/routes/comunidades.py": {
-    "mtime": 1777136412.863333,
-    "hash": "cfa01660bcf9435b2e4ade571d4bd4fa"
+    "mtime": 1778127087.734,
+    "hash": "957b62841aaa8b06a484de89e26265f5"
   },
   "/home/admonctrlxm/server/api/v1/routes/cu.py": {
     "mtime": 1774932879.132333,
@@ -340,8 +292,8 @@
     "hash": "1d6c44a1ce1f1af43743fd72bdd8c799"
   },
   "/home/admonctrlxm/server/api/v1/routes/__init__.py": {
-    "mtime": 1770153542.0573614,
-    "hash": "a17671f5e82b4c8e2386c99a8ba979b9"
+    "mtime": 1777739835.625,
+    "hash": "94a2e693a958315ffbf6d2fb09202b41"
   },
   "/home/admonctrlxm/server/api/v1/routes/commercial.py": {
     "mtime": 1774932879.132333,
@@ -352,8 +304,8 @@
     "hash": "420d1abdb7b40c6afadd1bd7201cc3a8"
   },
   "/home/admonctrlxm/server/api/v1/routes/contratos_or.py": {
-    "mtime": 1777135758.144333,
-    "hash": "178ef76da98c6f5e2b22144777a96557"
+    "mtime": 1778127113.416,
+    "hash": "c1e1ab510ecd5fdfefb0dde68ad950d1"
   },
   "/home/admonctrlxm/server/api/v1/routes/reports.py": {
     "mtime": 1774932879.134333,
@@ -396,32 +348,16 @@
     "hash": "5419c567e94b9b36f895399241545750"
   },
   "/home/admonctrlxm/server/api/v1/routes/subsidios.py": {
-    "mtime": 1777510799.1,
-    "hash": "a476b594c01a01487ec94e4f0a608b31"
+    "mtime": 1778195825.685,
+    "hash": "b15a00b1052ca8e756b1e4692bd44109"
   },
   "/home/admonctrlxm/server/api/v1/routes/energia_app.py": {
-    "mtime": 1776157948.686333,
-    "hash": "bb31cd57650491b73dc5c609a0936030"
+    "mtime": 1777738428.388,
+    "hash": "1b387445f930e95ce69d69fb77a313ff"
   },
   "/home/admonctrlxm/server/api/v1/routes/fenoge.py": {
     "mtime": 1777607758.244,
     "hash": "42fcd8bd7650d50162eb71fe1ce5123b"
-  },
-  "/home/admonctrlxm/server/assets/portada-interactive.js": {
-    "mtime": 1776133803.902333,
-    "hash": "af4787183dfb9873ca1dddbf7a97fac9"
-  },
-  "/home/admonctrlxm/server/assets/sidebar.js": {
-    "mtime": 1760040375.6522276,
-    "hash": "176fb5dece8b40703767d751f9ae0a5c"
-  },
-  "/home/admonctrlxm/server/assets/navbar-active.js": {
-    "mtime": 1765864055.6550605,
-    "hash": "36e4a242049c77629defb53ce164894d"
-  },
-  "/home/admonctrlxm/server/assets/js/theme-charts.js": {
-    "mtime": 1774163851.819331,
-    "hash": "86fbdbd4ffa45909525f178474d56845"
   },
   "/home/admonctrlxm/server/tests/test_informe_ejecutivo.py": {
     "mtime": 1772818190.454331,
@@ -616,8 +552,8 @@
     "hash": "f852b3666b94e23ab7acf825e1c9af00"
   },
   "/home/admonctrlxm/server/tests/security/__init__.py": {
-    "mtime": 1774051043.697331,
-    "hash": "5e155af9fc97790c778f51db777afe41"
+    "mtime": 1777739833.403,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/tests/security/test_sql_injection.py": {
     "mtime": 1774051166.079331,
@@ -640,8 +576,8 @@
     "hash": "f415d8179ac3ed1e27d16e7f64973797"
   },
   "/home/admonctrlxm/server/etl/etl_nuevos_dashboards.py": {
-    "mtime": 1776890318.268333,
-    "hash": "2124a7ca4d3d1124a98104b4e1f9c9fc"
+    "mtime": 1778201883.414,
+    "hash": "8ea837a39e8fad30adc36625feb69a6f"
   },
   "/home/admonctrlxm/server/etl/config_metricas.py": {
     "mtime": 1777069009.867333,
@@ -671,6 +607,10 @@
     "mtime": 1774164444.274331,
     "hash": "64321207279eceb2d8966ef7ad879652"
   },
+  "/home/admonctrlxm/server/etl/etl_sharepoint_watcher.py": {
+    "mtime": 1778198544.741,
+    "hash": "47e0a3f53daff7d17da40fbec3e0cc98"
+  },
   "/home/admonctrlxm/server/etl/etl_subsidios.py": {
     "mtime": 1776132214.221333,
     "hash": "34979a732516da657607fe76c53ed166"
@@ -688,8 +628,8 @@
     "hash": "137fe4f11f8dad95eb1e4ffe1901833c"
   },
   "/home/admonctrlxm/server/etl/etl_sharepoint_sync.py": {
-    "mtime": 1776117108.260333,
-    "hash": "7e1ccc77277940f489fda2a0e574c304"
+    "mtime": 1778198735.803,
+    "hash": "25a8534758e3fdfa042e31f859d4c5dc"
   },
   "/home/admonctrlxm/server/etl/etl_ideam.py": {
     "mtime": 1776086389.431333,
@@ -712,8 +652,8 @@
     "hash": "434cc7f8ed63b9be82b15e8ac066ed44"
   },
   "/home/admonctrlxm/server/whatsapp_bot/orchestrator/__init__.py": {
-    "mtime": 1770434396.7071195,
-    "hash": "cd9c921669b78f41735c35b7c42f6df4"
+    "mtime": 1777739860.01,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/orchestrator/bot.py": {
     "mtime": 1774932879.221333,
@@ -732,8 +672,8 @@
     "hash": "0ad14321c2deeffa56b8b9200ed4d74e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/app/__init__.py": {
-    "mtime": 1770434389.2000332,
-    "hash": "b2a23eba4803eb6ca63d163b132ada62"
+    "mtime": 1777739836.322,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/app/tasks.py": {
     "mtime": 1774932879.220333,
@@ -764,12 +704,12 @@
     "hash": "52bf4fa0cfc52636462a2a152b5cf2c9"
   },
   "/home/admonctrlxm/server/whatsapp_bot/app/utils/__init__.py": {
-    "mtime": 1770434394.7680972,
-    "hash": "54f13772e7294c450baf62d8bfb05804"
+    "mtime": 1777739860.574,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/services/__init__.py": {
-    "mtime": 1770434397.9311335,
-    "hash": "c7f2197aca9bc65c020a2c56cb87c0df"
+    "mtime": 1777739861.212,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/services/data_service.py": {
     "mtime": 1774932879.222333,
@@ -788,8 +728,8 @@
     "hash": "30dfc43dc9c903a19a707d49f59a9a62"
   },
   "/home/admonctrlxm/server/whatsapp_bot/tests/__init__.py": {
-    "mtime": 1770434400.7641659,
-    "hash": "a79ab16b515492734898b25a24971eef"
+    "mtime": 1777739861.794,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/tests/test_bot.py": {
     "mtime": 1770434400.5401633,
@@ -798,10 +738,6 @@
   "/home/admonctrlxm/server/whatsapp_bot/whatsapp-web-service/server.js": {
     "mtime": 1770434406.099227,
     "hash": "c08ef1d540c78de080eadad4b0e57545"
-  },
-  "/home/admonctrlxm/server/htmlcov/coverage_html_cb_dd2e7eb5.js": {
-    "mtime": 1774061397.655331,
-    "hash": "47d6ea8f87058d0cea6b52102adf1b13"
   },
   "/home/admonctrlxm/server/core/container.py": {
     "mtime": 1774932879.140333,
@@ -856,8 +792,8 @@
     "hash": "bb652b1ef5e1ae54bb6ebe92fdd435bf"
   },
   "/home/admonctrlxm/server/core/database/__init__.py": {
-    "mtime": 1774058405.917331,
-    "hash": "51bee24b67be46857a7d8ef35559da7b"
+    "mtime": 1777739838.118,
+    "hash": "bb8e5af7f17abbf4fd61cc709cac05ec"
   },
   "/home/admonctrlxm/server/core/database/migration_helper.py": {
     "mtime": 1774059179.652331,
@@ -872,8 +808,8 @@
     "hash": "13a05e43d2180779d7bf4c84ef2f67f6"
   },
   "/home/admonctrlxm/server/core/security/__init__.py": {
-    "mtime": 1774067061.021331,
-    "hash": "55630920cfc6c96a58c38dcf4ed871c5"
+    "mtime": 1777739809.428,
+    "hash": "7f4a2819888c352654d0da1b42921a3f"
   },
   "/home/admonctrlxm/server/core/security/sql_validator.py": {
     "mtime": 1774760939.184333,
@@ -883,17 +819,13 @@
     "mtime": 1774067049.568331,
     "hash": "69266c1a297386275e473e727a2d2742"
   },
-  "/home/admonctrlxm/server/backups/deprecated/sistema_notificaciones.py": {
-    "mtime": 1772818190.544331,
-    "hash": "07c93e942b378efb96ffb8a1d8796b67"
-  },
   "/home/admonctrlxm/server/interface/components/theme_toggle.py": {
     "mtime": 1774162983.975331,
     "hash": "54507ce17d43a681a9f8282bddb96447"
   },
   "/home/admonctrlxm/server/interface/components/__init__.py": {
-    "mtime": 1774162362.267331,
-    "hash": "f1ec1c79e1be95f1ffd3da73ab7be37e"
+    "mtime": 1777739624.128,
+    "hash": "d2060b5fa28274fa0b255f9b0e1a6d50"
   },
   "/home/admonctrlxm/server/interface/components/chart_theme.py": {
     "mtime": 1774163776.694331,
@@ -936,8 +868,8 @@
     "hash": "9fbfe3087cdc64354f6cefa8dd7520d7"
   },
   "/home/admonctrlxm/server/interface/components/data_display/__init__.py": {
-    "mtime": 1774160490.948331,
-    "hash": "c2e9a7acbd3ca66951ede8dd1f7a16e2"
+    "mtime": 1777739817.326,
+    "hash": "5d2a37574ed3829c25f68d13eef9fc9e"
   },
   "/home/admonctrlxm/server/interface/components/data_display/kpi_card.py": {
     "mtime": 1774160175.768331,
@@ -1044,8 +976,8 @@
     "hash": "278d47854af049958e010ed892efed71"
   },
   "/home/admonctrlxm/server/interface/pages/hidrologia/__init__.py": {
-    "mtime": 1772818190.620331,
-    "hash": "7a88b7cf50a25c1e4f6bed4e80dc3c43"
+    "mtime": 1777739798.693,
+    "hash": "28cf193ff41d14e85a9865e84923a41a"
   },
   "/home/admonctrlxm/server/interface/pages/hidrologia/utils.py": {
     "mtime": 1773195649.163331,
@@ -1070,42 +1002,6 @@
   "/home/admonctrlxm/server/interface/pages/hidrologia/kpis.py": {
     "mtime": 1772818190.688331,
     "hash": "00aba3857678debb5d75cef316129559"
-  },
-  "/home/admonctrlxm/server/energia_app/App.tsx": {
-    "mtime": 1776044056.094333,
-    "hash": "9d6e05e4b389b7a47bf8609edefdb514"
-  },
-  "/home/admonctrlxm/server/energia_app/index.js": {
-    "mtime": 1776044046.255333,
-    "hash": "ad8e45eacdb8aed2e37a0d8b12a61d85"
-  },
-  "/home/admonctrlxm/server/energia_app/android/app/src/main/java/co/gov/minminas/energia/WakeWordForegroundService.java": {
-    "mtime": 1776044442.118333,
-    "hash": "dc13bb8f61137fb6fb089df973670ee4"
-  },
-  "/home/admonctrlxm/server/energia_app/src/config.ts": {
-    "mtime": 1776145956.387333,
-    "hash": "2cff0d97f56aac26ca533bfb18b15929"
-  },
-  "/home/admonctrlxm/server/energia_app/src/services/audioService.ts": {
-    "mtime": 1776145938.225333,
-    "hash": "e026b141ab6b10a1e431970c1c6b49d3"
-  },
-  "/home/admonctrlxm/server/energia_app/src/services/pushService.ts": {
-    "mtime": 1776145962.527333,
-    "hash": "08b158f25daa32652c29c296a6b13d68"
-  },
-  "/home/admonctrlxm/server/energia_app/src/services/wakeWordService.ts": {
-    "mtime": 1776146009.003333,
-    "hash": "4c3d4299653c40debcc02f179cad1109"
-  },
-  "/home/admonctrlxm/server/energia_app/src/screens/HomeScreen.tsx": {
-    "mtime": 1776145962.527333,
-    "hash": "b70f567ee52ca2d8113029d654af1a8b"
-  },
-  "/home/admonctrlxm/server/energia_app/src/hooks/useWakeWord.ts": {
-    "mtime": 1776044246.823333,
-    "hash": "02c7a4722239d4435dce23df791a79b4"
   },
   "/home/admonctrlxm/server/domain/__init__.py": {
     "mtime": 1769657466.6132572,
@@ -1148,8 +1044,8 @@
     "hash": "23d02ba63c117710aaf6fab185e01851"
   },
   "/home/admonctrlxm/server/domain/services/news_service.py": {
-    "mtime": 1777300646.61,
-    "hash": "b2f8ba1b84b5a87e2298a104ea021e33"
+    "mtime": 1777947275.145,
+    "hash": "ee90c038bc33010b19f769de66700fdb"
   },
   "/home/admonctrlxm/server/domain/services/executive_report_service.py": {
     "mtime": 1774932879.170333,
@@ -1208,8 +1104,8 @@
     "hash": "30a1f4b435f20741be02b5fce98fdc1a"
   },
   "/home/admonctrlxm/server/domain/services/system_service.py": {
-    "mtime": 1774932879.176333,
-    "hash": "6519987eeaad93814c746bb0ec463ac0"
+    "mtime": 1777737835.982,
+    "hash": "490cd718e1ad3834e48748c253511508"
   },
   "/home/admonctrlxm/server/domain/services/restrictions_service.py": {
     "mtime": 1774932879.176333,
@@ -1276,8 +1172,8 @@
     "hash": "bc50f8be7e57e17420a3b90c8aa543d8"
   },
   "/home/admonctrlxm/server/domain/services/orchestrator/handlers/informe_handler.py": {
-    "mtime": 1776474574.037333,
-    "hash": "beb9d5a5f1a47e9f004a556a8d1000d9"
+    "mtime": 1777736545.782,
+    "hash": "1c33c96790a34d0545e654434c8284ee"
   },
   "/home/admonctrlxm/server/domain/services/orchestrator/handlers/predicciones_handler.py": {
     "mtime": 1777069122.852333,
@@ -1296,8 +1192,8 @@
     "hash": "0d0f8ab396c8843f8ac8c278fe4aafc0"
   },
   "/home/admonctrlxm/server/domain/interfaces/__init__.py": {
-    "mtime": 1774932879.167333,
-    "hash": "e97069ebec1ca9b8b9d53ebe0779e9ea"
+    "mtime": 1777739774.631,
+    "hash": "79e93cbe37e3a0badc766d2922571684"
   },
   "/home/admonctrlxm/server/domain/interfaces/database.py": {
     "mtime": 1772818190.815331,
@@ -1400,8 +1296,8 @@
     "hash": "29bfebd6a3fb7e846731c1d2631b45af"
   },
   "/home/admonctrlxm/server/infrastructure/database/repositories/transmission_repository.py": {
-    "mtime": 1772818190.886331,
-    "hash": "56e45cb25b17b61c7cd1282bc4d5a2ac"
+    "mtime": 1777927541.37,
+    "hash": "196c5b9f6947a87d065e52fef32218b4"
   },
   "/home/admonctrlxm/server/infrastructure/database/repositories/distribution_repository.py": {
     "mtime": 1774932879.182333,
@@ -1416,52 +1312,52 @@
     "hash": "0bef7d64816476ae17c9537c705f72b1"
   },
   "/home/admonctrlxm/server/infrastructure/event_sourcing/__init__.py": {
-    "mtime": 1774063404.104331,
-    "hash": "677d30f40e317933f55deba6ee00f101"
+    "mtime": 1777739613.283,
+    "hash": "b7c44e2312b8da20c3dc9a7b82552405"
   },
   "/home/admonctrlxm/server/infrastructure/event_sourcing/events.py": {
     "mtime": 1774063454.093331,
     "hash": "f71fcaa87559bbfe965ecdfb478dbcf9"
   },
   "/home/admonctrlxm/server/infrastructure/cache/__init__.py": {
-    "mtime": 1772760694.853331,
-    "hash": "ec679798d6c0fd08f4c0bfc509775564"
+    "mtime": 1777739862.237,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/admonctrlxm/server/infrastructure/cache/redis_client.py": {
     "mtime": 1772760694.855331,
     "hash": "cfd0abac533142f5bf17e43cedc549ec"
   },
   "/home/admonctrlxm/server/infrastructure/observability/__init__.py": {
-    "mtime": 1774065445.884331,
-    "hash": "e782638cedd7afbd6967c96780120351"
+    "mtime": 1777739811.835,
+    "hash": "705154f23cf03fda92d9e897a9a8856b"
   },
   "/home/admonctrlxm/server/infrastructure/observability/health/health_checker.py": {
     "mtime": 1774064895.907331,
     "hash": "646710055c169b6458648d6a59d115ba"
   },
   "/home/admonctrlxm/server/infrastructure/observability/health/__init__.py": {
-    "mtime": 1774065247.010331,
-    "hash": "dd66e1851776668818eb8977e16ed545"
+    "mtime": 1777739823.117,
+    "hash": "7b0fb2dae0f1a852c49dc3173801c17f"
   },
   "/home/admonctrlxm/server/infrastructure/observability/tracing/tracer.py": {
     "mtime": 1774065274.277331,
     "hash": "9c524fa8e366c04edc1a8333adefdfa0"
   },
   "/home/admonctrlxm/server/infrastructure/observability/tracing/__init__.py": {
-    "mtime": 1774065249.235331,
-    "hash": "702af94cb6dc0e1c23d9635a05a67c2e"
+    "mtime": 1777739821.427,
+    "hash": "aabbf7550e04c1ec8b54a9962ddf5cbd"
   },
   "/home/admonctrlxm/server/infrastructure/observability/alerts/alert_manager.py": {
     "mtime": 1774065283.176331,
     "hash": "c49a7ec6bcc19936edcf94917a5291e2"
   },
   "/home/admonctrlxm/server/infrastructure/observability/alerts/__init__.py": {
-    "mtime": 1774064959.112331,
-    "hash": "04e00b3e9bb3a0167089f4b25c32212a"
+    "mtime": 1777739825.101,
+    "hash": "a433e02f5eb65d7cef3ba78632edcc53"
   },
   "/home/admonctrlxm/server/infrastructure/observability/metrics/__init__.py": {
-    "mtime": 1774065244.808331,
-    "hash": "53fa063c4494cb2e6b720e5861d7441c"
+    "mtime": 1777739818.938,
+    "hash": "0e4a17f482cdfab53c660337255e9c4c"
   },
   "/home/admonctrlxm/server/infrastructure/observability/metrics/decorators.py": {
     "mtime": 1774064840.759331,
@@ -1480,8 +1376,8 @@
     "hash": "e9abcd14531a3393ae72ba065effe163"
   },
   "/home/admonctrlxm/server/infrastructure/cqrs/__init__.py": {
-    "mtime": 1774064531.636331,
-    "hash": "dd7224b9342bfb41e70fde09059b69a9"
+    "mtime": 1777739620.018,
+    "hash": "a4b840b702f79e0acd721b6101216ff9"
   },
   "/home/admonctrlxm/server/infrastructure/cqrs/middleware.py": {
     "mtime": 1774063617.295331,
@@ -1514,6 +1410,10 @@
   "/home/admonctrlxm/server/infrastructure/news/google_news_rss.py": {
     "mtime": 1776718131.642333,
     "hash": "f0bd1b4e457535d080b18011e833fe6c"
+  },
+  "/home/admonctrlxm/server/infrastructure/news/larepublica_rss.py": {
+    "mtime": 1777935549.423,
+    "hash": "afcad7e9a5d047ef523f182f4020ff97"
   },
   "/home/admonctrlxm/server/infrastructure/news/__init__.py": {
     "mtime": 1771259309.7540376,
@@ -1564,8 +1464,8 @@
     "hash": "5c867b198177d45b32f5b242d4fcfd14"
   },
   "/home/admonctrlxm/server/tasks/__init__.py": {
-    "mtime": 1777300671.617,
-    "hash": "3fb44f73d084b0a08e36a78a3e7c7ed2"
+    "mtime": 1777739794.023,
+    "hash": "552019970aba7ec0015a77fbfed83aae"
   },
   "/home/admonctrlxm/server/tasks/push_tasks.py": {
     "mtime": 1776043924.134333,
@@ -1576,12 +1476,16 @@
     "hash": "13b0c0bcdb5b998b8fe937f030152f76"
   },
   "/home/admonctrlxm/server/README.md": {
-    "mtime": 1774982385.364333,
-    "hash": "6ca3e5e4450d566096fdf7ee49c23b97"
+    "mtime": 1777754309.534,
+    "hash": "d158bce28360be997127dab99e2651c3"
+  },
+  "/home/admonctrlxm/server/SKILL_PACK_V4.1.md": {
+    "mtime": 1777771211.807,
+    "hash": "623aa9a989f3aa2c69cca25897a0d2ea"
   },
   "/home/admonctrlxm/server/AGENTS.md": {
-    "mtime": 1774982347.643333,
-    "hash": "710a9bace44a474dd72b661d919b29ec"
+    "mtime": 1777771211.137,
+    "hash": "bb9c3731a6e4e76ebb863a7d1623d5a9"
   },
   "/home/admonctrlxm/server/RUNBOOK_PRODUCCION.md": {
     "mtime": 1772760694.806331,
@@ -1615,117 +1519,25 @@
     "mtime": 1774070270.241331,
     "hash": "b9174d9fc9626504e23a73b3fffb4344"
   },
-  "/home/admonctrlxm/server/docs/PLAN_IMPLEMENTACION_REAL.md": {
-    "mtime": 1774420039.283331,
-    "hash": "fa3bd97ef1af579abe68ba43c9fd2742"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_MEJORA_TENDENCIAS_INFORME.md": {
-    "mtime": 1775945557.493333,
-    "hash": "3294dec65f49aa31d6440ead6433d749"
-  },
-  "/home/admonctrlxm/server/docs/README.md": {
-    "mtime": 1774070195.596331,
-    "hash": "09153cfabd87f0a74ef099f80fd12039"
-  },
   "/home/admonctrlxm/server/docs/DISPONIBILIDAD_24_7.md": {
     "mtime": 1772405091.540331,
     "hash": "085ef9554bed6dae0c91f999cae8e5d6"
-  },
-  "/home/admonctrlxm/server/docs/ARQUITECTURA_E2E.md": {
-    "mtime": 1774982385.337333,
-    "hash": "f5d70bd60eba8f6de8b5db1e136f52f1"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_MEJORA_ANOMALIAS.md": {
-    "mtime": 1775945428.329333,
-    "hash": "a571bdde0615975299e1a215b006d4c5"
-  },
-  "/home/admonctrlxm/server/docs/INDICE.md": {
-    "mtime": 1774982371.217333,
-    "hash": "6676069be8a1441ffb90e82cceb50b65"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_MAESTRO_MEJORAS.md": {
-    "mtime": 1775945667.168333,
-    "hash": "0ea786ee8e228f81107a96c73035b0ba"
   },
   "/home/admonctrlxm/server/docs/CACHE_USAGE_GUIDE.md": {
     "mtime": 1774162154.712331,
     "hash": "26b5fa9842dbdedbf4e093d5af51e5b4"
   },
-  "/home/admonctrlxm/server/docs/DOCUMENTACION_TECNICA_ORQUESTADOR.md": {
-    "mtime": 1772396698.554331,
-    "hash": "08cc8f2f8ebf700c1ba01505a43053e3"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_MEJORAS_FRONTEND.md": {
-    "mtime": 1774159298.092331,
-    "hash": "f0235d135a76a32bf0f507e53875105f"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_SUBSIDIOS_TELEGRAM.md": {
-    "mtime": 1772760694.844331,
-    "hash": "870c97ddc2b2b2d21759af2008494a89"
-  },
-  "/home/admonctrlxm/server/docs/PROPUESTA_INVESTIGACION_BASE_EXISTENTE.md": {
-    "mtime": 1774932879.166333,
-    "hash": "a8653db33c68ca4d36f085f3aaec74f7"
-  },
-  "/home/admonctrlxm/server/docs/etl_stability_plan.md": {
-    "mtime": 1772405121.164331,
-    "hash": "d8fba64ef975c09d4877f9f78ccf9dbe"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_FRONTEND_PRIMERO.md": {
-    "mtime": 1774420701.946331,
-    "hash": "e63254295dab42ddae9ae69312c452fb"
-  },
-  "/home/admonctrlxm/server/docs/ARQUITECTURA_MULTI_DASHBOARD.md": {
-    "mtime": 1774419429.540331,
-    "hash": "661656f546bd667060caddd26ee46041"
-  },
-  "/home/admonctrlxm/server/docs/ANALISIS_ARQUITECTURA_CRITICA.md": {
-    "mtime": 1774411115.453331,
-    "hash": "9ce910cfb7f3281478aa63189ec737f6"
-  },
   "/home/admonctrlxm/server/docs/GUIA_TROUBLESHOOTING.md": {
     "mtime": 1774075374.684331,
     "hash": "b3744fc35ed19a792041a93f7f916815"
-  },
-  "/home/admonctrlxm/server/docs/FASE7_AUDITORIA_PREDICCIONES.md": {
-    "mtime": 1773100417.466331,
-    "hash": "30988cb9fa2808cbb8d2c82e64af4a70"
-  },
-  "/home/admonctrlxm/server/docs/MAPEO_COMPLETO_METRICAS.md": {
-    "mtime": 1770665975.593972,
-    "hash": "f722d271b9b38f3b4227447999ee0541"
   },
   "/home/admonctrlxm/server/docs/METODOLOGIA_CU.md": {
     "mtime": 1774932879.166333,
     "hash": "06ccdd77045923b8fd965c03300f6983"
   },
-  "/home/admonctrlxm/server/docs/GUIA_IMPLEMENTACION_FASE_0.md": {
-    "mtime": 1774411920.079331,
-    "hash": "9e33e1f401499ed63bcab045f74d3bf9"
-  },
-  "/home/admonctrlxm/server/docs/INFORME_INSPECCION_EXHAUSTIVA.md": {
-    "mtime": 1774049292.092331,
-    "hash": "7cc61eaf79f32690788f0587c21f0944"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_MIGRACION_API_REACT.md": {
-    "mtime": 1774411851.721331,
-    "hash": "7b897959a72a8fd28e2aa21e96a76824"
-  },
   "/home/admonctrlxm/server/docs/COMPONENTS_GUIDE.md": {
     "mtime": 1774160609.953331,
     "hash": "d779195b3c621775c6f6285d2fe19649"
-  },
-  "/home/admonctrlxm/server/docs/PROPUESTA_TESIS_MAESTRIA_FISICA.md": {
-    "mtime": 1774932879.166333,
-    "hash": "2672a33bb35c9b293bc582f20598da67"
-  },
-  "/home/admonctrlxm/server/docs/POLITICA_CONFIANZA_PREDICCIONES.md": {
-    "mtime": 1773320163.170331,
-    "hash": "5959dfa1cd7e3f759e350e8bab2efa82"
-  },
-  "/home/admonctrlxm/server/docs/RESUMEN_EJECUTIVO_MIGRACION.md": {
-    "mtime": 1774412019.233331,
-    "hash": "8a744f888622e27fcb636835b1d59dd7"
   },
   "/home/admonctrlxm/server/docs/ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md": {
     "mtime": 1772404213.743331,
@@ -1735,21 +1547,9 @@
     "mtime": 1774075345.532331,
     "hash": "49d374a44a4c0a65718017b9234eca0d"
   },
-  "/home/admonctrlxm/server/docs/INVENTARIO_SERVIDOR.md": {
-    "mtime": 1774982347.652333,
-    "hash": "654d94efd1d88b10cae3bcf313e638de"
-  },
   "/home/admonctrlxm/server/docs/CRON_JOB_ETL_POSTGRESQL.md": {
     "mtime": 1772404930.209331,
     "hash": "eea6fbc1c2de41cf5d5a2cbce9c74e83"
-  },
-  "/home/admonctrlxm/server/docs/PLAN_MEJORA_PREDICCIONES.md": {
-    "mtime": 1775945324.195333,
-    "hash": "6abb56aec2aa955ab82d7a3fc3b9df0a"
-  },
-  "/home/admonctrlxm/server/docs/ANALISIS_COMPLETO_DASHBOARD_MME.md": {
-    "mtime": 1773206092.283331,
-    "hash": "38348981a6e39c262f99c87caf082afd"
   },
   "/home/admonctrlxm/server/docs/tecnicos/README_SEMAFORO.md": {
     "mtime": 1765863906.5463512,
@@ -1767,10 +1567,6 @@
     "mtime": 1774062648.087331,
     "hash": "cdf2aa8340affbcfb2746b4b19f9acc8"
   },
-  "/home/admonctrlxm/server/docs/informes/INFORME_ARQUITECTURA_COMPLETA_2026-03-05.md": {
-    "mtime": 1772760694.887331,
-    "hash": "1b9b94fa30bb176d940d9cb5b89a86bd"
-  },
   "/home/admonctrlxm/server/docs/informes/INFORME MENSUAL DE ACTIVIDADES - FEBRERO 2026.md": {
     "mtime": 1772424995.350331,
     "hash": "e9bd3082036671a044ce243acffa24a6"
@@ -1778,10 +1574,6 @@
   "/home/admonctrlxm/server/notebooks/README.md": {
     "mtime": 1765863906.5453513,
     "hash": "4749f8eb214bde78a0b66d3cae479c95"
-  },
-  "/home/admonctrlxm/server/docker/README.md": {
-    "mtime": 1775958109.404333,
-    "hash": "9c0206f0a269e7a6127cf33086f88bc8"
   },
   "/home/admonctrlxm/server/whatsapp_bot/README.md": {
     "mtime": 1772418642.896331,
@@ -1806,966 +1598,6 @@
   "/home/admonctrlxm/server/whatsapp_bot/whatsapp-web-service/DEPENDENCIAS.md": {
     "mtime": 1770434384.1039748,
     "hash": "b40cfcb18bd95cd809eab6e9b4cfbcfa"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_chatbot_py.html": {
-    "mtime": 1774050578.406331,
-    "hash": "4d9b940f9567bed6aa552a6fc04db540"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_687e5c028f144c29___init___py.html": {
-    "mtime": 1774060632.909331,
-    "hash": "d6204ceec986999ab598fde44cf6127a"
-  },
-  "/home/admonctrlxm/server/htmlcov/_check_oe_py.html": {
-    "mtime": 1774050578.354331,
-    "hash": "3ae3223ec3bac601b06efca10894a0b6"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_losses_py.html": {
-    "mtime": 1774050578.632331,
-    "hash": "aa3d8fd218fd31c5cfbd95798ff091bf"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_seguimiento_predicciones_py.html": {
-    "mtime": 1774050584.417331,
-    "hash": "2fc1cade986e6efcf2b92979a971f3b8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d3ff5d3eebbb7727_metrics_repository_py.html": {
-    "mtime": 1774060634.580331,
-    "hash": "83fae7443fa28d748dd766e6a77cbbc1"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_alertas_energeticas_py.html": {
-    "mtime": 1774050584.557331,
-    "hash": "4e4fc9bef3a9b4ed3f1288ada1894ec4"
-  },
-  "/home/admonctrlxm/server/htmlcov/index.html": {
-    "mtime": 1774061399.010331,
-    "hash": "0a65b2fa0b99ce49f0f1dcb4a28fe675"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06_hidro_lgbm_nasa_py.html": {
-    "mtime": 1774050581.103331,
-    "hash": "4b2350e94b31f91e9683b63f2f831224"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_comercializacion_py.html": {
-    "mtime": 1774050582.216331,
-    "hash": "93008900f98e337773b9719666312b93"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_simulation_py.html": {
-    "mtime": 1774050579.088331,
-    "hash": "bceb17698ef376df9f526a11784e10a4"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_10fae538ba4e8521_dependencies_py.html": {
-    "mtime": 1774050578.362331,
-    "hash": "a5dc0cbff3875faff03789901fcb9f3f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_transmission_service_py.html": {
-    "mtime": 1774050586.464331,
-    "hash": "1d7eef09aee525c6dab5e98aa5640af9"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_intelligent_analysis_service_py.html": {
-    "mtime": 1774061168.850331,
-    "hash": "48045eb21153983c904f03501194b909"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a_metricas_handler_py.html": {
-    "mtime": 1774061398.868331,
-    "hash": "fba9b91467cf49bbdac340de8f90e126"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_36868214f62c3ca0___init___py.html": {
-    "mtime": 1774060634.605331,
-    "hash": "1a8d16967461d4a4bc87ad76f471ef47"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d9eed69fe2b1c484___init___py.html": {
-    "mtime": 1774058826.986331,
-    "hash": "a18aacccb872743094faf88bca8cbe51"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_test_predictions_integration_py.html": {
-    "mtime": 1774050585.579331,
-    "hash": "a6744efb7dd566a115a3ac0655a6a8ad"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_generation_py.html": {
-    "mtime": 1774050578.622331,
-    "hash": "7ccd67d3a98fa64ef0c99e082a77765f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_inversiones_py.html": {
-    "mtime": 1774050584.040331,
-    "hash": "08ffd28adaa12daa8fcb4dd41169b566"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_cu_minorista_service_py.html": {
-    "mtime": 1774061397.778331,
-    "hash": "dcb3a22abb2a5696be9b60fc2104e60d"
-  },
-  "/home/admonctrlxm/server/htmlcov/app_py.html": {
-    "mtime": 1774050579.099331,
-    "hash": "ea4b57171006dca89dac64c2a3123b6a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531___init___py.html": {
-    "mtime": 1774050586.224331,
-    "hash": "9065350f544cb4d31d9070d84d14d2ec"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_app_factory_py.html": {
-    "mtime": 1774061397.677331,
-    "hash": "9852623858c2effae8eb65752461bd79"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_utils_py.html": {
-    "mtime": 1774050583.961331,
-    "hash": "3d653194ccbfcd348c8dedb66046cec6"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_generacion_fuentes_unificado_py.html": {
-    "mtime": 1774050582.759331,
-    "hash": "d0fa9a69948ae3e86960d5b614a4ab2f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_restricciones_py.html": {
-    "mtime": 1774050584.360331,
-    "hash": "de7618c2759158c55adaf8cddacd1d03"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_commercial_py.html": {
-    "mtime": 1774050578.593331,
-    "hash": "c524ab0dcb01d1fb7f571e12fc9e5ebe"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531_test_integracion_fase7_py.html": {
-    "mtime": 1774050586.326331,
-    "hash": "fdb893374f81c25a92d481daa35b9d8f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06_conformal_prediction_py.html": {
-    "mtime": 1774050581.064331,
-    "hash": "340cbe3bd1ea79a384a36819ce71465e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_36868214f62c3ca0_xm_service_py.html": {
-    "mtime": 1774060634.653331,
-    "hash": "367f0785782b141b9b734b3652562e46"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_cu_py.html": {
-    "mtime": 1774050578.442331,
-    "hash": "dcbecb5f4ae6d5e5c84594e64c5e210c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_9eaadc8775dd74cb_config_metricas_py.html": {
-    "mtime": 1774050580.891331,
-    "hash": "d5edd952c8b2d23b4e7c1adff33b194c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_28a2064f4135994e___init___py.html": {
-    "mtime": 1774050578.396331,
-    "hash": "0facf7fcecf963e679b2cfc708e5a051"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_reports_py.html": {
-    "mtime": 1774050578.540331,
-    "hash": "28882827bd86d123924082508dd93dc2"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_generation_service_py.html": {
-    "mtime": 1774061397.936331,
-    "hash": "01d9eb95ed136225ea58ce39196eb98b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_investment_service_py.html": {
-    "mtime": 1774060633.585331,
-    "hash": "77ab2f3e289cc6abd06f660ded5af6f7"
-  },
-  "/home/admonctrlxm/server/htmlcov/function_index.html": {
-    "mtime": 1774061399.165331,
-    "hash": "01fe47dd5ded30dcb02109e0103f5dd1"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_predictions_service_extended_py.html": {
-    "mtime": 1774061169.052331,
-    "hash": "b908bad4992fda0f35ad74cd024fec5d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_limpiar_datos_corruptos_py.html": {
-    "mtime": 1774050584.732331,
-    "hash": "4ee6d065f4ebfa82e2f740d3d8183254"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_train_predictions_postgres_py.html": {
-    "mtime": 1774050585.626331,
-    "hash": "ba053def1a0fc531c736ecc96dcbc6a4"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_send_test_informe_email_py.html": {
-    "mtime": 1774050585.531331,
-    "hash": "512868f7d93b5f6abc86addc85a136c1"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_hydrology_service_py.html": {
-    "mtime": 1774050586.419331,
-    "hash": "3b91c821fbbc22385bf4d7aca95af4f8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_layout_def_py.html": {
-    "mtime": 1774050583.815331,
-    "hash": "1387ca657b54bffcca12bb6fe5d595a8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d3ff5d3eebbb7727___init___py.html": {
-    "mtime": 1774060634.544331,
-    "hash": "045c8e311d34ee4a7a17f71df08f0ba3"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_losses_py.html": {
-    "mtime": 1774050578.485331,
-    "hash": "0ca08028947d906d8d265dd37aadb0e8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_simulacion_creg_py.html": {
-    "mtime": 1774050584.481331,
-    "hash": "def567ce53467031783aac0d86d38b6b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d3ff5d3eebbb7727_predictions_repository_py.html": {
-    "mtime": 1774060634.595331,
-    "hash": "8c4f9d0f0469ba032c2c871094c44d4e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_687e5c028f144c29_sql_validator_py.html": {
-    "mtime": 1774060632.919331,
-    "hash": "fe86839693f531ef847bece964c9d69d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279___init___py.html": {
-    "mtime": 1774050582.158331,
-    "hash": "cd74721350309b263caddc9130d1b53f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_17bd492d087794b9___init___py.html": {
-    "mtime": 1774050586.327331,
-    "hash": "4c5e7d83d115c1711894d2664f0e6799"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_simulation_py.html": {
-    "mtime": 1774050578.559331,
-    "hash": "1bb0ccae1b90fea21e03f8fcce989aae"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_simulation_service_py.html": {
-    "mtime": 1774050586.451331,
-    "hash": "32d8e64c905562b4c28d39c2c596fd0d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_gestionar_usuarios_subsidios_py.html": {
-    "mtime": 1774050584.706331,
-    "hash": "dcbe611022c4da6f2f136dacdb53a08d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_metricas_py.html": {
-    "mtime": 1774050584.206331,
-    "hash": "3b0973b7f4d12e1c71e7cb47a4d31582"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_8b5cf624e18bbc59_chat_widget_py.html": {
-    "mtime": 1774050582.134331,
-    "hash": "4818bb493acd0a937e0e87a805397557"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_10fae538ba4e8521___init___py.html": {
-    "mtime": 1774050578.356331,
-    "hash": "ce2b1190e623fc914e547ea991067254"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_news_service_py.html": {
-    "mtime": 1774061398.039331,
-    "hash": "cb6e955e2f4ff694fa405aeac983b0b8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_monitor_predictions_quality_py.html": {
-    "mtime": 1774050584.759331,
-    "hash": "406569cc5be3055b57a0b8531b771c40"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_diagnostico_metricas_etl_py.html": {
-    "mtime": 1774050584.699331,
-    "hash": "7cc22e01e48edc458ecd36377fbe8f15"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_costo_unitario_py.html": {
-    "mtime": 1774050582.317331,
-    "hash": "ef3b7b6cbd06a1444689f4f730320872"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06_solar_lgbm_ideam_py.html": {
-    "mtime": 1774050581.200331,
-    "hash": "b7f396dad01e6dbac4ddc88cf923da88"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a_anomalias_handler_py.html": {
-    "mtime": 1774061398.063331,
-    "hash": "40be78b21679a026e069cdc23dc6b920"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e11dcf6b635caac5_google_news_rss_py.html": {
-    "mtime": 1774061398.996331,
-    "hash": "7954fd2f5ac6b9a47844438ddf13d6b4"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_costo_usuario_final_py.html": {
-    "mtime": 1774050582.443331,
-    "hash": "ec71ac0bed69a831ce23957b2839cbd8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_f9150efbe1653769___init___py.html": {
-    "mtime": 1774060634.382331,
-    "hash": "9eb768217b965dffa4370319a0a1ea4a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_completar_tablas_incompletas_py.html": {
-    "mtime": 1774050584.641331,
-    "hash": "ec2b54e3c3129cc20af764abee5cbf63"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_data_services_py.html": {
-    "mtime": 1774050583.770331,
-    "hash": "a6511476a9b46415930ddc0f3f19c63c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f___init___py.html": {
-    "mtime": 1774050578.397331,
-    "hash": "075b04d917d553dd18c2f454dc64712a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_8b5cf624e18bbc59_kpi_card_py.html": {
-    "mtime": 1774050582.148331,
-    "hash": "4dde5f90fe1e6c2a1b423f9d1d6b6bed"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5caf520a5ad64cff_anomaly_tasks_py.html": {
-    "mtime": 1774050586.206331,
-    "hash": "24fbbab411e044c1c8fcc27111c6321b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_6afb148eabff8838___init___py.html": {
-    "mtime": 1774050625.198331,
-    "hash": "1706716a8d841ae6bde361001964c30d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d3ff5d3eebbb7727_commercial_repository_py.html": {
-    "mtime": 1774060634.560331,
-    "hash": "fcbf7b2bcf1ddc9e859598f1a35bcfd1"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_transmission_service_py.html": {
-    "mtime": 1774061398.981331,
-    "hash": "5982db57a90aa5bafe606f1e4b2006d8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_benchmark_performance_py.html": {
-    "mtime": 1774050584.624331,
-    "hash": "7b04a9be4c14bf46dc9654a8a2e5f479"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_config_py.html": {
-    "mtime": 1774060632.835331,
-    "hash": "43a567b119f6681fa5b4931ea16d8564"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_f3c3343d000f2bda___init___py.html": {
-    "mtime": 1774060172.738331,
-    "hash": "cdfbd843ffe6dea0def2fe6ef2858e15"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_hydrology_py.html": {
-    "mtime": 1774050578.474331,
-    "hash": "a0aeaf85ed1eb4d4f9e8de0c9bbda86d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_monte_carlo_py.html": {
-    "mtime": 1774050586.430331,
-    "hash": "63ad7dce50fac2f0123df99d1c22b8e6"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_config_simem_py.html": {
-    "mtime": 1774061397.683331,
-    "hash": "d73701d8f5b8df2f1cde7c1042a26014"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_restrictions_service_py.html": {
-    "mtime": 1774060634.444331,
-    "hash": "f75da9c1b32f21d759ee7c6d2a419bc2"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_validate_testing_phase3_py.html": {
-    "mtime": 1774050586.148331,
-    "hash": "1ae5471e2c4867fa00640058876b5352"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06___init___py.html": {
-    "mtime": 1774050581.011331,
-    "hash": "5ef577e7243fa75cf8233a0c0d534c84"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_2c1aa6f876931139___init___py.html": {
-    "mtime": 1774050625.219331,
-    "hash": "25dbd0216d532bfa36e3f38835f3f728"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_f9150efbe1653769_serializers_py.html": {
-    "mtime": 1774060634.389331,
-    "hash": "e549d8b40d16e036401eceb70aa4a1f2"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_inspeccion_senior_endpoint_py.html": {
-    "mtime": 1774050584.723331,
-    "hash": "0a39d073832bfcc9232081bf7a84f49a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db___init___py.html": {
-    "mtime": 1774050624.764331,
-    "hash": "329c5515b0c6ebddf7599266d34f9381"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_46a06a0c6eec664f_test_metrics_repository_unit_py.html": {
-    "mtime": 1774050586.372331,
-    "hash": "f8bb81d0b87db892473834dab9478530"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_8b5cf624e18bbc59_layout_py.html": {
-    "mtime": 1774050582.157331,
-    "hash": "3183a0e822acfb4160bd32f89e3119b7"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_anomaly_detection_py.html": {
-    "mtime": 1774050586.389331,
-    "hash": "97c42e7aa3b9527dabefd5864e17ee65"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_confianza_politica_py.html": {
-    "mtime": 1774060633.271331,
-    "hash": "7482f72f58dfbb6595264597a68ad85a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_common_py.html": {
-    "mtime": 1774050578.598331,
-    "hash": "e1c8bed5838a33be25bd38c930b990a6"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_simulation_service_py.html": {
-    "mtime": 1774061398.958331,
-    "hash": "aacac31b234122953cfec8632e5ad078"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_container_py.html": {
-    "mtime": 1774060632.868331,
-    "hash": "18c898504481aaba7a78ac31cebb8f39"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_perdidas_nt_py.html": {
-    "mtime": 1774050584.333331,
-    "hash": "1f8e5231ca1a2d4184dbbd43fbeb5bde"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_train_predictions_sector_energetico_py.html": {
-    "mtime": 1774050586.064331,
-    "hash": "2718fc320a678573a46eeda44c315a45"
-  },
-  "/home/admonctrlxm/server/htmlcov/class_index.html": {
-    "mtime": 1774061399.173331,
-    "hash": "cfeb0ef598c0e307405fa3d63140497e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d3ff5d3eebbb7727_base_repository_py.html": {
-    "mtime": 1774060634.551331,
-    "hash": "1ff4e94aeba34895126b90ceb7780b94"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_hydrology_service_py.html": {
-    "mtime": 1774060875.922331,
-    "hash": "cab6118dcb8aed4ce8810cd1b6f0a8d5"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_system_py.html": {
-    "mtime": 1774050578.567331,
-    "hash": "e67d5377dc52b6921f7f5f721765e19d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_distribution_py.html": {
-    "mtime": 1774050578.450331,
-    "hash": "4ceed09c1d114960a653676594a3f327"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_generacion_hidraulica_hidrologia_py.html": {
-    "mtime": 1774050582.768331,
-    "hash": "7910141cb4f5dfd7ac6a623b88ef3cf0"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c44929dd9a78a758___init___py.html": {
-    "mtime": 1774050586.329331,
-    "hash": "a5ad535a411c01c66330d850054b998f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_restrictions_py.html": {
-    "mtime": 1774050578.545331,
-    "hash": "43a052d592d23d67e7057502a3eadc12"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_test_alertas_e2e_py.html": {
-    "mtime": 1774050585.556331,
-    "hash": "a59d63b129ba6b0ee88c95d34617fd8d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_predictions_py.html": {
-    "mtime": 1774050578.525331,
-    "hash": "949cd244c1385934b511c4fbd36c2976"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_hydrology_py.html": {
-    "mtime": 1774050578.626331,
-    "hash": "4ecbe8283f6f216e94a7458cfc131978"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a_predicciones_handler_py.html": {
-    "mtime": 1774061398.904331,
-    "hash": "c74d25d21b924d25496dd6bcce12a53a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a_libre_noticias_handler_py.html": {
-    "mtime": 1774061398.255331,
-    "hash": "ad46e4ea27269b46d879b61101c63776"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a6db55048257840a___init___py.html": {
-    "mtime": 1774060632.929331,
-    "hash": "c761c3bcc6b2c283d5debd96799b1fb2"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_generation_service_py.html": {
-    "mtime": 1774050586.413331,
-    "hash": "965a2bc9ae7f6f3936d77798b162e388"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_ai_service_py.html": {
-    "mtime": 1774061397.742331,
-    "hash": "f27f7a83679e25a97cf4ee0590dd8246"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_auditoria_datos_orquestador_py.html": {
-    "mtime": 1774050584.576331,
-    "hash": "d5cd2d18e0d95e0d6eb0a13ff7e616aa"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_orchestrator_py.html": {
-    "mtime": 1774050579.069331,
-    "hash": "69b04f573938d1e259023ebb433eb19e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_commercial_service_py.html": {
-    "mtime": 1774060633.265331,
-    "hash": "681ae9f7cde1da30806171b94706ab4b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_charts_py.html": {
-    "mtime": 1774050583.710331,
-    "hash": "b4e5ae699de89effd2c009ab7c6f9004"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e11dcf6b635caac5___init___py.html": {
-    "mtime": 1774061398.988331,
-    "hash": "152dc9ca79a605016dc3d5696b6ba973"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_losses_nt_service_py.html": {
-    "mtime": 1774061397.995331,
-    "hash": "e34dc3ca8e9d19a48bc90870bdd43049"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_metrics_service_py.html": {
-    "mtime": 1774061398.011331,
-    "hash": "b0cd50144b51811b37e62bbd7730fa1d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_2c1aa6f876931139_metric_py.html": {
-    "mtime": 1774050625.223331,
-    "hash": "cad611bbd9f2b584511fb5216172c32d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_46a06a0c6eec664f___init___py.html": {
-    "mtime": 1774050586.362331,
-    "hash": "dabd8ac6f483665893c3b1d2130c85fb"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_notification_service_py.html": {
-    "mtime": 1774061169.012331,
-    "hash": "bfb2973a063f84b0bebd09ce44c01ab4"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_validar_sistema_completo_py.html": {
-    "mtime": 1774050586.095331,
-    "hash": "bc50099ba592b2da19c8309106b5c251"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a_cu_pnt_handler_py.html": {
-    "mtime": 1774061398.078331,
-    "hash": "c3037a1d6578df90e2bf2ef3be7dd57f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_backfill_sistema_metricas_py.html": {
-    "mtime": 1774050584.606331,
-    "hash": "2b5c2912e4cc3a094ada91532e986fda"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_geo_service_py.html": {
-    "mtime": 1774060633.494331,
-    "hash": "4e7860da4f030ee74b4baf5332cddd6b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e11dcf6b635caac5_news_client_py.html": {
-    "mtime": 1774061399.007331,
-    "hash": "81b3cb014b31905a478c35a3b9ffdcca"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_8b5cf624e18bbc59_chart_card_py.html": {
-    "mtime": 1774050582.095331,
-    "hash": "1343ab7706b2876870d596e013e89b1a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_distribution_py.html": {
-    "mtime": 1774050578.615331,
-    "hash": "66888654c57e405a1a000cd316dd030b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_exceptions_py.html": {
-    "mtime": 1774050625.162331,
-    "hash": "8678c43bfade44db9dec3dea700d6bd8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_f3c3343d000f2bda_data_sources_py.html": {
-    "mtime": 1774060172.745331,
-    "hash": "8f37da18bb8bb5a4d3bfe970eddfc349"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d3ff5d3eebbb7727_distribution_repository_py.html": {
-    "mtime": 1774060634.572331,
-    "hash": "a843fb1282cd4077c3a9de1f078e3176"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531_test_etl_py.html": {
-    "mtime": 1774050586.266331,
-    "hash": "3c06fd8bf7d9b78463eb38c9645ce923"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_transmission_py.html": {
-    "mtime": 1774050578.578331,
-    "hash": "391646c2f61a7a63c900686d2c5515bc"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_callbacks_py.html": {
-    "mtime": 1774050583.658331,
-    "hash": "abc1fd278d6fd52c002e75495fe26c59"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06_xgboost_precio_bolsa_py.html": {
-    "mtime": 1774050581.903331,
-    "hash": "d3fc3266d834295f64c9b877c6514d47"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_cu_service_py.html": {
-    "mtime": 1774061168.681331,
-    "hash": "780f0982cf506455e1092ac87daaa0be"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_metrics_py.html": {
-    "mtime": 1774050578.639331,
-    "hash": "162b32c8a989d604203fa94fce9eec80"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_f3c3343d000f2bda_database_py.html": {
-    "mtime": 1774050625.210331,
-    "hash": "4f505248540efd9c1a8718065c54f824"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_predictions_service_py.html": {
-    "mtime": 1774050586.444331,
-    "hash": "0680df36b81510c58f9843c8afadf9d3"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_losses_service_py.html": {
-    "mtime": 1774061168.921331,
-    "hash": "1b677dc19f22cec62de5026ce57e484b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_validators_py.html": {
-    "mtime": 1774061169.182331,
-    "hash": "52768461407794452d5238dc6125596e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_metricas_piloto_py.html": {
-    "mtime": 1774050584.217331,
-    "hash": "3eb307efd474d196e4f20548370a2f7d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_f3c3343d000f2bda_repositories_py.html": {
-    "mtime": 1774050625.218331,
-    "hash": "30925fac0bef6e18c4dee3c8ab91bd0a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5caf520a5ad64cff___init___py.html": {
-    "mtime": 1774050586.152331,
-    "hash": "75ba4533c88a6f9ceda63d6c37ebf97a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_diagnostico_bot_min_py.html": {
-    "mtime": 1774050584.662331,
-    "hash": "e9b57fd055a2662b5ebc17b73795910a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_investment_service_py.html": {
-    "mtime": 1774050586.424331,
-    "hash": "8df5b4a242167ad36f8e1c7282afb356"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_2c1aa6f876931139_prediction_py.html": {
-    "mtime": 1774050625.226331,
-    "hash": "a189ab4f55bd9651b676b7c543e8fce9"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_orchestrator_service_py.html": {
-    "mtime": 1774060634.391331,
-    "hash": "2b82a61c3d12be7a145a877515df2b45"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_4d5278700282b9df_manager_py.html": {
-    "mtime": 1774060634.542331,
-    "hash": "d0276adf7d3f5d6ddf7f3bfb80268f8b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_validate_security_phase1_py.html": {
-    "mtime": 1774050586.122331,
-    "hash": "fc570f3d442be3b597d3bca03bef22f1"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759___init___py.html": {
-    "mtime": 1774050578.590331,
-    "hash": "0ec5d448591f9d8654c0f98880deb185"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_36868214f62c3ca0_xm_adapter_py.html": {
-    "mtime": 1774060174.034331,
-    "hash": "1167673b37eafb44271182ae525eb18b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5caf520a5ad64cff_etl_tasks_py.html": {
-    "mtime": 1774050586.223331,
-    "hash": "0c3a81c6d88138402f3738e4375496b7"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d3ff5d3eebbb7727_transmission_repository_py.html": {
-    "mtime": 1774060634.604331,
-    "hash": "4adf5518c6c1c3fa2f6ccf0be014c6f5"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06_XM_Multivariate_Discovery_py.html": {
-    "mtime": 1774050581.007331,
-    "hash": "f4ac506ae8ac27602dd4295053aa423b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_b68fd75cdaecfaa0___init___py.html": {
-    "mtime": 1774050626.581331,
-    "hash": "91e8ec34380f2f546c3c4d3bad7ce749"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_b68fd75cdaecfaa0_redis_client_py.html": {
-    "mtime": 1774060458.147331,
-    "hash": "cc4acae5eb6a37399085f17e6cd4810d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_generacion_py.html": {
-    "mtime": 1774050582.546331,
-    "hash": "af1dde727c3e2aec0ab15721660cfe61"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_error_handlers_py.html": {
-    "mtime": 1774060632.889331,
-    "hash": "3d9492da10f7645e250374d68eee393d"
-  },
-  "/home/admonctrlxm/server/htmlcov/wsgi_py.html": {
-    "mtime": 1774050586.465331,
-    "hash": "fbcb94393a9196435ff9c7b4fb87ef07"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_system_py.html": {
-    "mtime": 1774050579.091331,
-    "hash": "90369c2f77815af45f43317ef4e8d40d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066___init___py.html": {
-    "mtime": 1774050586.375331,
-    "hash": "2a6fca6d0b0f93b976ca4d08957a90bd"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_test_xm_api_live_py.html": {
-    "mtime": 1774050585.588331,
-    "hash": "25a34c0f8e3674d3bfd125d39a25873f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_maps_py.html": {
-    "mtime": 1774050583.835331,
-    "hash": "08073ff54b8461376fa0940532549d73"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_commercial_py.html": {
-    "mtime": 1774050578.414331,
-    "hash": "61b9df99b1fe3ca75581bc2e3c0d9289"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_validate_subsidios_py.html": {
-    "mtime": 1774050586.137331,
-    "hash": "3794932b486882c44e61af0a3548913f"
-  },
-  "/home/admonctrlxm/server/htmlcov/gunicorn_config_py.html": {
-    "mtime": 1774050581.906331,
-    "hash": "f6e2632ebf69563b4026bc1e65a80437"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_36868214f62c3ca0_circuit_breaker_py.html": {
-    "mtime": 1774060634.621331,
-    "hash": "f15d3c02ca969225b1836a31e248759c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_validate_performance_phase4_py.html": {
-    "mtime": 1774050586.109331,
-    "hash": "7c528be705774191c1c52c541079a412"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a___init___py.html": {
-    "mtime": 1774060633.686331,
-    "hash": "70654b3d8d878d7b83e7e7729c1f2de2"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a6db55048257840a_orchestrator_py.html": {
-    "mtime": 1774060633.218331,
-    "hash": "d8490ff79ee91dae98ddcd712c012c34"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_home_py.html": {
-    "mtime": 1774050584.003331,
-    "hash": "5f556000648ab60a695d5c477b1d238c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_cu_py.html": {
-    "mtime": 1774050578.612331,
-    "hash": "88190a5c330f651269566e074be60f24"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e11dcf6b635caac5_mediastack_client_py.html": {
-    "mtime": 1774061399.001331,
-    "hash": "3e3f04e87812c0c43a5b396df0629711"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_perdidas_py.html": {
-    "mtime": 1774050584.258331,
-    "hash": "9fd6cfcb297053a8a330370d71f1e1d5"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c508e745c3c8697d_test_error_handlers_py.html": {
-    "mtime": 1774050586.348331,
-    "hash": "f6c776c2d99257f4173bffd782d4df93"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd___init___py.html": {
-    "mtime": 1774050584.521331,
-    "hash": "d7eb6c95733023e7aa5b3eb42d4fd974"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a_estado_actual_handler_py.html": {
-    "mtime": 1774061398.147331,
-    "hash": "2595aa25828d61e80a4fac32541e69b8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_65649c48b17238dd___init___py.html": {
-    "mtime": 1774060633.685331,
-    "hash": "7c0e5feb9e89c329513b3616038f3e70"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c44929dd9a78a758_test_settings_py.html": {
-    "mtime": 1774050586.337331,
-    "hash": "1687414d7d64e31c42d4d1da6661f6c4"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_restrictions_py.html": {
-    "mtime": 1774050579.083331,
-    "hash": "65b3b361f1b21116399db36bd0111051"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_validators_py.html": {
-    "mtime": 1774061397.708331,
-    "hash": "067c370846563a1d3c8717a982a6707c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_system_service_py.html": {
-    "mtime": 1774050586.458331,
-    "hash": "e3d177bc2a8ae5c5b02a9596ce80203e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_9eaadc8775dd74cb_validaciones_py.html": {
-    "mtime": 1774050580.907331,
-    "hash": "9d5077dafb268d7636e99a5d9a1ea254"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_ceee9273b0a123cb___init___py.html": {
-    "mtime": 1774050626.580331,
-    "hash": "5694e70c5a49373fc37379aec1811d1a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_8b5cf624e18bbc59_header_py.html": {
-    "mtime": 1774050582.143331,
-    "hash": "87f957aec9be88f49c1b2d79de75762e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_predictions_service_py.html": {
-    "mtime": 1774060634.392331,
-    "hash": "24ccda5ab083af41ed858d53e13e16bf"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_f9150efbe1653769_decorators_py.html": {
-    "mtime": 1774060634.386331,
-    "hash": "49f048203e25d1cfa377c2f97cee5651"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d04b5ea8aeb53bec_logger_py.html": {
-    "mtime": 1774060634.666331,
-    "hash": "d2d5895d0e76f0e2de70ec536f0078af"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_46a06a0c6eec664f_test_predictions_repository_py.html": {
-    "mtime": 1774050586.374331,
-    "hash": "13a2db3ff58cce6c3ebb389b695ff897"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_executive_report_service_py.html": {
-    "mtime": 1774061397.911331,
-    "hash": "c8535355fe393b36e81471dfb0c2745e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_diagnostico_conversores_unidades_py.html": {
-    "mtime": 1774050584.680331,
-    "hash": "a2d3877fa65cee5e30da52b8d85c9625"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_36868214f62c3ca0_ideam_service_py.html": {
-    "mtime": 1774050626.694331,
-    "hash": "4f9c4d7fd3ec9649550288e3d4cd60c8"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c11113ba3a57adbc___init___py.html": {
-    "mtime": 1774060632.920331,
-    "hash": "ce78927b8e66e635294f02d7219830f4"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_backfill_cu_historico_py.html": {
-    "mtime": 1774050584.586331,
-    "hash": "cf9024792cdba37a07541e47c6edbf2a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06_model_selection_py.html": {
-    "mtime": 1774050581.164331,
-    "hash": "c8e821a46008d8ceba1fb5a9789331ec"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_metrics_py.html": {
-    "mtime": 1774050578.492331,
-    "hash": "4cb5f322a6d550fe7647c35bfd88441c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531_conftest_py.html": {
-    "mtime": 1774050586.240331,
-    "hash": "13016c5563fbbd65e2469495db97671d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_4d5278700282b9df___init___py.html": {
-    "mtime": 1774060634.520331,
-    "hash": "22f117970c6c9c8f972b4e07212b64da"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_report_service_py.html": {
-    "mtime": 1774061169.124331,
-    "hash": "85c34a324e83c9b5b42dea114fd17049"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531_test_informe_ejecutivo_completo_py.html": {
-    "mtime": 1774050586.316331,
-    "hash": "e62c68753798f89b2909182499fc6afd"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_test_api_manual_py.html": {
-    "mtime": 1774050585.567331,
-    "hash": "b633c89b6b8a245f24569d67db8370e1"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_system_service_py.html": {
-    "mtime": 1774061398.970331,
-    "hash": "5511cb161e6549b9f90a4e77095fadd7"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_43dde650a875fb06_sota_models_py.html": {
-    "mtime": 1774050581.873331,
-    "hash": "954a7d10a007a3a37fb8115543416ecd"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_ai_service_py.html": {
-    "mtime": 1774050586.385331,
-    "hash": "63359c18380f7acc4eb49d345d87b723"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_monitorear_etl_py.html": {
-    "mtime": 1774050584.765331,
-    "hash": "a6481a95917f6d82c5f418bb7f517ce5"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb___init___py.html": {
-    "mtime": 1774050625.251331,
-    "hash": "81b53b2a5d5bbe8fac1ed7601bc736ca"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_predictions_py.html": {
-    "mtime": 1774050579.080331,
-    "hash": "627966747df0650b5f8b3e0e2bd31a5c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_65649c48b17238dd_orchestrator_service_py.html": {
-    "mtime": 1774061398.920331,
-    "hash": "9d196b985f13f4c479b401441ece2477"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_tables_py.html": {
-    "mtime": 1774050583.936331,
-    "hash": "9d07bc4e5250387b43ff7fcc35728970"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_distribucion_py.html": {
-    "mtime": 1774050582.523331,
-    "hash": "3912bb3c3d5142d8cc9e74f830bab265"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_metrics_service_py.html": {
-    "mtime": 1774050586.426331,
-    "hash": "4f9af8ad997779b5626429d272eda953"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c11113ba3a57adbc_date_utils_py.html": {
-    "mtime": 1774060632.922331,
-    "hash": "f9b0cd0cde886c973395f127d4e2b179"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_backfill_losses_detailed_py.html": {
-    "mtime": 1774050584.593331,
-    "hash": "e2fd432c8330817a32f8c8e97fc57f7d"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_metrics_calculator_py.html": {
-    "mtime": 1774061168.930331,
-    "hash": "23eedd76ef58ca29dfaeeba170d04454"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_indicators_service_py.html": {
-    "mtime": 1774061168.798331,
-    "hash": "bd6edf56cc4d9ab2d3d58f5cc5cb48a6"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_4d5278700282b9df_connection_py.html": {
-    "mtime": 1774060634.526331,
-    "hash": "cd05fd8d7b22cd745637ddf6f8562d0b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_validate_stability_phase2_py.html": {
-    "mtime": 1774050586.134331,
-    "hash": "121c5791b5a0cfc765e71fd42eaed1bb"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_10fae538ba4e8521_main_py.html": {
-    "mtime": 1774050578.390331,
-    "hash": "e74fde18bb36f378f9322649074f562f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531_test_hardening_fase8_py.html": {
-    "mtime": 1774050586.280331,
-    "hash": "e3af99a819178facd191972554e0353e"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_89405ba852edc58a_informe_handler_py.html": {
-    "mtime": 1774061398.220331,
-    "hash": "f0560783f47bc59fef3db35ab5af1b00"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_de1a740d5dc98ffd_db_explorer_py.html": {
-    "mtime": 1774050584.651331,
-    "hash": "7d8759e0e9abc39659833bda698d9fcd"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531_test_informe_ejecutivo_py.html": {
-    "mtime": 1774050586.300331,
-    "hash": "19b9eb8b7437fe9ec27d9b357934f7f1"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8_kpis_py.html": {
-    "mtime": 1774050583.808331,
-    "hash": "0027a27c339d6c701a28d64b915d377a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_46a06a0c6eec664f_test_metrics_repository_py.html": {
-    "mtime": 1774050586.364331,
-    "hash": "239d9977272d57be1e64b6aa50dbcf2a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_config_dynamic_py.html": {
-    "mtime": 1774061168.167331,
-    "hash": "b8d9fc82986da50986db9d84dd9a3a9c"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d5c1849c19b14759_transmission_py.html": {
-    "mtime": 1774050579.096331,
-    "hash": "ca3ea740ebb404fe991541a3b55f4114"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_76d64845232ba2b8___init___py.html": {
-    "mtime": 1774050582.770331,
-    "hash": "203eec497cbf95f810dff335081d930b"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_cache_py.html": {
-    "mtime": 1774060875.867331,
-    "hash": "db49627f1fb451920005c4cbf19d70da"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_a44f0ac069e85531_test_api_endpoints_py.html": {
-    "mtime": 1774050586.251331,
-    "hash": "d1b9c1bfd4e5b39508c1dc2744523d48"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_e21a214c9b86f066_test_distribution_commercial_losses_restrictions_py.html": {
-    "mtime": 1774050586.405331,
-    "hash": "e0a6abe5febd0817028d849640adf2d6"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_generation_py.html": {
-    "mtime": 1774050578.463331,
-    "hash": "6f124804363921c44a27bf95db0770d7"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_57760688d1f824db_constants_py.html": {
-    "mtime": 1774061397.700331,
-    "hash": "d98d7f8a543c48c6518f485a4bed625a"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c9132feaa7270279_transmision_py.html": {
-    "mtime": 1774050584.520331,
-    "hash": "020074b9356bded6fd4b4e0a7fba5a8f"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_d9eed69fe2b1c484_migration_helper_py.html": {
-    "mtime": 1774060172.690331,
-    "hash": "0ee306278d550cb22a78437b20dbe877"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_5560f3c72651afdb_distribution_service_py.html": {
-    "mtime": 1774061397.810331,
-    "hash": "e1dc5a8a73b3e5adf0e1667cd2fc1918"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c1f6838485e0d97f_whatsapp_alerts_py.html": {
-    "mtime": 1774050578.588331,
-    "hash": "4fc62446a379d314b1bd3f7288482495"
-  },
-  "/home/admonctrlxm/server/htmlcov/z_c508e745c3c8697d___init___py.html": {
-    "mtime": 1774050586.328331,
-    "hash": "c3d3ba723048b383fc27d897551f850a"
-  },
-  "/home/admonctrlxm/server/energia_app/README.md": {
-    "mtime": 1776044079.031333,
-    "hash": "918a8328c0a50f5a579ffdbf77328da6"
   },
   "/home/admonctrlxm/server/mlruns/2/c897ee6496234a0ebf95ebeed1e27c8f/artifacts/cv_charts/cv_boxplot_comparativo.html": {
     "mtime": 1772394113.260331,
@@ -2835,10 +1667,6 @@
     "mtime": 1770350111.6498635,
     "hash": "346412200625bb59699ea7334d56638d"
   },
-  "/home/admonctrlxm/server/data/tesis_director/README_diccionario_datos.txt": {
-    "mtime": 1776221331.724333,
-    "hash": "309593933765257e6b95c0dcedbd660e"
-  },
   "/home/admonctrlxm/server/logs/cv_results/cv_boxplot_comparativo.html": {
     "mtime": 1772404739.075331,
     "hash": "0de1cd75c2ff66451adfc3117375c0fb"
@@ -2867,6 +1695,10 @@
     "mtime": 1775134823.064333,
     "hash": "46f4e5eb347bb0c02924bc0e6de35245"
   },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-03.pdf": {
+    "mtime": 1777813234.513,
+    "hash": "ebd7fdcde236ebcf91953a70a820b9d6"
+  },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-13.pdf": {
     "mtime": 1773406824.945331,
     "hash": "d3bd20f1c4288ff528b9c6c977616472"
@@ -2874,6 +1706,10 @@
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-09.pdf": {
     "mtime": 1775739609.223333,
     "hash": "5d9060bf8e9a4676fbc6ea31328a201a"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-05.pdf": {
+    "mtime": 1777986034.186,
+    "hash": "404096201856f80ba3661d8bd8678a1e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-23.pdf": {
     "mtime": 1776949232.896333,
@@ -2931,9 +1767,17 @@
     "mtime": 1775653210.049333,
     "hash": "cff47b92a7d8648638a8c576d2080300"
   },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-08.pdf": {
+    "mtime": 1778245227.245,
+    "hash": "f6cfa2eb49e04d0bcd65c7359ecc6c71"
+  },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-26.pdf": {
     "mtime": 1777208459.336333,
     "hash": "d152c30c806f0998e7952a4b8129cd7c"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-07.pdf": {
+    "mtime": 1778158840.825,
+    "hash": "1049cb240e02bb80dd9e284662000c1c"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-30.pdf": {
     "mtime": 1777554023.802,
@@ -2946,6 +1790,10 @@
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-21.pdf": {
     "mtime": 1776776420.906333,
     "hash": "0144de6e99ee5a6c910c89913617604f"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-09.pdf": {
+    "mtime": 1778331621.71,
+    "hash": "bb6c67c1289d07eea7935ccf19dc98e1"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-28.pdf": {
     "mtime": 1774744738.717333,
@@ -2999,6 +1847,10 @@
     "mtime": 1777381228.726,
     "hash": "01613a87d78a46a5a621a8e0bbe8f69c"
   },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-06.pdf": {
+    "mtime": 1778072422.707,
+    "hash": "ad61e8cb84160bee37ad0cf1b4daa56a"
+  },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-19.pdf": {
     "mtime": 1773925218.729331,
     "hash": "eaad78198256cef3344b685383d7324f"
@@ -3022,6 +1874,10 @@
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-15.pdf": {
     "mtime": 1776258019.818333,
     "hash": "bd47bc4cd221d54133b7e9aff8736919"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-02.pdf": {
+    "mtime": 1777726822.793,
+    "hash": "7011cf2f71dcf1f924b373dd737d57be"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-01.pdf": {
     "mtime": 1775048423.909333,
@@ -3070,193 +1926,5 @@
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-25.pdf": {
     "mtime": 1774443633.410331,
     "hash": "d976e84d2abf3ba4215bd5594c9dd901"
-  },
-  "/home/admonctrlxm/server/data/informes/test_mejorado.pdf": {
-    "mtime": 1775948799.322333,
-    "hash": "b1029c2e7f613235a8089480323fd73e"
-  },
-  "/home/admonctrlxm/server/data/informes/test_con_noticias.pdf": {
-    "mtime": 1775953596.126333,
-    "hash": "2fa11e0ad1806e8dec96c2768245e14e"
-  },
-  "/home/admonctrlxm/server/assets/portada_Boton transmision.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "e714b7fd3ece2dd17e28b57dddd9c99e"
-  },
-  "/home/admonctrlxm/server/assets/portada_Boton distribucion.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "982d50c4b3fb9cf63caa011dcfe5ad77"
-  },
-  "/home/admonctrlxm/server/assets/portada_Boton generacion.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "20837675879793cacfff1c56512d2c8f"
-  },
-  "/home/admonctrlxm/server/assets/portada_titulo.png": {
-    "mtime": 1765942565.5891097,
-    "hash": "e7ee73149e25d49a5dc6f577aa8a343e"
-  },
-  "/home/admonctrlxm/server/assets/portada_fondo.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "bbf0ec7869a02a6120d699406b43dc06"
-  },
-  "/home/admonctrlxm/server/assets/portada_Logo del ministerio.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "2f7196aab767612d6a0f602113664d99"
-  },
-  "/home/admonctrlxm/server/assets/portada_Boton perdidas.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "98aeaa7f5da6fece9b8a3379d2dc9d3e"
-  },
-  "/home/admonctrlxm/server/assets/portada_Boton restricciones.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "8e06186b8af188e46e2b06b0ab2b4da3"
-  },
-  "/home/admonctrlxm/server/assets/portada_Logo de las manos.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "70de48e876ef5c06e46db37ad1ccacd4"
-  },
-  "/home/admonctrlxm/server/assets/portada_Boton comercializacion.png": {
-    "mtime": 1765864055.6680608,
-    "hash": "b4f33dc0d5571662600f1bed8a854b8c"
-  },
-  "/home/admonctrlxm/server/assets/portada_secciones.png": {
-    "mtime": 1765942559.52104,
-    "hash": "46ccc492909a77fab78ad8678586706a"
-  },
-  "/home/admonctrlxm/server/assets/Minminas_Colombia.svg.png": {
-    "mtime": 1765864055.6520605,
-    "hash": "7dec3a34947fea7278100b605978e580"
-  },
-  "/home/admonctrlxm/server/assets/portada.svg": {
-    "mtime": 1765864055.6680608,
-    "hash": "bc6b1b43b42be90f30769f668e1a7600"
-  },
-  "/home/admonctrlxm/server/assets/images/Recurso 1.png": {
-    "mtime": 1765864055.691061,
-    "hash": "9f1b7739e07477a795479a037e7ccebb"
-  },
-  "/home/admonctrlxm/server/assets/images/logo-minenergia.png": {
-    "mtime": 1765864055.6540606,
-    "hash": "2f7196aab767612d6a0f602113664d99"
-  },
-  "/home/admonctrlxm/server/assets/images/og-preview.jpg": {
-    "mtime": 1773397583.453331,
-    "hash": "dbeeadc54ee73b27713a48ac3952542a"
-  },
-  "/home/admonctrlxm/server/htmlcov/keybd_closed_cb_900cfef5.png": {
-    "mtime": 1774061397.655331,
-    "hash": "8285ae9f3a2652fbb7ffb8575590d91f"
-  },
-  "/home/admonctrlxm/server/htmlcov/favicon_32_cb_c827f16f.png": {
-    "mtime": 1774061397.655331,
-    "hash": "fe1c45ede5eaa2eaa3aff71f210afb26"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-04-09.png": {
-    "mtime": 1775736447.060333,
-    "hash": "b05290a763e3c41b40fe0bb0b2a6f496"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-04-09.png": {
-    "mtime": 1775736446.785333,
-    "hash": "a3fb1c12d3d1c8657a64056c7bbfa43d"
-  },
-  "/home/admonctrlxm/server/data/charts/aportes_hidricos_2026-04-12.png": {
-    "mtime": 1776055844.219333,
-    "hash": "ed9a9d2fab19442d83859f11618c8dd8"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-04-08.png": {
-    "mtime": 1775650242.879333,
-    "hash": "9b8c7996aaccccb859a3f22bb6067764"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-03-02.png": {
-    "mtime": 1772497760.755331,
-    "hash": "df3b3ca0eb4fe2e4a270a36af969f64c"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-04-12.png": {
-    "mtime": 1776054781.574333,
-    "hash": "a87fb260fd3be8532e28ef8f412dc382"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-04-11.png": {
-    "mtime": 1775964730.748333,
-    "hash": "22152d99f2aea2d20a4183276f21674d"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-03-02.png": {
-    "mtime": 1772497760.610331,
-    "hash": "729c3b4ec210d4d7f765e7949132c49d"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-02-19.png": {
-    "mtime": 1771557223.468331,
-    "hash": "8f820979384e7533b3ad528d0ecd03c5"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-02-16.png": {
-    "mtime": 1771293278.549461,
-    "hash": "bdf608d4b854e4c41a922e6a87abbaee"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-04-08.png": {
-    "mtime": 1775650243.155333,
-    "hash": "b5615b920e4363858078078048b13cd0"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-04-11.png": {
-    "mtime": 1775964730.982333,
-    "hash": "f958159f39343d9fe0fc2673e30d765b"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-04-08.png": {
-    "mtime": 1775650243.298333,
-    "hash": "798a5f37b0132f2aab699bb811b84c17"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-03-21.png": {
-    "mtime": 1774150082.308331,
-    "hash": "49c809888f715dddcd09388449652c20"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-02-16.png": {
-    "mtime": 1771293278.0964558,
-    "hash": "c520bb5cd9bc32c496d74e0c75d07720"
-  },
-  "/home/admonctrlxm/server/data/charts/demanda_evol_2026-04-12.png": {
-    "mtime": 1776054781.722333,
-    "hash": "83eb390cdef8e9ea9e6793ef8a90450f"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-03-02.png": {
-    "mtime": 1772497760.391331,
-    "hash": "a40a3e65ecaba98d89cb7a482a53e449"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-02-19.png": {
-    "mtime": 1771557223.816331,
-    "hash": "5b52dfa728269f3e8e6448d231069efe"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-04-11.png": {
-    "mtime": 1775964731.137333,
-    "hash": "f2891f7968e67e1355f462d3cc6a9aa2"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_multi_2026-04-12.png": {
-    "mtime": 1776054781.888333,
-    "hash": "f688f12966153f85bb9291b2c16d2dcd"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-03-21.png": {
-    "mtime": 1774150082.102331,
-    "hash": "307058e68532b708981fc6dc29186116"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-02-19.png": {
-    "mtime": 1771557223.666331,
-    "hash": "2b71f8005c5614fe70aa83fee52382d6"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-04-09.png": {
-    "mtime": 1775736446.947333,
-    "hash": "daf28863ab68ae3c962a875db66282c6"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-03-21.png": {
-    "mtime": 1774150082.418331,
-    "hash": "ff75e2abf1f725536f0db7bedbabdcf1"
-  },
-  "/home/admonctrlxm/server/data/charts/embalses_map_2026-04-12.png": {
-    "mtime": 1776054781.364333,
-    "hash": "023360e4177691c6b6f7a0af29499d42"
-  },
-  "/home/admonctrlxm/server/data/charts/gen_pie_2026-04-12.png": {
-    "mtime": 1776054781.196333,
-    "hash": "618370721f2208af3ae5359abe1d865f"
-  },
-  "/home/admonctrlxm/server/data/charts/precio_evol_2026-02-16.png": {
-    "mtime": 1771293278.6764624,
-    "hash": "013460987a295339c9972f2c9681103d"
   }
 }

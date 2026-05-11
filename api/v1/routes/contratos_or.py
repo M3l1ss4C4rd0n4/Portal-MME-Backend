@@ -120,6 +120,9 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
                 cols_d = [d[0] for d in cur.description]
                 desembolsos_rows = [dict(zip(cols_d, r)) for r in cur.fetchall()]
 
+                cur.execute("SELECT MAX(fecha_carga) FROM contratos_or.seguimiento")
+                ts_or = cur.fetchone()[0]
+
         def _f(v):
             return float(v) if v is not None else None
 
@@ -130,6 +133,7 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
         pagos_pos         = int(g[4] or 0)
 
         return JSONResponse({
+            "ultima_actualizacion": ts_or.strftime("%d/%m/%Y, %H:%M") if ts_or else None,
             "nContratos":        n_contratos,
             "avanceGeneral":     avance_general,
             "avanceFinanciero":  avance_financiero,

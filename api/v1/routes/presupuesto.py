@@ -55,11 +55,15 @@ async def get_presupuesto_resumen(request: Request, api_key: str = Depends(get_a
                 cols_t = [d[0] for d in cur.description]
                 totales = dict(zip(cols_t, cur.fetchone()))
 
+                cur.execute("SELECT MAX(fecha_carga) FROM presupuesto.resumen")
+                ts_pre = cur.fetchone()[0]
+
         # Convert Decimal → float for JSON serialization
         def _f(v):
             return float(v) if v is not None else None
 
         return JSONResponse({
+            "ultima_actualizacion": ts_pre.strftime("%d/%m/%Y, %H:%M") if ts_pre else None,
             "proyectos": [
                 {k: _f(v) if hasattr(v, "__float__") else v for k, v in row.items()}
                 for row in rows
