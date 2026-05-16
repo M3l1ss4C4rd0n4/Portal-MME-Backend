@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 ETL: Base_Subsidios_DDE.xlsx → PostgreSQL
-Importa hojas Pagos, Inicio (empresas) y Mapa a la base portal_energetico.
+Importa hojas Pagos, Inicio (empresas), Mapa y Validacion a la base portal_energetico.
 
 Uso:
     python etl/etl_subsidios.py                          # importar todo
     python etl/etl_subsidios.py --hoja pagos             # solo pagos
     python etl/etl_subsidios.py --hoja empresas          # solo catálogo
     python etl/etl_subsidios.py --hoja mapa              # solo mapa
+    python etl/etl_subsidios.py --hoja validaciones      # solo validaciones
     python etl/etl_subsidios.py --archivo /ruta/otro.xlsx # archivo diferente
 """
 import argparse
@@ -15,6 +16,7 @@ import hashlib
 import logging
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -66,9 +68,19 @@ def ensure_schema(conn):
 
 # ─── Hash para dedup ─────────────────────────────────────────────────────────
 
+# Clave de negocio inmutable: identifica unívocamente una fila del Excel
+# independientemente de cuándo se importó o si el metadata (fecha_actualizacion)
+# cambió entre importaciones.
+PAGOS_HASH_COLS = [
+    'no_resolucion', 'nombre_prestador', 'anio', 'trimestre',
+    'anio_trimestre_resolucion', 'tipo_giro',
+    'valor_resolucion', 'valor_pagado',
+]
+
+
 def row_hash(row: pd.Series) -> str:
-    """SHA-256 de todos los valores de la fila (orden estable)."""
-    raw = '|'.join(str(v) for v in row.values)
+    """SHA-256 de la clave de negocio (excluyendo metadata mutable)."""
+    raw = '|'.join(str(row[c]) for c in PAGOS_HASH_COLS)
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
 
@@ -119,13 +131,14 @@ def importar_pagos(xlsx_path: Path, conn) -> dict:
     filas_leidas = len(df)
     logger.info(f"   Filas leídas: {filas_leidas}")
 
-    # Eliminar duplicados exactos (94 conocidos)
-    df = df.drop_duplicates()
-    filas_dedup = filas_leidas - len(df)
-    logger.info(f"   Duplicados exactos eliminados: {filas_dedup}")
-
-    # Renombrar columnas
+    # Renombrar columnas primero para poder usar PAGOS_HASH_COLS
     df = df.rename(columns=PAGOS_COL_MAP)
+
+    # Eliminar duplicados por clave de negocio (keepea el último si hay varios)
+    key_cols = [c for c in PAGOS_HASH_COLS if c in df.columns]
+    df = df.drop_duplicates(subset=key_cols, keep='last')
+    filas_dedup = filas_leidas - len(df)
+    logger.info(f"   Duplicados por clave de negocio eliminados: {filas_dedup}")
 
     # Limpiar tipos
     df['trimestre'] = pd.to_numeric(df['trimestre'], errors='coerce').astype('Int64')
@@ -142,9 +155,8 @@ def importar_pagos(xlsx_path: Path, conn) -> dict:
     df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'], errors='coerce')
     df['fecha_resolucion'] = pd.to_datetime(df['fecha_resolucion'], errors='coerce')
 
-    # Hash para dedup incremental
-    hash_cols = [c for c in df.columns]  # todas las columnas
-    df['hash_fila'] = df[hash_cols].apply(row_hash, axis=1)
+    # Hash por clave de negocio (row_hash usa PAGOS_HASH_COLS, excluye fecha_actualizacion)
+    df['hash_fila'] = df.apply(row_hash, axis=1)
 
     # Convertir NaN/NA → None para PostgreSQL
     # El tipo Int64 produce pd.NA que psycopg2 no acepta; convertir a object
@@ -165,12 +177,22 @@ def importar_pagos(xlsx_path: Path, conn) -> dict:
         'hash_fila',
     ]
 
+    # Columnas mutables que se actualizan cuando el Excel cambia un registro existente
+    update_cols = [
+        'fecha_actualizacion', 'persona_actualiza', 'estado_resolucion',
+        'valor_resolucion', 'valor_pagado', 'pct_pagado', 'saldo_pendiente',
+        'estado_pago', 'tipo_pago', 'observacion', 'valor_disponible',
+        'valor_disponible_2', 'link_resolucion',
+    ]
+    update_clause = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+
     placeholders = ', '.join(['%s'] * len(dest_cols))
     col_list = ', '.join(dest_cols)
     insert_sql = f"""
         INSERT INTO subsidios_pagos ({col_list})
         VALUES ({placeholders})
-        ON CONFLICT (hash_fila) DO NOTHING
+        ON CONFLICT (hash_fila) DO UPDATE SET
+            {update_clause}
     """
 
     rows = [tuple(r[c] for c in dest_cols) for _, r in df.iterrows()]
@@ -355,6 +377,111 @@ def importar_mapa(xlsx_path: Path, conn) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# VALIDACIONES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+VALIDACION_COL_MAP = {
+    'Fecha actualización':              'fecha_actualizacion',
+    'Persona Actualiza':                'persona_actualiza',
+    'Fondo':                            'fondo',
+    'Area':                             'area',
+    'Año':                              'anio',
+    'Trimestre':                        'trimestre',
+    'Código\nSUI/FSSRI':               'codigo_sui',
+    'Nombre del Prestador':             'nombre_prestador',
+    'Estado de Validación':             'estado_validacion',
+    'Justificación':                    'justificacion',
+    'Radicado':                         'radicado',
+    'Fecha Radicado':                   'fecha_radicado',
+    'Observaciones':                    'observaciones',
+    'Estado de Validación Organizado':  'estado_validacion_organizado',
+    'A COD General':                    'cod_general',
+}
+
+
+def importar_validaciones(xlsx_path: Path, conn) -> dict:
+    """Lee hoja Validacion e inserta en subsidios_validaciones (TRUNCATE + INSERT)."""
+    t0 = time.time()
+    logger.info(f"📖 Leyendo hoja 'Validacion' de {xlsx_path.name}...")
+    df = pd.read_excel(xlsx_path, sheet_name='Validacion')
+    filas_leidas = len(df)
+    logger.info(f"   Filas leídas: {filas_leidas}")
+
+    # Renombrar columnas
+    df = df.rename(columns={k: v for k, v in VALIDACION_COL_MAP.items() if k in df.columns})
+    df = df[[c for c in VALIDACION_COL_MAP.values() if c in df.columns]]
+
+    # Limpiar tipos
+    df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'], errors='coerce')
+
+    # fecha_radicado: mix de datetime, float(NaN) y strings.
+    # Solo conservar valores que ya son datetime; todo lo demás → None
+    def _safe_date_radicado(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        if isinstance(v, datetime):
+            return v
+        return None
+
+    df['fecha_radicado'] = df['fecha_radicado'].apply(_safe_date_radicado)
+    df['anio'] = pd.to_numeric(df['anio'], errors='coerce').astype('Int64')
+    df['trimestre'] = pd.to_numeric(df['trimestre'], errors='coerce').astype('Int64')
+
+    dest_cols = [
+        'fecha_actualizacion', 'persona_actualiza', 'fondo', 'area', 'anio',
+        'trimestre', 'codigo_sui', 'nombre_prestador', 'estado_validacion',
+        'justificacion', 'radicado', 'fecha_radicado', 'observaciones',
+        'estado_validacion_organizado', 'cod_general',
+    ]
+
+    # Helper: convertir cualquier NaN/NaT/NaN-like → None puro de Python
+    def _to_pg(val):
+        if val is None:
+            return None
+        if isinstance(val, float) and (pd.isna(val) or val != val):
+            return None
+        try:
+            if pd.isna(val):
+                return None
+        except Exception:
+            pass
+        return val
+
+    rows = []
+    for _, r in df.iterrows():
+        row = []
+        for c in dest_cols:
+            v = r.get(c)
+            row.append(_to_pg(v))
+        rows.append(tuple(row))
+
+    insert_sql = f"""
+        INSERT INTO subsidios_validaciones
+            ({', '.join(dest_cols)})
+        VALUES
+            ({', '.join(['%s'] * len(dest_cols))})
+    """
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE TABLE subsidios_validaciones RESTART IDENTITY")
+        psycopg2.extras.execute_batch(cur, insert_sql, rows, page_size=500)
+        conn.commit()
+
+    duracion = time.time() - t0
+    stats = {
+        'hoja': 'Validacion',
+        'filas_leidas': filas_leidas,
+        'filas_importadas': len(rows),
+        'filas_duplicadas': 0,
+        'filas_error': 0,
+        'duracion_seg': round(duracion, 2),
+    }
+    _log_import(conn, xlsx_path.name, stats)
+    logger.info(f"✅ Validaciones: {len(rows)} registros ({duracion:.1f}s)")
+    return stats
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -387,7 +514,7 @@ def main():
     parser.add_argument('--archivo', type=str, default=str(DEFAULT_XLSX),
                         help='Ruta al archivo Excel')
     parser.add_argument('--hoja', type=str, default='todas',
-                        choices=['todas', 'pagos', 'empresas', 'mapa'],
+                        choices=['todas', 'pagos', 'empresas', 'mapa', 'validaciones'],
                         help='Hoja a importar')
     parser.add_argument('--reload', action='store_true',
                         help='Truncar subsidios_pagos antes de importar (carga completa)')
@@ -420,6 +547,8 @@ def main():
             importar_empresas(xlsx_path, conn)
         if args.hoja in ('todas', 'mapa'):
             importar_mapa(xlsx_path, conn)
+        if args.hoja in ('todas', 'validaciones'):
+            importar_validaciones(xlsx_path, conn)
 
         logger.info("🏁 ETL completado exitosamente")
     except Exception as e:
