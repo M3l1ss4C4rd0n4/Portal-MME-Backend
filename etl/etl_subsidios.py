@@ -74,7 +74,6 @@ def ensure_schema(conn):
 PAGOS_HASH_COLS = [
     'no_resolucion', 'nombre_prestador', 'anio', 'trimestre',
     'anio_trimestre_resolucion', 'tipo_giro',
-    'valor_resolucion', 'valor_pagado',
 ]
 
 
@@ -118,8 +117,8 @@ PAGOS_COL_MAP = {
 }
 
 
-def importar_pagos(xlsx_path: Path, conn) -> dict:
-    """Lee hoja Pagos, elimina duplicados exactos, calcula hash e inserta."""
+def importar_pagos(xlsx_path: Path, conn, fecha_fuente=None) -> dict:
+    """Lee hoja Pagos y reemplaza la tabla completa (full refresh, sin dedup)."""
     t0 = time.time()
     logger.info(f"📖 Leyendo hoja 'Pagos' de {xlsx_path.name}...")
     df = pd.read_excel(xlsx_path, sheet_name='Pagos')
@@ -131,14 +130,14 @@ def importar_pagos(xlsx_path: Path, conn) -> dict:
     filas_leidas = len(df)
     logger.info(f"   Filas leídas: {filas_leidas}")
 
-    # Renombrar columnas primero para poder usar PAGOS_HASH_COLS
-    df = df.rename(columns=PAGOS_COL_MAP)
+    # Eliminar la fila de totales de la tabla Excel (=SUBTOTALES al final)
+    # que pandas lee como dato real — se detecta porque no tiene prestador ni resolución
+    df = df[df['Nombre del Prestador'].notna() | df['No. de Resolución'].notna()]
+    if len(df) < filas_leidas:
+        logger.info(f"   Fila de totales Excel descartada ({filas_leidas - len(df)} fila(s))")
 
-    # Eliminar duplicados por clave de negocio (keepea el último si hay varios)
-    key_cols = [c for c in PAGOS_HASH_COLS if c in df.columns]
-    df = df.drop_duplicates(subset=key_cols, keep='last')
-    filas_dedup = filas_leidas - len(df)
-    logger.info(f"   Duplicados por clave de negocio eliminados: {filas_dedup}")
+    # Renombrar columnas
+    df = df.rename(columns=PAGOS_COL_MAP)
 
     # Limpiar tipos
     df['trimestre'] = pd.to_numeric(df['trimestre'], errors='coerce').astype('Int64')
@@ -155,14 +154,16 @@ def importar_pagos(xlsx_path: Path, conn) -> dict:
     df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'], errors='coerce')
     df['fecha_resolucion'] = pd.to_datetime(df['fecha_resolucion'], errors='coerce')
 
-    # Hash por clave de negocio (row_hash usa PAGOS_HASH_COLS, excluye fecha_actualizacion)
+    # hash_fila como campo de auditoría (ya no es UNIQUE — full refresh no necesita dedup)
     df['hash_fila'] = df.apply(row_hash, axis=1)
 
-    # Convertir NaN/NA → None para PostgreSQL
-    # El tipo Int64 produce pd.NA que psycopg2 no acepta; convertir a object
+    # Convertir NaN/NA/NaT → None para PostgreSQL
+    # Int64 produce pd.NA; datetime produce NaT — ambos deben convertirse a object primero
     for col in df.columns:
         if pd.api.types.is_integer_dtype(df[col]) or str(df[col].dtype) == 'Int64':
             df[col] = df[col].astype(object)
+        elif pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].astype(object).where(df[col].notna(), None)
     df = df.where(pd.notna(df), None)
 
     # Columnas destino (orden fijo)
@@ -177,48 +178,34 @@ def importar_pagos(xlsx_path: Path, conn) -> dict:
         'hash_fila',
     ]
 
-    # Columnas mutables que se actualizan cuando el Excel cambia un registro existente
-    update_cols = [
-        'fecha_actualizacion', 'persona_actualiza', 'estado_resolucion',
-        'valor_resolucion', 'valor_pagado', 'pct_pagado', 'saldo_pendiente',
-        'estado_pago', 'tipo_pago', 'observacion', 'valor_disponible',
-        'valor_disponible_2', 'link_resolucion',
-    ]
-    update_clause = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
-
     placeholders = ', '.join(['%s'] * len(dest_cols))
     col_list = ', '.join(dest_cols)
-    insert_sql = f"""
-        INSERT INTO subsidios_pagos ({col_list})
-        VALUES ({placeholders})
-        ON CONFLICT (hash_fila) DO UPDATE SET
-            {update_clause}
-    """
+    insert_sql = f"INSERT INTO subsidios_pagos ({col_list}) VALUES ({placeholders})"
 
     rows = [tuple(r[c] for c in dest_cols) for _, r in df.iterrows()]
 
     with conn.cursor() as cur:
-        filas_antes = _count_table(cur, 'subsidios_pagos')
+        # Full refresh: borrar todo e insertar el Excel exactamente como está
+        cur.execute("DELETE FROM subsidios_pagos")
+        deleted = cur.rowcount
+        logger.info(f"   Borradas {deleted} filas previas")
         psycopg2.extras.execute_batch(cur, insert_sql, rows, page_size=500)
         conn.commit()
         filas_despues = _count_table(cur, 'subsidios_pagos')
 
-    filas_importadas = filas_despues - filas_antes
-    filas_dup = len(df) - filas_importadas
     duracion = time.time() - t0
 
     stats = {
         'hoja': 'Pagos',
         'filas_leidas': filas_leidas,
-        'filas_importadas': filas_importadas,
-        'filas_duplicadas': filas_dup + filas_dedup,
+        'filas_importadas': filas_despues,
+        'filas_duplicadas': 0,
         'filas_error': 0,
         'duracion_seg': round(duracion, 2),
     }
-    _log_import(conn, xlsx_path.name, stats)
+    _log_import(conn, xlsx_path.name, stats, fecha_fuente=fecha_fuente)
 
-    logger.info(f"✅ Pagos: {filas_importadas} nuevas, {filas_dup} ya existían, "
-                f"{filas_dedup} exactos eliminados ({duracion:.1f}s)")
+    logger.info(f"✅ Pagos: {filas_despues} filas insertadas desde Excel ({duracion:.1f}s)")
     return stats
 
 
@@ -226,7 +213,7 @@ def importar_pagos(xlsx_path: Path, conn) -> dict:
 # EMPRESAS (Inicio)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def importar_empresas(xlsx_path: Path, conn) -> dict:
+def importar_empresas(xlsx_path: Path, conn, fecha_fuente=None) -> dict:
     """Lee hoja Inicio (catálogo de empresas) e inserta/actualiza."""
     t0 = time.time()
     logger.info(f"📖 Leyendo hoja 'Inicio' de {xlsx_path.name}...")
@@ -292,7 +279,7 @@ def importar_empresas(xlsx_path: Path, conn) -> dict:
         'filas_error': 0,
         'duracion_seg': round(duracion, 2),
     }
-    _log_import(conn, xlsx_path.name, stats)
+    _log_import(conn, xlsx_path.name, stats, fecha_fuente=fecha_fuente)
     logger.info(f"✅ Empresas: {len(rows)} registros upserted ({duracion:.1f}s)")
     return stats
 
@@ -301,7 +288,7 @@ def importar_empresas(xlsx_path: Path, conn) -> dict:
 # MAPA
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def importar_mapa(xlsx_path: Path, conn) -> dict:
+def importar_mapa(xlsx_path: Path, conn, fecha_fuente=None) -> dict:
     """Lee hoja Mapa (cobertura geográfica) e inserta."""
     t0 = time.time()
     logger.info(f"📖 Leyendo hoja 'Mapa' de {xlsx_path.name}...")
@@ -371,7 +358,7 @@ def importar_mapa(xlsx_path: Path, conn) -> dict:
         'filas_error': 0,
         'duracion_seg': round(duracion, 2),
     }
-    _log_import(conn, xlsx_path.name, stats)
+    _log_import(conn, xlsx_path.name, stats, fecha_fuente=fecha_fuente)
     logger.info(f"✅ Mapa: {len(rows)} registros ({duracion:.1f}s)")
     return stats
 
@@ -490,18 +477,30 @@ def _count_table(cur, table: str) -> int:
     return cur.fetchone()[0]
 
 
-def _log_import(conn, archivo: str, stats: dict):
+def _log_import(conn, archivo: str, stats: dict, fecha_fuente=None):
     with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO subsidios_import_log
-                (archivo, hoja, filas_leidas, filas_importadas, filas_duplicadas,
-                 filas_error, duracion_seg, observaciones)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            archivo, stats['hoja'], stats['filas_leidas'],
-            stats['filas_importadas'], stats['filas_duplicadas'],
-            stats['filas_error'], stats['duracion_seg'], None,
-        ))
+        if fecha_fuente is not None:
+            cur.execute("""
+                INSERT INTO subsidios_import_log
+                    (fecha, archivo, hoja, filas_leidas, filas_importadas, filas_duplicadas,
+                     filas_error, duracion_seg, observaciones)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                fecha_fuente, archivo, stats['hoja'], stats['filas_leidas'],
+                stats['filas_importadas'], stats['filas_duplicadas'],
+                stats['filas_error'], stats['duracion_seg'], None,
+            ))
+        else:
+            cur.execute("""
+                INSERT INTO subsidios_import_log
+                    (archivo, hoja, filas_leidas, filas_importadas, filas_duplicadas,
+                     filas_error, duracion_seg, observaciones)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                archivo, stats['hoja'], stats['filas_leidas'],
+                stats['filas_importadas'], stats['filas_duplicadas'],
+                stats['filas_error'], stats['duracion_seg'], None,
+            ))
     conn.commit()
 
 
