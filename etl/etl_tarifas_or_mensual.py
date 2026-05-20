@@ -528,7 +528,19 @@ def insertar_or(
              fazni_cop_kwh, faer_cop_kwh, prone_cop_kwh,
              fuente, vigente_desde, usa_cot, c_base_cop_kwh)
         VALUES (%s,%s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s,%s)
-        ON CONFLICT (or_codigo) DO NOTHING
+        ON CONFLICT (or_codigo) DO UPDATE SET
+            t_stn_cop_kwh            = EXCLUDED.t_stn_cop_kwh,
+            t_str_cop_kwh            = EXCLUDED.t_str_cop_kwh,
+            d_cop_kwh                = EXCLUDED.d_cop_kwh,
+            c_cop_kwh                = EXCLUDED.c_cop_kwh,
+            r_restricciones_cop_kwh  = EXCLUDED.r_restricciones_cop_kwh,
+            perdidas_reconocidas_pct = EXCLUDED.perdidas_reconocidas_pct,
+            fazni_cop_kwh            = EXCLUDED.fazni_cop_kwh,
+            faer_cop_kwh             = EXCLUDED.faer_cop_kwh,
+            prone_cop_kwh            = EXCLUDED.prone_cop_kwh,
+            fuente                   = EXCLUDED.fuente,
+            vigente_desde            = EXCLUDED.vigente_desde,
+            updated_at               = NOW()
     """
     values = (
         or_codigo.upper(), or_nombre, region, departamentos,
@@ -549,16 +561,12 @@ def insertar_or(
         with mgr.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(sql, values)
-            inserted = cur.rowcount > 0
-            if inserted:
-                conn.commit()
-                logger.info(f"✓ OR insertado: {or_codigo} — {or_nombre}")
-            else:
-                logger.warning(f"OR ya existe: {or_codigo} (no se sobreescribió)")
+            conn.commit()
             cur.close()
-        return inserted
+        logger.info(f"✓ OR upserted: {or_codigo} — {or_nombre} (vigente_desde={col_map['vigente_desde']})")
+        return True
     except Exception as e:
-        logger.error(f"Error insertando OR {or_codigo}: {e}")
+        logger.error(f"Error upserting OR {or_codigo}: {e}")
         return False
 
 

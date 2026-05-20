@@ -7,10 +7,16 @@ Descarga archivos Excel desde SharePoint del Ministerio (vía Microsoft Graph AP
 detecta cambios por hash SHA-256 y ejecuta el ETL correspondiente en PostgreSQL.
 
 Archivos configurados:
-  1. Matriz_Subsidios_DEE     → Base_Subsidios_DDE.xlsx      → tablas subsidios_*
-  2. Matriz_Ejecucion_2026    → Matriz_Ejecucion_Presupuestal_2026.xlsx → schema presupuesto
-  3. Matriz_Subsidios_KPIs    → Matriz_Subsidios_KPIs.xlsx   → schema subsidios_kpis
+  1. Matriz_General_Reparto   → Matriz_General_Reparto.xlsx → schema supervision (3 tablas)
+  2. Acuerdos_Gestion_DEE_2026 → Acuerdos_Gestion_DEE_2026.xlsx → schema presupuesto
+  3. Base_Subsidios_DDE       → Base_Subsidios_DDE.xlsx      → schema subsidios (4 tablas)
   4. Seguimiento_Contratos_CE → Seguimiento_Contratos_CE.xlsx → contratos_or.seguimiento
+  5. Comunidades_Seguimiento_FENOGE → comunidades_seguimiento_fenoge.xlsx → fenoge.seguimiento
+  6. Deficit_Historico_Subsidios → Deficit_Historico_Subsidios.xlsx → subsidios.deficit_historico
+  7. Comunidades_Energeticas_FENOGE → Comunidades_Energeticas_fenoge.xlsx → fenoge.comunidades
+  8. Colombia_Solar_OR        → Colombia_Solar_OR.xlsx       → schema colombia_solar
+
+NOTA: Matriz_Subsidios_KPIs.xlsx tiene handler pero NO está en SHAREPOINT_FILES (ver Error #2)
 
 Uso:
     python etl/etl_sharepoint_sync.py                  # sincronizar todos
@@ -36,7 +42,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -433,6 +439,28 @@ def _load_hash_cache() -> dict:
     return {}
 
 
+_BOGOTA = timezone(timedelta(hours=-5))
+
+
+def _sp_ts_to_bogota(iso: str) -> datetime | None:
+    """Convierte timestamp ISO de SharePoint (UTC) a datetime con tz America/Bogota (-5h)."""
+    try:
+        dt_utc = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt_utc.astimezone(_BOGOTA)
+    except Exception:
+        return None
+
+
+def _load_fecha_fuente(nombre: str) -> datetime | None:
+    """Lee lastModifiedDateTime del estado del watcher para el archivo indicado."""
+    try:
+        state = json.loads(HASH_CACHE_FILE.read_text(encoding="utf-8"))
+        iso = state.get(nombre, {}).get("lastModifiedDateTime", "")
+        return _sp_ts_to_bogota(iso) if iso else None
+    except Exception:
+        return None
+
+
 def _save_hash_cache(cache: dict) -> None:
     """Guarda los hashes en el estado unificado, preservando metadatos del watcher.
     cache: { "NombreArchivo": "sha256", ... }
@@ -480,6 +508,7 @@ def _load_sheets_to_schema(
     schema: str,
     truncate: bool = True,
     header_overrides: dict | None = None,
+    fecha_carga_override: datetime | None = None,
 ) -> dict:
     """
     Carga todas las hojas no-vacías de un Excel al schema indicado usando
@@ -517,7 +546,7 @@ def _load_sheets_to_schema(
                     logger.info("  Hoja '%s' vacía, omitida", sheet)
                     continue
                 table_name = _clean_col(sheet)
-                n = load_dataframe(conn, schema, table_name, df, truncate=truncate, commit=False)
+                n = load_dataframe(conn, schema, table_name, df, truncate=truncate, commit=False, fecha_carga_override=fecha_carga_override)
                 results[sheet] = n
 
             conn.commit()
@@ -530,7 +559,7 @@ def _load_sheets_to_schema(
     return results
 
 
-def handler_etl_subsidios(xlsx_path: Path) -> dict:
+def handler_etl_subsidios(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Base_Subsidios_DDE.xlsx → subsidios_pagos, subsidios_empresas, subsidios_mapa.
     Usa el ETL especializado de etl_subsidios.py (con hashes y lógica de dedup).
@@ -548,10 +577,25 @@ def handler_etl_subsidios(xlsx_path: Path) -> dict:
     conn = get_connection()
     try:
         ensure_schema(conn)
-        r_pagos    = importar_pagos(xlsx_path, conn)
-        r_empresas = importar_empresas(xlsx_path, conn)
-        r_mapa     = importar_mapa(xlsx_path, conn)
+        r_pagos    = importar_pagos(xlsx_path, conn, fecha_fuente=fecha_fuente)
+        r_empresas = importar_empresas(xlsx_path, conn, fecha_fuente=fecha_fuente)
+        r_mapa     = importar_mapa(xlsx_path, conn, fecha_fuente=fecha_fuente)
         r_kpis     = _importar_kpis_resumen(xlsx_path, conn)
+
+        # Alerta temprana: si la BD quedó con menos del 80% de filas del Excel, algo falló
+        filas_excel = r_pagos.get("filas_leidas", 0)
+        filas_bd    = r_pagos.get("filas_leidas", 0) - r_pagos.get("filas_duplicadas", 0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM subsidios.subsidios_pagos")
+            filas_bd_real = cur.fetchone()[0]
+        if filas_excel > 0 and filas_bd_real < filas_excel * 0.8:
+            logger.warning(
+                "  ⚠ subsidios_pagos: BD tiene %d filas pero Excel tiene %d — posible pérdida de datos",
+                filas_bd_real, filas_excel,
+            )
+        else:
+            logger.info("  ✅ Conteo OK: BD=%d filas (Excel=%d)", filas_bd_real, filas_excel)
+
         return {"pagos": r_pagos, "empresas": r_empresas, "mapa": r_mapa, "kpis_resumen": r_kpis}
     finally:
         conn.close()
@@ -632,7 +676,7 @@ def _importar_kpis_resumen(xlsx_path: Path, conn) -> dict:
         return {"error": str(e)}
 
 
-def handler_etl_presupuesto_onedrive(xlsx_path: Path) -> dict:
+def handler_etl_presupuesto_onedrive(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Matriz_Ejecucion_Presupuestal_2026.xlsx → schema presupuesto.
     Carga todas las hojas con datos al schema via loader genérico.
@@ -642,24 +686,16 @@ def handler_etl_presupuesto_onedrive(xlsx_path: Path) -> dict:
     return _load_sheets_to_schema(
         xlsx_path, schema="presupuesto", truncate=True,
         header_overrides={"resumen": 3},
+        fecha_carga_override=fecha_fuente,
     )
 
 
-def handler_etl_subsidios_kpis(xlsx_path: Path) -> dict:
-    """
-    Carga Matriz_Subsidios_KPIs.xlsx (hojas kpis, validación, pagos, etc.)
-    → schema subsidios_kpis en PostgreSQL.
-    """
-    logger.info("  ETL subsidios_kpis: %s", xlsx_path.name)
-    return _load_sheets_to_schema(xlsx_path, schema="subsidios_kpis", truncate=True)
-
-
-def handler_etl_contratos_or_onedrive(xlsx_path: Path) -> dict:
+def handler_etl_contratos_or_onedrive(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Seguimiento_Contratos_CE.xlsx → schema contratos_or.
     """
     logger.info("  ETL contratos_or: %s", xlsx_path.name)
-    return _load_sheets_to_schema(xlsx_path, schema="contratos_or", truncate=True)
+    return _load_sheets_to_schema(xlsx_path, schema="contratos_or", truncate=True, fecha_carga_override=fecha_fuente)
 
 
 def _nan_to_none(v):
@@ -680,21 +716,33 @@ def _nan_to_none(v):
     return v
 
 
-def _df_to_table(conn, schema: str, table: str, df, cols: list) -> int:
+def _df_to_table(conn, schema: str, table: str, df, cols: list, fecha_carga: "datetime | None" = None) -> int:
     """TRUNCATE + INSERT masivo de un DataFrame a una tabla tipada existente."""
     cursor = conn.cursor()
     cursor.execute(f"TRUNCATE TABLE {schema}.{table} RESTART IDENTITY")
-    placeholders = ", ".join(["%s"] * len(cols))
-    col_names = ", ".join(cols)
-    insert_sql = f"INSERT INTO {schema}.{table} ({col_names}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
-    rows = [tuple(_nan_to_none(v) for v in row)
-            for row in df[cols].itertuples(index=False, name=None)]
+    all_cols = cols + (["fecha_carga"] if fecha_carga is not None else [])
+    placeholders = ", ".join(["%s"] * len(all_cols))
+    col_names = ", ".join(all_cols)
+    insert_sql = f"INSERT INTO {schema}.{table} ({col_names}) VALUES ({placeholders})"
+    rows = [
+        tuple(_nan_to_none(v) for v in row) + ((fecha_carga,) if fecha_carga is not None else ())
+        for row in df[cols].itertuples(index=False, name=None)
+    ]
     cursor.executemany(insert_sql, rows)
+
+    # Verificar que la BD quedó con el mismo conteo que el DataFrame
+    cursor.execute(f"SELECT COUNT(*) FROM {schema}.{table}")
+    bd_count = cursor.fetchone()[0]
+    if bd_count != len(rows):
+        raise RuntimeError(
+            f"{schema}.{table}: se esperaban {len(rows)} filas pero la BD tiene {bd_count}"
+        )
+
     conn.commit()
     return len(rows)
 
 
-def handler_etl_supervision_onedrive(xlsx_path: Path) -> dict:
+def handler_etl_supervision_onedrive(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Matriz_General_Reparto.xlsx → schema supervision.
     Mapea explícitamente cada hoja a la tabla que lee la API del portal.
@@ -729,7 +777,7 @@ def handler_etl_supervision_onedrive(xlsx_path: Path) -> dict:
                 if df.empty:
                     logger.info("  Hoja '%s' vacía, omitida", sheet)
                     continue
-                n = load_dataframe(conn, "supervision", table, df, truncate=True, commit=False)
+                n = load_dataframe(conn, "supervision", table, df, truncate=True, commit=False, fecha_carga_override=fecha_fuente)
                 results[table] = n
 
             conn.commit()
@@ -777,7 +825,7 @@ _FENOGE_COM_MAP = {
 }
 
 
-def handler_etl_fenoge_seguimiento(xlsx_path: Path) -> dict:
+def handler_etl_fenoge_seguimiento(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga comunidades_seguimiento_fenoge.xlsx → fenoge.seguimiento.
     """
@@ -793,14 +841,32 @@ def handler_etl_fenoge_seguimiento(xlsx_path: Path) -> dict:
     db_cols = [c for c in _FENOGE_SEG_MAP.values() if c in df.columns]
     logger.info("  Columnas mapeadas: %s", db_cols)
 
+    # Forzar formato DD/MM/YYYY para fechas (evita MDY por defecto en PostgreSQL)
+    if "dia_actualizacion" in df.columns:
+        df["dia_actualizacion"] = pd.to_datetime(
+            df["dia_actualizacion"], dayfirst=True, errors="coerce"
+        ).dt.date
+
     with connection_manager.get_connection() as conn:
-        n = _df_to_table(conn, "fenoge", "seguimiento", df, db_cols)
+        n = _df_to_table(conn, "fenoge", "seguimiento", df, db_cols, fecha_carga=fecha_fuente)
 
     logger.info("  fenoge.seguimiento: %d filas cargadas", n)
     return {"filas": n}
 
 
-def handler_etl_fenoge_comunidades(xlsx_path: Path) -> dict:
+def _parse_cop_currency(series):
+    """Parsea formato moneda COP: ' $ 6.800.000,00' → 6800000.0"""
+    import pandas as pd
+    return (
+        series.astype(str)
+        .str.replace(r"[\$\s]", "", regex=True)   # quitar $ y espacios
+        .str.replace(".", "", regex=False)          # quitar separador miles
+        .str.replace(",", ".", regex=False)         # coma decimal → punto
+        .pipe(pd.to_numeric, errors="coerce")
+    )
+
+
+def handler_etl_fenoge_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Comunidades_Energeticas_fenoge.xlsx → fenoge.comunidades.
     """
@@ -816,14 +882,32 @@ def handler_etl_fenoge_comunidades(xlsx_path: Path) -> dict:
     db_cols = [c for c in _FENOGE_COM_MAP.values() if c in df.columns]
     logger.info("  Columnas mapeadas: %s", db_cols)
 
+    # Limpiar columnas de moneda COP que el Excel trae como strings con formato "$ X.XXX.XXX,YY"
+    for col in ("valor_kwp", "valor_proyecto"):
+        if col in df.columns and df[col].dtype == object:
+            df[col] = _parse_cop_currency(df[col])
+
+    # Coordenadas con coma decimal ("6,66" → 6.66)
+    for col in ("latitud", "longitud"):
+        if col in df.columns and df[col].dtype == object:
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(",", ".", regex=False),
+                errors="coerce",
+            )
+
+    # Normalizar fechas: el Excel mezcla datetime objects y strings "DD/MM/YYYY"
+    for col in ("fecha_inicio", "fecha_fin"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
+
     with connection_manager.get_connection() as conn:
-        n = _df_to_table(conn, "fenoge", "comunidades", df, db_cols)
+        n = _df_to_table(conn, "fenoge", "comunidades", df, db_cols, fecha_carga=fecha_fuente)
 
     logger.info("  fenoge.comunidades: %d filas cargadas", n)
     return {"filas": n}
 
 
-def handler_etl_deficit_historico(xlsx_path: Path) -> dict:
+def handler_etl_deficit_historico(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Info tablero.xlsx Hoja5 → subsidios.deficit_historico.
     Columnas: anio, subsidios, contribuciones, deficit_anual,
@@ -854,13 +938,13 @@ def handler_etl_deficit_historico(xlsx_path: Path) -> dict:
     df["anio"] = df["anio"].astype(int)
 
     with connection_manager.get_connection() as conn:
-        n = _df_to_table(conn, "subsidios", "deficit_historico", df, db_cols)
+        n = _df_to_table(conn, "subsidios", "deficit_historico", df, db_cols, fecha_carga=fecha_fuente)
 
     logger.info("  deficit_historico: %d filas cargadas", n)
     return {"filas": n}
 
 
-def handler_etl_colombia_solar(xlsx_path: Path) -> dict:
+def handler_etl_colombia_solar(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Colombia_Solar_OR.xlsx → schema colombia_solar.
     Hojas:
@@ -874,6 +958,7 @@ def handler_etl_colombia_solar(xlsx_path: Path) -> dict:
         xlsx_path,
         schema="colombia_solar",
         truncate=True,
+        fecha_carga_override=fecha_fuente,
         header_overrides={
             "Base": 1,
             "Seguimiento Diario": 2,
@@ -885,7 +970,6 @@ def handler_etl_colombia_solar(xlsx_path: Path) -> dict:
 ETL_HANDLERS = {
     "etl_subsidios": handler_etl_subsidios,
     "etl_presupuesto_onedrive": handler_etl_presupuesto_onedrive,
-    "etl_subsidios_kpis": handler_etl_subsidios_kpis,
     "etl_contratos_or_onedrive": handler_etl_contratos_or_onedrive,
     "etl_supervision_onedrive": handler_etl_supervision_onedrive,
     "etl_fenoge_seguimiento": handler_etl_fenoge_seguimiento,
@@ -979,8 +1063,11 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
                 result["error"] = f"Handler '{handler_name}' no encontrado"
             else:
                 logger.info("  🗄️  Ejecutando ETL: %s", handler_name)
+                fecha_fuente = _load_fecha_fuente(nombre)
+                if fecha_fuente:
+                    logger.info("  📅 fecha_fuente SharePoint → %s", fecha_fuente.strftime("%d/%m/%Y %H:%M (Bogotá)"))
                 t0 = time.time()
-                resultado = handler(destino)
+                resultado = handler(destino, fecha_fuente=fecha_fuente)
                 duracion = time.time() - t0
                 result["etl_ejecutado"] = True
                 result["resultado_etl"] = resultado

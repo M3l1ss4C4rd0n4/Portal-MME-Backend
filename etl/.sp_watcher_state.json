@@ -1,0 +1,66 @@
+{
+  "Matriz_General_Reparto": {
+    "lastModifiedDateTime": "2026-05-18T05:47:20Z",
+    "eTag": "\"{8C044B58-604D-45DA-93D9-015FB9BB6047},17109\"",
+    "size": 85513785,
+    "last_etl_run": "2026-05-18T06:00:01Z",
+    "last_etl_ok": true,
+    "content_hash": "9a7789c943025ad3000093d727efc77c554279e769667454015e36139799b4ec"
+  },
+  "Acuerdos_Gestion_DEE_2026": {
+    "lastModifiedDateTime": "2026-05-06T20:00:01Z",
+    "eTag": "\"{D7F413E7-766B-4BD4-AE85-7977BE8D51FF},132\"",
+    "size": 151675,
+    "last_etl_run": "2026-05-07T23:56:22Z",
+    "last_etl_ok": true,
+    "content_hash": "b79c75056912847f833bf938ca4013ef70d253e798d179bb5a2c20082e2c4b5e"
+  },
+  "Base_Subsidios_DDE": {
+    "lastModifiedDateTime": "2026-05-18T01:43:47Z",
+    "eTag": "\"{751521B2-15FE-4300-A140-05067D142FB6},1167\"",
+    "size": 4005567,
+    "last_etl_run": "2026-05-18T05:00:02Z",
+    "last_etl_ok": true,
+    "content_hash": "28915c5ac2a0253702d0c35f6be3f4c493087ca1c70e04ba36f7de633f3fca79"
+  },
+  "Seguimiento_Contratos_CE": {
+    "lastModifiedDateTime": "2026-05-17T19:05:53Z",
+    "eTag": "\"{0A6A50A7-545B-4DDE-8DA1-897BC546D23E},427\"",
+    "size": 137627,
+    "last_etl_run": "2026-05-17T19:00:01Z",
+    "last_etl_ok": true,
+    "content_hash": "2b2edb1c3e49114780e045de6cb1185d2b4be942dfa6821fdfefd630e3e10f73"
+  },
+  "Comunidades_Seguimiento_FENOGE": {
+    "lastModifiedDateTime": "2026-05-01T03:19:24Z",
+    "eTag": "\"{F6819F9F-F81B-413E-B7B8-E97EA59F6560},2\"",
+    "size": 36283,
+    "last_etl_run": "2026-05-07T23:56:22Z",
+    "last_etl_ok": true,
+    "content_hash": "d63514d25bb8fc381b599be999e54466d12da32789719de52ca7f4a4414c8017"
+  },
+  "Deficit_Historico_Subsidios": {
+    "lastModifiedDateTime": "2026-05-07T04:47:12Z",
+    "eTag": "\"{EA07217B-F77D-4EC6-A5A5-AB58D2158B74},3\"",
+    "size": 93850,
+    "last_etl_run": "2026-05-07T23:56:22Z",
+    "last_etl_ok": true,
+    "content_hash": "952ef941fa17c80c1568d86d236adc089204015e2ce2c5e8421469994b58afb6"
+  },
+  "Comunidades_Energeticas_FENOGE": {
+    "lastModifiedDateTime": "2026-05-11T14:52:13Z",
+    "eTag": "\"{A4E9BDF1-AC07-4F2F-85B0-9A714C7F18B9},6\"",
+    "size": 38707,
+    "last_etl_run": "2026-05-14T05:00:01Z",
+    "last_etl_ok": true,
+    "content_hash": "1ed451f35808492943fdbb38d3688d0be2842fff3a9e885d3006cc3aa8968b0e"
+  },
+  "Colombia_Solar_OR": {
+    "lastModifiedDateTime": "2026-05-14T22:45:57Z",
+    "eTag": "\"{8CDCDDC1-DB3C-4BF9-9505-C63FCBCAFA31},139\"",
+    "size": 83659,
+    "last_etl_run": "2026-05-14T23:00:01Z",
+    "last_etl_ok": true,
+    "content_hash": "458d4ecfb9cf028928adef3d303ff8a55c7be5473655acd4ae3d30f35debe70b"
+  }
+}

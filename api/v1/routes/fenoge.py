@@ -128,6 +128,9 @@ async def get_fenoge_mapa(request: Request, api_key: str = Depends(get_api_key))
                 """)
                 dept_avg_rows = cur.fetchall()
 
+                cur.execute("SELECT MAX(fecha_carga) FROM fenoge.comunidades")
+                ts_fen = cur.fetchone()[0]
+
         # --- Construir detalle_fase (equivalente a detalleZona) ---
         detalle_fase = [
             {
@@ -196,6 +199,7 @@ async def get_fenoge_mapa(request: Request, api_key: str = Depends(get_api_key))
             }
 
         return JSONResponse({
+            "ultima_actualizacion": ts_fen.strftime("%d/%m/%Y, %H:%M") if ts_fen else None,
             "totalCes":       int(k[0]),
             "totalKwp":       _f(k[1]) or 0.0,
             "avgKwp":         _f(k[2]),

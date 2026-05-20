@@ -90,10 +90,11 @@ def _pg_type(series: pd.Series) -> str:
     return 'TEXT'
 
 
-def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bool = True, commit: bool = True) -> int:
+def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bool = True, commit: bool = True, fecha_carga_override=None) -> int:
     """
     Carga un DataFrame en schema.table.
     Crea la tabla si no existe, trunca si truncate=True.
+    fecha_carga_override: datetime opcional; si se provee, se inserta en fecha_carga en lugar de NOW().
     Retorna número de filas insertadas.
     """
     if df.empty:
@@ -128,8 +129,11 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
             cur.execute(f'TRUNCATE TABLE {schema}."{table}" RESTART IDENTITY;')
 
         # Insert rows
-        cols_quoted = ', '.join(f'"{c}"' for c in df.columns)
-        placeholders = ', '.join(['%s'] * len(df.columns))
+        extra_cols = ['fecha_carga'] if fecha_carga_override is not None else []
+        cols_quoted = ', '.join(
+            [f'"{c}"' for c in df.columns] + extra_cols
+        )
+        placeholders = ', '.join(['%s'] * (len(df.columns) + len(extra_cols)))
         insert_sql = (
             f'INSERT INTO {schema}."{table}" ({cols_quoted}) '
             f'VALUES ({placeholders})'
@@ -159,6 +163,8 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
                             vals.append(val)
                     except (TypeError, ValueError):
                         vals.append(val)
+            if fecha_carga_override is not None:
+                vals.append(fecha_carga_override)
             rows.append(tuple(vals))
 
         psycopg2.extras.execute_batch(cur, insert_sql, rows, page_size=500)
@@ -198,9 +204,19 @@ def etl_supervision() -> None:
 # ─── ETL Comunidades ──────────────────────────────────────────────────────────
 
 def etl_comunidades() -> None:
-    """Carga Resumen_Implementación.xlsx → schema comunidades."""
+    """
+    Carga Resumen_Implementación.xlsx → schema comunidades.
+    
+    ⚠️  ARCHIVO LOCAL: Este archivo NO está sincronizado por SharePoint sync.
+    Ubicación: data/base_de_datos_comunidades_energeticas/Resumen_Implementación.xlsx
+    Trigger: Ejecución manual → python etl/etl_nuevos_dashboards.py --schema comunidades
+    
+    Carga dos hojas:
+    - 'Base': Registro principal de comunidades (comunidades.base)
+    - 'Implementadas': Comunidades implementadas (comunidades.implementadas)
+    """
     xlsx_path = BASE_DIR / 'data' / 'base_de_datos_comunidades_energeticas' / 'Resumen_Implementación.xlsx'
-    logger.info(f"=== ETL COMUNIDADES: {xlsx_path.name} ===")
+    logger.info(f"=== ETL COMUNIDADES: {xlsx_path.name} (ARCHIVO LOCAL - NO sincronizado) ===")
 
     # Base: main registry of communities
     df_base = pd.read_excel(xlsx_path, sheet_name='Base')
@@ -212,6 +228,7 @@ def etl_comunidades() -> None:
         load_dataframe(conn, 'comunidades', 'implementadas', df_impl)
 
     logger.info("=== comunidades: completado ===")
+
 
 
 # ─── ETL Presupuesto ──────────────────────────────────────────────────────────
