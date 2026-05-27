@@ -15,10 +15,25 @@ from domain.services.report_service import (
 ChartSpec = Tuple[str, str]  # (chart_key, caption)
 
 KPI_BG = "#254553"
+KPI_ACCENT = "#287270"
 GAUGES_PER_PAGE = 4
 LARGE_CHARTS_PER_PAGE = 2
-LARGE_HEIGHT_PAIR = 340
-LARGE_HEIGHT_SINGLE = 480
+LARGE_HEIGHT_PAIR = 360
+LARGE_HEIGHT_SINGLE = 500
+
+# Alturas de gauge según contexto (px) — equilibradas para llenar la hoja sin micro-gráficos
+_GAUGE_H = {
+    "intro_4": 248,
+    "intro_3_top": 235,
+    "intro_3_bot": 275,
+    "intro_2": 290,
+    "intro_1": 340,
+    "full_4": 300,
+    "full_3_top": 285,
+    "full_3_bot": 320,
+    "full_2": 355,
+    "full_1": 420,
+}
 
 
 def chapter_cover(num: int, title: str, subtitle: str = "") -> str:
@@ -66,7 +81,7 @@ def _format_kpi_value(k: Dict[str, Any]) -> str:
 
 
 def kpi_row(kpis: List[Dict[str, Any]], fecha_corte: str = "", max_items: int = 4) -> str:
-    """Fila de KPIs con el mismo estilo .kpi-box del informe principal."""
+    """Fila de KPIs — tamaño generoso para ocupar el ancho de la hoja."""
     if not kpis:
         return ""
     cells = ""
@@ -76,21 +91,24 @@ def kpi_row(kpis: List[Dict[str, Any]], fecha_corte: str = "", max_items: int = 
         label = _strip_emojis(str(k.get("label", "")))
         val_str = _format_kpi_value(k)
         cells += f"""
-        <td style="width:{width}%;padding:2px;vertical-align:top;">
-          <div class="kpi-box" style="background:{KPI_BG};">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value">{val_str}</div>
+        <td style="width:{width}%;padding:4px;vertical-align:stretch;">
+          <div style="background:{KPI_BG};border-left:4px solid {KPI_ACCENT};border-radius:4px;
+                      padding:14px 16px;min-height:92px;height:100%;box-sizing:border-box;">
+            <div style="font-size:9pt;font-weight:bold;color:#e2e8f0;
+                        text-transform:uppercase;letter-spacing:0.3px;">{label}</div>
+            <div style="font-size:20pt;font-weight:bold;color:#fff;margin-top:8px;line-height:1.1;">
+              {val_str}</div>
           </div>
         </td>
         """
     fc = _parse_fecha_corte(fecha_corte)
     fc_row = (
-        f'<tr><td colspan="{len(subset)}" style="padding:2px 4px 0;">{fc}</td></tr>'
+        f'<tr><td colspan="{len(subset)}" style="padding:4px 6px 0;">{fc}</td></tr>'
         if fc else ""
     )
     return (
-        f'<table width="100%" cellpadding="0" cellspacing="2" '
-        f'style="margin:0 0 6px 0;"><tr>{cells}</tr>{fc_row}</table>'
+        f'<table width="100%" cellpadding="0" cellspacing="4" '
+        f'style="margin:0 0 10px 0;"><tr>{cells}</tr>{fc_row}</table>'
     )
 
 
@@ -150,24 +168,71 @@ def embed_chart(
     )
 
 
+def _gauge_cell(
+    chart_paths: Optional[Dict[str, str]],
+    key: str,
+    caption: str,
+    max_height: int,
+    colspan: int = 1,
+) -> str:
+    img = embed_chart(
+        chart_paths, key, caption, max_height=max_height, compact=True,
+    )
+    cs = f' colspan="{colspan}"' if colspan > 1 else ""
+    return f'<td width="{"100" if colspan > 1 else "50"}%" style="padding:4px;vertical-align:top;"{cs}>{img}</td>'
+
+
 def _gauge_grid(
     batch: Sequence[ChartSpec],
     chart_paths: Optional[Dict[str, str]],
+    *,
+    has_intro: bool = False,
 ) -> str:
-    """Rejilla 2×2 de gauges compactos."""
-    cells: List[str] = []
-    for key, caption in batch:
-        img = embed_chart(
-            chart_paths, key, caption, max_height=175, compact=True,
-        )
-        cells.append(
-            f'<td width="50%" style="padding:2px;vertical-align:top;">{img}</td>'
-        )
-    while len(cells) < 4:
-        cells.append('<td width="50%" style="padding:2px;"></td>')
+    """Rejilla de gauges agrupados — tamaño proporcional al espacio disponible."""
+    n = len(batch)
+    if n == 0:
+        return ""
+    prefix = "intro" if has_intro else "full"
 
+    if n == 1:
+        key, caption = batch[0]
+        h = _GAUGE_H[f"{prefix}_1"]
+        return (
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">'
+            f'<tr>{_gauge_cell(chart_paths, key, caption, h, colspan=2)}</tr></table>'
+        )
+
+    if n == 2:
+        h = _GAUGE_H[f"{prefix}_2"]
+        c0 = _gauge_cell(chart_paths, batch[0][0], batch[0][1], h)
+        c1 = _gauge_cell(chart_paths, batch[1][0], batch[1][1], h)
+        return f"""
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">
+          <tr>{c0}{c1}</tr>
+        </table>
+        """
+
+    if n == 3:
+        ht = _GAUGE_H[f"{prefix}_3_top"]
+        hb = _GAUGE_H[f"{prefix}_3_bot"]
+        c0 = _gauge_cell(chart_paths, batch[0][0], batch[0][1], ht)
+        c1 = _gauge_cell(chart_paths, batch[1][0], batch[1][1], ht)
+        c2 = _gauge_cell(chart_paths, batch[2][0], batch[2][1], hb, colspan=2)
+        return f"""
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">
+          <tr>{c0}{c1}</tr>
+          <tr>{c2}</tr>
+        </table>
+        """
+
+    # 4 gauges — rejilla 2×2
+    h = _GAUGE_H[f"{prefix}_4"]
+    cells = [
+        _gauge_cell(chart_paths, key, caption, h)
+        for key, caption in batch[:4]
+    ]
     return f"""
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:2px 0 4px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">
       <tr>{cells[0]}{cells[1]}</tr>
       <tr>{cells[2]}{cells[3]}</tr>
     </table>
@@ -191,9 +256,14 @@ def _large_chart_block(
 def _large_charts_batch(
     batch: Sequence[ChartSpec],
     chart_paths: Optional[Dict[str, str]],
+    *,
+    has_intro: bool = False,
 ) -> str:
     """Dos gráficas grandes apiladas por página (misma sección)."""
-    height = LARGE_HEIGHT_SINGLE if len(batch) == 1 else LARGE_HEIGHT_PAIR
+    if has_intro:
+        height = 295 if len(batch) > 1 else 380
+    else:
+        height = LARGE_HEIGHT_SINGLE if len(batch) == 1 else LARGE_HEIGHT_PAIR
     return "".join(
         _large_chart_block(key, caption, chart_paths, max_height=height)
         for key, caption in batch
@@ -221,16 +291,18 @@ def chart_pages(
 
     for i in range(0, len(gauges), GAUGES_PER_PAGE):
         batch = gauges[i : i + GAUGES_PER_PAGE]
+        has_intro = bool(pending_intro)
         body = pending_intro
         pending_intro = ""
-        body += _gauge_grid(batch, chart_paths)
+        body += _gauge_grid(batch, chart_paths, has_intro=has_intro)
         pages.append(wrap_chapter_page(logo_b64, fecha_label, body))
 
     for i in range(0, len(large), LARGE_CHARTS_PER_PAGE):
         batch = large[i : i + LARGE_CHARTS_PER_PAGE]
+        has_intro = bool(pending_intro)
         body = pending_intro
         pending_intro = ""
-        body += _large_charts_batch(batch, chart_paths)
+        body += _large_charts_batch(batch, chart_paths, has_intro=has_intro)
         pages.append(wrap_chapter_page(logo_b64, fecha_label, body))
 
     if pending_intro and not pages:
