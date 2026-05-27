@@ -39,17 +39,24 @@ C = {
 }
 
 
-def _save(fig: go.Figure, key: str, width: int = 1280, height: int = 560) -> Optional[str]:
+def _save(
+    fig: go.Figure,
+    key: str,
+    width: int = 1280,
+    height: int = 560,
+    *,
+    hide_title: bool = True,
+) -> Optional[str]:
     out = CHARTS_DIR / f"portal_{key}.png"
     try:
         fig.update_layout(
             template="plotly_white",
             font=dict(family="Arial, sans-serif", size=11, color="#1e293b"),
-            title=dict(font=dict(size=15, color=C["primary"])),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.22, x=0),
-            margin=dict(l=55, r=25, t=55, b=90),
+            title=None if hide_title else dict(font=dict(size=15, color=C["primary"])),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.18, x=0),
+            margin=dict(l=50, r=20, t=24 if hide_title else 55, b=72),
         )
-        fig.write_image(str(out), width=width, height=height, scale=1)
+        fig.write_image(str(out), width=width, height=height, scale=2)
         return str(out)
     except Exception as exc:
         logger.warning("[portal_charts] %s: %s", key, exc)
@@ -70,11 +77,11 @@ def _gauge(value: float, title: str, key: str, max_val: float = 100) -> Optional
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=min(float(value), max_val),
-        number={"suffix": "%", "font": {"size": 28}},
-        title={"text": title, "font": {"size": 13}},
+        number={"suffix": "%", "font": {"size": 38}},
+        title={"text": ""},
         gauge={
             "axis": {"range": [0, max_val], "tickwidth": 1},
-            "bar": {"color": C["teal"]},
+            "bar": {"color": C["teal"], "thickness": 0.78},
             "steps": [
                 {"range": [0, 33], "color": "#fee2e2"},
                 {"range": [33, 66], "color": "#fef3c7"},
@@ -83,11 +90,27 @@ def _gauge(value: float, title: str, key: str, max_val: float = 100) -> Optional
             "threshold": {"line": {"color": C["orange"], "width": 3}, "value": value},
         },
     ))
-    fig.update_layout(margin=dict(l=30, r=30, t=50, b=20), height=380)
-    return _save(fig, key, height=400)
+    fig.update_layout(margin=dict(l=24, r=24, t=24, b=12))
+    return _save(fig, key, width=760, height=520)
 
 
 # ── Cap. 2 Comunidades ──────────────────────────────────────────────────────
+
+# Paleta mapa CE — igual al portal (marrón / naranja / amarillo)
+CE_MAP_COLORS = {
+    "baja": "#7C3A0A",
+    "media": "#D97706",
+    "alta": "#F59E0B",
+}
+
+
+def _ce_density_class(count: float) -> int:
+    if count >= 60:
+        return 2
+    if count >= 20:
+        return 1
+    return 0
+
 
 def chart_com_mapa(data: Dict[str, Any]) -> Optional[str]:
     rows = data.get("por_departamento") or []
@@ -95,26 +118,43 @@ def chart_com_mapa(data: Dict[str, Any]) -> Optional[str]:
         return None
     geojson = _load_geojson()
     locs = [r["departamento_geo"] for r in rows]
-    z = [r["count"] for r in rows]
+    counts = [r["count"] for r in rows]
+    z_cat = [_ce_density_class(c) for c in counts]
     if geojson:
         try:
             fig = go.Figure(go.Choropleth(
-                geojson=geojson, locations=locs, z=z,
+                geojson=geojson,
+                locations=locs,
+                z=z_cat,
                 featureidkey="properties.NOMBRE_DPT",
-                colorscale=[[0, "#e0f2fe"], [0.5, "#287270"], [1, "#254553"]],
-                colorbar_title="CEs", marker_line_width=0.4,
+                colorscale=[
+                    [0.0, CE_MAP_COLORS["baja"]],
+                    [0.33, CE_MAP_COLORS["baja"]],
+                    [0.34, CE_MAP_COLORS["media"]],
+                    [0.66, CE_MAP_COLORS["media"]],
+                    [0.67, CE_MAP_COLORS["alta"]],
+                    [1.0, CE_MAP_COLORS["alta"]],
+                ],
+                zmin=0,
+                zmax=2,
+                marker_line_color="#ffffff",
+                marker_line_width=0.5,
+                colorbar=dict(
+                    title="Densidad CE",
+                    tickvals=[0, 1, 2],
+                    ticktext=["Baja (<20)", "Media (20-59)", "Alta (≥60)"],
+                ),
             ))
             fig.update_geos(fitbounds="locations", visible=False)
-            fig.update_layout(title="Comunidades implementadas — Mapa por departamento")
-            return _save(fig, "com_mapa", height=600)
+            return _save(fig, "com_mapa", width=900, height=640)
         except Exception as exc:
             logger.warning("choropleth: %s", exc)
     top = rows[:12]
     fig = go.Figure(go.Bar(
         x=[r["departamento"] for r in top], y=[r["count"] for r in top],
-        marker_color=C["primary"],
+        marker_color=CE_MAP_COLORS["media"],
     ))
-    fig.update_layout(title="Comunidades implementadas por departamento", xaxis_tickangle=-35)
+    fig.update_layout(xaxis_tickangle=-35)
     return _save(fig, "com_mapa")
 
 
@@ -131,8 +171,8 @@ def chart_com_barras_ces(data: Dict[str, Any]) -> Optional[str]:
         name="kWp (÷10)", x=[r["departamento"] for r in top],
         y=[r["capacidad_kwp"] / 10 for r in top], marker_color=C["teal"],
     ))
-    fig.update_layout(title="CEs y capacidad por departamento (Top 12)", barmode="group", xaxis_tickangle=-35)
-    return _save(fig, "com_barras_ces")
+    fig.update_layout(barmode="group", xaxis_tickangle=-35)
+    return _save(fig, "com_barras_ces", width=900, height=640)
 
 
 def chart_com_inversion(data: Dict[str, Any]) -> Optional[str]:
@@ -145,8 +185,8 @@ def chart_com_inversion(data: Dict[str, Any]) -> Optional[str]:
         marker_color=C["gold"], text=[f'{r["inversion"]/1e9:.1f}' for r in top],
         textposition="outside",
     ))
-    fig.update_layout(title="Inversión estimada por departamento (miles de millones COP)", xaxis_tickangle=-35)
-    return _save(fig, "com_inversion")
+    fig.update_layout(xaxis_tickangle=-35)
+    return _save(fig, "com_inversion", width=900, height=640)
 
 
 # ── Contratos OR + Curva S ────────────────────────────────────────────────────

@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from domain.services.report_service import (
     _build_header_html,
     _fecha_corte_html,
-    _section_hdr,
     _strip_emojis,
 )
 
@@ -18,33 +17,23 @@ KPI_BG = "#254553"
 KPI_ACCENT = "#287270"
 GAUGES_PER_PAGE = 4
 LARGE_CHARTS_PER_PAGE = 2
-LARGE_HEIGHT_PAIR = 360
-LARGE_HEIGHT_SINGLE = 500
 
-# Alturas de gauge según contexto (px) — equilibradas para llenar la hoja sin micro-gráficos
-_GAUGE_H = {
-    "intro_4": 248,
-    "intro_3_top": 235,
-    "intro_3_bot": 275,
-    "intro_2": 290,
-    "intro_1": 340,
-    "full_4": 300,
-    "full_3_top": 285,
-    "full_3_bot": 320,
-    "full_2": 355,
-    "full_1": 420,
-}
+# Altura útil del cuerpo en hoja Letter (px aprox.) tras header del informe
+PAGE_USABLE_PX = 710
+INTRO_WITH_KPI_PX = 168
+INTRO_COVER_ONLY_PX = 58
+MINI_HDR_PX = 22
 
 
 def chapter_cover(num: int, title: str, subtitle: str = "") -> str:
     sub = (
-        f'<div style="font-size:9pt;color:#cbd5e1;margin-top:4px;">{subtitle}</div>'
+        f'<div style="font-size:9pt;color:#cbd5e1;margin-top:3px;">{subtitle}</div>'
         if subtitle else ""
     )
     return f"""
-    <div style="background:{KPI_BG};color:#fff;padding:10px 14px;margin:0 0 6px 0;border-radius:4px;">
+    <div style="background:{KPI_BG};color:#fff;padding:8px 14px;margin:0 0 4px 0;border-radius:4px;">
       <div style="font-size:7.5pt;opacity:0.85;letter-spacing:1px;">CAP&Iacute;TULO {num}</div>
-      <div style="font-size:14pt;font-weight:bold;margin-top:2px;">{title}</div>
+      <div style="font-size:13pt;font-weight:bold;margin-top:2px;">{title}</div>
       {sub}
     </div>
     """
@@ -59,11 +48,19 @@ def _parse_fecha_corte(fecha_corte: str) -> str:
     return _fecha_corte_html(str(fecha_corte)[:10])
 
 
-def subsection_hdr(title: str, fecha_corte: str = "", compact: bool = False) -> str:
-    fc = _parse_fecha_corte(fecha_corte)
-    margin = "2px 10px 4px" if compact else "0 10px 4px"
-    fc_block = f'<div style="margin:{margin};">{fc}</div>' if fc else ""
-    return f'{_section_hdr(title, "#287270")}{fc_block}'
+def _intro_overhead(intro_html: str) -> int:
+    if not intro_html:
+        return 0
+    if "min-height:105px" in intro_html or "kpi-label" in intro_html.lower():
+        return INTRO_WITH_KPI_PX
+    return INTRO_COVER_ONLY_PX
+
+
+def _mini_hdr(title: str) -> str:
+    return (
+        f'<div style="background:#287270;color:#fff;font-size:7.5pt;font-weight:bold;'
+        f'padding:3px 8px;margin:0 0 1px 0;line-height:1.2;">{title}</div>'
+    )
 
 
 def _format_kpi_value(k: Dict[str, Any]) -> str:
@@ -81,7 +78,7 @@ def _format_kpi_value(k: Dict[str, Any]) -> str:
 
 
 def kpi_row(kpis: List[Dict[str, Any]], fecha_corte: str = "", max_items: int = 4) -> str:
-    """Fila de KPIs — tamaño generoso para ocupar el ancho de la hoja."""
+    """Fila de KPIs — ocupa ancho completo con tarjetas altas."""
     if not kpis:
         return ""
     cells = ""
@@ -91,24 +88,24 @@ def kpi_row(kpis: List[Dict[str, Any]], fecha_corte: str = "", max_items: int = 
         label = _strip_emojis(str(k.get("label", "")))
         val_str = _format_kpi_value(k)
         cells += f"""
-        <td style="width:{width}%;padding:4px;vertical-align:stretch;">
-          <div style="background:{KPI_BG};border-left:4px solid {KPI_ACCENT};border-radius:4px;
-                      padding:14px 16px;min-height:92px;height:100%;box-sizing:border-box;">
-            <div style="font-size:9pt;font-weight:bold;color:#e2e8f0;
-                        text-transform:uppercase;letter-spacing:0.3px;">{label}</div>
-            <div style="font-size:20pt;font-weight:bold;color:#fff;margin-top:8px;line-height:1.1;">
+        <td style="width:{width}%;padding:3px;vertical-align:stretch;">
+          <div style="background:{KPI_BG};border-left:5px solid {KPI_ACCENT};border-radius:4px;
+                      padding:16px 18px;min-height:105px;height:100%;box-sizing:border-box;">
+            <div style="font-size:9.5pt;font-weight:bold;color:#e2e8f0;
+                        text-transform:uppercase;letter-spacing:0.4px;">{label}</div>
+            <div style="font-size:24pt;font-weight:bold;color:#fff;margin-top:10px;line-height:1.05;">
               {val_str}</div>
           </div>
         </td>
         """
     fc = _parse_fecha_corte(fecha_corte)
     fc_row = (
-        f'<tr><td colspan="{len(subset)}" style="padding:4px 6px 0;">{fc}</td></tr>'
+        f'<tr><td colspan="{len(subset)}" style="padding:3px 6px 0;">{fc}</td></tr>'
         if fc else ""
     )
     return (
-        f'<table width="100%" cellpadding="0" cellspacing="4" '
-        f'style="margin:0 0 10px 0;"><tr>{cells}</tr>{fc_row}</table>'
+        f'<table width="100%" cellpadding="0" cellspacing="3" '
+        f'style="margin:0 0 6px 0;"><tr>{cells}</tr>{fc_row}</table>'
     )
 
 
@@ -120,31 +117,27 @@ def embed_chart_path(
     path: Optional[str],
     caption: str = "",
     *,
-    max_height: int = 480,
-    compact: bool = False,
+    height: int = 480,
+    show_caption: bool = False,
 ) -> str:
-    """Incrusta PNG directamente (sin depender de substring en nombre de archivo)."""
     if not path or not os.path.isfile(path):
         return (
-            '<div style="margin:4px;padding:12px;background:#fef2f2;border:1px dashed #fca5a5;'
-            'text-align:center;font-size:7.5pt;color:#991b1b;">Gr&aacute;fico no disponible</div>'
+            '<div style="margin:2px;padding:10px;background:#fef2f2;border:1px dashed #fca5a5;'
+            'text-align:center;font-size:7pt;color:#991b1b;">Gr&aacute;fico no disponible</div>'
         )
     try:
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
     except OSError:
         return ""
-    margin = "2px 2px 4px" if compact else "4px 4px 8px"
-    cap_size = "6.5pt" if compact else "7.5pt"
     cap = (
-        f'<div class="chart-caption" style="font-size:{cap_size};color:#475569;margin-top:2px;">'
-        f"{caption}</div>"
-        if caption else ""
+        f'<div style="font-size:6.5pt;color:#64748b;margin-top:1px;text-align:center;">{caption}</div>'
+        if show_caption and caption else ""
     )
     return f"""
-    <div class="chart-box" style="margin:{margin};text-align:center;">
+    <div style="margin:0;text-align:center;line-height:0;">
       <img src="data:image/png;base64,{b64}" alt="{caption}"
-           style="width:100%;max-height:{max_height}px;object-fit:contain;">
+           style="width:100%;height:{height}px;max-height:{height}px;object-fit:contain;display:block;">
       {cap}
     </div>
     """
@@ -155,16 +148,16 @@ def embed_chart(
     key: str,
     caption: str = "",
     *,
-    max_height: int = 480,
-    compact: bool = False,
+    height: int = 480,
+    show_caption: bool = False,
 ) -> str:
     if not chart_paths:
-        return embed_chart_path(None, caption, max_height=max_height, compact=compact)
+        return embed_chart_path(None, caption, height=height, show_caption=show_caption)
     return embed_chart_path(
         chart_paths.get(key),
         caption or key,
-        max_height=max_height,
-        compact=compact,
+        height=height,
+        show_caption=show_caption,
     )
 
 
@@ -172,84 +165,81 @@ def _gauge_cell(
     chart_paths: Optional[Dict[str, str]],
     key: str,
     caption: str,
-    max_height: int,
+    height: int,
     colspan: int = 1,
 ) -> str:
-    img = embed_chart(
-        chart_paths, key, caption, max_height=max_height, compact=True,
+    block = _mini_hdr(caption) + embed_chart(
+        chart_paths, key, caption, height=height - MINI_HDR_PX,
     )
     cs = f' colspan="{colspan}"' if colspan > 1 else ""
-    return f'<td width="{"100" if colspan > 1 else "50"}%" style="padding:4px;vertical-align:top;"{cs}>{img}</td>'
+    w = "100%" if colspan > 1 else "50%"
+    return f'<td width="{w}" style="padding:2px;vertical-align:top;"{cs}>{block}</td>'
 
 
 def _gauge_grid(
     batch: Sequence[ChartSpec],
     chart_paths: Optional[Dict[str, str]],
     *,
-    has_intro: bool = False,
+    intro_html: str = "",
 ) -> str:
-    """Rejilla de gauges agrupados — tamaño proporcional al espacio disponible."""
+    """Gauges agrupados — altura calculada para llenar la hoja."""
     n = len(batch)
     if n == 0:
         return ""
-    prefix = "intro" if has_intro else "full"
+    overhead = _intro_overhead(intro_html)
+    avail = PAGE_USABLE_PX - overhead
 
     if n == 1:
-        key, caption = batch[0]
-        h = _GAUGE_H[f"{prefix}_1"]
+        h = avail - 4
         return (
-            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">'
-            f'<tr>{_gauge_cell(chart_paths, key, caption, h, colspan=2)}</tr></table>'
+            f'<table width="100%" cellpadding="0" cellspacing="0">'
+            f'<tr>{_gauge_cell(chart_paths, batch[0][0], batch[0][1], h, colspan=2)}</tr></table>'
         )
 
     if n == 2:
-        h = _GAUGE_H[f"{prefix}_2"]
+        h = avail - 4
         c0 = _gauge_cell(chart_paths, batch[0][0], batch[0][1], h)
         c1 = _gauge_cell(chart_paths, batch[1][0], batch[1][1], h)
-        return f"""
-        <table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">
-          <tr>{c0}{c1}</tr>
-        </table>
-        """
+        return f'<table width="100%" cellpadding="0" cellspacing="0"><tr>{c0}{c1}</tr></table>'
 
     if n == 3:
-        ht = _GAUGE_H[f"{prefix}_3_top"]
-        hb = _GAUGE_H[f"{prefix}_3_bot"]
-        c0 = _gauge_cell(chart_paths, batch[0][0], batch[0][1], ht)
-        c1 = _gauge_cell(chart_paths, batch[1][0], batch[1][1], ht)
-        c2 = _gauge_cell(chart_paths, batch[2][0], batch[2][1], hb, colspan=2)
+        h_top = int(avail * 0.47)
+        h_bot = avail - h_top - 4
+        c0 = _gauge_cell(chart_paths, batch[0][0], batch[0][1], h_top)
+        c1 = _gauge_cell(chart_paths, batch[1][0], batch[1][1], h_top)
+        c2 = _gauge_cell(chart_paths, batch[2][0], batch[2][1], h_bot, colspan=2)
         return f"""
-        <table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
           <tr>{c0}{c1}</tr>
           <tr>{c2}</tr>
         </table>
         """
 
-    # 4 gauges — rejilla 2×2
-    h = _GAUGE_H[f"{prefix}_4"]
+    h_row = (avail - 4) // 2
     cells = [
-        _gauge_cell(chart_paths, key, caption, h)
+        _gauge_cell(chart_paths, key, caption, h_row)
         for key, caption in batch[:4]
     ]
     return f"""
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0;">
+    <table width="100%" cellpadding="0" cellspacing="0">
       <tr>{cells[0]}{cells[1]}</tr>
       <tr>{cells[2]}{cells[3]}</tr>
     </table>
     """
 
 
-def _large_chart_block(
+def _large_chart_cell(
     key: str,
     caption: str,
     chart_paths: Optional[Dict[str, str]],
-    fecha_corte: str = "",
-    *,
-    max_height: int = LARGE_HEIGHT_PAIR,
+    height: int,
 ) -> str:
+    img_h = max(120, height - MINI_HDR_PX)
     return (
-        f'{subsection_hdr(caption, fecha_corte, compact=True)}'
-        f'{embed_chart(chart_paths, key, caption, max_height=max_height)}'
+        f'<td width="50%" style="padding:2px;vertical-align:top;">'
+        f'{_mini_hdr(caption)}'
+        f'{embed_chart(chart_paths, key, caption, height=img_h)}'
+        f"</td>"
     )
 
 
@@ -257,17 +247,24 @@ def _large_charts_batch(
     batch: Sequence[ChartSpec],
     chart_paths: Optional[Dict[str, str]],
     *,
-    has_intro: bool = False,
+    intro_html: str = "",
 ) -> str:
-    """Dos gráficas grandes apiladas por página (misma sección)."""
-    if has_intro:
-        height = 295 if len(batch) > 1 else 380
-    else:
-        height = LARGE_HEIGHT_SINGLE if len(batch) == 1 else LARGE_HEIGHT_PAIR
-    return "".join(
-        _large_chart_block(key, caption, chart_paths, max_height=height)
-        for key, caption in batch
-    )
+    """Dos gráficas grandes lado a lado; una sola ocupa todo el ancho."""
+    overhead = _intro_overhead(intro_html)
+    avail = PAGE_USABLE_PX - overhead
+
+    if len(batch) == 1:
+        key, caption = batch[0]
+        img_h = avail - MINI_HDR_PX
+        return (
+            f'{_mini_hdr(caption)}'
+            f'{embed_chart(chart_paths, key, caption, height=img_h)}'
+        )
+
+    img_h = avail - MINI_HDR_PX
+    c0 = _large_chart_cell(batch[0][0], batch[0][1], chart_paths, img_h + MINI_HDR_PX)
+    c1 = _large_chart_cell(batch[1][0], batch[1][1], chart_paths, img_h + MINI_HDR_PX)
+    return f'<table width="100%" cellpadding="0" cellspacing="2"><tr>{c0}{c1}</tr></table>'
 
 
 def chart_pages(
@@ -278,10 +275,10 @@ def chart_pages(
     intro_html: str = "",
 ) -> str:
     """
-    Layout compacto:
-    - KPIs + cover van en la misma página que el primer bloque de gráficos.
-    - Gauges agrupados 2×2 por página.
-    - Gráficas grandes de la misma sección: 2 por página apiladas.
+    Layout optimizado:
+    - Cover + KPIs en la misma hoja que el primer bloque visual.
+    - Gauges agrupados (2×2 o 2+1) llenando altura disponible.
+    - Gráficas grandes: 2 por hoja en columnas paralelas.
     """
     gauges = [(k, c) for k, c in specs if _is_gauge(k)]
     large = [(k, c) for k, c in specs if not _is_gauge(k)]
@@ -291,18 +288,16 @@ def chart_pages(
 
     for i in range(0, len(gauges), GAUGES_PER_PAGE):
         batch = gauges[i : i + GAUGES_PER_PAGE]
-        has_intro = bool(pending_intro)
         body = pending_intro
         pending_intro = ""
-        body += _gauge_grid(batch, chart_paths, has_intro=has_intro)
+        body += _gauge_grid(batch, chart_paths, intro_html=body)
         pages.append(wrap_chapter_page(logo_b64, fecha_label, body))
 
     for i in range(0, len(large), LARGE_CHARTS_PER_PAGE):
         batch = large[i : i + LARGE_CHARTS_PER_PAGE]
-        has_intro = bool(pending_intro)
         body = pending_intro
         pending_intro = ""
-        body += _large_charts_batch(batch, chart_paths, has_intro=has_intro)
+        body += _large_charts_batch(batch, chart_paths, intro_html=body)
         pages.append(wrap_chapter_page(logo_b64, fecha_label, body))
 
     if pending_intro and not pages:
