@@ -16,6 +16,9 @@ ChartSpec = Tuple[str, str]  # (chart_key, caption)
 
 KPI_BG = "#254553"
 GAUGES_PER_PAGE = 4
+LARGE_CHARTS_PER_PAGE = 2
+LARGE_HEIGHT_PAIR = 340
+LARGE_HEIGHT_SINGLE = 480
 
 
 def chapter_cover(num: int, title: str, subtitle: str = "") -> str:
@@ -176,10 +179,24 @@ def _large_chart_block(
     caption: str,
     chart_paths: Optional[Dict[str, str]],
     fecha_corte: str = "",
+    *,
+    max_height: int = LARGE_HEIGHT_PAIR,
 ) -> str:
     return (
         f'{subsection_hdr(caption, fecha_corte, compact=True)}'
-        f'{embed_chart(chart_paths, key, caption, max_height=500)}'
+        f'{embed_chart(chart_paths, key, caption, max_height=max_height)}'
+    )
+
+
+def _large_charts_batch(
+    batch: Sequence[ChartSpec],
+    chart_paths: Optional[Dict[str, str]],
+) -> str:
+    """Dos gráficas grandes apiladas por página (misma sección)."""
+    height = LARGE_HEIGHT_SINGLE if len(batch) == 1 else LARGE_HEIGHT_PAIR
+    return "".join(
+        _large_chart_block(key, caption, chart_paths, max_height=height)
+        for key, caption in batch
     )
 
 
@@ -194,7 +211,7 @@ def chart_pages(
     Layout compacto:
     - KPIs + cover van en la misma página que el primer bloque de gráficos.
     - Gauges agrupados 2×2 por página.
-    - Gráficas grandes ocupan el ancho disponible con márgenes mínimos.
+    - Gráficas grandes de la misma sección: 2 por página apiladas.
     """
     gauges = [(k, c) for k, c in specs if _is_gauge(k)]
     large = [(k, c) for k, c in specs if not _is_gauge(k)]
@@ -209,10 +226,11 @@ def chart_pages(
         body += _gauge_grid(batch, chart_paths)
         pages.append(wrap_chapter_page(logo_b64, fecha_label, body))
 
-    for key, caption in large:
+    for i in range(0, len(large), LARGE_CHARTS_PER_PAGE):
+        batch = large[i : i + LARGE_CHARTS_PER_PAGE]
         body = pending_intro
         pending_intro = ""
-        body += _large_chart_block(key, caption, chart_paths)
+        body += _large_charts_batch(batch, chart_paths)
         pages.append(wrap_chapter_page(logo_b64, fecha_label, body))
 
     if pending_intro and not pages:
