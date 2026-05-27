@@ -228,18 +228,15 @@ def _gauge_grid(
     """
 
 
-def _large_chart_cell(
+def _large_chart_block(
     key: str,
     caption: str,
     chart_paths: Optional[Dict[str, str]],
-    height: int,
+    img_h: int,
 ) -> str:
-    img_h = max(120, height - MINI_HDR_PX)
     return (
-        f'<td width="50%" style="padding:2px;vertical-align:top;">'
         f'{_mini_hdr(caption)}'
         f'{embed_chart(chart_paths, key, caption, height=img_h)}'
-        f"</td>"
     )
 
 
@@ -249,22 +246,24 @@ def _large_charts_batch(
     *,
     intro_html: str = "",
 ) -> str:
-    """Dos gráficas grandes lado a lado; una sola ocupa todo el ancho."""
+    """Dos gráficas grandes apiladas (ancho completo); una sola ocupa toda la hoja."""
     overhead = _intro_overhead(intro_html)
     avail = PAGE_USABLE_PX - overhead
+    gap = 3
 
     if len(batch) == 1:
         key, caption = batch[0]
-        img_h = avail - MINI_HDR_PX
-        return (
-            f'{_mini_hdr(caption)}'
-            f'{embed_chart(chart_paths, key, caption, height=img_h)}'
-        )
+        return _large_chart_block(key, caption, chart_paths, avail - MINI_HDR_PX)
 
-    img_h = avail - MINI_HDR_PX
-    c0 = _large_chart_cell(batch[0][0], batch[0][1], chart_paths, img_h + MINI_HDR_PX)
-    c1 = _large_chart_cell(batch[1][0], batch[1][1], chart_paths, img_h + MINI_HDR_PX)
-    return f'<table width="100%" cellpadding="0" cellspacing="2"><tr>{c0}{c1}</tr></table>'
+    per_chart = (avail - 2 * MINI_HDR_PX - gap) // 2
+    key0, cap0 = batch[0]
+    key1, cap1 = batch[1]
+    return (
+        f'<div style="margin:0 0 {gap}px 0;">'
+        f'{_large_chart_block(key0, cap0, chart_paths, per_chart)}'
+        f"</div>"
+        f"{_large_chart_block(key1, cap1, chart_paths, per_chart)}"
+    )
 
 
 def chart_pages(
@@ -278,7 +277,7 @@ def chart_pages(
     Layout optimizado:
     - Cover + KPIs en la misma hoja que el primer bloque visual.
     - Gauges agrupados (2×2 o 2+1) llenando altura disponible.
-    - Gráficas grandes: 2 por hoja en columnas paralelas.
+    - Gráficas grandes: 2 por hoja apiladas a ancho completo.
     """
     gauges = [(k, c) for k, c in specs if _is_gauge(k)]
     large = [(k, c) for k, c in specs if not _is_gauge(k)]
