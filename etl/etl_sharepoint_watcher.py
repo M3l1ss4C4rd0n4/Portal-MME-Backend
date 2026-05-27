@@ -3,14 +3,14 @@
 Watcher de cambios en SharePoint — Portal Energético MME
 =========================================================
 
-Corre cada 30 min vía cron. Para cada archivo en SHAREPOINT_FILES:
+Corre cada 5 min vía cron. Para cada archivo en SHAREPOINT_FILES:
   1. Consulta lastModifiedDateTime via Graph API (sin descargar el archivo)
   2. Compara con el estado guardado en .sp_watcher_state.json
   3. Si cambió → ejecuta el ETL de ese archivo (--forzar --archivo N)
   4. Guarda el nuevo estado
 
 Cron:
-  */30 * * * * cd /home/admonctrlxm/server && venv/bin/python3 etl/etl_sharepoint_watcher.py >> logs/sp_watcher.log 2>&1
+  */5 * * * * cd /home/admonctrlxm/server && venv/bin/python3 etl/etl_sharepoint_watcher.py >> logs/sp_watcher.log 2>&1
 """
 
 import sys

@@ -201,12 +201,19 @@ def broadcast_telegram(
 # ─────────────────── Email ───────────────────
 
 def _smtp_config():
-    """Lee configuración SMTP de env vars (cada vez que se invoca)."""
+    """Lee configuración SMTP de env vars; usa vault cifrado como fallback para la contraseña."""
+    password = os.getenv('SMTP_PASSWORD', '')
+    if not password:
+        try:
+            from core.secrets import get_secret
+            password = get_secret('SMTP_PASSWORD') or ''
+        except Exception:
+            pass
     return {
         'server': os.getenv('SMTP_SERVER', 'smtp.office365.com'),
         'port': int(os.getenv('SMTP_PORT', 587)),
         'user': os.getenv('SMTP_USER', ''),
-        'password': os.getenv('SMTP_PASSWORD', ''),
+        'password': password,
         'from_name': os.getenv('EMAIL_FROM_NAME', 'Portal Energético MME'),
     }
 

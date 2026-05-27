@@ -4,7 +4,7 @@ Tareas Celery para detección de anomalías y envío de alertas automáticas.
 - check_anomalies: Cada 30 minutos evalúa el sistema energético.
   SOLO envía notificación cuando detecta anomalías CRÍTICAS realmente urgentes.
   NO envía si la misma alerta ya fue notificada en las últimas 6 horas.
-- send_daily_summary: Resumen diario a las 8:00 AM (siempre se envía).
+- send_daily_summary: Resumen diario a las 8:30 AM (siempre se envía).
 
 Cuando detecta anomalías críticas, envía por Telegram + email
 usando NotificationService.
@@ -293,7 +293,7 @@ def check_anomalies(self):
         medianoche), no se reenvía — máximo 1 notificación por alerta por día.
       - Métricas evaluadas: demanda (presión), aportes hídricos, embalses (%),
         precio bolsa vs escasez, margen operativo (%), estrés térmico (%).
-      - El informe diario (8:00 AM) sí incluye TODAS las anomalías detectadas.
+      - El informe diario (8:30 AM) sí incluye TODAS las anomalías detectadas.
     """
     try:
         logger.info("🔍 [ANOMALÍAS] Verificando anomalías en el sistema...")
@@ -484,7 +484,7 @@ def check_anomalies(self):
 @shared_task(name='tasks.anomaly_tasks.send_daily_summary')
 def send_daily_summary():
     """
-    Tarea diaria (8:00 AM): genera el informe ejecutivo completo.
+    Tarea diaria (8:30 AM): genera el informe ejecutivo completo.
 
     Combina:
       - Texto narrativo generado por IA (informe_ejecutivo)
@@ -842,19 +842,31 @@ def send_daily_summary():
             logger.warning(f"[RESUMEN DIARIO] Error leyendo anomalías: {e}")
 
         # ══════════════════════════════════════════════
-        # 3. Generar gráficos PNG
+        # 3. Generar gráficos PNG (sector + portal)
         # ══════════════════════════════════════════════
         chart_paths = []
+        portal_data = {}
+        portal_chart_paths = {}
         try:
             from whatsapp_bot.services.informe_charts import generate_all_informe_charts
             charts = generate_all_informe_charts()
-            for key in ('generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos'):
+            for key in ('generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos',
+                        'despacho_termica', 'capacidad_embalse', 'aportes_demanda'):
                 path = charts.get(key, (None,))[0]
                 if path and os.path.isfile(path):
                     chart_paths.append(path)
-            logger.info(f"[RESUMEN DIARIO] Gráficos generados: {len(chart_paths)}")
+            logger.info(f"[RESUMEN DIARIO] Gráficos sector: {len(chart_paths)}")
         except Exception as e:
-            logger.warning(f"[RESUMEN DIARIO] Error generando gráficos: {e}")
+            logger.warning(f"[RESUMEN DIARIO] Error generando gráficos sector: {e}")
+
+        try:
+            from whatsapp_bot.services.informe_portal_data import fetch_all_portal_dashboards
+            from whatsapp_bot.services.informe_portal_charts import generate_all_portal_charts
+            portal_data = fetch_all_portal_dashboards()
+            portal_chart_paths = generate_all_portal_charts(portal_data)
+            logger.info(f"[RESUMEN DIARIO] Gráficos portal: {len(portal_chart_paths)}")
+        except Exception as e:
+            logger.warning(f"[RESUMEN DIARIO] Error datos/gráficos portal: {e}")
 
         # ══════════════════════════════════════════════
         # 4. Generar PDF (narrativa + gráficos)
@@ -869,6 +881,8 @@ def send_daily_summary():
                 anomalias=anomalias,
                 noticias=noticias,
                 contexto_datos=_contexto_datos,
+                portal_data=portal_data or None,
+                portal_chart_paths=portal_chart_paths or None,
             )
             if pdf_path:
                 size_kb = os.path.getsize(pdf_path) / 1024

@@ -568,11 +568,150 @@ def _make_handler(titulo: str, fn):
     return _handler
 
 
+# ── Déficit histórico ─────────────────────────────────────────────────────────
+
+def _q_deficit_historico() -> str:
+    with connection_manager.get_connection(use_dict_cursor=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT anio, subsidios, contribuciones, deficit_anual,
+                       deficit_acumulado, apropiacion_pgn
+                FROM subsidios.deficit_historico
+                ORDER BY anio DESC
+                LIMIT 8
+            """)
+            rows = list(reversed(cur.fetchall()))
+            cur.execute("SELECT MAX(anio) FROM subsidios.deficit_historico")
+            ultimo = (cur.fetchone() or {}).get("max")
+
+    if not rows:
+        return "📉 **DÉFICIT HISTÓRICO**\n\nSin datos disponibles."
+
+    ult = rows[-1]
+    lines = [
+        "📉 **DÉFICIT HISTÓRICO DE SUBSIDIOS**",
+        f"📅 Último año registrado: {ultimo or 'N/D'}",
+        "",
+        f"**Déficit acumulado ({ult['anio']}):** {_fmt_cop(ult.get('deficit_acumulado'))}",
+        f"Apropiación PGN: {_fmt_cop(ult.get('apropiacion_pgn'))}",
+        "",
+        "**Últimos años:**",
+    ]
+    for r in rows[-5:]:
+        lines.append(
+            f"• {r['anio']}: déficit {_fmt_cop(r.get('deficit_anual'))} "
+            f"(acum. {_fmt_cop(r.get('deficit_acumulado'))})"
+        )
+    return "\n".join(lines)
+
+
+# ── Validaciones ──────────────────────────────────────────────────────────────
+
+def _q_validaciones_resumen() -> str:
+    with connection_manager.get_connection(use_dict_cursor=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT estado_validacion_organizado AS estado, COUNT(*) AS total
+                FROM subsidios.subsidios_validaciones
+                WHERE area IN ('SIN', 'ZNI')
+                  AND estado_validacion_organizado IS NOT NULL
+                GROUP BY estado_validacion_organizado
+                ORDER BY total DESC
+            """)
+            resumen = cur.fetchall()
+
+            cur.execute("""
+                SELECT COUNT(DISTINCT nombre_prestador) AS n
+                FROM subsidios.subsidios_validaciones
+                WHERE area IN ('SIN', 'ZNI')
+            """)
+            n_prest = int((cur.fetchone() or {}).get("n") or 0)
+
+            cur.execute("SELECT MAX(fecha_actualizacion) FROM subsidios.subsidios_validaciones")
+            fecha = (cur.fetchone() or {}).get("max")
+
+    fecha_str = fecha.strftime("%d/%m/%Y") if fecha else "N/D"
+    total = sum(int(r["total"] or 0) for r in resumen)
+
+    lines = [
+        "✅ **VALIDACIONES DE SUBSIDIOS**",
+        f"📅 Corte: {fecha_str}",
+        "",
+        f"**Registros SIN/ZNI:** {total:,}".replace(",", "."),
+        f"**Prestadores:** {n_prest:,}".replace(",", "."),
+        "",
+        "**Por estado de validación:**",
+    ]
+    for r in resumen[:8]:
+        pct = round(int(r["total"] or 0) / total * 100, 1) if total else 0
+        lines.append(f"• {r['estado']}: {int(r['total']):,} ({pct}%)".replace(",", "."))
+    return "\n".join(lines)
+
+
 class SubsidiosHandlerMixin:
     """
     Mixin que expone los 8 módulos del sistema de subsidios (FSSRI/FOES)
     a través del orquestador del portal de dirección.
     """
+
+    @handle_service_error
+    async def _handle_subsidios_menu(
+        self,
+        parameters: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """Menú Cap. 3 — subsidios (déficit, pagos, validaciones)."""
+        data = {
+            "titulo": "Subsidios Energéticos",
+            "mensaje": (
+                "Capítulo 3 del portal: déficit histórico, detalle de pagos "
+                "FSSRI/FOES y validaciones de cuentas."
+            ),
+            "secciones": [
+                {"id": "subsidios_deficit_historico", "titulo": "Déficit histórico", "emoji": "📉"},
+                {"id": "subsidios_pagos_menu", "titulo": "Detalle de pagos", "emoji": "💳"},
+                {"id": "subsidios_validaciones", "titulo": "Validaciones", "emoji": "✅"},
+            ],
+            "opciones_pagos": [
+                {"id": "subsidios_deuda_total", "titulo": "Deuda total", "emoji": "💰"},
+                {"id": "subsidios_deuda_empresa", "titulo": "Deuda por empresa", "emoji": "🏢"},
+                {"id": "subsidios_trimestre", "titulo": "Trimestre pagado", "emoji": "📅"},
+                {"id": "subsidios_resoluciones", "titulo": "Resoluciones por año", "emoji": "📊"},
+                {"id": "subsidios_estado", "titulo": "Estado resoluciones", "emoji": "✅"},
+                {"id": "subsidios_pct_pagado", "titulo": "% Pagado", "emoji": "📈"},
+                {"id": "subsidios_deuda_fondo", "titulo": "Deuda FSSRI/FOES", "emoji": "🏦"},
+                {"id": "subsidios_pagado_anio", "titulo": "Pagado por año", "emoji": "💵"},
+            ],
+            "opcion_regresar": {
+                "id": "menu",
+                "titulo": "🔙 Regresar al menú principal",
+            },
+        }
+        return data, []
+
+    @handle_service_error
+    async def _handle_subsidios_pagos_menu(
+        self,
+        parameters: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        data = {
+            "titulo": "Detalle de pagos",
+            "mensaje": "Consultas FSSRI/FOES — deuda, resoluciones y pagos.",
+            "opciones_pagos": [
+                {"id": "subsidios_deuda_total", "titulo": "Deuda total", "emoji": "💰"},
+                {"id": "subsidios_deuda_empresa", "titulo": "Deuda por empresa", "emoji": "🏢"},
+                {"id": "subsidios_trimestre", "titulo": "Trimestre pagado", "emoji": "📅"},
+                {"id": "subsidios_resoluciones", "titulo": "Resoluciones por año", "emoji": "📊"},
+                {"id": "subsidios_estado", "titulo": "Estado resoluciones", "emoji": "✅"},
+                {"id": "subsidios_pct_pagado", "titulo": "% Pagado", "emoji": "📈"},
+                {"id": "subsidios_deuda_fondo", "titulo": "Deuda FSSRI/FOES", "emoji": "🏦"},
+                {"id": "subsidios_pagado_anio", "titulo": "Pagado por año", "emoji": "💵"},
+            ],
+            "opcion_regresar": {"id": "subsidios_menu", "titulo": "🔙 Subsidios"},
+        }
+        return data, []
+
+    _handle_subsidios_deficit_historico = _make_handler("📉 Déficit histórico", _q_deficit_historico)
+    _handle_subsidios_validaciones       = _make_handler("✅ Validaciones",       _q_validaciones_resumen)
 
     _handle_subsidios_deuda_total   = _make_handler("💰 Deuda total",        _q1_deuda_total)
     _handle_subsidios_deuda_empresa = _make_handler("🏢 Deuda por empresa",   _q2_deuda_empresa)

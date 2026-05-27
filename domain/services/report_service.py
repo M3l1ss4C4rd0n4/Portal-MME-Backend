@@ -29,6 +29,13 @@ import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from core.umbrales_oficiales import (
+    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
+    clasificar_hsin,
+    clasificar_indice_ne,
+    clasificar_visual_embalse,
+)
+
 logger = logging.getLogger(__name__)
 
 # ── Regex ampliado para limpiar emojis + caracteres problemáticos ──
@@ -108,34 +115,61 @@ def _get_impacto_operativo(metrica: str, desviacion_pct: Optional[float], valor_
         else:
             return "Fluctuación de precios dentro de rangos esperados."
     
-    # Embalses - Umbrales OFICIALES IDEAM/UNGRD (Colombia)
+    # Embalses — Índice NE oficial (Res. CREG 209/2020 + Res. CREG 026/2014)
     if 'embalse' in metrica_lower or 'porcentaje' in metrica_lower:
-        if valor_actual:
-            # RIESGO POR NIVEL BAJO (riesgo de desabastecimiento/apagón)
-            if valor_actual < 27:
-                return ("ALERTA ROJA (IDEAM): Riesgo crítico de racionamiento/apagón. "
-                        "Activar medidas de choque. Coordinar con UNGRD y operadores.")
-            elif valor_actual < 40:
-                return ("ALERTA DE SEGUIMIENTO: Nivel bajo de embalses. "
-                        "Preparar medidas preventivas. Monitoreo intensivo.")
-            
-            # RIESGO POR NIVEL ALTO (riesgo de desbordamiento)
-            elif valor_actual > 95:
-                return ("ALERTA ROJA (IDEAM): Desbordamiento inminente. Descargas masivas en curso. "
-                        "Evacuar zonas de riesgo aguas abajo. Coordinar con autoridades.")
-            elif valor_actual > 90:
-                return ("ALERTA NARANJA: Preparar descargas preventivas. "
-                        "Avisar comunidades aguas abajo. Monitoreo de pronósticos.")
-            elif valor_actual > 80:
-                return ("ALERTA AMARILLA: Vigilancia activa. Monitorear caudales de entrada.")
-            
-            # VARIACIÓN SIGNIFICATIVA
-            elif desviacion_pct and abs(desviacion_pct) > 20:
-                return "Variación importante en reservas. Monitorear comportamiento de aportes hídricos."
-            
-            else:
-                return "Nivel normal (40%-80%). Operación estable sin riesgos inmediatos."
+        if valor_actual is not None:
+            nivel_ne, descripcion_ne, senda = clasificar_indice_ne(float(valor_actual))
+
+            if nivel_ne == 'INFERIOR':
+                return (
+                    f"Índice NE INFERIOR: embalse {valor_actual:.1f}% bajo senda CREG {senda:.1f}%. "
+                    f"Riesgo de desabastecimiento — activar mecanismo de sostenimiento (CREG 026/2014 art. 7)."
+                )
+            if nivel_ne == 'ALERTA':
+                return (
+                    f"Índice NE ALERTA: embalse {valor_actual:.1f}% bajo senda CREG {senda:.1f}%. "
+                    f"Vigilar evolución semanal; si persiste → nivel INFERIOR."
+                )
+            if valor_actual > 95:
+                return (
+                    "Riesgo de vertimientos forzados (criterio operativo CND). "
+                    "Preparar descargas preventivas y monitorear caudales aguas abajo."
+                )
+            if valor_actual > 90:
+                return (
+                    "Nivel alto — vigilancia por posibles vertimientos preventivos (criterio operativo CND)."
+                )
+            if valor_actual >= NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT:
+                return (
+                    f"Índice NE SUPERIOR: embalse {valor_actual:.1f}% ≥ 70% "
+                    f"(regla absoluta CREG 209/2020). Operación estable."
+                )
+            if desviacion_pct and abs(desviacion_pct) > 20:
+                return "Variación importante en reservas. Monitorear comportamiento de aportes hídricos (HSIN)."
+            return (
+                f"Índice NE SUPERIOR: embalse {valor_actual:.1f}% ≥ senda CREG {senda:.1f}%. "
+                f"Operación estable según Estatuto CREG."
+            )
         return "Nivel de embalses dentro de rangos operativos normales."
+
+    # Aportes hídricos — Índice HSIN (Res. CREG 026/2014 art. 2)
+    if 'aporte' in metrica_lower or 'hsin' in metrica_lower:
+        if valor_actual is not None:
+            nivel_hsin, _ = clasificar_hsin(float(valor_actual))
+            if nivel_hsin == 'CRITICO':
+                return (
+                    f"HSIN {valor_actual:.1f}% ≤ 60% — nivel histórico de crisis. "
+                    f"Condición de sequía severa (CREG 026/2014 art. 2)."
+                )
+            if nivel_hsin == 'DEFICIT_SEVERO':
+                return (
+                    f"HSIN {valor_actual:.1f}% < 70% — déficit hídrico severo (referencia CREG 209/2020)."
+                )
+            if nivel_hsin == 'VIGILANCIA':
+                return (
+                    f"HSIN {valor_actual:.1f}% < 90% — vigilancia hídrica oficial (CREG 026/2014 art. 2)."
+                )
+            return f"HSIN {valor_actual:.1f}% ≥ 90% — condición hídrica normal (CREG 026/2014)."
     
     # Costo unitario
     if 'costo' in metrica_lower or 'cu_' in metrica_lower or 'unitario' in metrica_lower:
@@ -391,6 +425,7 @@ body {
     font-weight: bold;
     padding: 5px 14px;
     margin: 8px 10px 6px 10px;
+    page-break-after: avoid;
 }
 
 /* ── Two-column layout (table) ── */
@@ -726,9 +761,11 @@ body {
 /* ── Charts ── */
 .chart-box {
     text-align: center;
-    page-break-inside: avoid;
+    page-break-inside: auto;
+    margin: 6px 0;
 }
 .chart-box img {
+    width: 100%;
     max-width: 100%;
     height: auto;
 }
@@ -812,7 +849,7 @@ def _embed_chart(chart_paths: List[str], key_prefix: str) -> str:
         if not path or not os.path.exists(path):
             continue
         fname = os.path.basename(path).lower()
-        if fname.startswith(key_prefix):
+        if key_prefix in fname:
             try:
                 with open(path, 'rb') as f:
                     b64 = base64.b64encode(f.read()).decode('utf-8')
@@ -824,6 +861,12 @@ def _embed_chart(chart_paths: List[str], key_prefix: str) -> str:
             except Exception as e:
                 logger.warning(f'[REPORT] Error embediendo chart {path}: {e}')
     return ''
+
+
+def _wrap_report_page(logo_b64: str, fecha_label: str, body_html: str) -> str:
+    """Envuelve contenido en una página del informe con encabezado estándar."""
+    header = _build_header_html(logo_b64, fecha_label)
+    return f'<div class="page">{header}{body_html}</div>'
 
 
 def _parse_narrative_sections(md_text: str) -> Dict[str, str]:
@@ -860,12 +903,60 @@ def _format_fecha_larga(fecha_str: str = '') -> str:
     ]
     try:
         if fecha_str:
-            dt = datetime.strptime(fecha_str[:10], '%Y-%m-%d')
+            dt = datetime.strptime(str(fecha_str)[:10], '%Y-%m-%d')
         else:
             dt = datetime.now()
         return f'{dt.day} de {meses[dt.month]} de {dt.year}'
-    except Exception as e:
-        return datetime.now().strftime('%Y-%m-%d')
+    except Exception:
+        return str(fecha_str)[:10] if fecha_str else ''
+
+
+def _fecha_corte_html(fecha_str: str = '', variant: str = 'default') -> str:
+    """Línea HTML estándar con la fecha de corte del dato."""
+    if not fecha_str:
+        return ''
+    fc = _format_fecha_larga(str(fecha_str)[:10])
+    if variant == 'badge':
+        return (
+            f'<div style="font-size:6.5pt;background:#eef2f7;color:#475569;'
+            f'padding:2px 8px;border-radius:3px;display:inline-block;margin-top:4px;">'
+            f'Fecha de corte: {fc}</div>'
+        )
+    if variant == 'white':
+        return f'<div style="font-size:6.5pt;opacity:0.9;margin-top:3px;">Fecha de corte: {fc}</div>'
+    if variant == 'footer':
+        return f'<div style="font-size:6pt;color:#888;margin-top:2px;">Fecha de corte: {fc}</div>'
+    return f'<div style="font-size:6.5pt;color:#666;margin-top:3px;">Fecha de corte: {fc}</div>'
+
+
+def _resolve_fecha_corte(
+    fichas: Optional[List[Dict[str, Any]]] = None,
+    tipo: str = '',
+    tabla_indicadores: Optional[List[Dict[str, Any]]] = None,
+    variables_mercado: Optional[Dict[str, Any]] = None,
+    vm_key: str = '',
+    metric: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Resuelve la fecha de corte desde ficha, tabla KPI, variables de mercado o métrica."""
+    if metric and metric.get('fecha'):
+        return str(metric['fecha'])
+    if tipo:
+        ficha = _get_ficha_indicador(fichas or [], tipo)
+        if ficha and ficha.get('fecha'):
+            return str(ficha['fecha'])
+        for ind in (tabla_indicadores or []):
+            nombre = _strip_emojis(ind.get('indicador', '')).lower()
+            if tipo == 'generacion' and 'generaci' in nombre:
+                return str(ind.get('fecha', '') or '')
+            if tipo == 'precio' and ('precio' in nombre or 'bolsa' in nombre):
+                return str(ind.get('fecha', '') or '')
+            if tipo == 'embalses' and 'embalse' in nombre:
+                return str(ind.get('fecha', '') or '')
+    if variables_mercado and vm_key:
+        fc = variables_mercado.get(vm_key, {}).get('fecha')
+        if fc:
+            return str(fc)
+    return ''
 
 
 def _find_metric_prediction(pred_resumen: Dict[str, Any], keyword: str) -> Optional[Dict[str, Any]]:
@@ -881,7 +972,7 @@ def _find_metric_prediction(pred_resumen: Dict[str, Any], keyword: str) -> Optio
     return None
 
 
-def _build_pred_card(metric: Dict[str, Any], analysis_text: str = '') -> str:
+def _build_pred_card(metric: Dict[str, Any], analysis_text: str = '', fecha_corte: str = '') -> str:
     """
     Construye una tarjeta de predicción para insertar en cualquier página.
     Muestra: valor actual → proyectado, rango, tendencia y análisis contextual.
@@ -939,9 +1030,13 @@ def _build_pred_card(metric: Dict[str, Any], analysis_text: str = '') -> str:
     if analysis_text:
         analysis_html = f'<div class="pred-analysis">{analysis_text}</div>'
 
+    fc = fecha_corte or metric.get('fecha', '') or ''
+    fecha_html = _fecha_corte_html(fc, 'footer')
+
     return f"""
     <div class="pred-card">
       <div class="pred-card-hdr">&#128200; Proyecci&oacute;n: {nombre}</div>
+      {fecha_html}
       <span class="pred-row">
         <span class="pred-label">Actual</span><br>
         <span class="pred-val">{actual_s} {unidad}</span>
@@ -1028,6 +1123,7 @@ def _build_mercado_vars_cards(variables_mercado: Dict[str, Any]) -> str:
             continue
         raw = entry.get('valor', '—')
         unidad = entry.get('unidad', '')
+        fecha_var = entry.get('fecha', '')
         valor_str = f'{float(raw):,.2f}' if isinstance(raw, (int, float)) else str(raw)
         cells += (
             f'<td style="background:{color}; border-radius:4px; padding:5px 8px; '
@@ -1037,6 +1133,7 @@ def _build_mercado_vars_cards(variables_mercado: Dict[str, Any]) -> str:
             f'{valor_str}'
             f'<span style="font-size:6.5pt; margin-left:2px;">{unidad}</span>'
             f'</div>'
+            f'{_fecha_corte_html(fecha_var, "white")}'
             f'</td>'
         )
 
@@ -1243,7 +1340,8 @@ def _build_ficha_principal_vertical(
     tendencia: str,
     estado: str,
     analisis: Dict[str, Any],
-    color_base: str
+    color_base: str,
+    fecha_corte: str = '',
 ) -> str:
     """
     Construye una ficha principal con sub-fichas verticales (una debajo de otra).
@@ -1385,6 +1483,7 @@ def _build_ficha_principal_vertical(
                     <span style="color:{trend_color};">{trend_arrow} {tendencia}</span>
                     <span style="background:{estado_bg};color:#fff;padding:1px 6px;border-radius:3px;margin-left:6px;font-size:6.5pt;">{estado.upper()}</span>
                 </div>
+                {_fecha_corte_html(fecha_corte, 'white')}
             </div>
             <!-- Sub-fichas verticales -->
             <div style="padding:6px;background:#f8f9fa;">
@@ -1443,7 +1542,8 @@ def _build_resumen_ejecutivo_fichas(
                     break
         
         fichas_html.append(_build_ficha_principal_vertical(
-            nombre, emoji, valor, unidad, tendencia, estado, analisis, color
+            nombre, emoji, valor, unidad, tendencia, estado, analisis, color,
+            fecha_corte=str(ind.get('fecha', '') or ''),
         ))
     
     if not fichas_html:
@@ -1486,6 +1586,7 @@ def _build_mercado_vars_cards(variables_mercado: Dict[str, Any]) -> str:
             continue
         raw = entry.get('valor', '—')
         unidad = entry.get('unidad', '')
+        fecha_var = entry.get('fecha', '')
         valor_str = f'{float(raw):,.2f}' if isinstance(raw, (int, float)) else str(raw)
         cells += (
             f'<td style="background:{color}; border-radius:4px; padding:5px 8px; '
@@ -1495,6 +1596,7 @@ def _build_mercado_vars_cards(variables_mercado: Dict[str, Any]) -> str:
             f'{valor_str}'
             f'<span style="font-size:6.5pt; margin-left:2px;">{unidad}</span>'
             f'</div>'
+            f'{_fecha_corte_html(fecha_var, "white")}'
             f'</td>'
         )
 
@@ -1552,6 +1654,7 @@ def _build_mercado_vars_vertical(variables_mercado: Dict[str, Any], fichas: List
             f'<div style="font-size:14pt;font-weight:bold;margin-top:2px;">'
             f'{valor:.2f}<span style="font-size:9pt;margin-left:3px;opacity:0.9;">{unidad}</span>'
             f'</div>'
+            f'{_fecha_corte_html(precio_ficha.get("fecha", ""), "white")}'
             f'<div style="font-size:7pt;margin-top:2px;">'
             f'<span style="color:{trend_color};">{flecha} {signo}{var_pct:.1f}% vs prom 7d</span>'
             f'</div>'
@@ -1586,6 +1689,7 @@ def _build_mercado_vars_vertical(variables_mercado: Dict[str, Any], fichas: List
         
         raw = entry.get('valor', '—')
         unidad = entry.get('unidad', '')
+        fecha_var = entry.get('fecha', '')
         valor_str = f'{float(raw):,.2f}' if isinstance(raw, (int, float)) else str(raw)
         
         cards += (
@@ -1594,6 +1698,7 @@ def _build_mercado_vars_vertical(variables_mercado: Dict[str, Any], fichas: List
             f'<div style="font-size:12pt;font-weight:bold;margin-top:2px;">'
             f'{valor_str}<span style="font-size:7.5pt;margin-left:3px;opacity:0.9;">{unidad}</span>'
             f'</div>'
+            f'{_fecha_corte_html(fecha_var, "white")}'
             f'<div style="font-size:6.5pt;opacity:0.85;margin-top:4px;line-height:1.3;border-top:1px solid rgba(255,255,255,0.3);padding-top:4px;">'
             f'{descripcion}'
             f'</div>'
@@ -1628,6 +1733,9 @@ def _build_variables_mercado_xm(
     precio_escasez = variables_mercado.get('precio_escasez', {}).get('valor', 0)
     ppp_bolsa = variables_mercado.get('ppp_bolsa', {}).get('valor', 0)
     precio_max = variables_mercado.get('precio_max_oferta', {}).get('valor', 0)
+    fecha_escasez = variables_mercado.get('precio_escasez', {}).get('fecha', '')
+    fecha_ppp = variables_mercado.get('ppp_bolsa', {}).get('fecha', '')
+    fecha_max_var = variables_mercado.get('precio_max_oferta', {}).get('fecha', '')
     
     # Variaciones para las tarjetas (placeholder - se calcularían de la BD)
     var_escasez = -9.21
@@ -1701,8 +1809,10 @@ def _build_variables_mercado_xm(
         texto_max = f"El máximo precio mensual es de ${precio_max:.2f}."
     
     # Texto explicativo con viñetas (completo)
+    fecha_ppp_larga = _format_fecha_larga(str(fecha_ppp)[:10]) if fecha_ppp else ''
     texto_vinetas = f"""
     <div style="font-size:8.5pt;line-height:1.5;color:#333;">
+        {f'<div style="font-size:7pt;color:#666;margin-bottom:6px;">Fecha de corte PPP: {fecha_ppp_larga}</div>' if fecha_ppp_larga else ''}
         <div style="margin-bottom:8px;">• El <strong>Precio Promedio Ponderado (PPP)</strong> diario 
         (${ppp_bolsa:.2f}) {texto_ppp}.</div>
         <div style="margin-bottom:8px;">• {texto_max}</div>
@@ -1722,6 +1832,7 @@ def _build_variables_mercado_xm(
                     <div style="padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.2);">
                         <div style="font-size:8pt;font-weight:bold;">Precio Escasez</div>
                         <div style="font-size:16pt;font-weight:bold;margin-top:2px;">{precio_escasez:.2f} <span style="font-size:9pt;">$/kWh</span></div>
+                        {_fecha_corte_html(fecha_escasez, 'white')}
                     </div>
                     <div style="padding:8px 12px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.2);">
                         <div style="font-size:7pt;opacity:0.9;">Variación Mensual</div>
@@ -1738,6 +1849,7 @@ def _build_variables_mercado_xm(
                     <div style="padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.2);">
                         <div style="font-size:8pt;font-weight:bold;">PPP Diario</div>
                         <div style="font-size:16pt;font-weight:bold;margin-top:2px;">{ppp_bolsa:.2f} <span style="font-size:9pt;">$/kWh</span></div>
+                        {_fecha_corte_html(fecha_ppp, 'white')}
                     </div>
                     <div style="padding:8px 12px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.2);">
                         <div style="font-size:7pt;opacity:0.9;">Variación Semanal</div>
@@ -1754,6 +1866,7 @@ def _build_variables_mercado_xm(
                     <div style="padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.2);">
                         <div style="font-size:8pt;font-weight:bold;">Máximo Mensual</div>
                         <div style="font-size:16pt;font-weight:bold;margin-top:2px;">{precio_max:.2f} <span style="font-size:9pt;">$/kWh</span></div>
+                        {_fecha_corte_html(fecha_max_var, 'white')}
                     </div>
                     <div style="padding:8px 12px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.2);">
                         <div style="font-size:7pt;opacity:0.9;">Variación Mensual</div>
@@ -1801,6 +1914,12 @@ def _build_composicion_demanda_xm(
     dem_regulada = variables_mercado.get('demanda_regulada', {}).get('valor', 0)
     dem_no_reg = variables_mercado.get('demanda_no_reg', {}).get('valor', 0)
     dem_total = dem_regulada + dem_no_reg
+    fecha_corte = (
+        variables_mercado.get('demanda_regulada', {}).get('fecha')
+        or variables_mercado.get('demanda_no_reg', {}).get('fecha')
+        or ''
+    )
+    fecha_corte_html = _fecha_corte_html(fecha_corte, 'badge')
     
     # Porcentajes
     pct_regulada = (dem_regulada / dem_total * 100) if dem_total > 0 else 69.4
@@ -1837,9 +1956,10 @@ def _build_composicion_demanda_xm(
                         </table>
                         <div style="font-size:10pt;font-weight:bold;color:#333;margin-top:10px;text-align:center;">Demanda Regulada</div>
                         <div style="font-size:7pt;color:#555;margin-top:8px;line-height:1.4;text-align:justify;">
-                            Usuarios (industriales, comerciales, etc.) cuya demanda de energía máxima es superior a 2 MW 
-                            (Ley 143 de 1994, Artículo 11).
+                            Usuarios residenciales, comerciales sujetos a tarifas de energ&iacute;a reguladas por la Comisi&oacute;n
+                            de Regulaci&oacute;n de Energ&iacute;a y Gas (CREG).
                         </div>
+                        {_fecha_corte_html(variables_mercado.get('demanda_regulada', {}).get('fecha', ''), 'default')}
                     </div>
                     
                     <!-- Demanda No Regulada -->
@@ -1858,9 +1978,10 @@ def _build_composicion_demanda_xm(
                         </table>
                         <div style="font-size:10pt;font-weight:bold;color:#333;margin-top:10px;text-align:center;">Demanda No Regulada</div>
                         <div style="font-size:7pt;color:#555;margin-top:8px;line-height:1.4;text-align:justify;">
-                            Usuarios residenciales, comerciales sujetos a tarifas de energía reguladas por la Comisión 
-                            de Regulación de Energía y Gas (CREG).
+                            Usuarios (industriales, comerciales, etc.) cuya demanda de energ&iacute;a m&aacute;xima es superior a 2 MW
+                            (Ley 143 de 1994, Art&iacute;culo 11).
                         </div>
+                        {_fecha_corte_html(variables_mercado.get('demanda_no_reg', {}).get('fecha', ''), 'default')}
                     </div>
                 </td>
                 
@@ -1871,6 +1992,7 @@ def _build_composicion_demanda_xm(
                         <div style="background:#e8e8e8;border-radius:6px;padding:15px;margin-top:15px;text-align:center;">
                             <div style="font-size:28pt;font-weight:bold;color:#254553;">{dem_total:.2f} GWh</div>
                             <div style="font-size:9pt;color:#555;margin-top:4px;">Demanda Diaria Real</div>
+                            {fecha_corte_html}
                         </div>
                     </div>
                 </td>
@@ -1920,11 +2042,16 @@ def _build_page_mercado(
     precio_pred = _find_metric_prediction(pred_resumen, 'precio')  # type: ignore
     if not precio_pred:
         precio_pred = _find_metric_prediction(pred_resumen, 'bolsa')  # type: ignore
+    precio_ficha = _get_ficha_indicador(fichas, 'precio')
+    fecha_precio = _resolve_fecha_corte(
+        fichas, 'precio', tabla_indicadores, variables_mercado, 'ppp_bolsa', precio_pred
+    )
     precio_pred_html = _build_pred_card(
         precio_pred,
         'El Precio de Bolsa proyectado refleja la din&aacute;mica '
         'esperada de oferta-demanda para el pr&oacute;ximo mes, '
-        'considerando disponibilidad h&iacute;drica y despacho t&eacute;rmico.'
+        'considerando disponibilidad h&iacute;drica y despacho t&eacute;rmico.',
+        fecha_corte=fecha_precio,
     ) if precio_pred else ''
 
     return f"""
@@ -1992,6 +2119,7 @@ def _build_kpi_box(ficha: Dict[str, Any], bg_color: str) -> str:
         f'<div class="kpi-box" style="background:{bg_color};">'
         f'<div class="kpi-label">{indicador}</div>'
         f'<div class="kpi-value">{val_str} {unidad}</div>'
+        f'{_fecha_corte_html(str(ficha.get("fecha", "") or ""), "white")}'
         f'{var_line}</div>'
     )
 
@@ -2040,18 +2168,18 @@ def _build_page_generacion(
     """
     Página 2: Gráfico de generación + tabla de fuentes +
     análisis por tipo de fuente + predicción de generación.
+    Retorna 1-2 páginas HTML (generación + despacho/proyección al final).
     """
-    header = _build_header_html(logo_b64, fecha_label)
 
     # ── Ficha de Generación al inicio ──
     gen_ficha_html = ''
     for f in (fichas or []):
         ind_lower = f.get('indicador', '').lower()
         if 'generaci' in ind_lower:
-            valor = f.get('valor', 0)
+            valor = f.get('valor') or 0
             unidad = f.get('unidad', 'GWh')
             ctx = f.get('contexto', {})
-            var_pct = ctx.get('variacion_vs_promedio_pct', 0)
+            var_pct = ctx.get('variacion_vs_promedio_pct') or 0
             tendencia = ctx.get('tendencia', 'Estable')
             
             # Estado
@@ -2084,6 +2212,7 @@ def _build_page_generacion(
                 f'<div>'
                 f'<div style="font-size:8pt;font-weight:bold;opacity:0.9;">⚡ GENERACIÓN TOTAL DEL SISTEMA</div>'
                 f'<div style="font-size:16pt;font-weight:bold;margin-top:4px;">{valor:.2f} <span style="font-size:10pt;">{unidad}</span></div>'
+                f'{_fecha_corte_html(f.get("fecha", ""), "white")}'
                 f'</div>'
                 f'<div style="text-align:right;">'
                 f'<div style="font-size:9pt;color:{trend_color};">{flecha} {tendencia}</div>'
@@ -2150,7 +2279,7 @@ def _build_page_generacion(
           {table_rows}
         </table>
         <div style="font-size:6.5pt;color:#8d8d8d;margin-top:1px;">
-          Datos del {fecha_dato} &bull; Fuente: XM
+          Fecha de corte: {_format_fecha_larga(str(fecha_dato)[:10]) if fecha_dato else 'N/D'} &bull; Fuente: XM
         </div>
         """
 
@@ -2241,11 +2370,16 @@ def _build_page_generacion(
     gen_pred = _find_metric_prediction(pred_resumen, 'generaci')  # type: ignore
     if not gen_pred:
         gen_pred = _find_metric_prediction(pred_resumen, 'GENE')  # type: ignore
+    gen_ficha = _get_ficha_indicador(fichas, 'generacion')
+    fecha_gen_pred = _resolve_fecha_corte(
+        fichas, 'generacion', metric=gen_pred
+    ) or fecha_dato
     gen_pred_html = _build_pred_card(
         gen_pred,
         'La generaci&oacute;n total proyectada considera la estacionalidad '
         'h&iacute;drica, la disponibilidad t&eacute;rmica programada y '
-        'el crecimiento de FNCER en la matriz energ&eacute;tica.'
+        'el crecimiento de FNCER en la matriz energ&eacute;tica.',
+        fecha_corte=str(fecha_gen_pred or ''),
     ) if gen_pred else ''
     
     # Explicación de Generación Total
@@ -2253,17 +2387,24 @@ def _build_page_generacion(
     if gen_explicacion:
         gen_explicacion = f'<div style="margin:4px 10px;">{gen_explicacion}</div>'
 
-    return f"""
-    <div class="page">
-      {header}
+    # ── Gráfico Despacho vs Gen. Térmica (estilo XM) ──
+    despacho_chart = _embed_chart(chart_paths, 'despacho_termica')
+    despacho_block = ''
+    if despacho_chart or gen_pred_html or gen_explicacion:
+        despacho_block = f"""
+          {_section_hdr('Despacho VS Generaci&oacute;n T&eacute;rmica', '#737373')}
+          {despacho_chart or ''}
+          {gen_explicacion}
+          {gen_pred_html}
+        """
+
+    return _wrap_report_page(logo_b64, fecha_label, f"""
       {_section_hdr('Generaci&oacute;n Real por Fuente')}
       {gen_ficha_html}
       {top_section}
       {src_blocks}
-      {gen_pred_html}
-      {gen_explicacion}
-    </div>
-    """
+      {despacho_block}
+    """)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2320,7 +2461,10 @@ def _build_embalses_regionales_html(embalses_regionales: Dict[str, Any]) -> str:
             f'</tr>'
         )
 
-    nota = f'Fecha dato: {fecha_dato}' if fecha_dato else ''
+    nota = (
+        f'Fecha de corte: {_format_fecha_larga(str(fecha_dato)[:10])}'
+        if fecha_dato else ''
+    )
     return (
         f'<div style="margin:4px 10px;">'
         f'<table class="sema-tbl">'
@@ -2368,7 +2512,8 @@ def _get_aportes_rios_table() -> str:
             if df.empty:
                 return '<div style="font-size:7pt;color:#999;text-align:center;padding:10px;">No hay datos de aportes</div>'
             
-            fecha_dato = df.iloc[0]['fecha'].strftime('%d/%m/%Y') if 'fecha' in df.columns else ''
+            fecha_raw = df.iloc[0]['fecha'] if 'fecha' in df.columns else None
+            fecha_corte_rios = _format_fecha_larga(str(fecha_raw)[:10]) if fecha_raw is not None else ''
             
             # Construir filas de tabla
             rows = ''
@@ -2403,13 +2548,276 @@ def _get_aportes_rios_table() -> str:
                     {rows}
                 </table>
                 <div style="font-size:6pt;color:#999;margin-top:4px;text-align:right;">
-                    Fuente: XM/SIMEM • {fecha_dato}
+                    Fecha de corte: {fecha_corte_rios} &bull; Fuente: XM/SIMEM
                 </div>
             </div>
             '''
     except Exception as e:
         logger.warning(f"[REPORT] Error obteniendo aportes por río: {e}")
         return '<div style="font-size:7pt;color:#999;text-align:center;padding:10px;">Error cargando aportes</div>'
+
+
+def _xm_pct_bar_cell(pct: float, bar_color: str) -> str:
+    """Celda con barra de fondo estilo XM (Vol% verde, Aportes% azul)."""
+    w = max(0, min(float(pct), 100))
+    return (
+        f'<td style="padding:0;position:relative;height:16px;min-width:38px;">'
+        f'<div style="position:absolute;inset:0;background:#eceff1;"></div>'
+        f'<div style="position:absolute;left:0;top:0;bottom:0;width:{w}%;background:{bar_color};"></div>'
+        f'<span style="position:relative;display:block;text-align:right;padding:1px 3px;'
+        f'font-size:6pt;font-weight:bold;color:#1a1a1a;">{pct:.0f}%</span></td>'
+    )
+
+
+def _xm_trend_cell(val: float, decimals: int = 2, suffix: str = '') -> str:
+    """Celda numérica con color según tendencia (▲ verde / ▼ rojo)."""
+    if val > 0.05:
+        color, arrow = '#2E7D32', '▲'
+    elif val < -0.05:
+        color, arrow = '#C62828', '▼'
+    else:
+        color, arrow = '#555555', '●'
+    fmt = f'{{:+.{decimals}f}}'
+    return (
+        f'<td style="text-align:right;font-size:6pt;color:{color};font-weight:bold;">'
+        f'{fmt.format(val)}{suffix} {arrow}</td>'
+    )
+
+
+def _build_aportes_demanda_kpis_html() -> str:
+    """6 KPIs estilo XM — tarjetas visuales debajo del gráfico Aportes vs Demanda."""
+    try:
+        from whatsapp_bot.services.informe_charts import get_aportes_demanda_kpis
+        k = get_aportes_demanda_kpis()
+        if not k:
+            return ''
+
+        fl = k['fecha_label']
+        fc = _format_fecha_larga(str(k['fecha'])[:10]) if k.get('fecha') is not None else fl
+        fc_line = f'Fecha de corte: {fc}'
+        pct_dia = k['pct_aporte_dia']
+        pct_mes = k['pct_aporte_mes']
+        pct_dia_color = '#2E7D32' if pct_dia >= 100 else '#E65100'
+        pct_mes_color = '#2E7D32' if pct_mes >= 100 else '#E65100'
+
+        def _kpi_card(title, value, unit, sub, accent, bg):
+            return f"""
+            <td style="width:33%;padding:4px;vertical-align:top;">
+              <div style="background:{bg};border:1px solid #e0e0e0;border-left:4px solid {accent};border-radius:6px;
+                          padding:10px 12px;min-height:72px;">
+                <div style="font-size:6.5pt;font-weight:bold;color:{accent};text-transform:uppercase;
+                            letter-spacing:0.4px;">{title}</div>
+                <div style="font-size:16pt;font-weight:bold;color:#1a1a1a;line-height:1.1;margin:4px 0 2px;">
+                  {value}</div>
+                <div style="font-size:7pt;color:#555;">{unit}</div>
+                <div style="font-size:6.5pt;color:#888;margin-top:3px;">{sub}</div>
+              </div>
+            </td>"""
+
+        return f"""
+        <div style="margin:10px 10px 4px;">
+          <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0 6px;">
+            <tr>
+              {_kpi_card('Aportes d&iacute;a', f"{k['aportes_dia']:.1f}", 'GWh/d&iacute;a', fc_line, '#1565C0', '#e3f2fd')}
+              {_kpi_card('% vs media diaria', f"{pct_dia:.1f}%", f"Ref. {k['aportes_medios']:.1f} GWh/d&iacute;a", fc_line, pct_dia_color, '#e8f5e9')}
+              {_kpi_card('Demanda d&iacute;a', f"{k['demanda_dia']:.1f}", 'GWh/d&iacute;a', fc_line, '#2E7D32', '#e8f5e9')}
+            </tr>
+            <tr>
+              {_kpi_card('Aportes mes (prom.)', f"{k['aportes_mes']:.1f}", 'GWh/d&iacute;a', fc_line, '#1565C0', '#e3f2fd')}
+              {_kpi_card('% vs media hist.', f"{pct_mes:.1f}%", f"Ref. {k['hist_media_aportes']:.1f} GWh/d&iacute;a", fc_line, pct_mes_color, '#fff3e0')}
+              {_kpi_card('Demanda mes (prom.)', f"{k['demanda_mes']:.1f}", 'GWh/d&iacute;a', fc_line, '#FF9800', '#fff8e1')}
+            </tr>
+          </table>
+        </div>
+        """
+    except Exception as e:
+        logger.warning(f"[REPORT] KPIs aportes vs demanda: {e}")
+        return ''
+
+
+def _build_hidrologia_detalle_table() -> str:
+    """
+    Tabla estilo XM: hidrología por embalse con volúmenes, deltas y aportes.
+    """
+    try:
+        from infrastructure.database.connection import get_connection
+        import pandas as pd
+
+        embalse_region = {
+            k.upper(): v.upper() for k, v in {
+                'PENOL': 'ANTIOQUIA', 'RIOGRANDE2': 'ANTIOQUIA', 'PORCE II': 'ANTIOQUIA',
+                'PORCE III': 'ANTIOQUIA', 'MIRAFLORES': 'ANTIOQUIA', 'PLAYAS': 'ANTIOQUIA',
+                'TRONERAS': 'ANTIOQUIA', 'PUNCHINA': 'ANTIOQUIA', 'ITUANGO': 'ANTIOQUIA',
+                'AGREGADO BOGOTA': 'CENTRO', 'CHUZA': 'CENTRO', 'GUAVIO': 'CENTRO', 'MUNA': 'CENTRO',
+                'SAN CARLOS': 'CENTRO', 'BETANIA': 'CENTRO', 'EL QUIMBO': 'CENTRO', 'PRADO': 'CENTRO',
+                'AMANI': 'CALDAS', 'ESMERALDA': 'CALDAS', 'SAN LORENZO': 'CALDAS',
+                'CALIMA1': 'VALLE', 'ALTOANCHICAYA': 'VALLE', 'SALVAJINA': 'VALLE', 'FLORIDA II': 'VALLE',
+                'URRA1': 'CARIBE', 'TOPOCORO': 'ORIENTE', 'CHIVOR': 'ORIENTE', 'SOGAMOSO': 'ORIENTE', 'BATA': 'ORIENTE',
+            }.items()
+        }
+
+        with get_connection() as conn:
+            fecha_ref = pd.read_sql("""
+                SELECT fecha FROM metrics
+                WHERE metrica IN ('VoluUtilDiarEner','CapaUtilDiarEner') AND entidad='Embalse'
+                  AND fecha >= CURRENT_DATE - INTERVAL '7 days'
+                GROUP BY fecha
+                HAVING COUNT(DISTINCT CASE WHEN metrica='VoluUtilDiarEner' THEN recurso END)::float
+                     / NULLIF(COUNT(DISTINCT CASE WHEN metrica='CapaUtilDiarEner' THEN recurso END), 0) >= 0.8
+                ORDER BY fecha DESC LIMIT 1
+            """, conn)
+            if fecha_ref.empty:
+                return ''
+            f_ref = fecha_ref.iloc[0]['fecha']
+
+            df = pd.read_sql("""
+                SELECT
+                  v.recurso AS embalse,
+                  v.valor_gwh AS vol,
+                  c.valor_gwh AS cap,
+                  CASE WHEN c.valor_gwh > 0 THEN v.valor_gwh / c.valor_gwh * 100 ELSE 0 END AS pct,
+                  v_m.valor_gwh AS vol_mes,
+                  v_s.valor_gwh AS vol_sem,
+                  p_m.valor_gwh * 100 AS pct_mes,
+                  p_s.valor_gwh * 100 AS pct_sem
+                FROM metrics v
+                JOIN metrics c ON c.recurso=v.recurso AND c.fecha=v.fecha
+                  AND c.metrica='CapaUtilDiarEner' AND c.entidad='Embalse'
+                LEFT JOIN metrics v_m ON v_m.recurso=v.recurso AND v_m.metrica='VoluUtilDiarEner'
+                  AND v_m.entidad='Embalse' AND v_m.fecha = v.fecha - INTERVAL '30 days'
+                LEFT JOIN metrics v_s ON v_s.recurso=v.recurso AND v_s.metrica='VoluUtilDiarEner'
+                  AND v_s.entidad='Embalse' AND v_s.fecha = v.fecha - INTERVAL '7 days'
+                LEFT JOIN metrics p_m ON p_m.recurso=v.recurso AND p_m.metrica='PorcVoluUtilDiar'
+                  AND p_m.entidad='Embalse' AND p_m.fecha = v.fecha - INTERVAL '30 days'
+                LEFT JOIN metrics p_s ON p_s.recurso=v.recurso AND p_s.metrica='PorcVoluUtilDiar'
+                  AND p_s.entidad='Embalse' AND p_s.fecha = v.fecha - INTERVAL '7 days'
+                WHERE v.metrica='VoluUtilDiarEner' AND v.entidad='Embalse' AND v.fecha = %s
+                ORDER BY v.valor_gwh DESC
+            """, conn, params=(f_ref,))
+
+            rios = pd.read_sql("""
+                SELECT UPPER(recurso) AS rio, valor_gwh AS aporte,
+                       (SELECT valor_gwh FROM metrics m2
+                        WHERE m2.metrica='AporEnerMediHist' AND m2.entidad='Rio'
+                          AND m2.recurso=m.recurso AND m2.fecha=m.fecha) AS aporte_hist
+                FROM metrics m
+                WHERE metrica='AporEner' AND entidad='Rio' AND fecha = %s
+            """, conn, params=(f_ref,))
+
+            sin_row = pd.read_sql("""
+                SELECT valor_gwh * 100 AS pct_sin,
+                       (SELECT SUM(valor_gwh) FROM metrics
+                        WHERE metrica='VoluUtilDiarEner' AND entidad='Embalse' AND fecha = %s) AS vol_sin
+                FROM metrics
+                WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema' AND fecha = %s
+                LIMIT 1
+            """, conn, params=(f_ref, f_ref))
+
+        if df.empty:
+            return ''
+
+        rio_aporte = {r['rio']: r for _, r in rios.iterrows()}
+        df['region'] = df['embalse'].str.upper().map(embalse_region).fillna('OTRO')
+        df['delta_m'] = df['vol'] - df['vol_mes'].fillna(df['vol'])
+        df['delta_s'] = df['vol'] - df['vol_sem'].fillna(df['vol'])
+        df['delta_porc_m'] = df['pct'] - df['pct_mes'].fillna(df['pct'])
+        df['delta_porc_s'] = df['pct'] - df['pct_sem'].fillna(df['pct'])
+
+        def _match_aporte(emb):
+            key = str(emb).upper()
+            for rio, row in rio_aporte.items():
+                if key in rio or rio in key:
+                    ap = float(row['aporte'])
+                    hist = float(row['aporte_hist']) if pd.notna(row['aporte_hist']) and row['aporte_hist'] else ap
+                    pct_a = (ap / hist * 100) if hist else 0
+                    return ap, pct_a
+            return None, None
+
+        rows_html = ''
+        region_order = ['ANTIOQUIA', 'CALDAS', 'CARIBE', 'CENTRO', 'ORIENTE', 'VALLE', 'OTRO']
+        for region in region_order:
+            sub = df[df['region'] == region]
+            if sub.empty:
+                continue
+            for _, r in sub.iterrows():
+                ap, ap_pct = _match_aporte(r['embalse'])
+                ap_cell = f'{ap:.1f}' if ap is not None else '—'
+                ap_pct_val = ap_pct if ap_pct is not None else 0
+                ap_pct_cell = _xm_pct_bar_cell(ap_pct_val, '#64B5F6') if ap_pct is not None else '<td style="text-align:center;font-size:6pt;">—</td>'
+                rows_html += (
+                    f'<tr>'
+                    f'<td style="font-size:6pt;font-weight:600;">{r["embalse"][:18]}</td>'
+                    f'<td style="font-size:6pt;">{region.title()}</td>'
+                    f'<td style="text-align:right;font-size:6pt;">{r["vol"]:.0f}</td>'
+                    f'{_xm_pct_bar_cell(r["pct"], "#66BB6A")}'
+                    f'{_xm_trend_cell(r["delta_m"])}'
+                    f'{_xm_trend_cell(r["delta_s"])}'
+                    f'<td style="text-align:right;font-size:6pt;">{ap_cell}</td>'
+                    f'{ap_pct_cell}'
+                    f'{_xm_trend_cell(r["delta_porc_m"], decimals=1, suffix="%")}'
+                    f'{_xm_trend_cell(r["delta_porc_s"], decimals=1, suffix="%")}'
+                    f'</tr>'
+                )
+            # Fila TOTAL región
+            t_vol = sub['vol'].sum()
+            t_cap = sub['cap'].sum()
+            t_pct = (t_vol / t_cap * 100) if t_cap else 0
+            rows_html += (
+                f'<tr style="background:#eef2f7;font-weight:bold;">'
+                f'<td colspan="2" style="font-size:6pt;">TOTAL {region.title()}</td>'
+                f'<td style="text-align:right;font-size:6pt;">{t_vol:.0f}</td>'
+                f'{_xm_pct_bar_cell(t_pct, "#66BB6A")}'
+                f'<td colspan="5"></td></tr>'
+            )
+
+        t_vol = df['vol'].sum()
+        if not sin_row.empty and pd.notna(sin_row.iloc[0]['pct_sin']):
+            t_pct = float(sin_row.iloc[0]['pct_sin'])
+            t_vol = float(sin_row.iloc[0]['vol_sin'] or t_vol)
+        else:
+            t_cap = df['cap'].sum()
+            t_pct = (t_vol / t_cap * 100) if t_cap else 0
+        rows_html += (
+            f'<tr style="background:#254553;color:#fff;font-weight:bold;page-break-inside:avoid;">'
+            f'<td colspan="2" style="font-size:6.5pt;">TOTAL SIN</td>'
+            f'<td style="text-align:right;font-size:6.5pt;">{t_vol:.0f}</td>'
+            f'<td style="text-align:right;font-size:6.5pt;">{t_pct:.1f}%</td>'
+            f'<td colspan="6"></td></tr>'
+        )
+
+        fecha_dato = pd.to_datetime(f_ref).strftime('%Y-%m-%d')
+        fecha_corte_larga = _format_fecha_larga(fecha_dato)
+        return f"""
+        <div style="margin:4px 10px;">
+          <div style="font-size:8pt;font-weight:bold;color:#254553;margin-bottom:4px;">
+            Hidrolog&iacute;a por Regiones
+            <span style="font-size:7pt;font-weight:normal;color:#666;margin-left:6px;">
+              Fecha de corte: {fecha_corte_larga}
+            </span>
+          </div>
+          <table class="data-tbl" style="font-size:6pt;width:100%;border-collapse:collapse;">
+            <tr>
+              <th>Embalse</th><th>Regi&oacute;n</th>
+              <th style="text-align:right;">Vol(GWh)</th>
+              <th style="text-align:right;">Vol(%)</th>
+              <th style="text-align:right;">&Delta;Vol(M)</th>
+              <th style="text-align:right;">&Delta;Vol(S)</th>
+              <th style="text-align:right;">Aportes(GWh)</th>
+              <th style="text-align:right;">Aportes(%)</th>
+              <th style="text-align:right;">&Delta;Porc(M)</th>
+              <th style="text-align:right;">&Delta;Porc(S)</th>
+            </tr>
+            {rows_html}
+          </table>
+          <div style="font-size:5.5pt;color:#888;margin-top:3px;">
+            &Delta; mensual = diff vs hace 30 d&iacute;as; &Delta; semanal = diff vs hace 7 d&iacute;as. Fuente: XM/CND.
+          </div>
+        </div>
+        """
+
+    except Exception as e:
+        logger.warning(f"[REPORT] Error tabla hidrología detalle: {e}")
+        return ''
 
 
 def _build_page_hidrologia(
@@ -2422,11 +2830,11 @@ def _build_page_hidrologia(
     fichas: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
-    Página 3: Hidrología + embalses + predicciones compactas.
-    Replica diseño XM con gráfica de aportes hídricos (3 líneas) + panel derecho.
+    Hidrología + embalses en 3-4 páginas compactas.
+    Orden: ficha → capacidad → aportes/demanda → volumen útil → detalle por embalse
+    → mapa/aportes río → nivel regional → proyecciones (siempre al final).
     """
-    header = _build_header_html(logo_b64, fecha_label)
-    
+
     # ── Ficha de Embalses al inicio ──
     emb_ficha_html = ''
     for f in (fichas or []):
@@ -2438,16 +2846,10 @@ def _build_page_hidrologia(
             var_pct = ctx.get('variacion_vs_promedio_pct', 0)
             tendencia = ctx.get('tendencia', 'Estable')
             
-            # Estado según IDEAM/UNGRD thresholds
-            if valor < 27 or valor > 95:
-                estado = 'Crítico'
-                estado_bg = '#e74c3c'
-            elif valor < 40 or valor > 90:
-                estado = 'Alerta'
-                estado_bg = '#f39c12'
-            else:
-                estado = 'Normal'
-                estado_bg = '#27ae60'
+            # Estado según Índice NE oficial (Res. CREG 209/2020)
+            etiqueta, estado_bg_hex, _ = clasificar_visual_embalse(float(valor))
+            estado = etiqueta
+            estado_bg = estado_bg_hex
             
             # Flecha - colores claros para fondo oscuro
             if tendencia == 'Alza':
@@ -2468,6 +2870,7 @@ def _build_page_hidrologia(
                 f'<div>'
                 f'<div style="font-size:8pt;font-weight:bold;opacity:0.9;">💧 PORCENTAJE DE EMBALSES</div>'
                 f'<div style="font-size:16pt;font-weight:bold;margin-top:4px;">{valor:.2f} <span style="font-size:10pt;">{unidad}</span></div>'
+                f'{_fecha_corte_html(f.get("fecha", ""), "white")}'
                 f'</div>'
                 f'<div style="text-align:right;">'
                 f'<div style="font-size:9pt;color:{trend_color};">{flecha} {tendencia}</div>'
@@ -2483,11 +2886,18 @@ def _build_page_hidrologia(
             )
             break
 
-    # ── Gráfica de Aportes Hídricos (3 líneas) ──
+    # ── Gráficas XM: Capacidad Embalse + Aportes vs Demanda ──
+    capacidad_chart = _embed_chart(chart_paths, 'capacidad_embalse')
+    aportes_demanda_chart = _embed_chart(chart_paths, 'aportes_demanda')
+    aportes_kpis_html = _build_aportes_demanda_kpis_html()
+
+    # ── Gráfica de Aportes Hídricos (volumen útil % — 3 líneas) ──
     aportes_chart = _embed_chart(chart_paths, 'aportes_hidricos')
     
     # ── Datos para el panel derecho ──
     emb = embalses_detalle or {}
+    fecha_emb = str(emb.get('fecha_dato', '') or '')
+    fecha_emb_html = _fecha_corte_html(fecha_emb, 'default')
     nivel = emb.get('valor_actual_pct', 0)
     prom_30d = emb.get('promedio_30d_pct')
     media_hist = emb.get('media_historica_2020_2025_pct')
@@ -2520,6 +2930,7 @@ def _build_page_hidrologia(
         <!-- Reserva Nacional -->
         <div style="margin-bottom:10px;">
             <div style="font-size:7pt;font-weight:bold;color:#555;margin-bottom:4px;">RESERVA NACIONAL</div>
+            {fecha_emb_html}
             <div style="display:flex;align-items:center;gap:8px;">
                 <div style="flex:1;height:14px;background:#e0e0e0;border-radius:7px;overflow:hidden;">
                     <div style="width:{min(nivel, 100)}%;height:100%;background:linear-gradient(90deg, #287270, #2E8B57);border-radius:7px;"></div>
@@ -2576,16 +2987,13 @@ def _build_page_hidrologia(
     """
     
     # ── Sección de Aportes Hídricos (gráfica + panel) ──
-    # Reducir altura para que todo quepa en una página
-    aportes_chart_style = 'max-height:200px;overflow:hidden;' if aportes_chart else ''
-    
     aportes_section = f"""
-    <div style="margin:0 10px 8px;">
-        <div style="font-size:9pt;font-weight:bold;color:#254553;margin-bottom:6px;">📈 Hidrología — Evolución del Volumen Útil</div>
+    <div style="margin:0 10px 6px;">
+        <div style="font-size:9pt;font-weight:bold;color:#254553;margin-bottom:4px;">Hidrolog&iacute;a &mdash; Evoluci&oacute;n del Volumen &Uacute;til</div>
         <table cellpadding="0" cellspacing="0" style="width:100%;">
             <tr>
-                <td style="width:55%;vertical-align:top;padding-right:8px;{aportes_chart_style}">
-                    {aportes_chart or '<div style="text-align:center;padding:30px;color:#999;font-size:8pt;background:#f8f9fa;border-radius:6px;">Gráfica no disponible</div>'}
+                <td style="width:55%;vertical-align:top;padding-right:8px;">
+                    {aportes_chart or '<div style="text-align:center;padding:20px;color:#999;font-size:8pt;background:#f8f9fa;border-radius:6px;">Gr&aacute;fica no disponible</div>'}
                 </td>
                 <td style="width:45%;vertical-align:top;">
                     {panel_derecho_html}
@@ -2594,6 +3002,15 @@ def _build_page_hidrologia(
         </table>
     </div>
     """
+
+    # ── Tabla detalle por embalse (antes de nivel regional) ──
+    detalle_table = _build_hidrologia_detalle_table()
+    detalle_section = ''
+    if detalle_table:
+        detalle_section = f"""
+        {_section_hdr('Detalle Hidrol&oacute;gico por Embalse', '#287270')}
+        {detalle_table}
+        """
 
     # ── Embalses chart (mapa) ──
     emb_chart = _embed_chart(chart_paths, 'embalses_map')
@@ -2604,7 +3021,8 @@ def _build_page_hidrologia(
     # ── Indicadores clave (compacto) ──
     indicadores_html = f"""
     <div style="background:#f8f9fa;border:1px solid #e0e0e0;border-radius:6px;padding:8px;margin-top:8px;">
-        <div style="font-size:7pt;color:#666;text-align:center;">
+        {fecha_emb_html}
+        <div style="font-size:7pt;color:#666;text-align:center;margin-top:4px;">
             <strong>Promedio 30 días:</strong> {prom_30d_str}% | 
             <strong>Senda Histórica:</strong> {media_hist_str}% | 
             <strong>Energía:</strong> {energia_str} GWh
@@ -2612,16 +3030,16 @@ def _build_page_hidrologia(
     </div>
     """
 
-    # ── Two-column: map + aportes por río ──
-    hydro_section = f"""
-    <table class="two-col" cellpadding="0" cellspacing="0" style="margin-top:10px;">
+    # ── Mapa (izq) + aportes por río (der), nivel regional debajo ──
+    map_section = f"""
+    <table class="two-col" cellpadding="0" cellspacing="0" style="margin:0 10px 8px;">
       <tr>
-        <td class="col-60" style="padding-right:8px;">
-            {emb_chart or '<div style="text-align:center;padding:30px;color:#999;font-size:8pt;">Mapa no disponible</div>'}
+        <td class="col-60" style="padding-right:8px;vertical-align:top;">
+          {emb_chart or '<div style="text-align:center;padding:20px;color:#999;font-size:8pt;">Mapa no disponible</div>'}
         </td>
         <td class="col-40" style="vertical-align:top;">
-            {aportes_rios_html}
-            {indicadores_html}
+          {aportes_rios_html}
+          {indicadores_html}
         </td>
       </tr>
     </table>
@@ -2664,11 +3082,20 @@ def _build_page_hidrologia(
             if cambio is not None:
                 cambio_s = f' ({cambio:+.1f}%)'
 
+            m_fecha = m.get('fecha', '') or ''
+            if not m_fecha:
+                for f in (fichas or []):
+                    fi = _strip_emojis(f.get('indicador', '')).lower()
+                    if fi and (fi in nombre.lower() or nombre.lower() in fi):
+                        m_fecha = f.get('fecha', '') or ''
+                        break
+            fecha_actual_html = _fecha_corte_html(str(m_fecha), 'footer')
+
             rows += (
                 f'<tr>'
                 f'<td>{nombre}</td>'
                 f'<td style="text-align:center;">{unidad}</td>'
-                f'<td style="text-align:right;font-weight:bold;">{actual_s}</td>'
+                f'<td style="text-align:right;font-weight:bold;">{actual_s}{fecha_actual_html}</td>'
                 f'<td style="text-align:right;font-weight:bold;">{proy_s}</td>'
                 f'<td style="text-align:center;font-size:7.5pt;">{rango_s}</td>'
                 f'<td style="text-align:center;">'
@@ -2698,11 +3125,16 @@ def _build_page_hidrologia(
     emb_pred = _find_metric_prediction(pred_resumen, 'embalse')
     if not emb_pred:
         emb_pred = _find_metric_prediction(pred_resumen, 'porcentaje')
+    emb_ficha = _get_ficha_indicador(fichas, 'embalses')
+    fecha_emb_pred = _resolve_fecha_corte(
+        fichas, 'embalses', metric=emb_pred
+    ) or fecha_emb
     emb_pred_html = _build_pred_card(
         emb_pred,
         'La proyecci&oacute;n de embalses incorpora la estacionalidad '
         'de aportes h&iacute;dricos, consumo programado de centrales '
-        'hidroel&eacute;ctricas y perspectivas clim&aacute;ticas regionales.'
+        'hidroel&eacute;ctricas y perspectivas clim&aacute;ticas regionales.',
+        fecha_corte=str(fecha_emb_pred or ''),
     ) if emb_pred else ''
 
     regionales_html = _build_embalses_regionales_html(embalses_regionales or {})
@@ -2712,22 +3144,42 @@ def _build_page_hidrologia(
     if emb_explicacion:
         emb_explicacion = f'<div style="margin:4px 10px;">{emb_explicacion}</div>'
 
-    return f"""
-    <div class="page">
-      {header}
+    # ── Página capacidad: ficha + gráfico capacidad embalse ──
+    page_hydro_cap = _wrap_report_page(logo_b64, fecha_label, f"""
       {_section_hdr('Hidrolog&iacute;a y Embalses')}
       {emb_ficha_html}
+      {_section_hdr('Capacidad de Embalses', '#287270')}
+      {capacidad_chart or '<div style="text-align:center;padding:16px;color:#999;font-size:8pt;">Gr&aacute;fica no disponible</div>'}
+    """)
+
+    # ── Página aportes vs demanda: gráfico + KPIs (aprovecha página completa) ──
+    page_hydro_aportes = _wrap_report_page(logo_b64, fecha_label, f"""
+      {_section_hdr('Aportes vs Demanda', '#287270')}
+      {aportes_demanda_chart or '<div style="text-align:center;padding:16px;color:#999;font-size:8pt;">Gr&aacute;fica no disponible</div>'}
+      {aportes_kpis_html}
+    """)
+
+    # ── Página detalle + mapa + regional + proyecciones (flujo continuo, sin hoja vacía) ──
+    proyecciones_block = ''
+    if emb_pred_html or pred_html:
+        proyecciones_block = f"""
+          {emb_pred_html}
+          {_section_hdr('Proyecciones a 1 Mes', '#287270') if pred_html else ''}
+          {pred_html}
+        """
+
+    page_hydro_detalle_map = _wrap_report_page(logo_b64, fecha_label, f"""
       {aportes_section}
-      {_section_hdr('Mapa de Embalses por Región', '#254553')}
-      {hydro_section}
-      {emb_explicacion}
+      {detalle_section}
+      {_section_hdr('Mapa de Embalses por Regi&oacute;n', '#254553')}
+      {map_section}
       {_section_hdr('Nivel por Regi&oacute;n Hidrol&oacute;gica', '#287270') if regionales_html else ''}
       {regionales_html}
-      {emb_pred_html}
-      {_section_hdr('Proyecciones a 1 Mes', '#287270') if pred_html else ''}
-      {pred_html}
-    </div>
-    """
+      {emb_explicacion}
+      {proyecciones_block}
+    """)
+
+    return page_hydro_cap + page_hydro_aportes + page_hydro_detalle_map
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2774,16 +3226,20 @@ def _build_page_noticias(
     anomalias: List[Dict[str, Any]],
     noticias: List[Dict[str, Any]],
     indices_compuestos: Optional[Dict[str, Any]] = None,
+    include_riesgos: bool = True,
+    include_noticias: bool = True,
+    include_canales: bool = True,
+    max_noticias: int = 5,
 ) -> str:
     """
-    Página 5: Anomalías/riesgos + Noticias + Canales.
-    Replica Páginas 4-5 del modelo (Alertas del Sector).
+    Página de riesgos/noticias/cierre.
+    Con include_riesgos=False solo noticias; con include_noticias=False solo índices/anomalías.
     """
     header = _build_header_html(logo_b64, fecha_label)
 
     # ── Índices Compuestos (ISH / IPM / IES / CIS) ──
     idx_html = ''
-    if indices_compuestos:
+    if include_riesgos and indices_compuestos:
         _IDX_COLORS = {
             'ÓPTIMO': '#1B5E20', 'ADECUADO': '#2E7D32', 'NORMAL': '#2E7D32', 'ESTABLE': '#2E7D32',
             'LEVE': '#7CB342', 'BAJO': '#E65100', 'MODERADO': '#E65100', 'VIGILANCIA': '#E65100',
@@ -2928,7 +3384,7 @@ def _build_page_noticias(
 
     # ── Anomalías ──
     anom_html = ''
-    if anomalias:
+    if include_riesgos and anomalias:
         rows = ''
         for a in (anomalias or [])[:8]:
             # Compatibilidad: manejar tanto 'metrica' como 'indicador'
@@ -3025,9 +3481,9 @@ def _build_page_noticias(
 
     # ── Noticias ──
     news_html = ''
-    if noticias:
+    if include_noticias and noticias:
         items = ''
-        for n in (noticias or [])[:5]:
+        for n in (noticias or [])[:max_noticias]:
             titulo = _strip_emojis(n.get('titulo', ''))
             resumen = _strip_emojis(n.get('resumen', n.get('resumen_corto', '')))
             fuente = n.get('fuente', '')
@@ -3050,7 +3506,9 @@ def _build_page_noticias(
         """
 
     # ── Canales ──
-    channels_html = f"""
+    channels_html = ''
+    if include_canales:
+        channels_html = f"""
     {_section_hdr('Canales de Consulta', '#287270')}
     <div class="channels-box">
       <table cellpadding="0" cellspacing="0" border="0">
@@ -3096,30 +3554,21 @@ def generar_pdf_informe(
     anomalias: Optional[list] = None,
     noticias: Optional[list] = None,
     contexto_datos: Optional[Dict[str, Any]] = None,
+    portal_data: Optional[Dict[str, Any]] = None,
+    portal_chart_paths: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
     """
     Genera un PDF estilo modelo XM del informe ejecutivo diario.
 
-    Estructura de 5 páginas:
-      P1: Variables del Mercado y Resumen Ejecutivo
-      P2: Generación Real por Fuente (con análisis por tipo)
-      P3: Hidrología/Embalses + Proyecciones a 1 Mes
-      P4: Análisis Ejecutivo IA (narrativa completa)
-      P5: Riesgos, Noticias y Cierre
+    Estructura del PDF (multi-capítulo cuando portal_data está presente):
+      Cap. 1: Gestión del sector (mercado, generación, hidrología, IA, riesgos)
+      Cap. 2: Comunidades energéticas
+      Cap. 3: Subsidios
+      Cap. 4: Supervisión
+      Cap. 5: Presupuesto DEE
+      Cap. 6: Noticias (3 ítems) + canales
 
-    Args:
-        informe_texto: Texto Markdown de la narrativa IA.
-        fecha_generacion: Fecha/hora de generación.
-        generado_con_ia: Si fue generado con IA.
-        chart_paths: Lista de paths a PNGs (gen_pie, embalses_map, precio_evol).
-        fichas: Lista de KPIs [{indicador, valor, unidad, contexto}].
-        predicciones: Dict o lista de predicciones (legacy, fallback).
-        anomalias: Lista de anomalías [{severidad, metrica, descripcion}].
-        noticias: Lista de noticias [{titulo, resumen, fuente, url}].
-        contexto_datos: Dict del orquestador con campos enriquecidos.
-
-    Returns:
-        Ruta absoluta al PDF temporal, o None si falla.
+    Sin portal_data conserva la estructura legacy de 5 bloques HTML.
     """
     try:
         from weasyprint import HTML
@@ -3170,13 +3619,81 @@ def generar_pdf_informe(
             informe_texto or '',
         )
 
-        page5 = _build_page_noticias(
-            logo_b64, fecha_label,
-            anomalias or [], noticias or [],
-            indices_compuestos=indices_compuestos,
-        )
+        pages_extra: List[str] = []
+
+        if portal_data:
+            from domain.services.report_chapters import (
+                build_chapter_colombia_solar,
+                build_chapter_comunidades,
+                build_chapter_contratos_or,
+                build_chapter_fenoge,
+                build_chapter_gestion_riesgos,
+                build_chapter_noticias,
+                build_chapter_presupuesto,
+                build_chapter_subsidios,
+                build_chapter_supervision,
+            )
+
+            page_riesgos = build_chapter_gestion_riesgos(
+                logo_b64, fecha_label,
+                anomalias or [],
+                indices_compuestos=indices_compuestos,
+            )
+            pages_extra = [
+                page_riesgos,
+                build_chapter_comunidades(
+                    logo_b64, fecha_label,
+                    portal_data.get("comunidades") or {},
+                    portal_chart_paths,
+                ),
+                build_chapter_contratos_or(
+                    logo_b64, fecha_label,
+                    portal_data.get("contratos_or") or {},
+                    portal_chart_paths,
+                ),
+                build_chapter_fenoge(
+                    logo_b64, fecha_label,
+                    portal_data.get("fenoge") or {},
+                    portal_chart_paths,
+                ),
+                build_chapter_colombia_solar(
+                    logo_b64, fecha_label,
+                    portal_chart_paths,
+                ),
+                build_chapter_subsidios(
+                    logo_b64, fecha_label,
+                    portal_data.get("subsidios") or {},
+                    portal_chart_paths,
+                ),
+                build_chapter_supervision(
+                    logo_b64, fecha_label,
+                    portal_data.get("supervision") or {},
+                    portal_chart_paths,
+                ),
+                build_chapter_presupuesto(
+                    logo_b64, fecha_label,
+                    portal_data.get("presupuesto") or {},
+                    portal_chart_paths,
+                ),
+                build_chapter_noticias(
+                    logo_b64, fecha_label,
+                    noticias or [],
+                ),
+            ]
+            page5 = ''
+        else:
+            page5 = _build_page_noticias(
+                logo_b64, fecha_label,
+                anomalias or [], noticias or [],
+                indices_compuestos=indices_compuestos,
+            )
 
         # ── Ensamblar HTML ──
+        body_pages = [page1, page2, page3, page4]
+        if page5:
+            body_pages.append(page5)
+        body_pages.extend(pages_extra)
+
         full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -3184,11 +3701,7 @@ def generar_pdf_informe(
   <style>{_CSS}</style>
 </head>
 <body>
-  {page1}
-  {page2}
-  {page3}
-  {page4}
-  {page5}
+  {''.join(body_pages)}
 </body>
 </html>"""
 

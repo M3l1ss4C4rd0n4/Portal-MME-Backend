@@ -52,6 +52,7 @@ from subsidios_handler import (
     _user_name    as sub_user_name,
     _back_kb      as sub_back_kb,
     _menu_kb      as sub_menu_kb,
+    _pagos_menu_kb as sub_pagos_menu_kb,
     _safe_send    as sub_safe_send,
     q_deuda_total,
     q_deuda_empresa,
@@ -213,7 +214,7 @@ def _r(val, dec=1):
 
 
 def render_menu(data: dict) -> tuple:
-    """Renderiza el menú principal (4 opciones + submenús + subsidios)"""
+    """Renderiza el menú principal (6 opciones en 2 columnas)."""
     bienvenida = data.get("mensaje_bienvenida", "¡Bienvenido! 👋")
     indicadores = data.get("indicadores_clave", [])
     menu_items = data.get("menu_principal", [])
@@ -224,23 +225,211 @@ def render_menu(data: dict) -> tuple:
         for ind in indicadores:
             text += f"• {ind}\n"
 
-    # Subsidios
-    text += "\n📋 *Subsidios:* Consulta la base de subsidios DDE."
-
     keyboard = []
+    row: list = []
     for item in menu_items:
         emoji = item.get("emoji", "")
         titulo = item.get("titulo", "")
         item_id = item.get("id", "")
-        keyboard.append([InlineKeyboardButton(
+        row.append(InlineKeyboardButton(
             f"{emoji} {titulo}", callback_data=f"intent:{item_id}"
-        )])
+        ))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
 
-    # Botón de Subsidios al final
-    keyboard.append([InlineKeyboardButton(
-        "📋 Subsidios", callback_data="intent:subsidios"
-    )])
+    return text, InlineKeyboardMarkup(keyboard)
 
+
+def render_gestion_sector_submenu() -> tuple:
+    """Submenú: métricas XM — estado, predicciones y anomalías."""
+    text = (
+        "📊 *Gestión del sector energético*\n\n"
+        "Indicadores del sistema eléctrico *(datos XM)*:\n"
+        "generación, precio de bolsa y embalses.\n"
+    )
+    keyboard = [
+        [InlineKeyboardButton("📊 Estado actual", callback_data="intent:estado_actual")],
+        [InlineKeyboardButton("🔮 Predicciones XM", callback_data="intent:predicciones_sector")],
+        [InlineKeyboardButton("🚨 Anomalías detectadas", callback_data="intent:anomalias_sector")],
+        [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def render_mas_opciones_submenu() -> tuple:
+    """Submenú: noticias y pregunta libre."""
+    text = "➕ *Más opciones*\n\nSelecciona una opción:\n"
+    keyboard = [
+        [InlineKeyboardButton("📰 Noticias del sector", callback_data="intent:noticias_sector")],
+        [InlineKeyboardButton("❓ Pregunta libre", callback_data="action:pregunta_libre_prompt")],
+        [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def render_comunidades_submenu() -> tuple:
+    """Cap. 2 — cuatro tableros de comunidades energéticas."""
+    text = (
+        "🏘️ *Comunidades Energéticas — Cap. 2*\n\n"
+        "Cuatro tableros del portal:\n"
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("🏘️ Implementadas", callback_data="intent:comunidades_implementadas"),
+            InlineKeyboardButton("📄 Contratos OR", callback_data="intent:contratos_or_menu"),
+        ],
+        [
+            InlineKeyboardButton("☀️ Fenoge 1.0/1.1", callback_data="intent:fenoge_menu"),
+            InlineKeyboardButton("🌞 Colombia Solar", callback_data="intent:colombia_solar_menu"),
+        ],
+        [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _regresar_kb(data: dict) -> InlineKeyboardMarkup:
+    reg = data.get("opcion_regresar", {})
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            reg.get("titulo", "🔙 Menú principal"),
+            callback_data=f"intent:{reg.get('id', 'menu')}",
+        )
+    ]])
+
+
+def render_comunidades_resumen(data: dict) -> tuple:
+    """Resumen KPIs — implementadas, OR, Fenoge o Colombia Solar."""
+    titulo = data.get("titulo", "Comunidades Energéticas")
+    subtitulo = data.get("subtitulo", "")
+    fecha = data.get("fecha_corte", "")
+
+    text = f"🏘️ *{titulo}*\n"
+    if subtitulo:
+        text += f"_{subtitulo}_\n"
+    if fecha:
+        text += f"📅 Corte: _{fecha}_\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    for kpi in data.get("kpis", []):
+        emoji = kpi.get("emoji", "•")
+        label = kpi.get("label", "")
+        valor = kpi.get("valor", "N/A")
+        unidad = kpi.get("unidad", "")
+        suf = f" {unidad}" if unidad else ""
+        text += f"{emoji} *{label}:* {valor}{suf}\n"
+
+    top = data.get("top_departamentos", [])
+    if top:
+        text += "\n*Top departamentos:*\n"
+        for i, d in enumerate(top, 1):
+            text += f"{i}. {d.get('departamento', 'N/D')} — {d.get('count', 0)} CEs · {d.get('capacidad_kwp', 0)} kWp\n"
+
+    proy = data.get("top_proyectos", [])
+    if proy:
+        text += "\n*Proyectos destacados:*\n"
+        for i, p in enumerate(proy, 1):
+            text += f"{i}. {p.get('nombre', 'N/D')} — {p.get('avance', 0)}%\n"
+
+    fases = data.get("por_fase", [])
+    if fases:
+        text += "\n*Por fase Fenoge:*\n"
+        for f in fases:
+            text += f"• {f.get('fase', 'N/D')}: {f.get('count', 0)} CEs · {f.get('kwp', 0)} kWp\n"
+
+    nota = data.get("nota")
+    if nota:
+        text += f"\n_{nota}_\n"
+
+    return text, _regresar_kb(data)
+
+
+def render_subsidios_menu(data: dict) -> tuple:
+    """Cap. 3 — tres secciones de subsidios."""
+    text = "📋 *Subsidios — Cap. 3*\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    text += (data.get("mensaje") or "Déficit histórico · Pagos · Validaciones") + "\n\n"
+    text += "Selecciona la sección:"
+    return text, sub_menu_kb()
+
+
+def render_subsidios_pagos_menu(data: dict) -> tuple:
+    """Submenú detalle de pagos."""
+    text = "💳 *Detalle de pagos*\n\nSelecciona la consulta FSSRI/FOES:"
+    return text, sub_pagos_menu_kb()
+
+
+def render_supervision_resumen(data: dict) -> tuple:
+    """Resumen KPIs supervisión de contratos."""
+    titulo = data.get("titulo", "Supervisión")
+    fecha = data.get("fecha_corte", "")
+
+    text = f"🔍 *{titulo}*\n"
+    if fecha:
+        text += f"📅 Corte: _{fecha}_\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    for kpi in data.get("kpis", []):
+        emoji = kpi.get("emoji", "•")
+        label = kpi.get("label", "")
+        valor = kpi.get("valor", "N/A")
+        unidad = kpi.get("unidad", "")
+        suf = f" {unidad}" if unidad else ""
+        text += f"{emoji} *{label}:* {valor}{suf}\n"
+
+    fin = data.get("financiero", {})
+    if fin:
+        text += "\n*Ejecución financiera:*\n"
+        text += f"• Valor proyecto: {fin.get('valor_proyecto', 'N/D')}\n"
+        text += f"• Desembolsado: {fin.get('desembolsado', 'N/D')}\n"
+        text += f"• Por desembolsar: {fin.get('por_desembolsar', 'N/D')}\n"
+
+    fondos = data.get("top_fondos", [])
+    if fondos:
+        text += "\n*Contratos por fondo (top 5):*\n"
+        for i, f in enumerate(fondos, 1):
+            text += f"{i}. {f.get('fondo', 'N/D')} — {f.get('contratos', 0)} contratos\n"
+
+    regresar = data.get("opcion_regresar", {})
+    keyboard = [[InlineKeyboardButton(
+        regresar.get("titulo", "🔙 Menú principal"), callback_data="intent:menu"
+    )]]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def render_presupuesto_resumen(data: dict) -> tuple:
+    """Resumen ejecución presupuestal DEE + top proyectos."""
+    titulo = data.get("titulo", "Ejecución Presupuestal")
+    fecha = data.get("fecha_corte", "")
+    tot = data.get("totales", {})
+
+    text = f"💼 *{titulo}*\n"
+    if fecha:
+        text += f"📅 Corte: _{fecha}_\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    text += "*Totales DEE:*\n"
+    text += f"• Apropiación: {tot.get('apropiacion', 'N/D')}\n"
+    text += f"• Comprometido: {tot.get('comprometido', 'N/D')} ({tot.get('pct_comprometido', 0)}%)\n"
+    text += f"• Obligado: {tot.get('obligados', 'N/D')} ({tot.get('pct_obligado', 0)}%)\n"
+    text += f"• Disponible: {tot.get('disponible', 'N/D')}\n"
+
+    proyectos = data.get("top_proyectos", [])
+    if proyectos:
+        text += "\n*Top 5 proyectos (por apropiación):*\n"
+        for i, p in enumerate(proyectos, 1):
+            nombre = p.get("proyecto", "N/D")
+            if len(nombre) > 40:
+                nombre = nombre[:37] + "..."
+            text += f"{i}. {nombre}\n"
+            text += f"   {p.get('apropiacion', 'N/D')} · comp. {p.get('pct_comprometido', 0)}%\n"
+
+    regresar = data.get("opcion_regresar", {})
+    keyboard = [[InlineKeyboardButton(
+        regresar.get("titulo", "🔙 Menú principal"), callback_data="intent:menu"
+    )]]
     return text, InlineKeyboardMarkup(keyboard)
 
 
@@ -1094,6 +1283,29 @@ def render_response(intent: str, result: dict) -> tuple:
         return render_informe_ejecutivo(data)
     elif intent == "mas_informacion":
         return render_mas_informacion_submenu()
+    elif intent in ("gestion_sector", "sector_energetico"):
+        return render_gestion_sector_submenu()
+    elif intent == "mas_opciones":
+        return render_mas_opciones_submenu()
+    elif intent in ("comunidades_menu", "comunidades"):
+        return render_comunidades_submenu()
+    elif intent in (
+        "comunidades_implementadas", "contratos_or_menu", "contratos_or",
+        "fenoge_menu", "fenoge", "colombia_solar_menu", "colombia_solar",
+    ):
+        return render_comunidades_resumen(data)
+    elif intent in ("supervision_menu", "supervision"):
+        return render_supervision_resumen(data)
+    elif intent in ("presupuesto_menu", "presupuesto"):
+        return render_presupuesto_resumen(data)
+    elif intent in ("subsidios_menu", "subsidios"):
+        return render_subsidios_menu(data)
+    elif intent == "subsidios_pagos_menu":
+        return render_subsidios_pagos_menu(data)
+    elif intent.startswith("subsidios_") and intent not in (
+        "subsidios_menu", "subsidios_pagos_menu",
+    ):
+        return render_generic(data, intent)
     else:
         return render_generic(data, intent)
 
@@ -1140,7 +1352,9 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_orchestrated(update.effective_chat, update.effective_user, "menu")
 
 async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_orchestrated(update.effective_chat, update.effective_user, "estado_actual")
+    track_telegram_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
+    text, kb = render_gestion_sector_submenu()
+    await _safe_send(update.effective_chat, text, kb)
 
 async def cmd_predicciones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_telegram_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
@@ -1232,19 +1446,22 @@ async def cmd_noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_telegram_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
-    help_text = """❓ *Ayuda del Bot — Portal Energético MME*
+    help_text = """❓ *Ayuda — Portal de Dirección MME*
+
+*Capítulos del portal:*
+📊 Gestión del sector (XM) · 🏘️ Comunidades · 📋 Subsidios
+🔍 Supervisión · 💼 Presupuesto · 📄 Informe PDF
 
 *Comandos:*
-📊 /estado — Estado actual del sector
-🔮 /predicciones — Predicciones del sector
-🚨 /anomalias — Anomalías detectadas
-📰 /noticias — Noticias clave del sector
-📋 /informe — Informe ejecutivo completo
+📊 /estado — Cap. 1 Gestión del sector
+📋 /subsidios — Cap. 3 Subsidios (déficit, pagos, validaciones)
+📋 /informe — Informe ejecutivo PDF
+🔙 /menu — Menú principal
 🔙 /menu — Menú principal
 ❓ /ayuda — Esta ayuda
 
 *También puedes:*
-• Tocar los botones interactivos
+• Tocar los botones interactivos (menú en 2 columnas)
 • Escribir tu pregunta en lenguaje natural
 
 _Ejemplo: "¿Cómo está la generación hoy?"_"""
@@ -1273,12 +1490,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         intent = data.split(":", 1)[1]
 
         # ── Subsidios: mostrar menú del módulo ──────────────────
-        if intent == "subsidios":
+        if intent in ("subsidios", "subsidios_menu"):
             sub_audit(user.id, sub_user_name(user), '/subsidios', None)
             txt = (
-                "📋 *MÓDULO DE SUBSIDIOS*\n"
-                "Base de Subsidios DDE — Ministerio de Minas y Energía\n\n"
-                "Selecciona la consulta que deseas realizar:"
+                "📋 *SUBSIDIOS — Cap. 3*\n"
+                "Déficit histórico · Detalle de pagos · Validaciones\n\n"
+                "Selecciona la sección:"
             )
             try:
                 await query.edit_message_text(
@@ -1302,6 +1519,42 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if intent == "mas_informacion":
             track_telegram_user(user.id, user.username, user.first_name)
             text, kb = render_mas_informacion_submenu()
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+            except Exception:
+                await _safe_send(chat, text, kb)
+            return
+
+        if intent == "gestion_sector":
+            track_telegram_user(user.id, user.username, user.first_name)
+            text, kb = render_gestion_sector_submenu()
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+            except Exception:
+                await _safe_send(chat, text, kb)
+            return
+
+        if intent in ("comunidades_menu", "comunidades"):
+            track_telegram_user(user.id, user.username, user.first_name)
+            text, kb = render_comunidades_submenu()
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+            except Exception:
+                await _safe_send(chat, text, kb)
+            return
+
+        if intent == "subsidios_pagos_menu":
+            track_telegram_user(user.id, user.username, user.first_name)
+            text, kb = render_subsidios_pagos_menu({})
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+            except Exception:
+                await _safe_send(chat, text, kb)
+            return
+
+        if intent == "mas_opciones":
+            track_telegram_user(user.id, user.username, user.first_name)
+            text, kb = render_mas_opciones_submenu()
             try:
                 await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
             except Exception:
@@ -1491,7 +1744,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 from services.informe_charts import generate_all_informe_charts
                 charts = await asyncio.to_thread(generate_all_informe_charts)
-                for key in ['generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos']:
+                for key in ['generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos',
+                            'despacho_termica', 'capacidad_embalse', 'aportes_demanda']:
                     if key in charts:
                         filepath = charts[key][0]
                         if filepath:
@@ -2049,17 +2303,37 @@ async def _dispatch_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     except Exception as e:
         logger.error(f"[SUBSIDIOS-TEXT] Error: {e}")
 
-    # Selección numérica (1-5) → atajos del menú
-    if message in ("1", "2", "3", "4", "5"):
-        intent_map = {"1": "estado_actual", "2": "predicciones_sector",
-                      "3": "anomalias_sector", "4": "noticias_sector",
-                      "5": "mas_informacion"}
+    # Selección numérica (1-7) → atajos del menú
+    if message in ("1", "2", "3", "4", "5", "6", "7"):
+        intent_map = {
+            "1": "gestion_sector",
+            "2": "comunidades_menu",
+            "3": "subsidios_menu",
+            "4": "supervision_menu",
+            "5": "presupuesto_menu",
+            "6": "informe_ejecutivo",
+            "7": "mas_opciones",
+        }
         intent = intent_map[message]
-        if intent in ("predicciones_sector",):
+        if intent == "gestion_sector":
+            text, kb = render_gestion_sector_submenu()
+            await _safe_send(chat, text, kb)
+        elif intent == "informe_ejecutivo":
+            await send_orchestrated(chat, user, intent, context=context)
+        elif intent == "comunidades_menu":
+            text, kb = render_comunidades_submenu()
+            await _safe_send(chat, text, kb)
+        elif intent == "predicciones_sector":
             text, kb = render_predicciones_submenu()
             await _safe_send(chat, text, kb)
         elif intent == "mas_informacion":
             text, kb = render_mas_informacion_submenu()
+            await _safe_send(chat, text, kb)
+        elif intent == "mas_opciones":
+            text, kb = render_mas_opciones_submenu()
+            await _safe_send(chat, text, kb)
+        elif intent == "subsidios_menu":
+            text, kb = render_subsidios_menu({})
             await _safe_send(chat, text, kb)
         else:
             await send_orchestrated(chat, user, intent, context=context)
@@ -2069,7 +2343,19 @@ async def _dispatch_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     # Evita que frases comunes caigan a pregunta_libre cuando hay un intent exacto.
     _msg_lower = message.lower()
     _detected_intent = None
-    if any(k in _msg_lower for k in ("noticia", "noticias", "news", "novedad", "novedades", "últimas noticias", "informacion del dia", "información del día")):
+    if any(k in _msg_lower for k in ("gestión del sector", "gestion del sector", "sector energético", "sector energetico", "métricas xm", "metricas xm")):
+        _detected_intent = "gestion_sector"
+    elif any(k in _msg_lower for k in ("comunidad", "comunidades", "ce implementadas", "energéticas")):
+        _detected_intent = "comunidades_menu"
+    elif any(k in _msg_lower for k in ("supervisión", "supervision", "contratos minminas", "contratos de supervisión")):
+        _detected_intent = "supervision_menu"
+    elif any(k in _msg_lower for k in ("presupuesto", "ejecución presupuestal", "ejecucion presupuestal", "apropiación dee", "apropiacion dee")):
+        _detected_intent = "presupuesto_menu"
+    elif any(k in _msg_lower for k in ("subsidio", "subsidios", "deuda fssri", "foes")):
+        _detected_intent = "subsidios_menu"
+    elif any(k in _msg_lower for k in ("más opciones", "mas opciones", "más opcion", "mas opcion")):
+        _detected_intent = "mas_opciones"
+    elif any(k in _msg_lower for k in ("noticia", "noticias", "news", "novedad", "novedades", "últimas noticias", "informacion del dia", "información del día")):
         _detected_intent = "noticias_sector"
     elif any(k in _msg_lower for k in ("estado actual", "estado del sistema", "cómo está el sistema", "como esta el sistema", "situación actual", "situacion actual", "resumen del sistema")):
         _detected_intent = "estado_actual"
@@ -2082,11 +2368,20 @@ async def _dispatch_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     if _detected_intent:
         logger.info(f"[NLP-INTENT] '{message[:60]}' → {_detected_intent}")
-        if _detected_intent == "predicciones_sector":
+        if _detected_intent == "gestion_sector":
+            text, kb = render_gestion_sector_submenu()
+            await _safe_send(chat, text, kb)
+        elif _detected_intent == "predicciones_sector":
             text, kb = render_predicciones_submenu()
             await _safe_send(chat, text, kb)
         elif _detected_intent == "mas_informacion":
             text, kb = render_mas_informacion_submenu()
+            await _safe_send(chat, text, kb)
+        elif _detected_intent == "mas_opciones":
+            text, kb = render_mas_opciones_submenu()
+            await _safe_send(chat, text, kb)
+        elif _detected_intent == "subsidios_menu":
+            text, kb = render_subsidios_menu({})
             await _safe_send(chat, text, kb)
         else:
             await send_orchestrated(chat, user, _detected_intent, context=context)
@@ -2125,7 +2420,7 @@ def main():
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info("🤖 Telegram Bot v2 — Portal Energético MME")
+    logger.info("🤖 Telegram Bot v2 — Portal de Dirección MME")
     logger.info(f"   Modo: POLLING")
     logger.info(f"   Orquestador: {ORCHESTRATOR_ENDPOINT}")
     logger.info("=" * 60)
@@ -2147,23 +2442,22 @@ def main():
 
         # Descripción del bot (aparece en "What can this bot do?")
         descripcion = (
-            "¡Hola! 👋 Soy el asistente del Portal Energético del "
-            "Ministerio de Minas y Energía de Colombia.\n\n"
-            "Puedo informarte sobre los indicadores clave del sector "
-            "energético. También puedes escribirme cualquier pregunta "
-            "en cualquier momento.\n\n"
-            "📊 Indicadores clave:\n"
+            "¡Hola! 👋 Soy el asistente del Portal de Dirección de Despacho "
+            "del Viceministro de Minas y Energía.\n\n"
+            "Consulto los capítulos del portal: gestión del sector (XM), "
+            "comunidades, subsidios, supervisión, presupuesto e informe PDF.\n\n"
+            "📊 Indicadores XM:\n"
             "• ⚡ Generación Total del Sistema (GWh)\n"
             "• 💲 Precio de Bolsa Nacional (COP/kWh)\n"
             "• 🔥 Porcentaje de Embalses (%)\n\n"
-            "📋 Subsidios: Consulta la base de subsidios DDE.\n"
+            "🏘️ Comunidades · 📋 Subsidios · 🔍 Supervisión · 💼 Presupuesto\n"
             "🔒 Acceso limitado a personal autorizado."
         )
         try:
             await application.bot.set_my_description(descripcion)
             await application.bot.set_my_short_description(
-                "Asistente del Portal Energético MME — Indicadores, "
-                "predicciones, anomalías, noticias y subsidios."
+                "Asistente Portal de Dirección MME — Capítulos del portal "
+                "energético y tableros de gestión."
             )
         except Exception as e:
             logger.warning(f"No se pudo actualizar descripción del bot: {e}")

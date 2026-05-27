@@ -58,15 +58,16 @@ app.conf.beat_schedule = {
         'task': 'tasks.anomaly_tasks.check_anomalies',
         'schedule': crontab(minute='*/30'),  # Cada 30 minutos
     },
-    # Resumen diario a las 8:00 AM (hora Colombia)
-    'send-daily-summary-8am': {
+    # Resumen diario a las 8:30 AM (hora Colombia)
+    # XM publica cambios entre 7:00–8:00 AM; 30 min de margen para datos frescos.
+    'send-daily-summary-830am': {
         'task': 'tasks.anomaly_tasks.send_daily_summary',
-        'schedule': crontab(hour=8, minute=0),  # Diario a las 8 AM
+        'schedule': crontab(hour=8, minute=30),
     },
-    # Informe EnergIA app: push FCM a las 8:05 AM (5 min después del resumen)
-    'energia-app-informe-8am': {
+    # Informe EnergIA app: push FCM 5 min después del resumen
+    'energia-app-informe-830am': {
         'task': 'tasks.push_tasks.enviar_informe_diario_push',
-        'schedule': crontab(hour=8, minute=5),  # Diario a las 8:05 AM
+        'schedule': crontab(hour=8, minute=35),
     },
     # Cálculo del Costo Unitario (CU) diario a las 10:00 AM
     # (espera a que RestAliv y PerdidasEner estén disponibles — lag ~2 días)
@@ -82,18 +83,29 @@ app.conf.beat_schedule = {
         'task': 'tasks.etl_tasks.regenerar_predicciones',
         'schedule': crontab(hour=2, minute=0, day_of_week='0,3,6'),  # Dom/Mié/Sáb 02:00 AM
     },
-    # Sincronización automática Excel SharePoint → data/ → PostgreSQL
-    # Descarga archivos, detecta cambios por hash y actualiza la BD.
-    # Horario: 7:00 AM diario (laboral, antes del inicio de la jornada).
-    'sync-sharepoint-xlsx-diario': {
-        'task': 'tasks.etl_tasks.sync_sharepoint_xlsx',
-        'schedule': crontab(hour=7, minute=0),  # Diario 7:00 AM
-    },
+    # Sincronización SharePoint: cron 4:00 AM + watcher cada 5 min (no Celery).
+    # (ver etl/etl_sharepoint_watcher.py y crontab del servidor).
+    # La tarea Celery duplicada sync-sharepoint-xlsx-diario fue retirada para evitar
+    # descargas redundantes a las 7:00 AM.
     # Actualización de noticias del portal 3 veces al día
     # Mañana (7:00), mediodía (12:00) y noche (19:00)
     'refresh-news-3x-dia': {
         'task': 'tasks.etl_tasks.refresh_news_cache',
         'schedule': crontab(hour='7,12,19', minute=0),
+    },
+    # Senda de Referencia CREG — verificar/refrescar valores oficiales semanalmente
+    # XM publica la senda al inicio de cada estación (mayo y diciembre).
+    # Esta tarea re-aplica los valores semilla y alerta si XM no ha publicado.
+    'refresh-senda-referencia-semanal': {
+        'task': 'tasks.etl_tasks.refresh_senda_referencia',
+        'schedule': crontab(hour=2, minute=15, day_of_week='1'),  # Lunes 02:15 AM
+    },
+    # Precios de Escasez (PEI/PE/PES) — refrescar mensualmente día 1
+    # CREG publica los nuevos precios al inicio de cada mes.
+    # Esta tarea infiere PEI/PE/PES desde PrecEsca XM si no hay carga manual.
+    'refresh-precios-escasez-mensual': {
+        'task': 'tasks.etl_tasks.refresh_precios_escasez',
+        'schedule': crontab(hour=3, minute=0, day_of_month='1'),  # Día 1 de cada mes 03:00 AM
     },
 }
 

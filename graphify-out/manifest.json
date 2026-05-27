@@ -356,8 +356,8 @@
     "hash": "1b387445f930e95ce69d69fb77a313ff"
   },
   "/home/admonctrlxm/server/api/v1/routes/fenoge.py": {
-    "mtime": 1777607758.244,
-    "hash": "42fcd8bd7650d50162eb71fe1ce5123b"
+    "mtime": 1778952056.976,
+    "hash": "d82f0bda7edc4a8feb4bd4f473bacdf3"
   },
   "/home/admonctrlxm/server/tests/test_informe_ejecutivo.py": {
     "mtime": 1772818190.454331,
@@ -576,8 +576,8 @@
     "hash": "f415d8179ac3ed1e27d16e7f64973797"
   },
   "/home/admonctrlxm/server/etl/etl_nuevos_dashboards.py": {
-    "mtime": 1778201883.414,
-    "hash": "8ea837a39e8fad30adc36625feb69a6f"
+    "mtime": 1778948302.725,
+    "hash": "2786f6d11c9df15cce2ee7d06609d8f7"
   },
   "/home/admonctrlxm/server/etl/config_metricas.py": {
     "mtime": 1777069009.867333,
@@ -588,8 +588,8 @@
     "hash": "1cedd55e60b0effd2a60eb02f0236734"
   },
   "/home/admonctrlxm/server/etl/etl_tarifas_or_mensual.py": {
-    "mtime": 1774932879.179333,
-    "hash": "922dbb49598ca072efbb55bdb35d823d"
+    "mtime": 1778689841.148,
+    "hash": "7895bfebca6757a3cc4a9cd51f23ceab"
   },
   "/home/admonctrlxm/server/etl/validaciones.py": {
     "mtime": 1774932879.180333,
@@ -608,12 +608,12 @@
     "hash": "64321207279eceb2d8966ef7ad879652"
   },
   "/home/admonctrlxm/server/etl/etl_sharepoint_watcher.py": {
-    "mtime": 1778198544.741,
-    "hash": "47e0a3f53daff7d17da40fbec3e0cc98"
+    "mtime": 1778372668.887,
+    "hash": "ec222bfa25e24678cac96d3abca05a9f"
   },
   "/home/admonctrlxm/server/etl/etl_subsidios.py": {
-    "mtime": 1776132214.221333,
-    "hash": "34979a732516da657607fe76c53ed166"
+    "mtime": 1779081385.869,
+    "hash": "3af4653d2da72d38606a3cc27b53cf3f"
   },
   "/home/admonctrlxm/server/etl/etl_loss_metrics.py": {
     "mtime": 1774932879.176333,
@@ -628,8 +628,8 @@
     "hash": "137fe4f11f8dad95eb1e4ffe1901833c"
   },
   "/home/admonctrlxm/server/etl/etl_sharepoint_sync.py": {
-    "mtime": 1778198735.803,
-    "hash": "25a8534758e3fdfa042e31f859d4c5dc"
+    "mtime": 1778952630.221,
+    "hash": "8a974692accbae4bad3f216da4593b30"
   },
   "/home/admonctrlxm/server/etl/etl_ideam.py": {
     "mtime": 1776086389.431333,
@@ -1559,6 +1559,10 @@
     "mtime": 1765863906.5453513,
     "hash": "29e2b1c38d06c13039593bf5252559a6"
   },
+  "/home/admonctrlxm/server/docs/tecnicos/NOTA_FILA_TOTALES_EXCEL.md": {
+    "mtime": 1779082308.371,
+    "hash": "7764c0a225ab9bcada27b0b0ecc87f45"
+  },
   "/home/admonctrlxm/server/docs/tecnicos/DOCUMENTACION_TECNICA_IA_ML.md": {
     "mtime": 1772418642.896331,
     "hash": "ea5c50e3210a3c9a4474541e7247cf62"
@@ -1695,6 +1699,10 @@
     "mtime": 1775134823.064333,
     "hash": "46f4e5eb347bb0c02924bc0e6de35245"
   },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-15.pdf": {
+    "mtime": 1778850028.584,
+    "hash": "c8478a25c6c151f6c83e7fc213d93c4b"
+  },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-03.pdf": {
     "mtime": 1777813234.513,
     "hash": "ebd7fdcde236ebcf91953a70a820b9d6"
@@ -1707,6 +1715,10 @@
     "mtime": 1775739609.223333,
     "hash": "5d9060bf8e9a4676fbc6ea31328a201a"
   },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-14.pdf": {
+    "mtime": 1778763625.439,
+    "hash": "3bf9d068d0f475c028dcdbcaf4b79eef"
+  },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-05.pdf": {
     "mtime": 1777986034.186,
     "hash": "404096201856f80ba3661d8bd8678a1e"
@@ -1714,6 +1726,10 @@
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-23.pdf": {
     "mtime": 1776949232.896333,
     "hash": "6126f06668db096092b4d4d145b68da4"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-12.pdf": {
+    "mtime": 1778590826.022,
+    "hash": "0c79866952c51bf9f72c40862ea7330b"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-22.pdf": {
     "mtime": 1774184437.168331,
@@ -1803,9 +1819,17 @@
     "mtime": 1776088209.202333,
     "hash": "49d19ac13b535ddd506d698b49da7951"
   },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-16.pdf": {
+    "mtime": 1778936449.599,
+    "hash": "b7b1f93020594cba5a658afcdfb67dc9"
+  },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-18.pdf": {
     "mtime": 1773838814.653331,
     "hash": "c6d50a00dded30fa9a988d3b132935eb"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-13.pdf": {
+    "mtime": 1778677239.898,
+    "hash": "315c46682c6a8f82c364f0315d400f80"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-17.pdf": {
     "mtime": 1776430814.057333,
@@ -1826,6 +1850,14 @@
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-24.pdf": {
     "mtime": 1774357234.291331,
     "hash": "dda3cd2db39968ccd7eb6784f0556dd7"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-10.pdf": {
+    "mtime": 1778418033.297,
+    "hash": "9d59ebcc513bcf780d60153e9e3e4187"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-11.pdf": {
+    "mtime": 1778504445.535,
+    "hash": "fcc07b103f64b7345932f5c2f1b0d5ee"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-10.pdf": {
     "mtime": 1775826013.635333,
@@ -1922,6 +1954,10 @@
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-04-07.pdf": {
     "mtime": 1775566813.902333,
     "hash": "101645457eb9320d8f2d3db5715cc971"
+  },
+  "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-05-17.pdf": {
+    "mtime": 1779022826.289,
+    "hash": "3fdc35a0712e389d9fcb8b0a034fd72e"
   },
   "/home/admonctrlxm/server/whatsapp_bot/informes/Informe_Ejecutivo_MME_2026-03-25.pdf": {
     "mtime": 1774443633.410331,
