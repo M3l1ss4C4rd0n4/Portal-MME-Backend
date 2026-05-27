@@ -34,6 +34,9 @@ from domain.services.orchestrator.handlers.metricas_handler import MetricasHandl
 from domain.services.orchestrator.handlers.informe_handler import InformeHandlerMixin
 from domain.services.orchestrator.handlers.libre_noticias_handler import LibreNoticiasHandlerMixin
 from domain.services.orchestrator.handlers.subsidios_handler import SubsidiosHandlerMixin
+from domain.services.orchestrator.handlers.comunidades_handler import ComunidadesHandlerMixin
+from domain.services.orchestrator.handlers.supervision_handler import SupervisionHandlerMixin
+from domain.services.orchestrator.handlers.presupuesto_handler import PresupuestoHandlerMixin
 from domain.services.orchestrator.utils.serializers import sanitize_numpy_types
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,9 @@ class ChatbotOrchestratorService(
     InformeHandlerMixin,
     LibreNoticiasHandlerMixin,
     SubsidiosHandlerMixin,
+    ComunidadesHandlerMixin,
+    SupervisionHandlerMixin,
+    PresupuestoHandlerMixin,
 ):
     """
     Orquestador central para el chatbot.
@@ -195,6 +201,29 @@ class ChatbotOrchestratorService(
             "alertas": self._handle_anomalias_detectadas,
 
             "mas_informacion": self._handle_menu,
+            "gestion_sector": self._handle_gestion_sector,
+            "sector_energetico": self._handle_gestion_sector,
+            "mas_opciones": self._handle_mas_opciones,
+
+            # ── Tableros del portal ─────────────────────────────────────
+            "comunidades_menu": self._handle_comunidades_menu,
+            "comunidades": self._handle_comunidades_menu,
+            "comunidades_implementadas": self._handle_comunidades_implementadas,
+            "contratos_or_menu": self._handle_contratos_or_menu,
+            "contratos_or": self._handle_contratos_or_menu,
+            "fenoge_menu": self._handle_fenoge_menu,
+            "fenoge": self._handle_fenoge_menu,
+            "colombia_solar_menu": self._handle_colombia_solar_menu,
+            "colombia_solar": self._handle_colombia_solar_menu,
+            "supervision_menu": self._handle_supervision_menu,
+            "supervision": self._handle_supervision_menu,
+            "presupuesto_menu": self._handle_presupuesto_menu,
+            "presupuesto": self._handle_presupuesto_menu,
+            "subsidios_menu": self._handle_subsidios_menu,
+            "subsidios": self._handle_subsidios_menu,
+            "subsidios_pagos_menu": self._handle_subsidios_pagos_menu,
+            "subsidios_deficit_historico": self._handle_subsidios_deficit_historico,
+            "subsidios_validaciones": self._handle_subsidios_validaciones,
 
             # ── Sub-opciones de "Más información" ───────────────────────
             "informe_ejecutivo": self._handle_informe_ejecutivo,

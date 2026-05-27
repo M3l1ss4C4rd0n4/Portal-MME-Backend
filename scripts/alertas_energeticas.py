@@ -12,9 +12,20 @@ Este sistema es COMPLEMENTARIO a XM, NO sustitutivo.
   (PrecEsca, PPP Bolsa, Demanda Reg/No Reg). Los datos se replican en
   sector_energetico.metrics con un rezago de ~1-2 días respecto a XM.
 
-• Señales operativas detectadas aquí: demanda alta, aportes hídricos
-  bajos, embalses en niveles mínimos, estrés térmico, precios de bolsa
-  sobre precio de escasez.
+• MARCO REGULATORIO OFICIAL — Todos los umbrales operativos están alineados
+  con el Estatuto para Situaciones de Riesgo de Desabastecimiento:
+    - Resolución CREG 026 de 2014
+    - Resolución CREG 209 de 2020 (Senda de Referencia + Índice NE)
+    - Resolución CREG 101 066 de 2024 (PEI, PE, PES)
+    - Resolución CREG 101 055 de 2024 (regla complementaria)
+  Ver core/umbrales_oficiales.py para el detalle de cada umbral.
+
+• Señales operativas detectadas aquí (con fuente regulatoria):
+    - Demanda sostenida (umbral percentil 99 histórico XM)
+    - Aportes hídricos bajos (Índice HSIN — CREG 026/2014 art. 2)
+    - Embalses en nivel inferior (Índice NE — CREG 209/2020)
+    - Precio de bolsa vs precio de escasez (Índice PBP — CREG 026/2014)
+    - Estrés térmico (referencia operativa CND)
 
 • Señales fuera de alcance: transacciones individuales, despacho central,
   restricciones de red, desviaciones en tiempo real. Consultar XM / NEON.
@@ -22,9 +33,6 @@ Este sistema es COMPLEMENTARIO a XM, NO sustitutivo.
 • Índices compuestos (ISH, IPM, IES, CIS): de naturaleza DESCRIPTIVA.
   No son alertas operativas ni reemplazan los semáforos de XM.
   Los pesos (0.40/0.35/0.25) reflejan percepción analítica, no norma técnica.
-
-• Percentiles / umbrales de aportes: AporEnerMediHist XM cuando disponible
-  (percentiles dinámicos). Fallback a tablas estacionales 2020-2026.
 ──────────────────────────────────────────────────────────────
 Output: JSON con alertas clasificadas por severidad
 """
@@ -37,6 +45,25 @@ import psycopg2
 import pandas as pd
 from datetime import datetime, date, timedelta
 from infrastructure.database.connection import PostgreSQLConnectionManager
+from core.umbrales_oficiales import (
+    # Umbrales oficiales (CREG 209/2020) — Índice NE / Senda de Referencia
+    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
+    obtener_senda_referencia,
+    clasificar_indice_ne,
+    # Umbrales oficiales (CREG 026/2014) — Índice HSIN
+    HSIN_UMBRAL_NORMAL,
+    HSIN_UMBRAL_DEFICIT_SEVERO,
+    HSIN_UMBRAL_CRITICO_HISTORICO,
+    HSIN_VENTANA_SEMANAS,
+    clasificar_hsin,
+    # Precios de escasez oficiales (CREG 101 066/2024) — vigentes dinámicos
+    obtener_precios_escasez_vigentes,
+    PRECIO_ESCASEZ_PEI_REF_2026_01,
+    PRECIO_ESCASEZ_PE_REF_2026_01,
+    PRECIO_ESCASEZ_PES_REF_2026_01,
+    # Capacidad e información oficial del SIN
+    OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT,
+)
 import json
 
 # Sistema de notificaciones: usar notification_service (producción)
@@ -61,86 +88,117 @@ def notificar_alerta(alerta, enviar_email=True, enviar_whatsapp=True, solo_criti
     }
 
 # =============================================================================
-# UMBRALES DE ALERTAS (CONFIGURABLES POR POLÍTICA MINISTERIAL)
-# Fuentes de datos: pydataxm (físico-operativo) + pydataSIMEM (económico)
-# Criterios alineados con el razonamiento técnico del CND/XM
+# UMBRALES DE ALERTAS — TODOS RESPALDADOS POR FUENTES REGULATORIAS OFICIALES
+# =============================================================================
+# Los umbrales hídricos, embalses y precio provienen del Estatuto para
+# Situaciones de Riesgo de Desabastecimiento (CREG 026/2014, 209/2020,
+# 101 055/2024, 101 066/2024). Ver core/umbrales_oficiales.py para el detalle
+# de cada resolución.
+#
+# Los umbrales de demanda y estrés térmico son criterios operativos del CND
+# documentados en boletines técnicos de XM. Se mantienen en este archivo
+# porque NO existe una resolución CREG que los normalice — son referencias
+# operativas, no regulatorias estrictas.
 # =============================================================================
 
 UMBRALES = {
-    # ─── DEMANDA ───────────────────────────────────────────────────────────────
-    # Señal de presión en demanda. Por sí sola NO es crisis: se evalúa junto al
-    # margen operativo. Umbral: p99 histórico anual (253 GWh).
-    # Condición crítica: > 60 % de días del horizonte exceden el p99.
+    # ─── DEMANDA ────────────────────────────────────────────────────────────
+    # CRITERIO OPERATIVO DEL CND (no regulatorio CREG):
+    # Señal de presión en demanda derivada de percentiles del histórico XM.
+    # NO existe umbral regulatorio fijo para demanda en el Estatuto CREG;
+    # estos valores son referencias operativas calibradas con datos XM.
     'DEMANDA': {
-        'ALERTA': 248,              # GWh/día — p75 histórico
-        'CRITICO': 253,             # GWh/día — p99 histórico
-        'DIAS_CRITICO_PCT': 0.60,   # fracción mínima del horizonte para disparar CRÍTICO
-        'DIAS_ALERTA_PCT': 0.50,    # fracción mínima del horizonte para disparar ALERTA
+        'ALERTA': 248,              # GWh/día — p75 histórico XM
+        'CRITICO': 253,             # GWh/día — p99 histórico XM
+        'DIAS_CRITICO_PCT': 0.60,   # fracción del horizonte para disparar CRÍTICO
+        'DIAS_ALERTA_PCT': 0.50,    # fracción del horizonte para disparar ALERTA
+        'fuente': 'Criterio operativo CND derivado de percentiles XM histórico',
     },
-    # ─── EMBALSES (como % de capacidad útil) ──────────────────────────────────
-    # Fuente: EMBALSES_PCT (ya viene en % desde predictions, no usar GWh absolutos).
-    # Referencia XM: capacidad útil total SIN ≈ 46 700 GWh equivalentes.
+    # ─── EMBALSES — ÍNDICE NE OFICIAL (Res. CREG 209 de 2020) ───────────────
+    # El nivel se compara contra la Senda de Referencia mensual publicada por
+    # XM/CND. NO existe un umbral fijo único; el umbral varía por mes según
+    # la senda CREG. Ver core/umbrales_oficiales.SENDA_REFERENCIA_2024_2025.
+    #
+    # Niveles oficiales del Índice NE:
+    #   SUPERIOR: embalse ≥ senda  O  embalse ≥ 70% (regla absoluta CREG)
+    #   ALERTA:   senda − X ≤ embalse < senda
+    #   INFERIOR: embalse < senda − X  (X = 0 en práctica reciente)
     'EMBALSES_PCT': {
-        'CRITICO': 30.0,    # < 30 % → riesgo de racionamiento
-        'ALERTA':  40.0,    # 30–40 % → vigilancia activa
+        'UMBRAL_ABSOLUTO_SUPERIOR': NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,  # 70% Res. 209/2020
+        'OBJETIVO_XM_ANTE_NINO': OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT,    # 80% Boletín XM 04-2026
+        'fuente': 'Resolución CREG 209 de 2020 — Índice NE y Senda de Referencia',
     },
-    # ─── APORTES HÍDRICOS ─────────────────────────────────────────────────────
-    # Umbrales estacionales en _UMBRALES_APORTES_ESTACIONAL (p5/p15 por mes).
-    # días_criticos / horizonte >= 0.60 → CRÍTICO
-    # días_alerta   / horizonte >= 0.50 → ALERTA
+    # ─── APORTES HÍDRICOS — ÍNDICE HSIN OFICIAL (Res. CREG 026/2014 art. 2) ──
+    # HSIN = aportes acumulados últimas 4 semanas / promedio histórico × 100
+    # Niveles oficiales CREG:
+    #   NORMAL:         HSIN ≥ 90%
+    #   VIGILANCIA:     HSIN < 90%  (Estatuto CREG art. 2)
+    #   DÉFICIT SEVERO: HSIN < 70%  (referencia CREG 209/2020)
+    #   CRÍTICO:        HSIN ≤ 60%  (nivel histórico abril 2020)
     'APORTES_HIDRICOS': {
+        'UMBRAL_NORMAL': HSIN_UMBRAL_NORMAL,                # 90% — CREG 026/2014
+        'UMBRAL_DEFICIT_SEVERO': HSIN_UMBRAL_DEFICIT_SEVERO,  # 70%
+        'UMBRAL_CRITICO_HISTORICO': HSIN_UMBRAL_CRITICO_HISTORICO,  # 60% — referencia 2020
+        'VENTANA_SEMANAS': HSIN_VENTANA_SEMANAS,            # 4 semanas (CREG art. 2)
         'DIAS_CRITICO_PCT': 0.60,
         'DIAS_ALERTA_PCT':  0.50,
+        'fuente': 'Resolución CREG 026 de 2014 art. 2 — Índice HSIN',
     },
-    # ─── PRECIO BOLSA ─────────────────────────────────────────────────────────
-    # Comparar precio_bolsa con precio_escasez (fuente PRECIO_ESCASEZ disponible).
-    # ratio = precio_bolsa_prom / precio_escasez_prom
-    # Si precio_escasez no está disponible: usar umbrales fijos en COP/kWh.
+    # ─── PRECIO BOLSA — ÍNDICE PBP OFICIAL (Res. CREG 026/2014 + 101 066/2024)
+    # PBP nivel BAJO: PBP < Precio Escasez Activación durante 4 de 7 días.
+    # PBP nivel ALTO: PBP ≥ Precio Escasez Activación.
+    #
+    # Tres niveles de precio de escasez vigentes (CREG 101 066/2024):
+    #   PEI (Inferior):  327.67 COP/kWh ene-2026 (actualizable mensualmente)
+    #   PE  (071/2006):  590.56 COP/kWh ene-2026
+    #   PES (Superior):  830.34 COP/kWh ene-2026
+    #
+    # Por defecto el sistema compara contra PE (precio de escasez de
+    # activación tradicional). Los valores se actualizan mensualmente
+    # via consulta a XM/CREG.
     'PRECIO_BOLSA': {
-        'CRITICO_RATIO': 0.90,   # precio_bolsa > 90 % precio_escasez → escasez inminente
-        'ALERTA_RATIO':  0.65,   # precio_bolsa > 65 % precio_escasez → señal de estrés
-        'CRITICO_FIJO':  850,    # COP/kWh — fallback si no hay precio_escasez
-        'ALERTA_FIJO':   500,    # COP/kWh — fallback
+        'PEI_REF': PRECIO_ESCASEZ_PEI_REF_2026_01,  # CREG 101 066/2024
+        'PE_REF':  PRECIO_ESCASEZ_PE_REF_2026_01,   # CREG 071/2006
+        'PES_REF': PRECIO_ESCASEZ_PES_REF_2026_01,  # CREG 140/2017
+        'DIAS_VENTANA': 7,
+        'DIAS_BAJO_MINIMO': 4,   # 4 de 7 días → nivel BAJO (CREG 026/2014)
+        'fuente': 'Resolución CREG 026 de 2014 art. 2 + CREG 101 066/2024',
     },
-    # ─── MARGEN OPERATIVO ─────────────────────────────────────────────────────
+    # ─── MARGEN OPERATIVO ────────────────────────────────────────────────────
+    # CRITERIO OPERATIVO CND (no normado en Estatuto CREG):
     # margen (%) = (GENE_TOTAL_pred − DEMANDA_pred) / DEMANDA_pred × 100
-    # Criterio dominante del CND: ¿hay potencia suficiente?
     'MARGEN_OPERATIVO': {
         'CRITICO': 3.0,    # < 3 % → riesgo real de déficit
         'ALERTA':  8.0,    # 3–8 % → vigilancia
+        'fuente': 'Criterio operativo CND para evaluación de balance energético',
     },
-    # ─── ESTRÉS TÉRMICO ───────────────────────────────────────────────────────
-    # participación (%) = Térmica_pred / DEMANDA_pred × 100
-    # XM no entra en riesgo sin aumento térmico sostenido.
+    # ─── ESTRÉS TÉRMICO ──────────────────────────────────────────────────────
+    # CRITERIO OPERATIVO CND (no normado en Estatuto CREG):
+    # participación (%) = Térmica / DEMANDA × 100
     'ESTRES_TERMICO': {
         'CRITICO': 35.0,             # > 35 % sostenido → riesgo estructural
         'ALERTA':  20.0,             # 20–35 % sostenido → vigilancia
-        'DIAS_CRITICO_PCT': 0.70,    # fracción mínima del horizonte
+        'DIAS_CRITICO_PCT': 0.70,    # fracción del horizonte
         'DIAS_ALERTA_PCT':  0.60,
+        'fuente': 'Criterio operativo CND derivado del Boletín XM 10-abril-2026',
     },
-}
-
-# Umbrales mensuales estacionales para AporEner (derivados de percentiles 2020–2026)
-# Índice = mes (1..12); valores = (p05_critico, p15_alerta) GWh/día
-_UMBRALES_APORTES_ESTACIONAL = {
-    1:  (63,  115),   # Ene
-    2:  (98,  129),   # Feb
-    3:  (124, 141),   # Mar
-    4:  (160, 194),   # Abr
-    5:  (223, 291),   # May
-    6:  (311, 392),   # Jun
-    7:  (315, 356),   # Jul
-    8:  (227, 264),   # Ago
-    9:  (188, 217),   # Sep
-    10: (221, 251),   # Oct
-    11: (296, 335),   # Nov
-    12: (194, 211),   # Dic
 }
 
 
 def _get_umbral_aportes(mes: int) -> dict:
-    """Devuelve umbrales de aportes hídricos (GWh/día) ajustados por estacionalidad."""
-    critico, alerta = _UMBRALES_APORTES_ESTACIONAL.get(mes, (300, 400))
+    """DEPRECADO en favor del Índice HSIN oficial.
+
+    Mantenido solo para compatibilidad con código legacy. Para nueva lógica
+    usar clasificar_hsin() de core.umbrales_oficiales (CREG 026/2014 art. 2).
+    """
+    # Estos valores son percentiles mensuales del histórico XM 2020-2026,
+    # útiles solo como fallback diagnóstico. NO son umbrales regulatorios.
+    _LEGACY = {
+        1: (63, 115), 2: (98, 129), 3: (124, 141), 4: (160, 194),
+        5: (223, 291), 6: (311, 392), 7: (315, 356), 8: (227, 264),
+        9: (188, 217), 10: (221, 251), 11: (296, 335), 12: (194, 211),
+    }
+    critico, alerta = _LEGACY.get(mes, (300, 400))
     return {'CRITICO': critico, 'ALERTA': alerta}
 
 
@@ -303,96 +361,109 @@ class SistemaAlertasEnergeticas:
         else:
             print(f"  ✅ Normal: Promedio {promedio:.1f} GWh/día ({dias_criticos} días > p99 = {pct_crit*100:.0f}% mínimo requerido)")
     
-    def evaluar_aportes_hidricos(self, horizonte=30):
-        """Evalúa riesgo hidrológico comparando AporEner contra AporEnerMediHist (XM).
+    def evaluar_aportes_hidricos(self, horizonte=None):
+        """Evalúa el ÍNDICE HSIN OFICIAL del Estatuto CREG 026/2014 art. 2.
 
-        Umbrales DINÁMICOS: usa la media histórica oficial XM (AporEnerMediHist)
-        del mismo período como referencia, en lugar de percentiles estáticos de
-        2020-2026 que no se actualizan con el clima real.
+        Marco regulatorio: Resolución CREG 026 de 2014 — Artículo 2.
+        HSIN = aportes acumulados últimas 4 semanas / promedio histórico × 100
 
-        Umbrales: CRÍTICO < 50% mediana histórica XM, ALERTA < 65% mediana histórica XM.
-        Fallback automático a p5/p15 mensuales hardcodeados si AporEnerMediHist no
-        tiene datos suficientes en BD (≥ 25% de cobertura del horizonte).
+        Niveles oficiales:
+            NORMAL:         HSIN ≥ 90%
+            VIGILANCIA:     HSIN < 90%  (Estatuto CREG art. 2)
+            DÉFICIT SEVERO: HSIN < 70%  (referencia CREG 209/2020)
+            CRÍTICO:        HSIN ≤ 60%  (nivel histórico abril 2020)
+
+        Datos: AporEner (real) vs AporEnerMediHist (media histórica oficial XM)
+        publicado en https://www.xm.com.co/hidrologia/aportes
         """
-        print("💧 Evaluando APORTES HÍDRICOS (vs. media histórica XM)...")
+        print("💧 Evaluando ÍNDICE HSIN (CREG 026/2014 art. 2)...")
 
-        df = self.cargar_datos_reales('AporEner', dias=horizonte)
+        ventana = horizonte or (HSIN_VENTANA_SEMANAS * 7)
+        df = self.cargar_datos_reales('AporEner', dias=ventana)
         if len(df) == 0:
             return
 
-        # ── Umbrales dinámicos: AporEnerMediHist ya está en BD (etl_rules) ──
-        df_hist = self.cargar_datos_reales('AporEnerMediHist', dias=horizonte)
-        if len(df_hist) >= max(3, horizonte // 4):
-            # Referencia oficial XM — se actualiza sola con el ETL.
-            # ADVERTENCIA: AporEnerMediHist hereda los supuestos históricos de XM
-            # (ventana de cálculo, años de referencia). Si XM cambia su metodología,
-            # estos umbrales cambian automáticamente. Documentar en auditorías externas.
-            media_hist = float(df_hist['valor_gwh'].mean())
-            _umbral_critico = round(media_hist * 0.50, 1)  # < 50% mediana → crítico
-            _umbral_alerta  = round(media_hist * 0.65, 1)  # < 65% mediana → alerta
-            fuente_umbral = f"AporEnerMediHist XM (media={media_hist:.1f} GWh/d)"
-        else:
-            # Fallback a percentiles mensuales hardcodeados
-            _mes_ref = datetime.now().month
-            _umb = _get_umbral_aportes(_mes_ref)
-            _umbral_critico = _umb['CRITICO']
-            _umbral_alerta  = _umb['ALERTA']
-            mes_str_fb = datetime.now().strftime('%b')
-            fuente_umbral = f"p5/p15 estacional {mes_str_fb} (fallback: AporEnerMediHist sin datos)"
-            print(f"  ⚠️  AporEnerMediHist insuficiente ({len(df_hist)} días) — usando fallback")
+        # AporEnerMediHist es la referencia oficial XM publicada
+        df_hist = self.cargar_datos_reales('AporEnerMediHist', dias=ventana)
+        if len(df_hist) < max(3, ventana // 4):
+            print(f"  ⚠️  AporEnerMediHist insuficiente ({len(df_hist)} días) — alerta omitida")
+            return
 
-        pct_crit = UMBRALES['APORTES_HIDRICOS']['DIAS_CRITICO_PCT']
-        pct_alert = UMBRALES['APORTES_HIDRICOS']['DIAS_ALERTA_PCT']
+        media_hist = float(df_hist['valor_gwh'].mean())
+        if media_hist <= 0:
+            print("  ⚠️  AporEnerMediHist == 0 — alerta omitida")
+            return
+
+        # Cálculo oficial HSIN: aportes promedio últimas 4 semanas vs media histórica
+        promedio_aportes = float(df['valor_gwh'].mean())
+        hsin_pct = (promedio_aportes / media_hist) * 100.0
+
+        # Clasificación oficial CREG
+        nivel_hsin, descripcion_hsin = clasificar_hsin(hsin_pct)
 
         total = len(df)
-        promedio = float(df['valor_gwh'].mean())
         minimo = float(df['valor_gwh'].min())
-        dias_criticos = int((df['valor_gwh'] < _umbral_critico).sum())
-        dias_alerta = int((df['valor_gwh'] < _umbral_alerta).sum())
 
-        if dias_criticos / total >= pct_crit:
+        if nivel_hsin == 'CRITICO':
             self.alertas.append({
                 'categoria': 'HIDROLOGIA',
                 'severidad': 'CRÍTICO',
-                'titulo': f'Sequía severa: {dias_criticos}/{total} días aportes < {_umbral_critico} GWh',
+                'titulo': f'Índice HSIN CRÍTICO: aportes al {hsin_pct:.1f}% de media histórica',
                 'descripcion': (
-                    f'Aportes mín: {minimo:.1f} GWh/día, promedio: {promedio:.1f} GWh/día. '
-                    f'El {dias_criticos/total*100:.0f}% del periodo está bajo el umbral crítico '
-                    f'({fuente_umbral}). Riesgo hidrológico.'
+                    f'HSIN = {hsin_pct:.1f}% — nivel histórico de crisis (referencia abril 2020). '
+                    f'Aportes promedio {promedio_aportes:.1f} GWh/día, mín {minimo:.1f} GWh/día. '
+                    f'Media histórica XM: {media_hist:.1f} GWh/día. '
+                    f'Estatuto CREG 026/2014 art. 2.'
                 ),
-                'valor': promedio,
-                'umbral': _umbral_critico,
-                'dias_afectados': dias_criticos,
-                'recomendacion': 'URGENTE: Activar plan de contingencia hidrológica. Revisar despacho térmico.'
+                'valor': hsin_pct,
+                'umbral': HSIN_UMBRAL_CRITICO_HISTORICO,
+                'dias_afectados': total,
+                'fuente_regulatoria': 'Resolución CREG 026 de 2014 art. 2 — Índice HSIN',
+                'recomendacion': (
+                    'URGENTE: condición de sequía severa. Activar mecanismo de sostenimiento '
+                    'CREG 026/2014 art. 7. Maximizar despacho térmico. Reportar a CREG.'
+                )
             })
-            print(f"  🚨 CRÍTICO: Sequía severa ({dias_criticos}/{total} días < {_umbral_critico} GWh — {fuente_umbral})")
+            print(f"  🚨 HSIN CRÍTICO: {hsin_pct:.1f}% ≤ 60% (nivel histórico)")
 
-        elif dias_alerta / total >= pct_alert:
+        elif nivel_hsin in ('VIGILANCIA', 'DEFICIT_SEVERO'):
             self.alertas.append({
                 'categoria': 'HIDROLOGIA',
                 'severidad': 'ALERTA',
-                'titulo': f'Aportes bajos: {dias_alerta}/{total} días < {_umbral_alerta} GWh',
+                'titulo': f'Índice HSIN {nivel_hsin}: {hsin_pct:.1f}% de media histórica',
                 'descripcion': (
-                    f'Promedio: {promedio:.1f} GWh/día. Tendencia a la baja. '
-                    f'Referencia: {fuente_umbral}.'
+                    f'HSIN = {hsin_pct:.1f}% < 90% — condición de vigilancia (CREG 026/2014 art. 2). '
+                    f'Aportes promedio {promedio_aportes:.1f} GWh/día. '
+                    f'Media histórica XM: {media_hist:.1f} GWh/día. '
+                    f'Si persiste por 2 verificaciones semanales, se confirma vigilancia.'
                 ),
-                'valor': promedio,
-                'umbral': _umbral_alerta,
-                'dias_afectados': dias_alerta,
-                'recomendacion': 'Optimizar uso de embalses. Aumentar generación térmica.'
+                'valor': hsin_pct,
+                'umbral': HSIN_UMBRAL_NORMAL,
+                'dias_afectados': total,
+                'fuente_regulatoria': 'Resolución CREG 026 de 2014 art. 2 — Índice HSIN',
+                'recomendacion': (
+                    'Optimizar uso de embalses. Aumentar generación térmica. '
+                    'Vigilar evolución semanal del HSIN.'
+                )
             })
-            print(f"  ⚠️  ALERTA: Aportes bajos ({dias_alerta}/{total} días < {_umbral_alerta} GWh — {fuente_umbral})")
+            print(f"  ⚠️  HSIN {nivel_hsin}: {hsin_pct:.1f}% < {HSIN_UMBRAL_NORMAL}%")
         else:
-            print(f"  ✅ Normal: Aportes promedio {promedio:.1f} GWh/día (umbral alerta {_umbral_alerta} GWh — {fuente_umbral})")
+            print(f"  ✅ HSIN NORMAL: {hsin_pct:.1f}% ≥ {HSIN_UMBRAL_NORMAL}% (CREG 026/2014)")
     
     def evaluar_embalses(self, horizonte=30):
-        """Evalúa nivel de almacenamiento de embalses con datos reales XM.
+        """Evalúa el nivel de embalses usando el ÍNDICE NE OFICIAL del Estatuto CREG.
+
+        Marco regulatorio: Resolución CREG 209 de 2020.
+        El nivel real del embalse del SIN se compara con la SENDA DE REFERENCIA
+        mensual publicada por XM/CND. Niveles del Índice NE:
+            SUPERIOR: embalse ≥ senda  O  embalse ≥ 70% (regla absoluta CREG)
+            ALERTA:   senda − X ≤ embalse < senda
+            INFERIOR: embalse < senda − X
 
         Usa PorcVoluUtilDiar (% de capacidad útil diaria, almacenado como
         fracción 0-1 en la BD → se multiplica por 100).
-        Umbrales: CRÍTICO < 30%, ALERTA 30-40% (alineados con criterios XM).
         """
-        print("🏞️  Evaluando CAPACIDAD DE EMBALSES...")
+        print("🏞️  Evaluando ÍNDICE NE (CREG 209/2020) — embalses vs senda referencia...")
 
         df = self.cargar_datos_reales('PorcVoluUtilDiar', dias=horizonte)
         if len(df) == 0:
@@ -401,56 +472,80 @@ class SistemaAlertasEnergeticas:
         df = df.copy()
         df['valor_gwh'] = df['valor_gwh'] * 100.0
 
-        umbral_crit = UMBRALES['EMBALSES_PCT']['CRITICO']
-        umbral_alert = UMBRALES['EMBALSES_PCT']['ALERTA']
-
-        pct_actual = float(df['valor_gwh'].iloc[0])    # nivel más reciente (últimos datos completos XM)
+        pct_actual = float(df['valor_gwh'].iloc[0])    # nivel más reciente
         pct_inicio = float(df['valor_gwh'].iloc[-1])   # nivel hace N días
         pct_min = float(df['valor_gwh'].min())
-        tendencia = pct_actual - pct_inicio  # positivo = llenando, negativo = vaciando
+        tendencia = pct_actual - pct_inicio  # positivo = llenando
 
-        if pct_min < umbral_crit:
+        # Clasificación oficial Índice NE
+        nivel_ne, descripcion_ne, senda = clasificar_indice_ne(pct_actual)
+        nivel_ne_min, _, _ = clasificar_indice_ne(pct_min)
+
+        if nivel_ne_min == 'INFERIOR':
             self.alertas.append({
                 'categoria': 'EMBALSES',
                 'severidad': 'CRÍTICO',
-                'titulo': f'Nivel crítico de embalses: {pct_min:.1f}% capacidad útil',
+                'titulo': f'Índice NE INFERIOR: embalses {pct_min:.1f}% < senda CREG {senda:.1f}%',
                 'descripcion': (
                     f'Nivel mínimo reciente: {pct_min:.1f}%. Actual: {pct_actual:.1f}%. '
+                    f'Senda de Referencia CREG para este mes: {senda:.1f}%. '
                     f'Tendencia últimos {horizonte} días: {tendencia:+.1f}%. '
-                    f'Umbral crítico XM: {umbral_crit}%.'
+                    f'Marco regulatorio: Estatuto CREG 026/2014 + Res. 209/2020.'
                 ),
                 'valor': pct_min,
-                'umbral': umbral_crit,
+                'umbral': senda,
                 'dias_afectados': horizonte,
-                'recomendacion': 'URGENTE: Activar todos los respaldos térmicos. Revisar plan de contingencia hídrica.'
+                'fuente_regulatoria': 'Resolución CREG 209 de 2020 — Índice NE',
+                'recomendacion': (
+                    'CRÍTICO: Activar mecanismo de sostenimiento (CREG 026/2014 art. 7). '
+                    'Maximizar respaldos térmicos. Reportar a CREG la condición de riesgo.'
+                )
             })
-            print(f"  🚨 CRÍTICO: Nivel mínimo reciente {pct_min:.1f}% (umbral={umbral_crit}%)")
+            print(f"  🚨 NE INFERIOR: nivel mínimo {pct_min:.1f}% < senda CREG {senda:.1f}%")
 
-        elif pct_actual < umbral_alert:
+        elif nivel_ne == 'ALERTA':
             self.alertas.append({
                 'categoria': 'EMBALSES',
                 'severidad': 'ALERTA',
-                'titulo': f'Embalses bajo zona de alerta: {pct_actual:.1f}% capacidad útil',
+                'titulo': f'Índice NE ALERTA: embalses {pct_actual:.1f}% bajo senda CREG {senda:.1f}%',
                 'descripcion': (
-                    f'Nivel actual: {pct_actual:.1f}%. Tendencia últimos {horizonte} días: {tendencia:+.1f}%.'
+                    f'Nivel actual: {pct_actual:.1f}%. Senda CREG: {senda:.1f}%. '
+                    f'Tendencia últimos {horizonte} días: {tendencia:+.1f}%. '
+                    f'Si persiste por 2 verificaciones semanales → nivel INFERIOR.'
                 ),
                 'valor': pct_actual,
-                'umbral': umbral_alert,
+                'umbral': senda,
                 'dias_afectados': horizonte,
-                'recomendacion': 'Conservar agua. Maximizar generación térmica y renovables no hidráulicas.'
+                'fuente_regulatoria': 'Resolución CREG 209 de 2020 — Índice NE',
+                'recomendacion': (
+                    'Conservar agua. Maximizar térmicas y renovables no hidráulicas. '
+                    'Vigilar evolución semanal.'
+                )
             })
-            print(f"  ⚠️  ALERTA: Nivel {pct_actual:.1f}% (umbral={umbral_alert}%)")
+            print(f"  ⚠️  NE ALERTA: nivel actual {pct_actual:.1f}% < senda {senda:.1f}%")
         else:
-            print(f"  ✅ Normal: {pct_actual:.1f}% capacidad útil (tendencia {tendencia:+.1f}% / {horizonte}d)")
+            print(f"  ✅ NE SUPERIOR: {pct_actual:.1f}% ≥ senda CREG {senda:.1f}% "
+                  f"(tendencia {tendencia:+.1f}% / {horizonte}d)")
     
     def evaluar_precio_bolsa(self, horizonte=30):
-        """Evalúa comportamiento del precio de bolsa vs precio de escasez.
+        """Evalúa el ÍNDICE PBP OFICIAL contra los tres niveles de precio de escasez.
 
-        Usa datos reales XM (PrecBolsNaci, PrecEsca, recurso='Sistema').
-        Cuando el precio de bolsa se acerca al costo de escasez, el mercado
-        está en estrés real. Fuente: pydataSIMEM (COP/kWh).
+        Marco regulatorio:
+            - Resolución CREG 026 de 2014 art. 2 — Índice PBP
+            - Resolución CREG 071 de 2006 — Precio de escasez
+            - Resolución CREG 140 de 2017 — Precio Marginal de Escasez (PES)
+            - Resolución CREG 101 066 de 2024 — Tres niveles de precio escasez
+
+        Tres niveles oficiales del precio de escasez:
+            PEI (Inferior):   327.67 COP/kWh ene-2026 (CREG 101 066/2024)
+            PE  (071/2006):   590.56 COP/kWh ene-2026 (precio de activación)
+            PES (Superior):   830.34 COP/kWh ene-2026 (CREG 140/2017)
+
+        Índice PBP del Estatuto CREG 026/2014 art. 2:
+            NIVEL BAJO:  PBP < PE durante 4 de últimos 7 días
+            NIVEL ALTO:  PBP ≥ PE (activación del Mecanismo de Confiabilidad)
         """
-        print("💰 Evaluando PRECIO DE BOLSA...")
+        print("💰 Evaluando ÍNDICE PBP vs Precios de Escasez (CREG 026/2014 + 101 066/2024)...")
 
         df_bolsa = self.cargar_datos_reales('PrecBolsNaci', dias=horizonte)
         if len(df_bolsa) == 0:
@@ -463,64 +558,98 @@ class SistemaAlertasEnergeticas:
 
         umb = UMBRALES['PRECIO_BOLSA']
 
-        if len(df_escasez) > 0:
-            # Ratio diario suavizado con media móvil 3 días (anti-ruido por días atípicos)
-            bolsa_idx = df_bolsa.set_index('fecha')['valor_gwh']
-            escasez_idx = df_escasez.set_index('fecha')['valor_gwh']
-            fechas_comunes = bolsa_idx.index.intersection(escasez_idx.index)
-            if len(fechas_comunes) > 0:
-                ratio_diario = (bolsa_idx.loc[fechas_comunes] /
-                                escasez_idx.loc[fechas_comunes].replace(0, float('nan')))
-                ratio = float(ratio_diario.rolling(3, min_periods=1).mean().mean())
-            else:
-                ratio = bolsa_prom / float(df_escasez['valor_gwh'].mean()) if float(df_escasez['valor_gwh'].mean()) > 0 else 0
-            escasez_prom = float(df_escasez['valor_gwh'].mean())
-            crit_umbral = escasez_prom * umb['CRITICO_RATIO']
-            alert_umbral = escasez_prom * umb['ALERTA_RATIO']
-            referencia = f"escasez={escasez_prom:.0f} COP/kWh, ratio={ratio:.0%} (mv3d)"
-            es_critico = ratio >= umb['CRITICO_RATIO']
-            es_alerta = ratio >= umb['ALERTA_RATIO']
-        else:
-            # Fallback: umbrales fijos si no hay predicción de precio_escasez
-            crit_umbral = umb['CRITICO_FIJO']
-            alert_umbral = umb['ALERTA_FIJO']
-            referencia = f"umbral fijo (sin precio_escasez)"
-            es_critico = bolsa_prom >= crit_umbral
-            es_alerta = bolsa_prom >= alert_umbral
+        # Determinar precios de escasez vigentes con prioridad:
+        # 1) Tabla oficial sector_energetico.precios_escasez_mensuales (PEI/PE/PES)
+        # 2) Valor real de PrecEsca en métricas (si existe)
+        # 3) Referencia regulatoria CREG 101 066/2024 (fallback)
+        precios_vigentes = obtener_precios_escasez_vigentes()
+        pei_vigente = precios_vigentes['pei']
+        pe_vigente = precios_vigentes['pe']
+        pes_vigente = precios_vigentes['pes']
 
-        if es_critico:
+        if precios_vigentes['origen'] == 'BD':
+            fuente_precio = (
+                f"BD precios_escasez_mensuales {precios_vigentes['anio']}-{precios_vigentes['mes']:02d} "
+                f"(PEI={pei_vigente:.0f}, PE={pe_vigente:.0f}, PES={pes_vigente:.0f})"
+            )
+        elif len(df_escasez) > 0:
+            # Sobreescribir PE con valor real publicado por XM (más actualizado)
+            pe_real = float(df_escasez['valor_gwh'].mean())
+            pe_vigente = pe_real
+            # Inferir PEI y PES proporcionalmente
+            pes_vigente = pe_real * (umb['PES_REF'] / umb['PE_REF'])
+            pei_vigente = pe_real * (umb['PEI_REF'] / umb['PE_REF'])
+            fuente_precio = f"PrecEsca real XM ({pe_real:.0f} COP/kWh)"
+        else:
+            fuente_precio = f"fallback CREG 101 066/2024 (ene-2026)"
+
+        # Índice PBP oficial: contar días con PBP >= PE en los últimos 7 días
+        ventana = umb['DIAS_VENTANA']
+        df_bolsa_sorted = df_bolsa.sort_values('fecha', ascending=False).head(ventana)
+        dias_alto = int((df_bolsa_sorted['valor_gwh'] >= pe_vigente).sum())
+        dias_pes = int((df_bolsa_sorted['valor_gwh'] >= pes_vigente).sum())
+        n_ventana = len(df_bolsa_sorted)
+
+        # Suavizado: media móvil 3 días sobre la serie completa (anti-ruido)
+        bolsa_idx = df_bolsa.set_index('fecha')['valor_gwh'].sort_index()
+        bolsa_mv3 = bolsa_idx.rolling(3, min_periods=1).mean()
+        bolsa_prom_mv = float(bolsa_mv3.mean())
+
+        if dias_pes >= umb['DIAS_BAJO_MINIMO']:
+            # Múltiples días por encima del PES — riesgo extremo de activación de escasez
             self.alertas.append({
                 'categoria': 'PRECIO_MERCADO',
                 'severidad': 'CRÍTICO',
-                'titulo': f'Precio bolsa crítico: {bolsa_prom:.0f} COP/kWh ≥ {umb["CRITICO_RATIO"]*100:.0f}% precio escasez',
+                'titulo': (f'PBP CRÍTICO: {dias_pes}/{n_ventana} días sobre PES '
+                           f'{pes_vigente:.0f} COP/kWh'),
                 'descripcion': (
-                    f'Precio bolsa promedio: {bolsa_prom:.0f} COP/kWh. '
-                    f'Máximo: {bolsa_max:.0f} COP/kWh. Referencia: {referencia}. '
-                    f'Sistema cerca del costo de escasez — riesgo de intervención.'
+                    f'Precio bolsa promedio: {bolsa_prom:.0f} COP/kWh (mv3d: {bolsa_prom_mv:.0f}). '
+                    f'Máximo: {bolsa_max:.0f} COP/kWh. PES vigente: {pes_vigente:.0f} COP/kWh '
+                    f'(Res. CREG 140/2017). Fuente: {fuente_precio}. '
+                    f'Sistema en zona crítica de escasez.'
                 ),
                 'valor': bolsa_prom,
-                'umbral': crit_umbral,
-                'dias_afectados': horizonte,
-                'recomendacion': 'Intervención regulatoria urgente. Evaluar subsidios y despacho forzado.'
+                'umbral': pes_vigente,
+                'dias_afectados': dias_pes,
+                'fuente_regulatoria': 'Resolución CREG 101 066 de 2024 — PES',
+                'recomendacion': (
+                    'Intervención regulatoria urgente. Activar mecanismo de '
+                    'confiabilidad (CREG 026/2014). Evaluar despacho forzado.'
+                )
             })
-            print(f"  🚨 CRÍTICO: Bolsa {bolsa_prom:.0f} COP/kWh ({referencia})")
+            print(f"  🚨 PBP CRÍTICO: {dias_pes}/{n_ventana} días sobre PES "
+                  f"{pes_vigente:.0f} COP/kWh ({fuente_precio})")
 
-        elif es_alerta:
+        elif dias_alto >= umb['DIAS_BAJO_MINIMO']:
+            # PBP en nivel ALTO según Estatuto CREG art. 2
             self.alertas.append({
                 'categoria': 'PRECIO_MERCADO',
                 'severidad': 'ALERTA',
-                'titulo': f'Precio bolsa elevado: {bolsa_prom:.0f} COP/kWh ≥ {umb["ALERTA_RATIO"]*100:.0f}% precio escasez',
+                'titulo': (f'Índice PBP ALTO: {dias_alto}/{n_ventana} días sobre PE '
+                           f'{pe_vigente:.0f} COP/kWh'),
                 'descripcion': (
-                    f'Precio bolsa promedio: {bolsa_prom:.0f} COP/kWh. Referencia: {referencia}.'
+                    f'Precio bolsa promedio: {bolsa_prom:.0f} COP/kWh (mv3d: {bolsa_prom_mv:.0f}). '
+                    f'PE vigente: {pe_vigente:.0f} COP/kWh (Res. CREG 071/2006). '
+                    f'Fuente: {fuente_precio}. Índice PBP en nivel ALTO según '
+                    f'Estatuto CREG 026/2014 art. 2.'
                 ),
                 'valor': bolsa_prom,
-                'umbral': alert_umbral,
-                'dias_afectados': horizonte,
-                'recomendacion': 'Monitorear generadores. Evaluar medidas para estabilizar precios.'
+                'umbral': pe_vigente,
+                'dias_afectados': dias_alto,
+                'fuente_regulatoria': 'Resolución CREG 026 de 2014 art. 2 — Índice PBP',
+                'recomendacion': (
+                    'Monitoreo intensivo. Si persiste y se combina con NE Inferior '
+                    'o HSIN < 90%, se entra en condición de RIESGO (CREG art. 3).'
+                )
             })
-            print(f"  ⚠️  ALERTA: Bolsa {bolsa_prom:.0f} COP/kWh ({referencia})")
+            print(f"  ⚠️  PBP ALTO: {dias_alto}/{n_ventana} días sobre PE "
+                  f"{pe_vigente:.0f} COP/kWh ({fuente_precio})")
+        elif bolsa_prom_mv >= pei_vigente:
+            print(f"  ℹ️  Precio sobre PEI {pei_vigente:.0f} pero PBP en nivel BAJO "
+                  f"({dias_alto}/{n_ventana} días sobre PE)")
         else:
-            print(f"  ✅ Normal: Bolsa {bolsa_prom:.0f} COP/kWh ({referencia})")
+            print(f"  ✅ PBP BAJO: precio promedio {bolsa_prom:.0f} COP/kWh < PEI "
+                  f"{pei_vigente:.0f} ({fuente_precio})")
     
     def evaluar_balance_energetico(self, horizonte=30):
         """Nota: Con datos reales, Gene ≈ DemaSIN por física del sistema eléctrico.
@@ -889,7 +1018,7 @@ def main():
     try:
         # Evaluar cada categoría
         sistema.evaluar_demanda(horizonte=30)
-        sistema.evaluar_aportes_hidricos(horizonte=30)
+        sistema.evaluar_aportes_hidricos()
         sistema.evaluar_embalses(horizonte=30)
         sistema.evaluar_precio_bolsa(horizonte=30)
         sistema.evaluar_balance_energetico(horizonte=30)

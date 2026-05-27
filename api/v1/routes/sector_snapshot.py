@@ -4,7 +4,7 @@ GET /v1/sector/snapshot → métricas clave del SIN (sector_energetico.metrics)
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
@@ -12,6 +12,16 @@ from slowapi.util import get_remote_address
 
 from api.dependencies import get_api_key
 from infrastructure.database.connection import PostgreSQLConnectionManager
+from core.umbrales_oficiales import (
+    HSIN_VENTANA_SEMANAS,
+    clasificar_hsin,
+    clasificar_indice_ne,
+    clasificar_indice_pbp,
+    clasificar_visual_embalse,
+    determinar_condicion_sistema,
+    obtener_precios_escasez_vigentes,
+    obtener_senda_referencia,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -181,6 +191,50 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                 apor_7d     = float(t7[3]) if t7 and t7[3] else None
                 apor_h_7d   = float(t7[4]) if t7 and t7[4] else None
 
+                # ── HSIN oficial (CREG 026/2014 art. 2): ventana 4 semanas ──
+                hsin_dias = HSIN_VENTANA_SEMANAS * 7
+                cur.execute("""
+                    SELECT
+                        AVG(CASE WHEN metrica='AporEner'         THEN valor_gwh END) AS apor_4w,
+                        AVG(CASE WHEN metrica='AporEnerMediHist' THEN valor_gwh END) AS hist_4w
+                    FROM sector_energetico.metrics
+                    WHERE entidad='Sistema' AND recurso='Sistema'
+                      AND metrica IN ('AporEner','AporEnerMediHist')
+                      AND fecha >= %s::date - %s * INTERVAL '1 day'
+                      AND fecha <= %s
+                """, [fecha_aportes, hsin_dias, fecha_aportes])
+                row_hsin = cur.fetchone()
+                apor_4w = float(row_hsin[0]) if row_hsin and row_hsin[0] else None
+                hist_4w = float(row_hsin[1]) if row_hsin and row_hsin[1] else None
+
+                cur.execute("""
+                    SELECT
+                        AVG(CASE WHEN metrica='AporEner'         THEN valor_gwh END) AS apor_4w,
+                        AVG(CASE WHEN metrica='AporEnerMediHist' THEN valor_gwh END) AS hist_4w
+                    FROM sector_energetico.metrics
+                    WHERE entidad='Sistema' AND recurso='Sistema'
+                      AND metrica IN ('AporEner','AporEnerMediHist')
+                      AND fecha >= (%s::date - INTERVAL '7 days') - %s * INTERVAL '1 day'
+                      AND fecha <= %s::date - INTERVAL '7 days'
+                """, [fecha_aportes, hsin_dias, fecha_aportes])
+                row_hsin_prev = cur.fetchone()
+                apor_4w_prev = float(row_hsin_prev[0]) if row_hsin_prev and row_hsin_prev[0] else None
+                hist_4w_prev = float(row_hsin_prev[1]) if row_hsin_prev and row_hsin_prev[1] else None
+
+                # PBP: últimos 7 días de precio bolsa (CREG 026/2014 art. 2)
+                cur.execute("""
+                    SELECT valor_gwh
+                    FROM sector_energetico.metrics
+                    WHERE metrica='PPPrecBolsNaci'
+                      AND entidad='Sistema' AND recurso='Sistema'
+                      AND fecha >= %s::date - INTERVAL '7 days'
+                      AND fecha <= %s
+                    ORDER BY fecha DESC
+                    LIMIT 7
+                """, [fecha_precio, fecha_precio])
+                pbp_rows = cur.fetchall()
+                pbp_diarios = [float(r[0]) for r in pbp_rows if r and r[0] is not None]
+
         # % embalse viene como fracción (0-1) desde la BD
         pct_embalses = round(pct_emb_raw * 100, 2)
 
@@ -211,31 +265,40 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                 label = "ESTABLE"
             return {"direccion": label.lower(), "cambio7d": round(cambio, 2), "label": label}
 
-        if pct_embalses < 50:
-            estado_sin, color_sin = "CRÍTICO", "#EF4444"
-        elif pct_embalses < 60:
-            estado_sin, color_sin = "ALERTA ALTA", "#F97316"
-        elif pct_embalses < 70:
-            estado_sin, color_sin = "ALERTA TEMPRANA", "#F59E0B"
-        elif pct_embalses < 80:
-            estado_sin, color_sin = "ESTABLE", "#06B6D4"
-        else:
-            estado_sin, color_sin = "NORMAL", "#22C55E"
+        # ── Clasificación regulatoria CREG (Res. 209/2020 + 026/2014) ──
+        fecha_eval = fecha_embalse if isinstance(fecha_embalse, date) else (
+            fecha_embalse.date() if hasattr(fecha_embalse, 'date') else date.today()
+        )
+        senda_pct = obtener_senda_referencia(fecha_eval)
+        nivel_ne, _, _ = clasificar_indice_ne(pct_embalses, fecha_eval)
+        visual_emb, color_sin, _ = clasificar_visual_embalse(pct_embalses, fecha_eval)
+        estado_sin = visual_emb
 
-        # pct mensual (metodología XM): acumulado mes / acumulado histórico
-        aportes_pct = round((aportes_mtd / hist_mtd) * 100, 2) \
+        # HSIN oficial (4 semanas) — indicador primario de aportes
+        hsin_pct = round((apor_4w / hist_4w) * 100, 2) if apor_4w and hist_4w and hist_4w > 0 else None
+        hsin_pct_prev = round((apor_4w_prev / hist_4w_prev) * 100, 2) \
+            if apor_4w_prev and hist_4w_prev and hist_4w_prev > 0 else None
+        nivel_hsin, _ = clasificar_hsin(hsin_pct) if hsin_pct is not None else ('INDETERMINADO', '')
+
+        # pct mensual (metodología XM): acumulado mes / acumulado histórico (complementario)
+        aportes_pct_mtd = round((aportes_mtd / hist_mtd) * 100, 2) \
             if aportes_mtd and hist_mtd and hist_mtd > 0 else None
+        aportes_pct = hsin_pct  # HSIN es el indicador regulatorio usado en semáforos
+
+        # Precios de escasez vigentes + índice PBP
+        precios_vigentes = obtener_precios_escasez_vigentes(fecha_eval)
+        pe_vigente = precios_vigentes['pe']
+        pbp_nivel, _ = clasificar_indice_pbp(pbp_diarios, pe_vigente) if pbp_diarios else ('INDETERMINADO', '')
+        condicion, _ = determinar_condicion_sistema(nivel_ne, nivel_hsin, pbp_nivel)
 
         # ── Tendencias: variables auxiliares ─────────────────────────────
         emb_7d_pct  = round(emb_7d_raw * 100, 2) if emb_7d_raw else None
-        apor_pct_7d = round((apor_7d / apor_h_7d) * 100, 2) \
-                      if apor_7d and apor_h_7d and apor_h_7d > 0 else None
 
         tendencias = {
             "embalses":   _tendencia_pp(pct_embalses,  emb_7d_pct,   1.0),
             "precio":     _tendencia_pct(precio,        precio_7d,    5.0),
             "generacion": _tendencia_pct(generacion,    gene_7d,      5.0),
-            "aportes":    _tendencia_pp(aportes_pct,    apor_pct_7d,  5.0),
+            "aportes":    _tendencia_pp(hsin_pct,        hsin_pct_prev, 5.0),
         }
 
         # Capacidad útil total del sistema (GWh)
@@ -254,8 +317,22 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                 "actualGwh":      round(aportes_mtd, 2) if aportes_mtd else round(aportes, 2),
                 "historicoGwh":   round(hist_mtd, 2) if hist_mtd else round(aportes_h, 2),
                 "pct":            aportes_pct,
+                "pctMtd":         aportes_pct_mtd,
+                "hsinPct":        hsin_pct,
+                "indiceHsin":     nivel_hsin,
                 "dailyActualGwh": round(aportes, 2),
                 "dailyHistGwh":   round(aportes_h, 2),
+            },
+            "umbralesRegulatorios": {
+                "sendaReferenciaPct": round(senda_pct, 1),
+                "indiceNe":           nivel_ne,
+                "indiceHsin":         nivel_hsin,
+                "indicePbp":          pbp_nivel,
+                "condicionSistema":   condicion,
+                "pei":                precios_vigentes['pei'],
+                "pe":                 precios_vigentes['pe'],
+                "pes":                precios_vigentes['pes'],
+                "preciosOrigen":      precios_vigentes.get('origen', 'fallback'),
             },
             "tendencias":          tendencias,
             "ultimaActualizacion": _fmt_fecha(ultima),

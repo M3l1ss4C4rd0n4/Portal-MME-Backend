@@ -23,6 +23,17 @@ from domain.services.distribution_service import DistributionService
 from domain.services.commercial_service import CommercialService
 from domain.services.losses_service import LossesService
 from domain.services.restrictions_service import RestrictionsService
+from core.umbrales_oficiales import (
+    # Resolución CREG 209/2020 — Índice NE
+    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
+    obtener_senda_referencia,
+    clasificar_indice_ne,
+    # Resolución CREG 026/2014 art. 2 — Índice HSIN
+    HSIN_UMBRAL_NORMAL,
+    HSIN_UMBRAL_DEFICIT_SEVERO,
+    HSIN_UMBRAL_CRITICO_HISTORICO,
+    clasificar_hsin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,44 +60,68 @@ class TrendDirection(str, Enum):
     UNKNOWN = "unknown"
 
 
-# Umbrales oficiales XM/UPME/MinEnergía/IDEAM
-# Embalses: >80% Normal | 70-80% Estable | 60-70% Alerta temprana | 50-60% Alerta alta | <50% Crítico
-# Aportes:  >=120% Muy favorable | 100-120% Normal | 90-100% Vigilancia | 70-90% Déficit | <70% Crítico
+# ═══════════════════════════════════════════════════════════════════════════════
+# UMBRALES ALINEADOS CON MARCO REGULATORIO OFICIAL
+# ───────────────────────────────────────────────────────────────────────────────
+# Reservas hídricas → Índice NE del Estatuto CREG 026/2014 + Res. 209/2020
+#   - Comparación contra Senda de Referencia mensual publicada por XM/CND
+#   - Regla absoluta superior: 70% (Res. CREG 209/2020)
+#   - Objetivo XM ante El Niño: 80% (Boletín XM 10-abril-2026)
+# Aportes hídricos → Índice HSIN (CREG 026/2014 art. 2)
+#   - NORMAL: ≥ 90% media histórica
+#   - VIGILANCIA: < 90%
+#   - DÉFICIT SEVERO: < 70% (referencia CREG 209/2020)
+#   - CRÍTICO HISTÓRICO: ≤ 60% (abril 2020)
+# Pérdidas → CREG perfiles por operador (umbral nacional 12%/15%)
+# Variaciones (generación/demanda) → Criterios operativos CND
+# ═══════════════════════════════════════════════════════════════════════════════
 THRESHOLDS = {
+    # Reservas hídricas: clasificación visual derivada de la Senda CREG.
+    # El cálculo regulatorio real (Índice NE) se hace con clasificar_indice_ne().
+    # Estos rangos son para semaforización visual coherente con CREG 209/2020.
     "reservas_hidricas": {
-        "critical_low": 50.0,    # < 50% → CRÍTICO
-        "warning_low": 60.0,     # 50-60% → ALERTA ALTA
-        "alert_low": 70.0,       # 60-70% → ALERTA TEMPRANA
-        "optimal_min": 70.0,
-        "optimal_max": 80.0,     # >= 80% → NORMAL
-        "warning_high": 95.0,
-        "critical_high": 98.0
+        "critical_low": 50.0,    # < 50% → riesgo extremo (muy bajo cualquier senda)
+        "warning_low": 60.0,     # 50-60% → cerca de senda en estación seca
+        "alert_low": 70.0,       # 60-70% → regla absoluta CREG (umbral superior)
+        "optimal_min": 70.0,     # ≥ 70% → NE SUPERIOR por regla absoluta CREG 209/2020
+        "optimal_max": 80.0,     # ≥ 80% → objetivo XM ante El Niño
+        "warning_high": 95.0,    # Vertimientos preventivos
+        "critical_high": 98.0,   # Riesgo de desbordamiento (IDEAM/UNGRD operadores)
+        "fuente_regulatoria": "Resolución CREG 209/2020 (Índice NE) + Boletín XM 2026",
     },
+    # Aportes hídricos: alineado con Índice HSIN oficial (CREG 026/2014 art. 2).
     "aportes_hidricos": {
-        "critical_low": 70.0,    # < 70% → CRÍTICO
-        "warning_low": 90.0,     # 70-90% → DÉFICIT HÍDRICO
-        "alert_low": 100.0,      # 90-100% → VIGILANCIA
-        "optimal_min": 100.0,
-        "optimal_max": 120.0,    # >= 120% → MUY FAVORABLE
+        "critical_low": HSIN_UMBRAL_CRITICO_HISTORICO,  # 60% — abril 2020
+        "warning_low": HSIN_UMBRAL_DEFICIT_SEVERO,      # 70% — déficit severo CREG 209/2020
+        "alert_low": HSIN_UMBRAL_NORMAL,                # 90% — umbral oficial CREG 026/2014
+        "optimal_min": HSIN_UMBRAL_NORMAL,              # ≥ 90% → HSIN NORMAL
+        "optimal_max": 120.0,                           # ≥ 120% → muy favorable (lluvioso)
         "warning_high": 150.0,
-        "critical_high": 200.0
+        "critical_high": 200.0,                         # Riesgo de vertimientos
+        "fuente_regulatoria": "Resolución CREG 026 de 2014 art. 2 — Índice HSIN",
     },
+    # Variaciones diarias: criterios operativos CND (no normados en Estatuto CREG).
     "generacion_variacion": {
-       "warning_change": 15.0,  # % cambio día a día
-        "critical_change": 25.0
+       "warning_change": 15.0,
+        "critical_change": 25.0,
+        "fuente_regulatoria": "Criterio operativo CND (no en Estatuto CREG)",
     },
     "demanda_variacion": {
         "warning_change": 15.0,
-        "critical_change": 25.0
+        "critical_change": 25.0,
+        "fuente_regulatoria": "Criterio operativo CND (no en Estatuto CREG)",
     },
+    # Pérdidas: alineado con perfiles CREG por operador de red.
     "perdidas": {
         "optimal_max": 10.0,
         "warning_high": 12.0,
-        "critical_high": 15.0
+        "critical_high": 15.0,
+        "fuente_regulatoria": "Perfiles CREG por operador de red",
     },
     "restricciones_incremento": {
-        "warning_multiplier": 2.0,  # 2x vs semana anterior
-        "critical_multiplier": 3.0
+        "warning_multiplier": 2.0,
+        "critical_multiplier": 3.0,
+        "fuente_regulatoria": "Criterio operativo CND",
     }
 }
 
@@ -386,39 +421,55 @@ class IntelligentAnalysisService:
             if reserva_pct is not None:
                 status.kpis['reservas_pct'] = round(reserva_pct, 2)
                 status.kpis['energia_embalsada_gwh'] = round(reserva_gwh, 2)
-                
-                # Detectar anomalías en reservas
-                thresholds = THRESHOLDS['reservas_hidricas']
-                if reserva_pct < thresholds['critical_low']:
+
+                # ── ÍNDICE NE OFICIAL — Resolución CREG 209/2020 ──
+                # Compara el nivel real contra la Senda de Referencia mensual
+                # publicada por XM/CND. Tres niveles oficiales: SUPERIOR, ALERTA, INFERIOR.
+                nivel_ne, descripcion_ne, senda_pct = clasificar_indice_ne(reserva_pct)
+                status.kpis['indice_ne'] = nivel_ne
+                status.kpis['senda_referencia_pct'] = round(senda_pct, 1)
+                status.kpis['fuente_regulatoria_embalses'] = 'Resolución CREG 209 de 2020 — Índice NE'
+
+                if nivel_ne == 'INFERIOR':
                     status.anomalias.append(Anomalia(
                         sector="hidrologia",
-                        metric_name="reservas_hidricas",
+                        metric_name="indice_ne_inferior",
                         severity=SeverityLevel.CRITICAL,
                         current_value=reserva_pct,
-                        expected_value=thresholds['optimal_min'],
-                        description=f"Reservas hídricas críticas: {reserva_pct:.1f}% (por debajo de {thresholds['critical_low']}%)"
+                        expected_value=senda_pct,
+                        description=(
+                            f"Índice NE INFERIOR: embalses {reserva_pct:.1f}% < "
+                            f"senda CREG {senda_pct:.1f}%. {descripcion_ne}"
+                        )
                     ))
-                elif reserva_pct < thresholds['warning_low']:
+                elif nivel_ne == 'ALERTA':
                     status.anomalias.append(Anomalia(
                         sector="hidrologia",
-                        metric_name="reservas_hidricas",
+                        metric_name="indice_ne_alerta",
                         severity=SeverityLevel.ALERT,
                         current_value=reserva_pct,
-                        expected_value=thresholds['optimal_min'],
-                        description=f"Reservas hídricas bajas: {reserva_pct:.1f}%"
+                        expected_value=senda_pct,
+                        description=(
+                            f"Índice NE ALERTA: embalses {reserva_pct:.1f}% "
+                            f"bajo senda CREG {senda_pct:.1f}%. Si persiste 2 verificaciones "
+                            f"semanales → nivel INFERIOR."
+                        )
                     ))
-                elif reserva_pct > thresholds['critical_high']:
+
+                # Anomalía complementaria: niveles muy altos (riesgo de vertimientos)
+                thresholds = THRESHOLDS['reservas_hidricas']
+                if reserva_pct > thresholds['critical_high']:
                     status.anomalias.append(Anomalia(
                         sector="hidrologia",
-                        metric_name="reservas_hidricas",
+                        metric_name="reservas_muy_altas",
                         severity=SeverityLevel.WARNING,
                         current_value=reserva_pct,
                         expected_value=thresholds['optimal_max'],
                         description=f"Reservas muy altas: {reserva_pct:.1f}% (riesgo de vertimientos)"
                     ))
-                
-                # Tendencia de reservas
-                if reserva_pct < thresholds['warning_low']:
+
+                # Tendencia derivada del Índice NE
+                if nivel_ne == 'INFERIOR':
                     status.trends['reservas'] = TrendDirection.DOWN
                 elif reserva_pct > thresholds['optimal_max']:
                     status.trends['reservas'] = TrendDirection.UP
@@ -430,8 +481,17 @@ class IntelligentAnalysisService:
             
             if aporte_pct is not None:
                 status.kpis['aportes_pct_vs_historico'] = round(aporte_pct, 2)
-                
-                # Detectar anomalías en aportes
+
+                # ── ÍNDICE HSIN OFICIAL — Resolución CREG 026/2014 art. 2 ──
+                # HSIN = aportes vs media histórica × 100
+                # Niveles: NORMAL (≥90%), VIGILANCIA (<90%), DÉFICIT SEVERO (<70%), CRÍTICO (≤60%)
+                nivel_hsin, descripcion_hsin = clasificar_hsin(aporte_pct)
+                status.kpis['indice_hsin'] = nivel_hsin
+                status.kpis['fuente_regulatoria_aportes'] = (
+                    'Resolución CREG 026 de 2014 art. 2 — Índice HSIN'
+                )
+
+                # Detectar anomalías en aportes (alineado con HSIN)
                 thresholds = THRESHOLDS['aportes_hidricos']
                 if aporte_pct < thresholds['critical_low']:
                     status.anomalias.append(Anomalia(

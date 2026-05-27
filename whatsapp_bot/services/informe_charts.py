@@ -921,6 +921,412 @@ def generate_aportes_hidricos_chart() -> Tuple[Optional[str], str, str]:
 
 
 # ═══════════════════════════════════════════════════════════
+# Constantes compartidas — gráficos estilo XM (térmica + embalses)
+# ═══════════════════════════════════════════════════════════
+
+SQL_CASE_COMBUSTIBLE = """
+  CASE
+    WHEN c.codigo IN ('PPA1','PPA2','PPA3','PPA4','GE32','GEC3','TBST','TCDT','TRN1','2S8S','3KL4','TPD1','TDR1') THEN 'Carbón'
+    WHEN c.codigo IN ('CTG1','CTG2','CTG3') THEN 'Gas Importado'
+    WHEN c.codigo IN ('2U91','2U93','2U8Y','PRG1','PRG2','2WFN','4YCN','2XXR','2YB9','2S8I','2S6Q','2S6S','2S8G','2V25','2V27',
+                      '3Q99','3GJU','3C3X','3ADA','3NNZ','3KLQ','3C4V','2YWY','3JNR','4T6E','4T6C','4XP3','ARG1','3AXV','PTR1','2U5P','5E69','3ENA') THEN 'Líquidos'
+    WHEN UPPER(c.nombre) LIKE '%CARTAGENA%' THEN 'Gas Importado'
+    WHEN UPPER(c.nombre) ~ '(PAIPA|GECELCA|TEBSAB|TERMOCANDELARIA|TERMONORTE|DOÑA JUANA|DRUMMOND|TERMOPIEDRAS)' THEN 'Carbón'
+    WHEN UPPER(c.nombre) ~ '(AUTOG|MECHERO|PROELECTRICA|PTAR|AGPE)' THEN 'Líquidos'
+    ELSE 'Gas'
+  END
+"""
+
+EMBALSE_REGION_XM = {
+    'PENOL': 'Antioquia', 'RIOGRANDE2': 'Antioquia', 'PORCE II': 'Antioquia',
+    'PORCE III': 'Antioquia', 'MIRAFLORES': 'Antioquia', 'PLAYAS': 'Antioquia',
+    'TRONERAS': 'Antioquia', 'PUNCHINA': 'Antioquia', 'ITUANGO': 'Antioquia',
+    'AGREGADO BOGOTA': 'Centro', 'CHUZA': 'Centro', 'GUAVIO': 'Centro', 'MUNA': 'Centro',
+    'SAN CARLOS': 'Centro', 'BETANIA': 'Centro', 'EL QUIMBO': 'Centro', 'PRADO': 'Centro',
+    'AMANI': 'Centro', 'ESMERALDA': 'Centro', 'SAN LORENZO': 'Centro',
+    'CALIMA1': 'Valle', 'ALTOANCHICAYA': 'Valle', 'SALVAJINA': 'Valle', 'FLORIDA II': 'Valle',
+    'URRA1': 'Caribe', 'TOPOCORO': 'Oriente', 'CHIVOR': 'Oriente', 'SOGAMOSO': 'Oriente', 'BATA': 'Oriente',
+}
+
+REGION_COLORS_CAP = {
+    'Antioquia': '#9B8FC7', 'Centro': '#C8C8C8', 'Oriente': '#B8D4E8',
+    'Valle': '#7EC8D0', 'Caribe': '#8FA84A',
+}
+REGION_ORDER_CAP = ['Antioquia', 'Centro', 'Oriente', 'Valle', 'Caribe']
+MESES_CORTO = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+
+
+def _fmt_fecha_corta(ts) -> str:
+    d = pd.to_datetime(ts)
+    return f"{MESES_CORTO[d.month - 1].capitalize()}-{d.day:02d}"
+
+
+def _monthly_step_values(fechas: pd.Series, valores: pd.Series) -> list:
+    df = pd.DataFrame({'fecha': pd.to_datetime(fechas), 'val': valores})
+    df['periodo'] = df['fecha'].dt.to_period('M')
+    prom = df.groupby('periodo')['val'].mean()
+    return [float(prom[p]) for p in df['periodo']]
+
+
+def generate_despacho_termica_chart() -> Tuple[Optional[str], str, str]:
+    """Barras Gene real por combustible + líneas GeneProgDesp y promedios mensuales."""
+    try:
+        from infrastructure.database.connection import get_connection
+
+        with get_connection() as conn:
+            df = pd.read_sql(f"""
+                WITH daily AS (
+                  SELECT m.fecha, {SQL_CASE_COMBUSTIBLE} AS combustible,
+                    SUM(CASE WHEN m.metrica='Gene' THEN m.valor_gwh ELSE 0 END) AS gen
+                  FROM metrics m
+                  JOIN catalogos c ON c.codigo=m.recurso AND c.catalogo='ListadoRecursos' AND c.tipo='TERMICA'
+                  WHERE m.entidad='Recurso' AND m.metrica='Gene'
+                    AND m.fecha >= CURRENT_DATE - INTERVAL '45 days'
+                  GROUP BY m.fecha, combustible
+                ),
+                pivot AS (
+                  SELECT fecha,
+                    SUM(CASE WHEN combustible='Carbón' THEN gen ELSE 0 END) AS carbon,
+                    SUM(CASE WHEN combustible IN ('Gas','Gas Importado') THEN gen ELSE 0 END) AS gas,
+                    SUM(CASE WHEN combustible='Líquidos' THEN gen ELSE 0 END) AS liquidos
+                  FROM daily GROUP BY fecha
+                ),
+                prog AS (
+                  SELECT m.fecha, SUM(m.valor_gwh) AS desp_prog
+                  FROM metrics m
+                  JOIN catalogos c ON c.codigo=m.recurso AND c.catalogo='ListadoRecursos' AND c.tipo='TERMICA'
+                  WHERE m.entidad='Recurso' AND m.metrica='GeneProgDesp'
+                    AND m.fecha >= CURRENT_DATE - INTERVAL '45 days'
+                  GROUP BY m.fecha
+                )
+                SELECT p.fecha, p.carbon, p.gas, p.liquidos,
+                       (p.carbon + p.gas + p.liquidos) AS total_real, pr.desp_prog
+                FROM pivot p JOIN prog pr ON pr.fecha = p.fecha
+                ORDER BY p.fecha LIMIT 30
+            """, conn)
+
+        if df.empty or len(df) < 5:
+            return None, "", ""
+
+        df['fecha'] = pd.to_datetime(df['fecha'])
+        ultima = df.iloc[-1]
+        ultima_fecha = df['fecha'].max()
+        prom_real_mes = _monthly_step_values(df['fecha'], df['total_real'])
+        prom_prog_mes = _monthly_step_values(df['fecha'], df['desp_prog'])
+
+        fig, ax = plt.subplots(figsize=(11, 5.5))
+        x = list(range(len(df)))
+        labels = [_fmt_fecha_corta(f) for f in df['fecha']]
+        carbon, gas, liq = df['carbon'].values, df['gas'].values, df['liquidos'].values
+        total = df['total_real'].values
+
+        ax.bar(x, carbon, 0.72, label='Gen. Carbón', color='#5D4037', zorder=2)
+        ax.bar(x, gas, 0.72, bottom=carbon, label='Gen. Gas', color='#FF9800', zorder=2)
+        ax.bar(x, liq, 0.72, bottom=carbon + gas, label='Gen. Líquidos', color='#F44336', zorder=2)
+        desp_prog = df['desp_prog'].values
+        ax.plot(x, desp_prog, color='#000', linewidth=2, label='Despacho Programado Térmica', zorder=4)
+        ax.plot(x, prom_prog_mes, color='#E53935', linewidth=1.8, linestyle='--', label='Prom. Gen. Programada Térmica', zorder=3)
+        ax.plot(x, prom_real_mes, color='#78909C', linewidth=1.8, linestyle='--', label='Prom. Gen. Real Térmica', zorder=3)
+
+        # Etiquetas dentro de cada segmento de barra (estilo XM, fuente blanca)
+        for i in range(len(df)):
+            c_v, g_v, l_v = carbon[i], gas[i], liq[i]
+            if c_v >= 1.5:
+                ax.text(i, c_v / 2, f'{c_v:.1f}', ha='center', va='center',
+                        fontsize=5.5, color='white', fontweight='bold', zorder=5)
+            if g_v >= 1.5:
+                ax.text(i, c_v + g_v / 2, f'{g_v:.1f}', ha='center', va='center',
+                        fontsize=5.5, color='white', fontweight='bold', zorder=5)
+            if l_v >= 0.8:
+                ax.text(i, c_v + g_v + l_v / 2, f'{l_v:.1f}', ha='center', va='center',
+                        fontsize=5.5, color='white', fontweight='bold', zorder=5)
+            # Etiquetas sobre la línea negra (Despacho Programado), no sobre las barras
+            dp = desp_prog[i]
+            if dp > 0:
+                ax.text(i, dp + 0.5, f'{dp:.1f}', ha='center', va='bottom',
+                        fontsize=5.5, color='#000000', fontweight='bold', zorder=6)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=7)
+        ax.set_ylabel('GWh/día', fontsize=9)
+        ax.set_title('Despacho VS Generación Térmica', fontsize=12, fontweight='bold', pad=12)
+        ax.set_ylim(0, max(total.max(), df['desp_prog'].max()) * 1.15)
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.22), ncol=3, frameon=False, fontsize=7)
+        ax.grid(True, axis='y', alpha=0.25)
+        for spine in ['top', 'right']:
+            ax.spines[spine].set_visible(False)
+
+        mes = MESES_CORTO[ultima_fecha.month - 1].capitalize()
+        prom_mes = df[df['fecha'].dt.to_period('M') == ultima_fecha.to_period('M')]['total_real'].mean()
+        fig.text(0.5, 0.01,
+                 f"El día ({_fmt_fecha_corta(ultima_fecha)}), la Gen. Térmica fue de {ultima['total_real']:.2f} GWh/día "
+                 f"y el prom del mes ({mes}): {prom_mes:.1f} GWh/día",
+                 ha='center', fontsize=7, color='#666')
+        plt.tight_layout(rect=[0, 0.04, 1, 1])
+
+        filepath = str(CHARTS_DIR / f'despacho_termica_{date.today().isoformat()}.png')
+        fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        logger.info(f"[CHARTS] Despacho térmica: {filepath}")
+        return filepath, f"Despacho vs Gen. Térmica — {_fmt_fecha_corta(ultima_fecha)}", ultima_fecha.strftime('%Y-%m-%d')
+    except Exception as e:
+        logger.error(f"Error despacho térmica: {e}", exc_info=True)
+        return None, "", ""
+
+
+def generate_capacidad_embalse_chart(dias: int = 120) -> Tuple[Optional[str], str, str]:
+    """
+    Stacked area por región + % SIN + históricos.
+    % SIN se proyecta a GWh (pct/100 * yMax) en el eje izquierdo, igual que el slider.
+    """
+    try:
+        import math
+        from infrastructure.database.connection import get_connection
+
+        with get_connection() as conn:
+            areas_df = pd.read_sql("""
+                SELECT m.fecha, m.recurso, m.valor_gwh AS energia_gwh
+                FROM metrics m
+                WHERE m.metrica='VoluUtilDiarEner' AND m.entidad='Embalse'
+                  AND m.fecha >= CURRENT_DATE - %s * INTERVAL '1 day'
+                  AND m.fecha <= CURRENT_DATE - INTERVAL '1 day'
+                ORDER BY m.fecha, m.recurso
+            """, conn, params=(dias + 1,))
+            pct_df = pd.read_sql("""
+                SELECT fecha, valor_gwh * 100 AS pct_sin FROM metrics
+                WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema'
+                  AND fecha >= CURRENT_DATE - %s * INTERVAL '1 day'
+                  AND fecha <= CURRENT_DATE - INTERVAL '1 day'
+                ORDER BY fecha
+            """, conn, params=(dias + 1,))
+            hist_df = pd.read_sql("""
+                WITH pct AS (
+                  SELECT fecha, valor_gwh * 100 AS pct_sin FROM metrics
+                  WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema'
+                    AND fecha BETWEEN '2009-01-01' AND '2021-12-31'
+                )
+                SELECT EXTRACT(DOY FROM fecha)::int AS doy,
+                  AVG(CASE WHEN fecha BETWEEN '2009-01-01' AND '2021-12-31' THEN pct_sin END) AS h09,
+                  AVG(CASE WHEN fecha BETWEEN '2014-01-01' AND '2021-12-31' THEN pct_sin END) AS h14,
+                  AVG(CASE WHEN fecha BETWEEN '2020-01-01' AND '2021-12-31' THEN pct_sin END) AS h20
+                FROM pct GROUP BY 1 ORDER BY 1
+            """, conn)
+            cap_row = pd.read_sql("""
+                SELECT SUM(valor_gwh) AS capacidad_total FROM metrics
+                WHERE metrica='CapaUtilDiarEner' AND entidad='Embalse'
+                  AND fecha = (
+                    SELECT MAX(fecha) FROM metrics
+                    WHERE metrica='CapaUtilDiarEner' AND entidad='Embalse'
+                  )
+            """, conn)
+
+        if areas_df.empty or pct_df.empty:
+            return None, "", ""
+
+        capacidad_total = float(cap_row.iloc[0]['capacidad_total'] or 15500)
+        areas_df['fecha'] = pd.to_datetime(areas_df['fecha'])
+        pct_df['fecha'] = pd.to_datetime(pct_df['fecha'])
+        hist_map = {int(r['doy']): {'h09': r['h09'], 'h14': r['h14'], 'h20': r['h20']} for _, r in hist_df.iterrows()}
+
+        areas_df['region'] = areas_df['recurso'].apply(
+            lambda r: EMBALSE_REGION_XM.get((r or '').strip().upper(), 'Otros')
+        )
+        regional = areas_df[areas_df['region'] != 'Otros'].groupby(['fecha', 'region'], as_index=False)['energia_gwh'].sum()
+        fechas = pd.DatetimeIndex(sorted(set(regional['fecha']) | set(pct_df['fecha'])))
+
+        fig, ax1 = plt.subplots(figsize=(11, 5.5))
+        bottom = [0.0] * len(fechas)
+        for region in REGION_ORDER_CAP:
+            sub = regional[regional['region'] == region].set_index('fecha')
+            vals = [float(sub.loc[f, 'energia_gwh']) if f in sub.index else 0 for f in fechas]
+            ax1.fill_between(fechas, bottom, [b + v for b, v in zip(bottom, vals)],
+                             label=region, color=REGION_COLORS_CAP.get(region, '#999'), alpha=0.85)
+            bottom = [b + v for b, v in zip(bottom, vals)]
+
+        stack_max = max(bottom) if bottom else 0
+        y_max = math.ceil(max(stack_max, capacidad_total) / 2000) * 2000
+        ax1.set_ylabel('GWh', fontsize=9)
+        ax1.set_ylim(0, y_max)
+
+        def _pct_gwh(pct):
+            if pct is None or (isinstance(pct, float) and pd.isna(pct)):
+                return None
+            return float(pct) / 100.0 * y_max
+
+        pct_map = pct_df.set_index('fecha')['pct_sin']
+        pct_vals = [float(pct_map[f]) if f in pct_map.index else None for f in fechas]
+        sin_gwh = [_pct_gwh(v) for v in pct_vals]
+
+        h14_pct, h09_pct, h20_pct = [], [], []
+        for f in fechas:
+            row = hist_map.get(f.dayofyear, {})
+            h14_pct.append(float(row['h14']) if row.get('h14') is not None and pd.notna(row.get('h14')) else None)
+            h09_pct.append(float(row['h09']) if row.get('h09') is not None and pd.notna(row.get('h09')) else None)
+            h20_pct.append(float(row['h20']) if row.get('h20') is not None and pd.notna(row.get('h20')) else None)
+
+        ax1.plot(fechas, [_pct_gwh(v) for v in h14_pct], color='#F59E0B', linestyle='--', linewidth=1.2, label='Hist.(2014-2021)', zorder=8)
+        ax1.plot(fechas, [_pct_gwh(v) for v in h09_pct], color='#2563EB', linestyle='--', linewidth=1.2, label='Hist.(2009-2021)', zorder=8)
+        ax1.plot(fechas, [_pct_gwh(v) for v in h20_pct], color='#7E22CE', linestyle=':', linewidth=1.2, label='Hist.(2020-2021)', zorder=8)
+        ax1.plot(fechas, sin_gwh, color='#F97316', linewidth=1.8, marker='o', markersize=4,
+                 label='% SIN', zorder=10)
+
+        for i, f in enumerate(fechas):
+            if i % 7 != 0 and i != len(fechas) - 1:
+                continue
+            v, gwh = pct_vals[i], sin_gwh[i]
+            if v is not None and gwh is not None:
+                ax1.annotate(
+                    f'{v:.2f}', xy=(f, gwh), xytext=(0, 8),
+                    textcoords='offset points', ha='center', va='bottom',
+                    fontsize=6.5, fontweight='bold', color='#444444', zorder=11,
+                )
+
+        ax2 = ax1.twinx()
+        ax2.set_ylabel('% Capacidad', fontsize=9)
+        ax2.set_ylim(0, 100)
+
+        ax1.xaxis.set_major_locator(mdates.DayLocator(interval=7))
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
+        plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=6.5)
+        ax1.set_title('Capacidad Embalse', fontsize=12, fontweight='bold', pad=10)
+        ax1.legend(loc='upper center', bbox_to_anchor=(0.5, 1.18), ncol=4, frameon=False, fontsize=6.5)
+        ax1.grid(True, axis='y', alpha=0.2)
+        plt.tight_layout()
+
+        filepath = str(CHARTS_DIR / f'capacidad_embalse_{date.today().isoformat()}.png')
+        fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        ultima_fecha = pct_df['fecha'].max()
+        logger.info(f"[CHARTS] Capacidad embalse: {filepath} (y_max={y_max}, cap={capacidad_total:.0f})")
+        return filepath, f"Capacidad Embalse — {ultima_fecha.strftime('%d/%m/%Y')}", ultima_fecha.strftime('%Y-%m-%d')
+    except Exception as e:
+        logger.error(f"Error capacidad embalse: {e}", exc_info=True)
+        return None, "", ""
+
+
+def generate_aportes_demanda_chart() -> Tuple[Optional[str], str, str]:
+    """Aportes Energía vs Demanda Nacional + medias."""
+    try:
+        from infrastructure.database.connection import get_connection
+
+        with get_connection() as conn:
+            df = pd.read_sql("""
+                SELECT fecha,
+                  MAX(CASE WHEN metrica='AporEner' THEN valor_gwh END) AS aportes,
+                  MAX(CASE WHEN metrica='AporEnerMediHist' THEN valor_gwh END) AS aportes_medios,
+                  MAX(CASE WHEN metrica='DemaReal' THEN valor_gwh END) AS demanda
+                FROM metrics WHERE entidad='Sistema' AND recurso='Sistema'
+                  AND metrica IN ('AporEner','AporEnerMediHist','DemaReal')
+                  AND fecha >= CURRENT_DATE - INTERVAL '130 days'
+                GROUP BY fecha HAVING MAX(CASE WHEN metrica='DemaReal' THEN valor_gwh END) IS NOT NULL
+                  AND MAX(CASE WHEN metrica='AporEner' THEN valor_gwh END) IS NOT NULL
+                ORDER BY fecha DESC LIMIT 120
+            """, conn)
+
+        if df.empty or len(df) < 10:
+            return None, "", ""
+
+        df['fecha'] = pd.to_datetime(df['fecha'])
+        df = df.sort_values('fecha')
+        df = df[df['demanda'] >= df['demanda'].median() * 0.4]
+        df = df.tail(90)
+        if len(df) < 10:
+            return None, "", ""
+
+        demanda_media = float(df['demanda'].mean())
+        ultima = df.iloc[-1]
+        ultima_fecha = df['fecha'].max()
+
+        fig, ax = plt.subplots(figsize=(11, 5.5))
+        ax.fill_between(df['fecha'], df['aportes'], alpha=0.15, color='#2196F3')
+        ax.plot(df['fecha'], df['aportes'], color='#2196F3', linewidth=1.5, linestyle='--', label='Aportes Energía')
+        ax.plot(df['fecha'], df['aportes_medios'], color='#1565C0', linewidth=2, drawstyle='steps-post', label='Aportes Medios')
+        ax.plot(df['fecha'], df['demanda'], color='#2E7D32', linewidth=2, label='Demanda Nacional')
+        ax.axhline(demanda_media, color='#FF9800', linewidth=1.8, label='Demanda Media')
+        ax.set_ylabel('GWh/día', fontsize=9)
+        ax.set_title('Aportes vs Demanda', fontsize=12, fontweight='bold', pad=10)
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.14), ncol=4, frameon=False, fontsize=8)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=7)
+        ax.grid(True, alpha=0.25)
+        for spine in ['top', 'right']:
+            ax.spines[spine].set_visible(False)
+        plt.tight_layout()
+
+        filepath = str(CHARTS_DIR / f'aportes_demanda_{date.today().isoformat()}.png')
+        fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        logger.info(f"[CHARTS] Aportes vs demanda: {filepath}")
+        return filepath, f"Aportes vs Demanda — {ultima_fecha.strftime('%d/%m/%Y')}", ultima_fecha.strftime('%Y-%m-%d')
+    except Exception as e:
+        logger.error(f"Error aportes vs demanda: {e}", exc_info=True)
+        return None, "", ""
+
+
+def get_aportes_demanda_kpis() -> dict:
+    """KPIs estilo XM para la sección Aportes vs Demanda (6 valores con fechas)."""
+    try:
+        from infrastructure.database.connection import get_connection
+
+        with get_connection() as conn:
+            df = pd.read_sql("""
+                SELECT fecha,
+                  MAX(CASE WHEN metrica='AporEner' THEN valor_gwh END) AS aportes,
+                  MAX(CASE WHEN metrica='AporEnerMediHist' THEN valor_gwh END) AS aportes_medios,
+                  MAX(CASE WHEN metrica='DemaReal' THEN valor_gwh END) AS demanda
+                FROM metrics WHERE entidad='Sistema' AND recurso='Sistema'
+                  AND metrica IN ('AporEner','AporEnerMediHist','DemaReal')
+                  AND fecha >= CURRENT_DATE - INTERVAL '130 days'
+                GROUP BY fecha
+                HAVING MAX(CASE WHEN metrica='DemaReal' THEN valor_gwh END) IS NOT NULL
+                  AND MAX(CASE WHEN metrica='AporEner' THEN valor_gwh END) IS NOT NULL
+                ORDER BY fecha DESC LIMIT 120
+            """, conn)
+
+        if df.empty:
+            return {}
+
+        df['fecha'] = pd.to_datetime(df['fecha'])
+        df = df.sort_values('fecha')
+        df = df[df['demanda'] >= df['demanda'].median() * 0.4]
+        if df.empty:
+            return {}
+
+        ultima = df.iloc[-1]
+        ultima_fecha = ultima['fecha']
+        mes_mask = df['fecha'].dt.to_period('M') == ultima_fecha.to_period('M')
+        mes_df = df[mes_mask]
+
+        aportes_dia = float(ultima['aportes'] or 0)
+        aportes_med = float(ultima['aportes_medios'] or df['aportes_medios'].mean() or 0)
+        demanda_dia = float(ultima['demanda'] or 0)
+        demanda_media = float(df['demanda'].mean() or 0)
+        aportes_mes = float(mes_df['aportes'].mean() or 0)
+        demanda_mes = float(mes_df['demanda'].mean() or 0)
+        hist_media_aportes = float(df['aportes_medios'].mean() or aportes_med)
+
+        pct_dia = (aportes_dia / aportes_med * 100) if aportes_med else 0
+        pct_mes = (aportes_mes / hist_media_aportes * 100) if hist_media_aportes else 0
+
+        return {
+            'fecha': ultima_fecha,
+            'fecha_label': _fmt_fecha_corta(ultima_fecha),
+            'aportes_dia': aportes_dia,
+            'aportes_medios': aportes_med,
+            'pct_aporte_dia': pct_dia,
+            'aportes_mes': aportes_mes,
+            'pct_aporte_mes': pct_mes,
+            'hist_media_aportes': hist_media_aportes,
+            'demanda_dia': demanda_dia,
+            'demanda_mes': demanda_mes,
+            'demanda_media': demanda_media,
+        }
+    except Exception as e:
+        logger.error(f"Error KPIs aportes vs demanda: {e}", exc_info=True)
+        return {}
+
+
+# ═══════════════════════════════════════════════════════════
 # Generador combinado
 # ═══════════════════════════════════════════════════════════
 
@@ -930,8 +1336,7 @@ def generate_all_informe_charts() -> dict:
 
     Returns
     -------
-    dict  con claves 'generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos'.
-    Cada valor es (filepath | None, caption, fecha_str).
+    dict con claves de gráficos existentes + despacho_termica, capacidad_embalse, aportes_demanda.
     """
     results = {}
     for key, fn in [
@@ -941,6 +1346,9 @@ def generate_all_informe_charts() -> dict:
         ('demanda', generate_demand_chart),
         ('precio_multi', generate_price_multi_chart),
         ('aportes_hidricos', generate_aportes_hidricos_chart),
+        ('despacho_termica', generate_despacho_termica_chart),
+        ('capacidad_embalse', generate_capacidad_embalse_chart),
+        ('aportes_demanda', generate_aportes_demanda_chart),
     ]:
         try:
             results[key] = fn()

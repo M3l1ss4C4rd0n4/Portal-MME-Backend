@@ -2,7 +2,7 @@
 Tareas Celery para push notifications de la app EnergIA.
 
 beat_schedule entry (registrado en tasks/__init__.py):
-  'energia-app-informe-8am' → cada día a las 8:00 AM (hora Colombia)
+  'energia-app-informe-830am' → cada día a las 8:35 AM (hora Colombia)
 
 Flujo:
   1. Busca en BD los dispositivos activos con FCM token
@@ -178,7 +178,7 @@ def _deactivate_failed_tokens(tokens: List[str], responses: list) -> None:
 )
 def enviar_informe_diario_push(self):
     """
-    Tarea diaria 8:00 AM (hora Colombia):
+    Tarea diaria 8:35 AM (hora Colombia):
     Genera el informe ejecutivo de energía y lo envía como push FCM
     a todos los dispositivos EnergIA registrados.
     """

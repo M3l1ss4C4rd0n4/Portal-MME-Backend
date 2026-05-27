@@ -447,18 +447,69 @@ class LibreNoticiasHandlerMixin:
             return None
 
     @handle_service_error
+    async def _handle_gestion_sector(
+        self,
+        parameters: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """Submenú: métricas XM del sector (estado, predicciones, anomalías)."""
+        data = {
+            "titulo": "Gestión del sector energético",
+            "instruccion": (
+                "Indicadores del sistema eléctrico (datos XM): generación, "
+                "precio de bolsa y embalses."
+            ),
+            "opciones": [
+                {"id": "estado_actual", "titulo": "Estado actual", "emoji": "📊"},
+                {"id": "predicciones_sector", "titulo": "Predicciones XM", "emoji": "🔮"},
+                {"id": "anomalias_sector", "titulo": "Anomalías detectadas", "emoji": "🚨"},
+            ],
+            "opcion_regresar": {
+                "id": "menu",
+                "titulo": "🔙 Regresar al menú principal",
+            },
+        }
+        return data, []
+
+    @handle_service_error
+    async def _handle_mas_opciones(
+        self,
+        parameters: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """Submenú: noticias e informe complementario."""
+        data = {
+            "titulo": "Más opciones",
+            "instruccion": "Selecciona una opción:",
+            "opciones": [
+                {"id": "noticias_sector", "titulo": "Noticias del sector", "emoji": "📰"},
+                {"id": "mas_informacion", "titulo": "Pregunta libre", "emoji": "❓"},
+            ],
+            "opcion_regresar": {
+                "id": "menu",
+                "titulo": "🔙 Regresar al menú principal",
+            },
+        }
+        return data, []
+
+    @handle_service_error
     async def _handle_menu(
         self,
         parameters: Dict[str, Any]
     ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
-        """Handler: Menú principal del chatbot (5 opciones)."""
+        """Handler: Menú principal del chatbot (7 capítulos del portal)."""
         data = {
+            "portal_nombre": "Portal de Dirección de Despacho del Viceministro de Minas y Energía",
+            "portal_nombre_corto": "Portal de Dirección MME",
             "mensaje_bienvenida": (
-                "¡Hola! 👋 Soy el asistente del *Portal Energético* del "
-                "Ministerio de Minas y Energía de Colombia.\n\n"
-                "Puedo informarte sobre los indicadores clave del sector "
-                "energético. También puedes escribirme cualquier pregunta "
-                "en cualquier momento."
+                "¡Hola! 👋 Soy el asistente del *Portal de Dirección de Despacho "
+                "del Viceministro de Minas y Energía*.\n\n"
+                "Consulto los mismos tableros del portal, organizados en capítulos:\n\n"
+                "📊 *Cap. 1 — Gestión del sector (XM):* estado, predicciones y anomalías\n"
+                "🏘️ *Cap. 2 — Comunidades:* implementadas, Contratos OR, Fenoge y Colombia Solar\n"
+                "📋 *Cap. 3 — Subsidios:* déficit histórico, pagos y validaciones\n"
+                "🔍 *Cap. 4 — Supervisión* de contratos MinMinas\n"
+                "💼 *Cap. 5 — Ejecución presupuestal* DEE\n"
+                "📄 *Cap. 6 — Informe ejecutivo* PDF integrado\n\n"
+                "También puedes escribirme en cualquier momento."
             ),
             "indicadores_clave": [
                 "⚡ Generación Total del Sistema (GWh)",
@@ -468,62 +519,101 @@ class LibreNoticiasHandlerMixin:
             "menu_principal": [
                 {
                     "numero": 1,
-                    "id": "estado_actual",
-                    "titulo": "Estado actual del sector",
+                    "id": "gestion_sector",
+                    "titulo": "Gestión del sector",
                     "emoji": "📊",
-                    "descripcion": "Muestra las 3 fichas de indicadores clave: Generación Total, Precio de Bolsa y Porcentaje de Embalses con sus valores actuales.",
-                },
-                {
-                    "numero": 2,
-                    "id": "predicciones_sector",
-                    "titulo": "Predicciones del sector",
-                    "emoji": "🔮",
-                    "descripcion": "Predicciones de los 3 indicadores clave. Puedes elegir el horizonte temporal.",
+                    "descripcion": (
+                        "Métricas XM: estado actual, predicciones y anomalías "
+                        "de generación, precio de bolsa y embalses."
+                    ),
                     "sub_menu": {
-                        "instruccion": "¿Para qué periodo deseas las predicciones?",
-                        "opciones_horizonte": [
-                            {"numero": 1, "id": "1_semana", "titulo": "Una semana", "dias": 7},
-                            {"numero": 2, "id": "1_mes", "titulo": "Un mes", "dias": 30},
-                            {"numero": 3, "id": "6_meses", "titulo": "Los próximos 6 meses", "dias": 180},
-                            {"numero": 4, "id": "1_ano", "titulo": "El próximo año", "dias": 365},
-                            {"numero": 5, "id": "personalizado", "titulo": "Fecha personalizada", "formato": "DD-MM-AAAA", "descripcion": "Escribe la fecha exacta en formato día-mes-año"},
+                        "instruccion": "Indicadores del sector energético (datos XM):",
+                        "opciones": [
+                            {
+                                "numero": 1,
+                                "id": "estado_actual",
+                                "titulo": "Estado actual",
+                                "emoji": "📊",
+                            },
+                            {
+                                "numero": 2,
+                                "id": "predicciones_sector",
+                                "titulo": "Predicciones XM",
+                                "emoji": "🔮",
+                            },
+                            {
+                                "numero": 3,
+                                "id": "anomalias_sector",
+                                "titulo": "Anomalías detectadas",
+                                "emoji": "🚨",
+                            },
                         ],
                     },
                 },
                 {
+                    "numero": 2,
+                    "id": "comunidades_menu",
+                    "titulo": "Comunidades energéticas",
+                    "emoji": "🏘️",
+                    "descripcion": (
+                        "Cap. 2: implementadas, Contratos OR, Fenoge 1.0/1.1 "
+                        "y Colombia Solar (curva S)."
+                    ),
+                },
+                {
                     "numero": 3,
-                    "id": "anomalias_sector",
-                    "titulo": "Anomalías detectadas del sector",
-                    "emoji": "🚨",
-                    "descripcion": "Anomalías en el estado actual de los 3 indicadores clave y anomalías en las predicciones disponibles.",
+                    "id": "subsidios_menu",
+                    "titulo": "Subsidios",
+                    "emoji": "📋",
+                    "descripcion": (
+                        "Cap. 3: déficit histórico, detalle de pagos FSSRI/FOES "
+                        "y validaciones de cuentas."
+                    ),
                 },
                 {
                     "numero": 4,
-                    "id": "noticias_sector",
-                    "titulo": "Noticias del sector",
-                    "emoji": "📰",
-                    "descripcion": "Las 3 noticias más relevantes sobre el sector energético colombiano.",
+                    "id": "supervision_menu",
+                    "titulo": "Supervisión",
+                    "emoji": "🔍",
+                    "descripcion": "Cap. 4: KPIs contratos MinMinas — avance físico/financiero y usuarios.",
                 },
                 {
                     "numero": 5,
-                    "id": "mas_informacion",
-                    "titulo": "Más información del sector energético",
+                    "id": "presupuesto_menu",
+                    "titulo": "Ejecución presupuestal",
+                    "emoji": "💼",
+                    "descripcion": "Cap. 5: totales DEE y detalle por proyecto.",
+                },
+                {
+                    "numero": 6,
+                    "id": "informe_ejecutivo",
+                    "titulo": "Informe ejecutivo",
                     "emoji": "📋",
-                    "descripcion": "Accede al informe ejecutivo completo o haz una pregunta específica.",
+                    "descripcion": (
+                        "Cap. 6: informe PDF con todos los capítulos del portal "
+                        "más noticias del sector."
+                    ),
+                },
+                {
+                    "numero": 7,
+                    "id": "mas_opciones",
+                    "titulo": "Más opciones",
+                    "emoji": "➕",
+                    "descripcion": "Noticias del sector y pregunta libre.",
                     "sub_menu": {
-                        "instruccion": "¿Qué información necesitas?",
+                        "instruccion": "Selecciona una opción:",
                         "opciones": [
                             {
                                 "numero": 1,
-                                "id": "informe_ejecutivo",
-                                "titulo": "Informe ejecutivo completo",
-                                "descripcion": "Todas las métricas del sector con KPIs, predicciones, análisis estadístico y recomendaciones técnicas.",
+                                "id": "noticias_sector",
+                                "titulo": "Noticias del sector",
+                                "emoji": "📰",
                             },
                             {
                                 "numero": 2,
-                                "id": "pregunta_libre",
-                                "titulo": "Preguntar algo específico",
-                                "descripcion": "Escribe tu pregunta y la IA te responderá con datos del sector energético.",
+                                "id": "mas_informacion",
+                                "titulo": "Pregunta libre",
+                                "emoji": "❓",
                             },
                         ],
                     },

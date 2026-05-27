@@ -118,7 +118,17 @@ def _user_name(user) -> str:
 
 
 def _menu_kb():
-    """Teclado del menú de subsidios."""
+    """Teclado principal Cap. 3 — subsidios."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📉 Déficit histórico", callback_data="sub:deficit"),
+         InlineKeyboardButton("✅ Validaciones", callback_data="sub:validaciones")],
+        [InlineKeyboardButton("💳 Detalle de pagos", callback_data="sub:pagos_menu")],
+        [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")],
+    ])
+
+
+def _pagos_menu_kb():
+    """Submenú detalle de pagos (8 consultas)."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💰 Deuda total", callback_data="sub:deuda"),
          InlineKeyboardButton("🏢 Deuda empresa", callback_data="sub:deuda_empresa")],
@@ -128,14 +138,22 @@ def _menu_kb():
          InlineKeyboardButton("📈 % Pagado", callback_data="sub:pct_pagado")],
         [InlineKeyboardButton("🏦 Deuda FSSRI/FOES", callback_data="sub:deuda_fondo"),
          InlineKeyboardButton("💵 Pagado por año", callback_data="sub:pagado_anio")],
-        [InlineKeyboardButton("🔙 Menú principal", callback_data="intent:menu")],
+        [InlineKeyboardButton("🔙 Subsidios", callback_data="sub:menu"),
+         InlineKeyboardButton("🏠 Menú principal", callback_data="intent:menu")],
     ])
 
 
 def _back_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 Menú subsidios", callback_data="sub:menu"),
+        [InlineKeyboardButton("🔙 Subsidios", callback_data="sub:menu"),
          InlineKeyboardButton("🏠 Menú principal", callback_data="intent:menu")],
+    ])
+
+
+def _pagos_back_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Detalle pagos", callback_data="sub:pagos_menu"),
+         InlineKeyboardButton("🔙 Subsidios", callback_data="sub:menu")],
     ])
 
 
@@ -840,6 +858,66 @@ def q_pagado_anio(anio: int = None) -> str:
         return '\n'.join(lines)
 
 
+def q_deficit_historico() -> str:
+    rows = _query("""
+        SELECT anio, deficit_anual, deficit_acumulado, apropiacion_pgn
+        FROM subsidios.deficit_historico
+        ORDER BY anio DESC
+        LIMIT 8
+    """)
+    if not rows:
+        return "📉 *DÉFICIT HISTÓRICO*\n\nSin datos disponibles."
+
+    rows = list(reversed(rows))
+    ult = rows[-1]
+    lines = [
+        "📉 *DÉFICIT HISTÓRICO DE SUBSIDIOS*",
+        f"Cap. 3 — evolución anual del déficit",
+        "",
+        f"*Déficit acumulado ({ult['anio']}):* {_fmt_money(ult.get('deficit_acumulado'))}",
+        f"Apropiación PGN: {_fmt_money(ult.get('apropiacion_pgn'))}",
+        "",
+        "*Últimos años:*",
+    ]
+    for r in rows[-5:]:
+        lines.append(
+            f"• {r['anio']}: {_fmt_money(r.get('deficit_anual'))} "
+            f"(acum. {_fmt_money(r.get('deficit_acumulado'))})"
+        )
+    return "\n".join(lines)
+
+
+def q_validaciones_resumen() -> str:
+    resumen = _query("""
+        SELECT estado_validacion_organizado AS estado, COUNT(*) AS total
+        FROM subsidios.subsidios_validaciones
+        WHERE area IN ('SIN', 'ZNI') AND estado_validacion_organizado IS NOT NULL
+        GROUP BY estado_validacion_organizado
+        ORDER BY total DESC
+    """)
+    n_prest = _scalar("""
+        SELECT COUNT(DISTINCT nombre_prestador)
+        FROM subsidios.subsidios_validaciones WHERE area IN ('SIN', 'ZNI')
+    """) or 0
+    fecha = _scalar("SELECT MAX(fecha_actualizacion) FROM subsidios.subsidios_validaciones")
+    fecha_str = fecha.strftime('%d/%m/%Y') if fecha else 'N/D'
+    total = sum(int(r['total'] or 0) for r in resumen)
+
+    lines = [
+        "✅ *VALIDACIONES DE SUBSIDIOS*",
+        f"📅 Corte: {fecha_str}",
+        "",
+        f"*Registros SIN/ZNI:* {total:,}".replace(',', '.'),
+        f"*Prestadores:* {int(n_prest):,}".replace(',', '.'),
+        "",
+        "*Por estado:*",
+    ]
+    for r in resumen[:8]:
+        pct = round(int(r['total'] or 0) / total * 100, 1) if total else 0
+        lines.append(f"• {r['estado']}: {int(r['total']):,} ({pct}%)".replace(',', '.'))
+    return "\n".join(lines)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SEARCH: Buscar empresa por nombre (fuzzy)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1053,9 +1131,9 @@ async def cmd_subsidios(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _audit(user.id, _user_name(user), '/subsidios')
 
     text = (
-        "📋 *MÓDULO DE SUBSIDIOS*\n"
-        "Base de Subsidios DDE — Ministerio de Minas y Energía\n\n"
-        "Selecciona la consulta que deseas realizar:"
+        "📋 *SUBSIDIOS — Cap. 3*\n"
+        "Déficit histórico · Detalle de pagos · Validaciones\n\n"
+        "Selecciona la sección:"
     )
     await _safe_send(update.effective_chat, text, _menu_kb())
 
@@ -1183,35 +1261,48 @@ async def handle_subsidios_callback(query, user, chat, data: str, context):
 
     if action == 'menu':
         text = (
-            "📋 *MÓDULO DE SUBSIDIOS*\n"
-            "Base de Subsidios DDE — Ministerio de Minas y Energía\n\n"
-            "Selecciona la consulta que deseas realizar:"
+            "📋 *SUBSIDIOS — Cap. 3*\n"
+            "Déficit histórico · Detalle de pagos · Validaciones\n\n"
+            "Selecciona la sección:"
         )
         kb = _menu_kb()
+    elif action == 'pagos_menu':
+        text = (
+            "💳 *DETALLE DE PAGOS*\n"
+            "Consultas FSSRI/FOES — deuda, resoluciones y pagos\n\n"
+            "Selecciona la consulta:"
+        )
+        kb = _pagos_menu_kb()
+    elif action == 'deficit':
+        text = q_deficit_historico()
+        kb = _back_kb()
+    elif action == 'validaciones':
+        text = q_validaciones_resumen()
+        kb = _back_kb()
     elif action == 'deuda':
         text = q_deuda_total()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     elif action == 'deuda_empresa':
         text = q_deuda_empresa()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     elif action == 'trimestre':
         text = q_trimestre_pagado()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     elif action == 'resoluciones':
         text = q_resoluciones_anio()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     elif action == 'estado_res':
         text = q_estado_resoluciones()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     elif action == 'pct_pagado':
         text = q_porcentaje_pagado()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     elif action == 'deuda_fondo':
         text = q_deuda_fondo()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     elif action == 'pagado_anio':
         text = q_pagado_anio()
-        kb = _back_kb()
+        kb = _pagos_back_kb()
     else:
         text = "⚠️ Opción no reconocida."
         kb = _menu_kb()

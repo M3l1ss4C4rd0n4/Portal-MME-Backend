@@ -402,11 +402,8 @@ def sync_sharepoint_xlsx(self, nombres: list = None, forzar: bool = False):
     detecta cambios por hash SHA-256 y actualiza la base de datos PostgreSQL
     con la información de los archivos que hayan cambiado.
 
-    Archivos configurados (ver etl/etl_sharepoint_sync.py):
-      - Matriz_Subsidios_DEE     → tablas subsidios_pagos / empresas / mapa
-      - Matriz_Ejecucion_2026    → schema presupuesto
-      - Matriz_Subsidios_KPIs    → schema subsidios_kpis
-      - Seguimiento_Contratos_CE → schema contratos_or
+    Programación automática: cron 4:00 AM + watcher cada 5 min (no Celery).
+    Archivos configurados (ver etl/etl_sharepoint_sync.py), incluye Colombia_Solar_OR.
 
     Args:
         nombres: Lista de nombres específicos a sincronizar (None = todos los activos).
@@ -471,4 +468,176 @@ def refresh_news_cache(self):
         return {"status": "success", "cache_invalidated": bool(deleted)}
     except Exception as exc:
         logger.error("[REFRESH_NEWS] Error invalidando cache: %s", exc)
+        raise self.retry(exc=exc)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Senda de Referencia CREG (Resolución CREG 209 de 2020)
+# ──────────────────────────────────────────────────────────────────────────
+
+@app.task(
+    name='tasks.etl_tasks.refresh_precios_escasez',
+    bind=True,
+    base=SafeETLTask,
+)
+def refresh_precios_escasez(self):
+    """
+    Verifica y refresca los precios de escasez vigentes (PEI/PE/PES) del mes
+    actual en la tabla `sector_energetico.precios_escasez_mensuales`.
+
+    Estrategia:
+      1. Si ya existe registro del mes actual, no hace nada (OK).
+      2. Si no existe, intenta inferir PE a partir de PrecEsca en la tabla metrics
+         (la métrica que sí publica XM vía API), y proporcionar PEI/PES
+         según las relaciones de la Resolución CREG 101 066/2024.
+      3. Si tampoco hay PrecEsca en metrics, registra ALERTA y mantiene los
+         valores vigentes (el sistema usará el mes anterior como fallback).
+
+    Esta tarea se ejecuta el día 1 de cada mes para mantener los valores
+    actualizados. Para ingreso manual oficial, ver script:
+        scripts/actualizar_precios_escasez.py
+    """
+    try:
+        from datetime import date
+        from core.config import settings
+        import psycopg2
+
+        hoy = date.today()
+        anio, mes = hoy.year, hoy.month
+
+        params = {
+            'host': settings.POSTGRES_HOST, 'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB, 'user': settings.POSTGRES_USER,
+        }
+        if settings.POSTGRES_PASSWORD:
+            params['password'] = settings.POSTGRES_PASSWORD
+        conn = psycopg2.connect(**params)
+        cur = conn.cursor()
+
+        # 1) ¿Ya existe registro del mes actual?
+        cur.execute("""
+            SELECT pei, pe, pes
+            FROM sector_energetico.precios_escasez_mensuales
+            WHERE anio = %s AND mes = %s
+        """, (anio, mes))
+        existe = cur.fetchone()
+
+        if existe:
+            logger.info(
+                "[PRECIOS_ESCASEZ] Mes %s-%02d ya cargado (PEI=%.2f, PE=%.2f, PES=%.2f)",
+                anio, mes, existe[0], existe[1], existe[2]
+            )
+            return {'status': 'ok_already_loaded', 'anio': anio, 'mes': mes}
+
+        # 2) Inferir desde PrecEsca de XM (PE)
+        cur.execute("""
+            SELECT AVG(valor_gwh) FROM sector_energetico.metrics
+            WHERE metrica = 'PrecEsca' AND entidad = 'Sistema' AND recurso = 'Sistema'
+              AND EXTRACT(YEAR FROM fecha) = %s
+              AND EXTRACT(MONTH FROM fecha) = %s
+        """, (anio, mes))
+        pe_avg = cur.fetchone()[0]
+
+        if pe_avg is None:
+            # Sin datos: alertar y dejar al sistema usar el mes anterior
+            logger.warning(
+                "[PRECIOS_ESCASEZ] Sin PrecEsca XM para %s-%02d. "
+                "El sistema usará el mes anterior como referencia. "
+                "Verificar https://www.xm.com.co/transacciones/cargo-por-confiabilidad/precio-de-bolsa-y-escasez",
+                anio, mes,
+            )
+            cur.close()
+            conn.close()
+            return {'status': 'sin_datos_xm', 'anio': anio, 'mes': mes}
+
+        # Relaciones CREG 101 066/2024 derivadas de enero 2026 (referencia)
+        # PEI/PE ≈ 0.555 ; PES/PE ≈ 1.406
+        pei_inf = float(pe_avg) * 0.555
+        pe_inf = float(pe_avg)
+        pes_inf = float(pe_avg) * 1.406
+
+        cur.execute("""
+            INSERT INTO sector_energetico.precios_escasez_mensuales
+                (anio, mes, pei, pe, pes, fuente)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (anio, mes) DO UPDATE SET
+                pei = EXCLUDED.pei, pe = EXCLUDED.pe, pes = EXCLUDED.pes,
+                fuente = EXCLUDED.fuente, actualizado_en = NOW()
+        """, (
+            anio, mes, pei_inf, pe_inf, pes_inf,
+            'Inferido de PrecEsca XM + proporciones CREG 101 066/2024',
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        logger.info(
+            "[PRECIOS_ESCASEZ] Cargado %s-%02d (PEI=%.2f, PE=%.2f, PES=%.2f) "
+            "inferido de PrecEsca XM",
+            anio, mes, pei_inf, pe_inf, pes_inf,
+        )
+        return {
+            'status': 'success_inferido',
+            'anio': anio, 'mes': mes,
+            'pei': pei_inf, 'pe': pe_inf, 'pes': pes_inf,
+        }
+    except Exception as exc:
+        logger.error("[PRECIOS_ESCASEZ] Error: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@app.task(
+    name='tasks.etl_tasks.refresh_senda_referencia',
+    bind=True,
+    base=SafeETLTask,
+)
+def refresh_senda_referencia(self):
+    """
+    Verifica y refresca la Senda de Referencia oficial XM/CND en la BD.
+
+    Esta tarea NO descarga archivos automáticamente (XM publica la senda como
+    XLSX al inicio de cada estación, requiere descarga manual). Pero sí:
+      - Re-aplica los valores semilla oficiales conocidos (idempotente).
+      - Detecta si la última publicación es muy antigua y registra alerta.
+      - Es la base para futura integración con FTPS de XM cuando se
+        configuren las credenciales.
+
+    Fuente: Resolución CREG 209 de 2020. Publicación oficial XM:
+      https://www.xm.com.co/resoluciones/operacion-y-mercado/resolucion-creg-209-de-2020-condicion-del-sistema
+
+    Para importar una nueva senda manualmente:
+      python3 etl/etl_senda_referencia.py --xlsx archivo.xlsx --estacion INVIERNO
+    """
+    try:
+        from etl.etl_senda_referencia import cargar_valores_semilla, info_senda
+
+        # Re-aplicar valores oficiales conocidos (idempotente)
+        n = cargar_valores_semilla()
+        info = info_senda()
+
+        # Alertar si la última publicación es muy antigua (> 7 meses sin actualizar)
+        from datetime import datetime, date
+        if info.get('ultima_publicacion_xm'):
+            ult_publ = datetime.strptime(
+                info['ultima_publicacion_xm'][:10], '%Y-%m-%d'
+            ).date()
+            dias_desde_publicacion = (date.today() - ult_publ).days
+            if dias_desde_publicacion > 210:  # > 7 meses
+                logger.warning(
+                    "[SENDA] Última publicación XM tiene %d días. "
+                    "Verificar si XM publicó nueva senda en %s",
+                    dias_desde_publicacion,
+                    'https://www.xm.com.co/resoluciones/operacion-y-mercado/'
+                    'resolucion-creg-209-de-2020-condicion-del-sistema',
+                )
+                info['warning_publicacion_antigua'] = True
+
+        logger.info(
+            "[SENDA] Refresh OK — %d valores oficiales sembrados, "
+            "última publicación: %s",
+            n, info.get('ultima_publicacion_xm'),
+        )
+        return {'status': 'success', 'info': info, 'semillas_sembradas': n}
+    except Exception as exc:
+        logger.error("[SENDA] Error refrescando senda: %s", exc)
         raise self.retry(exc=exc)

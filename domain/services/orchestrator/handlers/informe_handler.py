@@ -185,11 +185,26 @@ class InformeHandlerMixin:
                     "fuentes_experimentales": ["PRECIO_BOLSA"],
                 },
                 "notas_negocio": {
+                    "marco_regulatorio": (
+                        "Umbrales alineados con Estatuto CREG 026/2014, Res. CREG 209/2020 "
+                        "(Índice NE / Senda de Referencia) y Res. CREG 101 066/2024 (PEI/PE/PES)."
+                    ),
                     "umbrales_embalses": {
-                        "critico_bajo": 30,
-                        "alerta_bajo": 40,
-                        "optimo_min": 50,
-                        "optimo_max": 85,
+                        "indice": "NE — Resolución CREG 209/2020",
+                        "superior_absoluto_pct": 70,
+                        "senda_referencia": "Consulta dinámica XM/CND (senda mensual/diaria)",
+                        "niveles": ["SUPERIOR", "ALERTA", "INFERIOR"],
+                    },
+                    "umbrales_aportes": {
+                        "indice": "HSIN — Resolución CREG 026/2014 art. 2",
+                        "ventana_semanas": 4,
+                        "normal_pct": 90,
+                        "deficit_severo_pct": 70,
+                        "critico_historico_pct": 60,
+                    },
+                    "umbrales_precio": {
+                        "indice": "PBP — Resolución CREG 026/2014 art. 2",
+                        "niveles_escasez": "PEI / PE / PES — Res. CREG 101 066/2024",
                     },
                     "umbrales_anomalias": {
                         "generacion_embalses": {"normal": "<10%", "alerta": "10-25%", "critico": ">25%"},

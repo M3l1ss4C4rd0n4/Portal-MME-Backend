@@ -509,12 +509,18 @@ def _load_sheets_to_schema(
     truncate: bool = True,
     header_overrides: dict | None = None,
     fecha_carga_override: datetime | None = None,
+    sheets_exclude: set[str] | frozenset[str] | None = None,
+    skip_duplicate_tables: bool = True,
+    drop_orphan_tables: bool = False,
 ) -> dict:
     """
     Carga todas las hojas no-vacías de un Excel al schema indicado usando
     el loader genérico de etl_nuevos_dashboards.
     Retorna dict {hoja: filas_cargadas}.
     header_overrides: {nombre_hoja: fila_encabezado} para hojas con filas vacías iniciales.
+    sheets_exclude: hojas a omitir (duplicados, vacías, auxiliares).
+    skip_duplicate_tables: si dos hojas mapean al mismo nombre de tabla, carga solo la primera.
+    drop_orphan_tables: elimina tablas del schema que ya no provienen del Excel actual.
 
     ATÓMICO: todas las hojas se cargan en una sola transacción.
     Si una hoja falla, se hace ROLLBACK y ninguna tabla se modifica.
@@ -527,30 +533,76 @@ def _load_sheets_to_schema(
     xl = pd.ExcelFile(xlsx_path)
     logger.info("  Hojas disponibles: %s", xl.sheet_names)
     overrides = header_overrides or {}
-    results = {}
+    exclude = set(sheets_exclude or [])
+    results: dict = {}
+    loaded_tables: set[str] = set()
 
     with connection_manager.get_connection() as conn:
         try:
-            # Drop all target tables first so new columns from the Excel are
-            # picked up on recreate (CREATE TABLE IF NOT EXISTS never adds columns).
+            # Drop target tables first so new columns from the Excel are picked up on recreate.
             with conn.cursor() as cur:
                 for sheet in xl.sheet_names:
+                    if sheet in exclude:
+                        continue
                     table_name = _clean_col(sheet)
+                    if skip_duplicate_tables and table_name in loaded_tables:
+                        continue
+                    loaded_tables.add(table_name)
                     cur.execute(f'DROP TABLE IF EXISTS {schema}."{table_name}" CASCADE;')
 
+            loaded_tables.clear()
             for sheet in xl.sheet_names:
+                if sheet in exclude:
+                    logger.info("  Hoja '%s' excluida por configuración", sheet)
+                    continue
+
+                table_name = _clean_col(sheet)
+                if skip_duplicate_tables and table_name in loaded_tables:
+                    logger.info(
+                        "  Hoja '%s' omitida (tabla '%s' ya cargada desde otra hoja)",
+                        sheet,
+                        table_name,
+                    )
+                    continue
+
                 header_row = overrides.get(sheet, 0)
                 df = pd.read_excel(xlsx_path, sheet_name=sheet, header=header_row)
                 df = df.dropna(how="all").dropna(axis=1, how="all")
                 if df.empty:
                     logger.info("  Hoja '%s' vacía, omitida", sheet)
                     continue
-                table_name = _clean_col(sheet)
-                n = load_dataframe(conn, schema, table_name, df, truncate=truncate, commit=False, fecha_carga_override=fecha_carga_override)
+                n = load_dataframe(
+                    conn,
+                    schema,
+                    table_name,
+                    df,
+                    truncate=truncate,
+                    commit=False,
+                    fecha_carga_override=fecha_carga_override,
+                )
                 results[sheet] = n
+                loaded_tables.add(table_name)
+
+            if drop_orphan_tables and loaded_tables:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = %s AND table_type = 'BASE TABLE'
+                        """,
+                        (schema,),
+                    )
+                    existing = {row[0] for row in cur.fetchall()}
+                    for orphan in sorted(existing - loaded_tables):
+                        cur.execute(f'DROP TABLE IF EXISTS {schema}."{orphan}" CASCADE;')
+                        logger.info("  🗑  Tabla obsoleta eliminada: %s.%s", schema, orphan)
 
             conn.commit()
-            logger.info("  ✅ Transacción commiteada: %d hojas cargadas", len([v for v in results.values() if v >= 0]))
+            logger.info(
+                "  ✅ Transacción commiteada: %d hojas cargadas",
+                len([v for v in results.values() if v >= 0]),
+            )
         except Exception as e:
             conn.rollback()
             logger.error("  ❌ Error atómico en carga de hojas — ROLLBACK ejecutado: %s", e, exc_info=True)
@@ -944,14 +996,22 @@ def handler_etl_deficit_historico(xlsx_path: Path, fecha_fuente: datetime | None
     return {"filas": n}
 
 
+# Hojas auxiliares o duplicadas que colisionan al normalizar nombre → tabla PG
+COLOMBIA_SOLAR_SHEETS_EXCLUDE = frozenset({
+    "Gráficas_General",
+    "Hoja1",
+    "Hoja3",
+    "TD ",                      # duplicado de "TD" (misma tabla td)
+    "Base General_OR_Inicial",  # duplicado de "Base General OR_Inicial"
+})
+
+
 def handler_etl_colombia_solar(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
     Carga Colombia_Solar_OR.xlsx → schema colombia_solar.
-    Hojas:
-      - Base General OR_Inicial  → header=0
-      - Base                     → header=1 (fila 0 vacía)
-      - TD                       → header=0
-      - Seguimiento Diario       → header=2 (fila 0 vacía, fila 1 agrupaciones)
+    Hojas principales:
+      - Base General OR_Inicial, Base, TD, Seguimiento Diario
+      - Proyectado/Reportado: Obras Civiles, Internas, Usuarios, Potencia
     """
     logger.info("  ETL colombia_solar: %s", xlsx_path.name)
     return _load_sheets_to_schema(
@@ -959,6 +1019,9 @@ def handler_etl_colombia_solar(xlsx_path: Path, fecha_fuente: datetime | None = 
         schema="colombia_solar",
         truncate=True,
         fecha_carga_override=fecha_fuente,
+        sheets_exclude=COLOMBIA_SOLAR_SHEETS_EXCLUDE,
+        skip_duplicate_tables=True,
+        drop_orphan_tables=True,
         header_overrides={
             "Base": 1,
             "Seguimiento Diario": 2,
@@ -1049,13 +1112,8 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
         else:
             logger.info("  ✓ Sin cambios (hash idéntico), ETL omitido")
 
-        # 3. Actualizar cache (solo si el ETL va a correr o ya corrió,
-        #    no en solo_descarga — evita que un test de descarga enmascare cambios reales)
-        if not solo_descarga:
-            cache[nombre] = hash_actual
-            _save_hash_cache(cache)
-
-        # 4. ETL
+        # 3. ETL — el hash solo se persiste si el ETL termina OK (ver paso 4)
+        etl_ok = False
         if cambio and not solo_descarga:
             handler = ETL_HANDLERS.get(handler_name)
             if handler is None:
@@ -1065,13 +1123,27 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
                 logger.info("  🗄️  Ejecutando ETL: %s", handler_name)
                 fecha_fuente = _load_fecha_fuente(nombre)
                 if fecha_fuente:
-                    logger.info("  📅 fecha_fuente SharePoint → %s", fecha_fuente.strftime("%d/%m/%Y %H:%M (Bogotá)"))
+                    logger.info(
+                        "  📅 fecha_fuente SharePoint → %s",
+                        fecha_fuente.strftime("%d/%m/%Y %H:%M (Bogotá)"),
+                    )
                 t0 = time.time()
                 resultado = handler(destino, fecha_fuente=fecha_fuente)
                 duracion = time.time() - t0
+                etl_ok = True
                 result["etl_ejecutado"] = True
                 result["resultado_etl"] = resultado
                 logger.info("  ✅ ETL completado en %.1fs → %s", duracion, resultado)
+
+        # 4. Persistir hash solo tras ETL exitoso (o si no hubo cambio — hash ya válido)
+        if not solo_descarga and etl_ok:
+            cache[nombre] = hash_actual
+            _save_hash_cache(cache)
+        elif cambio and not solo_descarga and not etl_ok:
+            logger.warning(
+                "  ⚠️  Hash NO actualizado para [%s] — se reintentará en el próximo ciclo",
+                nombre,
+            )
 
     except Exception as e:
         result["error"] = str(e)

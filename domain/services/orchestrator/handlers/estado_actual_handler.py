@@ -1,6 +1,11 @@
 """
 Mixin: Estado actual + helpers de datos históricos y de construcción de bloques.
 Este mixin define los 11 métodos compartidos que otros mixins consumen vía MRO.
+
+MARCO REGULATORIO:
+La evaluación del nivel de embalses se basa en el ÍNDICE NE oficial (Resolución
+CREG 209 de 2020), que compara el embalse real contra la Senda de Referencia
+mensual publicada por XM/CND.
 """
 import asyncio
 import logging
@@ -9,6 +14,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
+from core.umbrales_oficiales import (
+    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
+    OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT,
+    obtener_senda_referencia,
+    clasificar_indice_ne,
+    clasificar_hsin,
+    HSIN_UMBRAL_NORMAL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,21 +284,63 @@ class EstadoActualHandlerMixin:
         except Exception as e:
             logger.warning(f"Error calculando percentiles embalses: {e}")
 
-        # Umbrales fijos de respaldo (OFICIALES IDEAM/UNGRD - Colombia)
-        # Nivel ALTO (riesgo desbordamiento): >95% Crítico, 90-95% Alerta, 80-90% Vigilancia
-        # Nivel BAJO (riesgo desabastecimiento): <27% Crítico, 27-40% Alerta
+        # ── Fallback regulatorio: Índice NE vs Senda CREG 209/2020 ──
+        # Cuando no hay histórico suficiente para percentiles, se usa el marco
+        # OFICIAL del Estatuto CREG en lugar de umbrales fijos arbitrarios.
+        nivel_ne, descripcion_ne, senda_pct = clasificar_indice_ne(nivel_pct)
+        prom_referencia = max(senda_pct, 50.0)
+
+        # Riesgo de vertimientos (criterio operativo CND, no regulatorio)
         if nivel_pct > 95:
-            return "🔴 Nivel crítico alto", "Referencia: >95% - Alerta Roja IDEAM. Riesgo de desbordamiento.", 60.0
+            return (
+                "🔴 Nivel crítico alto (riesgo de vertimientos)",
+                f"Referencia: >95% — riesgo de vertimientos forzados (criterio operativo CND).",
+                prom_referencia,
+            )
         elif nivel_pct >= 90:
-            return "🟠 Nivel alerta naranja", "Referencia: 90-95% - Preparar descargas preventivas.", 60.0
-        elif nivel_pct >= 80:
-            return "🟡 Nivel alerta amarilla", "Referencia: 80-90% - Vigilancia activa IDEAM.", 60.0
-        elif nivel_pct >= 40:
-            return "🟢 Nivel normal", "Referencia: 40-80% - Rango óptimo de operación.", 60.0
-        elif nivel_pct >= 27:
-            return "🟡 Nivel alerta seguimiento", "Referencia: 27-40% - Alerta de seguimiento.", 60.0
-        else:
-            return "🔴 Nivel crítico bajo", "Referencia: <27% - Alerta Roja IDEAM. Riesgo de racionamiento/apagón.", 60.0
+            return (
+                "🟠 Vertimientos preventivos",
+                f"Referencia: 90-95% — preparar descargas preventivas (criterio operativo CND).",
+                prom_referencia,
+            )
+
+        # Niveles de Índice NE oficial (Estatuto CREG 026/2014 + Res. 209/2020)
+        if nivel_ne == 'SUPERIOR':
+            # Sub-clasificación visual del nivel superior
+            if nivel_pct >= OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT:  # ≥ 80%
+                return (
+                    "🟢 NE Superior — objetivo XM ante El Niño",
+                    f"≥ {OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT:.0f}% (objetivo XM Boletín 04-2026). "
+                    f"Senda CREG: {senda_pct:.1f}%.",
+                    prom_referencia,
+                )
+            elif nivel_pct >= NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT:  # ≥ 70%
+                return (
+                    "🟢 NE Superior — regla absoluta CREG",
+                    f"≥ {NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT:.0f}% (regla absoluta CREG 209/2020). "
+                    f"Senda CREG: {senda_pct:.1f}%.",
+                    prom_referencia,
+                )
+            else:
+                return (
+                    "🟢 NE Superior — sobre senda CREG",
+                    f"≥ senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014 + Res. 209/2020).",
+                    prom_referencia,
+                )
+        elif nivel_ne == 'ALERTA':
+            return (
+                "🟡 NE Alerta — bajo senda CREG",
+                f"< senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014). "
+                f"Si persiste 2 verificaciones semanales → NE Inferior.",
+                prom_referencia,
+            )
+        else:  # INFERIOR
+            return (
+                "🔴 NE Inferior — riesgo de desabastecimiento",
+                f"< senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014 art. 3). "
+                f"Activa mecanismo de sostenimiento (CREG 026/2014 art. 7).",
+                prom_referencia,
+            )
 
     # ── Shared helpers utilizados por AnomaliaHandlerMixin vía MRO ──
 
@@ -584,10 +639,13 @@ class EstadoActualHandlerMixin:
             'embalses': '%',
         }
         valores_actuales: Dict[str, Any] = {}
+        fechas_actuales: Dict[str, Any] = {}
         for f in fichas:
             for clave, nombre_ind in _MAP_INDICADOR.items():
                 if f.get('indicador') == nombre_ind and f.get('valor') is not None:
                     valores_actuales[clave] = f['valor']
+                if f.get('indicador') == nombre_ind and f.get('fecha'):
+                    fechas_actuales[clave] = f['fecha']
 
         resultado = []
         for clave in ['generacion', 'precio_bolsa', 'embalses']:
@@ -615,6 +673,7 @@ class EstadoActualHandlerMixin:
                 "indicador": _MAP_INDICADOR[clave],
                 "unidad": _MAP_UNIDAD[clave],
                 "valor_actual": valores_actuales.get(clave),
+                "fecha": fechas_actuales.get(clave),
                 "promedio_proyectado_1m": prom_proyectado,
                 "rango_min": pred.get('rango_min'),
                 "rango_max": pred.get('rango_max'),
@@ -685,14 +744,15 @@ class EstadoActualHandlerMixin:
                     estado = "Alerta"
                 _anom_key = 'Precio de Bolsa'
             elif 'Embalses' in ind_nombre:
-                # UMBRALES OFICIALES IDEAM/UNGRD (Colombia)
-                # Nivel ALTO (riesgo desbordamiento): >95% Crítico, 90-95% Alerta, 80-90% Vigilancia
-                # Nivel BAJO (riesgo desabastecimiento): <27% Crítico, 27-40% Alerta
-                # Normal: 40-80%
+                # ÍNDICE NE OFICIAL — Resolución CREG 209 de 2020
+                # Compara contra Senda de Referencia mensual publicada por XM/CND.
+                # Niveles: SUPERIOR / ALERTA / INFERIOR.
+                # Adicional: criterio operativo CND para vertimientos (>95%).
                 if valor is not None:
-                    if valor < 27 or valor > 95:
+                    nivel_ne, _, _senda = clasificar_indice_ne(valor)
+                    if valor > 95 or nivel_ne == 'INFERIOR':
                         estado = "Crítico"
-                    elif valor < 40 or valor > 80:
+                    elif valor > 80 or nivel_ne == 'ALERTA':
                         estado = "Alerta"
                 _anom_key = 'Embalses'
 
@@ -753,8 +813,8 @@ class EstadoActualHandlerMixin:
         La asignación embalse→región usa EMBALSE_REGION de informe_charts.py
         (fuente de verdad única — no duplicar el dict aquí).
 
-        Semáforo regional:
-          < 30% → Crítico | 30-40% → Alerta | ≥ 40% → Normal
+        Semáforo regional según Índice NE oficial (Res. CREG 209/2020):
+          NE Inferior o > 95% → Crítico | NE Alerta o > 80% → Alerta | resto → Normal
 
         Returns:
             {
@@ -795,12 +855,14 @@ class EstadoActualHandlerMixin:
         regiones_out = []
         for region, grp in df_known.groupby('region'):
             pct_prom = round(float(grp['pct'].mean()), 1)
-            # Umbrales OFICIALES IDEAM/UNGRD
-            # Nivel ALTO: >95% Crítico, 90-95% Alerta, 80-90% Vigilancia
-            # Nivel BAJO: <27% Crítico, 27-40% Alerta
-            if pct_prom < 27 or pct_prom > 95:
+            # ── ÍNDICE NE OFICIAL CREG 209/2020 ──
+            # Para semáforo regional aplicamos el mismo marco regulatorio,
+            # comparando el nivel promedio regional contra la senda CREG.
+            # Adicional: criterio operativo CND para alto nivel (vertimientos).
+            nivel_ne_reg, _, _senda_reg = clasificar_indice_ne(pct_prom)
+            if pct_prom > 95 or nivel_ne_reg == 'INFERIOR':
                 estado = 'Crítico'
-            elif pct_prom < 40 or pct_prom > 80:
+            elif pct_prom > 80 or nivel_ne_reg == 'ALERTA':
                 estado = 'Alerta'
             else:
                 estado = 'Normal'
@@ -810,6 +872,8 @@ class EstadoActualHandlerMixin:
                 'n_embalses': int(len(grp)),
                 'embalses': sorted(grp['recurso'].tolist()),
                 'estado': estado,
+                'indice_ne': nivel_ne_reg,
+                'fuente_regulatoria': 'CREG 209/2020',
             })
 
         # Ordenar: peores primero (más fácil detectar riesgos)
