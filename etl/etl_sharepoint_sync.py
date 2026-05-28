@@ -9,12 +9,13 @@ detecta cambios por hash SHA-256 y ejecuta el ETL correspondiente en PostgreSQL.
 Archivos configurados:
   1. Matriz_General_Reparto   → Matriz_General_Reparto.xlsx → schema supervision (3 tablas)
   2. Acuerdos_Gestion_DEE_2026 → Acuerdos_Gestion_DEE_2026.xlsx → schema presupuesto
-  3. Base_Subsidios_DDE       → Base_Subsidios_DDE.xlsx      → schema subsidios (4 tablas)
+  3. Base_Subsidios_DDE       → Base_Subsidios_DDE.xlsx      → schema subsidios (pagos, validaciones, empresas, mapa, kpis)
   4. Seguimiento_Contratos_CE → Seguimiento_Contratos_CE.xlsx → contratos_or.seguimiento
   5. Comunidades_Seguimiento_FENOGE → comunidades_seguimiento_fenoge.xlsx → fenoge.seguimiento
   6. Deficit_Historico_Subsidios → Deficit_Historico_Subsidios.xlsx → subsidios.deficit_historico
   7. Comunidades_Energeticas_FENOGE → Comunidades_Energeticas_fenoge.xlsx → fenoge.comunidades
   8. Colombia_Solar_OR        → Colombia_Solar_OR.xlsx       → schema colombia_solar
+  9. Resumen_Implementacion_CE → Resumen_Implementación.xlsx → schema comunidades (base, implementadas)
 
 NOTA: Matriz_Subsidios_KPIs.xlsx tiene handler pero NO está en SHAREPOINT_FILES (ver Error #2)
 
@@ -59,16 +60,28 @@ _lock_fd = None
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
-# Solo StreamHandler en terminal real; evita duplicados cuando cron redirige con >>
-_log_handlers = [logging.FileHandler(LOG_DIR / "etl_sharepoint_sync.log", encoding="utf-8")]
-if sys.stdout.isatty():
-    _log_handlers.append(logging.StreamHandler(sys.stdout))
+# Configuración lazy: evita que `import etl_sharepoint_sync` (desde el watcher)
+# redirija los logs del watcher al archivo de sync.
+_logger_configured = False
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [ETL_SP_SYNC] %(levelname)s - %(message)s",
-    handlers=_log_handlers,
-)
+
+def _configure_logging() -> None:
+    global _logger_configured
+    if _logger_configured:
+        return
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handlers = [logging.FileHandler(LOG_DIR / "etl_sharepoint_sync.log", encoding="utf-8")]
+    if sys.stdout.isatty():
+        handlers.append(logging.StreamHandler(sys.stdout))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [ETL_SP_SYNC] %(levelname)s - %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+    _logger_configured = True
+
+
 logger = logging.getLogger(__name__)
 
 # ─── Cargar .env ──────────────────────────────────────────────────────────────
@@ -164,6 +177,16 @@ SHAREPOINT_FILES = [
         "archivo_local": "Colombia_Solar_OR.xlsx",
         "directorio": "onedrive",
         "etl_handler": "etl_colombia_solar",
+        "activo": True,
+    },
+    {
+        "nombre": "Resumen_Implementacion_CE",
+        # url = archivo hermano en Data_CE (resuelve drive_id); graph_path = Excel real de comunidades
+        "url": "https://minenergiacol.sharepoint.com/:x:/r/sites/msteams_c07b9d_609752/Shared%20Documents/General/01.%20Comunidades%20Energ%C3%A9ticas/Data_CE/Seguimiento%20Completo_CE_Contratos.xlsx?d=w0a6a50a7545b4dde8da1897bc546d23e&csf=1&web=1&e=eJXmPx",
+        "graph_path": "/General/01. Comunidades Energéticas/Data_CE/Resumen_Implementación_Sinergia-Ajuste.xlsx",
+        "archivo_local": "Resumen_Implementación.xlsx",
+        "directorio": "base_de_datos_comunidades_energeticas",
+        "etl_handler": "etl_comunidades",
         "activo": True,
     },
 ]
@@ -413,6 +436,79 @@ def descargar_desde_sharepoint(
     logger.info("  ✅ Descarga autenticada exitosa (%.1f KB)", destino.stat().st_size / 1024)
 
 
+def _resolve_drive_id(reference_share_url: str) -> str:
+    """Obtiene drive_id de SharePoint a partir de un link de referencia en la misma biblioteca."""
+    token = _get_access_token()
+    sharing_token = _encode_sharing_url(reference_share_url)
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/shares/{sharing_token}/driveItem",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        timeout=(15, 30),
+    )
+    resp.raise_for_status()
+    drive_id = resp.json().get("parentReference", {}).get("driveId")
+    if not drive_id:
+        raise RuntimeError("No se pudo resolver drive_id desde el link de referencia")
+    return drive_id
+
+
+def _get_drive_item_metadata(reference_share_url: str, graph_path: str) -> dict | None:
+    """Metadata de un archivo por ruta dentro del drive (cuando no hay link :x: válido)."""
+    try:
+        drive_id = _resolve_drive_id(reference_share_url)
+        token = _get_access_token()
+        resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{graph_path}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=(15, 30),
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return {
+            "lastModifiedDateTime": data.get("lastModifiedDateTime", ""),
+            "eTag": data.get("eTag", ""),
+            "size": data.get("size", 0),
+            "name": data.get("name", ""),
+        }
+    except Exception as exc:
+        logger.warning("  ⚠️  No se pudo leer metadata Graph path %s: %s", graph_path, exc)
+        return None
+
+
+def descargar_por_graph_path(
+    reference_share_url: str,
+    graph_path: str,
+    destino: Path,
+    timeout: tuple = (30, 1800),
+) -> None:
+    """Descarga un archivo por ruta Graph API (misma biblioteca que reference_share_url)."""
+    drive_id = _resolve_drive_id(reference_share_url)
+    meta = _get_drive_item_metadata(reference_share_url, graph_path)
+    if meta:
+        logger.info("  Archivo remoto: %s", meta.get("name", graph_path))
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_suffix(".tmp")
+    token = _get_access_token()
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{graph_path}:/content",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+        stream=True,
+    )
+    resp.raise_for_status()
+    with open(tmp, "wb") as f:
+        for chunk in resp.iter_content(1024 * 256):
+            if chunk:
+                f.write(chunk)
+    if not _es_excel_valido(tmp):
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"El archivo en {graph_path} no es un Excel válido")
+    tmp.replace(destino)
+    logger.info("  ✅ Descarga Graph path exitosa (%.1f KB)", destino.stat().st_size / 1024)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HASH CACHE (detección de cambios)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -477,6 +573,59 @@ def _save_hash_cache(cache: dict) -> None:
             state[nombre] = {}
         state[nombre]["content_hash"] = hash_val
 
+    HASH_CACHE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _fetch_sharepoint_metadata(share_link: str) -> dict | None:
+    """Obtiene lastModifiedDateTime, eTag y size desde Graph API."""
+    try:
+        token = _get_access_token()
+        sharing_token = _encode_sharing_url(share_link)
+        resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/shares/{sharing_token}/driveItem",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=(15, 30),
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return {
+            "lastModifiedDateTime": data.get("lastModifiedDateTime", ""),
+            "eTag": data.get("eTag", ""),
+            "size": data.get("size", 0),
+        }
+    except Exception as exc:
+        logger.warning("  ⚠️  No se pudo leer metadata SharePoint: %s", exc)
+        return None
+
+
+def _mark_etl_success(
+    nombre: str,
+    share_link: str,
+    content_hash: str,
+    graph_path: str | None = None,
+) -> None:
+    """Actualiza estado unificado tras ETL exitoso (hash + metadata SharePoint)."""
+    state = {}
+    if HASH_CACHE_FILE.exists():
+        try:
+            state = json.loads(HASH_CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    entry = state.get(nombre, {}) if isinstance(state.get(nombre), dict) else {}
+    entry["content_hash"] = content_hash
+    entry["last_etl_run"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entry["last_etl_ok"] = True
+
+    if graph_path:
+        meta = _get_drive_item_metadata(share_link, graph_path)
+    else:
+        meta = _fetch_sharepoint_metadata(share_link)
+    if meta:
+        entry.update(meta)
+
+    state[nombre] = entry
     HASH_CACHE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -613,7 +762,8 @@ def _load_sheets_to_schema(
 
 def handler_etl_subsidios(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
-    Carga Base_Subsidios_DDE.xlsx → subsidios_pagos, subsidios_empresas, subsidios_mapa.
+    Carga Base_Subsidios_DDE.xlsx → subsidios_pagos, subsidios_validaciones,
+    subsidios_empresas, subsidios_mapa, kpis_resumen.
     Usa el ETL especializado de etl_subsidios.py (con hashes y lógica de dedup).
     """
     sys.path.insert(0, str(BASE_DIR))
@@ -623,20 +773,21 @@ def handler_etl_subsidios(xlsx_path: Path, fecha_fuente: datetime | None = None)
         importar_pagos,
         importar_empresas,
         importar_mapa,
+        importar_validaciones,
     )
 
     logger.info("  ETL subsidios: %s", xlsx_path.name)
     conn = get_connection()
     try:
         ensure_schema(conn)
-        r_pagos    = importar_pagos(xlsx_path, conn, fecha_fuente=fecha_fuente)
-        r_empresas = importar_empresas(xlsx_path, conn, fecha_fuente=fecha_fuente)
-        r_mapa     = importar_mapa(xlsx_path, conn, fecha_fuente=fecha_fuente)
-        r_kpis     = _importar_kpis_resumen(xlsx_path, conn)
+        r_pagos         = importar_pagos(xlsx_path, conn, fecha_fuente=fecha_fuente)
+        r_empresas      = importar_empresas(xlsx_path, conn, fecha_fuente=fecha_fuente)
+        r_mapa          = importar_mapa(xlsx_path, conn, fecha_fuente=fecha_fuente)
+        r_validaciones  = importar_validaciones(xlsx_path, conn)
+        r_kpis          = _importar_kpis_resumen(xlsx_path, conn)
 
         # Alerta temprana: si la BD quedó con menos del 80% de filas del Excel, algo falló
         filas_excel = r_pagos.get("filas_leidas", 0)
-        filas_bd    = r_pagos.get("filas_leidas", 0) - r_pagos.get("filas_duplicadas", 0)
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM subsidios.subsidios_pagos")
             filas_bd_real = cur.fetchone()[0]
@@ -648,7 +799,22 @@ def handler_etl_subsidios(xlsx_path: Path, fecha_fuente: datetime | None = None)
         else:
             logger.info("  ✅ Conteo OK: BD=%d filas (Excel=%d)", filas_bd_real, filas_excel)
 
-        return {"pagos": r_pagos, "empresas": r_empresas, "mapa": r_mapa, "kpis_resumen": r_kpis}
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM subsidios.subsidios_validaciones")
+            filas_val = cur.fetchone()[0]
+        logger.info(
+            "  ✅ Validaciones: BD=%d filas (Excel=%d)",
+            filas_val,
+            r_validaciones.get("filas_importadas", 0),
+        )
+
+        return {
+            "pagos": r_pagos,
+            "empresas": r_empresas,
+            "mapa": r_mapa,
+            "validaciones": r_validaciones,
+            "kpis_resumen": r_kpis,
+        }
     finally:
         conn.close()
 
@@ -844,6 +1010,7 @@ def handler_etl_supervision_onedrive(xlsx_path: Path, fecha_fuente: datetime | N
 
 _FENOGE_SEG_MAP = {
     "region": "region",
+    "comunidad": "nombre_comunidad",
     "numero_de_contrato": "numero_contrato",
     "dia_actualizacion": "dia_actualizacion",
     "mes_no": "mes_no",
@@ -1029,6 +1196,46 @@ def handler_etl_colombia_solar(xlsx_path: Path, fecha_fuente: datetime | None = 
     )
 
 
+def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
+    """
+    Carga Resumen_Implementación.xlsx → comunidades.base + comunidades.implementadas.
+    """
+    import pandas as pd
+
+    sys.path.insert(0, str(BASE_DIR))
+    from etl.etl_nuevos_dashboards import load_dataframe
+    from infrastructure.database.connection import connection_manager
+
+    logger.info("  ETL comunidades: %s", xlsx_path.name)
+    xl = pd.ExcelFile(xlsx_path)
+    base_sheet = next((s for s in xl.sheet_names if s.lower() == "base"), None)
+    impl_sheet = next((s for s in xl.sheet_names if s.lower() == "implementadas"), None)
+    if not base_sheet:
+        raise ValueError(f"Hoja 'Base' no encontrada en {xlsx_path.name} (hojas: {xl.sheet_names})")
+
+    df_base = pd.read_excel(xlsx_path, sheet_name=base_sheet)
+    results: dict = {}
+
+    with connection_manager.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS comunidades.base CASCADE")
+            cur.execute("DROP TABLE IF EXISTS comunidades.implementadas CASCADE")
+        conn.commit()
+        results["base"] = load_dataframe(
+            conn, "comunidades", "base", df_base, fecha_carga_override=fecha_fuente
+        )
+        if impl_sheet:
+            df_impl = pd.read_excel(xlsx_path, sheet_name=impl_sheet)
+            results["implementadas"] = load_dataframe(
+                conn, "comunidades", "implementadas", df_impl, fecha_carga_override=fecha_fuente
+            )
+        else:
+            logger.warning("  ⚠ Hoja 'Implementadas' no encontrada — solo se cargó base")
+
+    logger.info("  comunidades: %s", results)
+    return results
+
+
 # Mapa handler_name → función
 ETL_HANDLERS = {
     "etl_subsidios": handler_etl_subsidios,
@@ -1039,6 +1246,7 @@ ETL_HANDLERS = {
     "etl_fenoge_comunidades": handler_etl_fenoge_comunidades,
     "etl_deficit_historico": handler_etl_deficit_historico,
     "etl_colombia_solar": handler_etl_colombia_solar,
+    "etl_comunidades": handler_etl_comunidades,
 }
 
 
@@ -1076,6 +1284,7 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
 
     cache = _load_hash_cache()
     hash_previo = cache.get(nombre, "")
+    graph_path = cfg.get("graph_path")
 
     try:
         # 1. Descargar (hasta 4 intentos con backoff exponencial)
@@ -1088,7 +1297,10 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
         for intento in range(1, max_intentos + 1):
             try:
                 rate_limit = cfg.get("rate_limit_bytes_per_sec")
-                descargar_desde_sharepoint(url, destino, timeout=timeout_dl, rate_limit_bytes_per_sec=rate_limit)
+                if graph_path:
+                    descargar_por_graph_path(url, graph_path, destino, timeout=timeout_dl)
+                else:
+                    descargar_desde_sharepoint(url, destino, timeout=timeout_dl, rate_limit_bytes_per_sec=rate_limit)
                 result["descargado"] = True
                 break
             except Exception as dl_err:
@@ -1135,10 +1347,9 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
                 result["resultado_etl"] = resultado
                 logger.info("  ✅ ETL completado en %.1fs → %s", duracion, resultado)
 
-        # 4. Persistir hash solo tras ETL exitoso (o si no hubo cambio — hash ya válido)
+        # 4. Persistir hash y metadata SharePoint solo tras ETL exitoso
         if not solo_descarga and etl_ok:
-            cache[nombre] = hash_actual
-            _save_hash_cache(cache)
+            _mark_etl_success(nombre, url, hash_actual, graph_path=graph_path)
         elif cambio and not solo_descarga and not etl_ok:
             logger.warning(
                 "  ⚠️  Hash NO actualizado para [%s] — se reintentará en el próximo ciclo",
@@ -1156,6 +1367,25 @@ def _acquire_lock() -> bool:
     """Intenta adquirir el lock file. Retorna True si se adquirió, False si ya está ocupado."""
     import fcntl
     global _lock_fd
+
+    # Limpiar lock huérfano si el PID dueño ya no existe
+    if LOCK_FILE.exists():
+        try:
+            pid_str = LOCK_FILE.read_text(encoding="utf-8").strip()
+            if pid_str.isdigit():
+                stale_pid = int(pid_str)
+                try:
+                    os.kill(stale_pid, 0)
+                except OSError:
+                    logger.warning(
+                        "⚠️  Lock huérfano (PID %d no activo) — eliminando %s",
+                        stale_pid,
+                        LOCK_FILE,
+                    )
+                    LOCK_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
     try:
         fd = open(LOCK_FILE, "w")
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1172,7 +1402,7 @@ def _acquire_lock() -> bool:
 
 
 def _release_lock():
-    """Libera el lock file. NO elimina el archivo para evitar race conditions."""
+    """Libera el lock file y elimina el archivo para evitar locks huérfanos visibles."""
     import fcntl
     global _lock_fd
     try:
@@ -1180,6 +1410,7 @@ def _release_lock():
             fcntl.flock(_lock_fd, fcntl.LOCK_UN)
             _lock_fd.close()
             _lock_fd = None
+        LOCK_FILE.unlink(missing_ok=True)
     except Exception:
         _lock_fd = None
 
@@ -1201,6 +1432,7 @@ def run_sync(
     Returns:
         Lista de dicts con resultado por archivo.
     """
+    _configure_logging()
     archivos = [f for f in SHAREPOINT_FILES if f.get("activo", True)]
     if nombres:
         archivos = [f for f in archivos if f["nombre"] in nombres]
@@ -1249,6 +1481,7 @@ def _run_sync_impl(archivos: list, forzar: bool, solo_descarga: bool) -> list:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    _configure_logging()
     parser = argparse.ArgumentParser(
         description="ETL: Sincronización SharePoint → data/ → PostgreSQL"
     )

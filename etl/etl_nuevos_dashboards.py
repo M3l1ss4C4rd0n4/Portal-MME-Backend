@@ -80,14 +80,78 @@ def _pg_type(series: pd.Series) -> str:
         return 'BOOLEAN'
     # Only try date detection on object/string columns
     if dtype == object:
-        sample = series.dropna().head(5)
+        sample = series.dropna().head(100)
+        if len(sample) > 0:
+            numericish = sum(_is_numericish(v) for v in sample)
+            if numericish / len(sample) >= 0.7:
+                return 'NUMERIC'
         if len(sample) > 0 and all(isinstance(v, str) for v in sample):
             try:
-                parsed = pd.to_datetime(sample, errors='raise', format='mixed')
+                pd.to_datetime(sample, errors='raise', format='mixed')
                 return 'TIMESTAMP'
             except Exception:
                 pass
     return 'TEXT'
+
+
+_PLACEHOLDER_VALUES = frozenset({
+    '', 'por definir', 'n/a', 'na', 'nd', 's/d', '-', '—', 'sin dato', 'pendiente',
+})
+
+
+def _is_numericish(val) -> bool:
+    """True si el valor es numérico o placeholder que debe mapearse a NULL en columnas NUMERIC."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return True
+    if isinstance(val, (int, float)) and not pd.isna(val):
+        return True
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in _PLACEHOLDER_VALUES:
+            return True
+        try:
+            float(s.replace(',', '').replace('$', '').strip())
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _cell_for_pg(val, pg_type: str):
+    """Normaliza un valor de celda antes de INSERT según tipo PostgreSQL."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    if isinstance(val, pd.Timestamp):
+        return None if pd.isnull(val) else val.to_pydatetime()
+    if hasattr(val, '__class__') and val.__class__.__name__ == 'NaTType':
+        return None
+    if isinstance(val, str):
+        s = val.strip()
+        if s.lower() in _PLACEHOLDER_VALUES:
+            return None
+        if pg_type == 'NUMERIC':
+            try:
+                return float(s.replace(',', '').replace('$', '').strip())
+            except ValueError:
+                return None
+        if pg_type == 'BIGINT':
+            try:
+                return int(float(s.replace(',', '').replace('$', '').strip()))
+            except ValueError:
+                return None
+        return s
+    if pg_type in ('NUMERIC', 'BIGINT') and hasattr(val, 'item'):
+        return None if pd.isnull(val) else val.item()
+    if pg_type == 'NUMERIC' and isinstance(val, (int, float)):
+        return None if pd.isna(val) else float(val)
+    if pg_type == 'BIGINT' and isinstance(val, (int, float)):
+        return None if pd.isna(val) else int(val)
+    try:
+        if pd.isnull(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return val
 
 
 def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bool = True, commit: bool = True, fecha_carga_override=None) -> int:
@@ -115,8 +179,10 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
         # Build CREATE TABLE
         col_defs = ['id SERIAL PRIMARY KEY',
                     'fecha_carga TIMESTAMP DEFAULT NOW()']
+        col_types: dict[str, str] = {}
         for col in df.columns:
             pg_t = _pg_type(df[col])
+            col_types[col] = pg_t
             col_defs.append(f'"{col}" {pg_t}')
 
         create_sql = (
@@ -141,28 +207,10 @@ def load_dataframe(conn, schema: str, table: str, df: pd.DataFrame, truncate: bo
 
         rows = []
         for _, row in df.iterrows():
-            vals = []
-            for val in row.values:
-                if val is None:
-                    vals.append(None)
-                elif isinstance(val, float) and pd.isna(val):
-                    vals.append(None)
-                elif isinstance(val, pd.Timestamp):
-                    vals.append(None if pd.isnull(val) else val.to_pydatetime())
-                elif hasattr(val, '__class__') and val.__class__.__name__ == 'NaTType':
-                    vals.append(None)
-                elif isinstance(val, str):
-                    vals.append(val)
-                elif hasattr(val, 'item'):  # numpy scalar (np.float64, np.int64, etc.)
-                    vals.append(None if pd.isnull(val) else val.item())
-                else:
-                    try:
-                        if pd.isnull(val):
-                            vals.append(None)
-                        else:
-                            vals.append(val)
-                    except (TypeError, ValueError):
-                        vals.append(val)
+            vals = [
+                _cell_for_pg(val, col_types[col])
+                for col, val in zip(df.columns, row.values)
+            ]
             if fecha_carga_override is not None:
                 vals.append(fecha_carga_override)
             rows.append(tuple(vals))
@@ -207,9 +255,9 @@ def etl_comunidades() -> None:
     """
     Carga Resumen_Implementación.xlsx → schema comunidades.
     
-    ⚠️  ARCHIVO LOCAL: Este archivo NO está sincronizado por SharePoint sync.
+    ⚠️  ARCHIVO LOCAL (legacy): Este archivo también se sincroniza vía SharePoint sync
+    como Resumen_Implementacion_CE. Este script queda para cargas manuales puntuales.
     Ubicación: data/base_de_datos_comunidades_energeticas/Resumen_Implementación.xlsx
-    Trigger: Ejecución manual → python etl/etl_nuevos_dashboards.py --schema comunidades
     
     Carga dos hojas:
     - 'Base': Registro principal de comunidades (comunidades.base)

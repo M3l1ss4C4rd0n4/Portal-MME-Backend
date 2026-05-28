@@ -24,9 +24,6 @@ from pathlib import Path
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from etl.etl_sharepoint_sync import _get_access_token, SHAREPOINT_FILES
-
 # ── Rutas ────────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).parent.parent
 STATE_FILE = Path(__file__).parent / ".sp_watcher_state.json"
@@ -36,13 +33,23 @@ PYTHON     = BASE_DIR / "venv" / "bin" / "python3"
 
 LOG_DIR.mkdir(exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [SP_WATCHER] %(levelname)s  %(message)s",
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter(
+    fmt="%(asctime)s [SP_WATCHER] %(levelname)s  %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+))
 logger = logging.getLogger("sp_watcher")
+logger.handlers.clear()
+logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
+sys.path.insert(0, str(BASE_DIR))
+from etl.etl_sharepoint_sync import (
+    _get_access_token,
+    SHAREPOINT_FILES,
+    _get_drive_item_metadata,
+)
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 # Segundos máximos para que corra el ETL de un archivo antes de rendirse
@@ -149,10 +156,14 @@ def check_and_sync(init_only: bool = False):
 
         nombre = cfg["nombre"]
         url    = cfg["url"]
+        graph_path = cfg.get("graph_path")
         logger.info("── #%d %s", i, nombre)
 
-        sharing_token = _encode_sharing_url(url)
-        meta = _get_metadata(sharing_token, headers)
+        if graph_path:
+            meta = _get_drive_item_metadata(url, graph_path)
+        else:
+            sharing_token = _encode_sharing_url(url)
+            meta = _get_metadata(sharing_token, headers)
 
         if meta is None:
             logger.warning("  ⚠ No se pudo obtener metadata — se omite")
