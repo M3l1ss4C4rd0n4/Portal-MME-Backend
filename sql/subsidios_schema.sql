@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_sp_concepto_trim ON subsidios_pagos(concepto_trim
 CREATE INDEX IF NOT EXISTS idx_sp_no_resol ON subsidios_pagos(no_resolucion);
 CREATE INDEX IF NOT EXISTS idx_sp_anio_trim_resol ON subsidios_pagos(anio_trimestre_resolucion);
 CREATE INDEX IF NOT EXISTS idx_sp_empresa_fondo ON subsidios_pagos(nombre_prestador, fondo);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sp_hash ON subsidios_pagos(hash_fila);
+CREATE INDEX IF NOT EXISTS idx_sp_hash ON subsidios_pagos(hash_fila);
 
 -- Catálogo de empresas prestadoras (hoja Inicio)
 CREATE TABLE IF NOT EXISTS subsidios_empresas (

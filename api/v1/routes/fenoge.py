@@ -219,6 +219,10 @@ async def get_fenoge_mapa(request: Request, api_key: str = Depends(get_api_key))
         raise HTTPException(status_code=500, detail="Error al obtener datos Fenoge")
 
 
+# Último mes visible en la curva S (evita meses futuros sin datos reales)
+SEGUIMIENTO_FECHA_CORTE = "2026-08-01"
+
+
 # ─── /seguimiento ─────────────────────────────────────────────────────────────
 @router.get("/seguimiento", summary="Avance de obra Fenoge para gráfica de líneas")
 @limiter.limit("60/minute")
@@ -240,18 +244,27 @@ async def get_fenoge_seguimiento(request: Request, api_key: str = Depends(get_ap
                 """)
                 contratos = [r[0] for r in cur.fetchall()]
 
-                # Datos completos ordenados por fecha y contrato
+                cur.execute("""
+                    SELECT DISTINCT nombre_comunidad FROM fenoge.seguimiento
+                    WHERE nombre_comunidad IS NOT NULL AND nombre_comunidad <> ''
+                    ORDER BY nombre_comunidad
+                """)
+                comunidades = [r[0] for r in cur.fetchall()]
+
+                # Datos completos ordenados por fecha y contrato (hasta agosto 2026)
                 cur.execute("""
                     SELECT
                         region,
                         numero_contrato,
+                        nombre_comunidad,
                         dia_actualizacion,
                         avance_real_acumulado_pct,
                         avance_programado_acumulado_pct
                     FROM fenoge.seguimiento
                     WHERE dia_actualizacion IS NOT NULL
-                    ORDER BY region, numero_contrato, dia_actualizacion
-                """)
+                      AND dia_actualizacion <= %s
+                    ORDER BY region, numero_contrato, nombre_comunidad, dia_actualizacion
+                """, (SEGUIMIENTO_FECHA_CORTE,))
                 rows = cur.fetchall()
 
         # Agrupar por contrato para generar series de líneas
@@ -260,17 +273,20 @@ async def get_fenoge_seguimiento(request: Request, api_key: str = Depends(get_ap
             {
                 "region":         r[0],
                 "contrato":       r[1],
-                "fecha":          r[2].isoformat() if r[2] else None,
-                "realAcum":       float(r[3]) * 100 if r[3] is not None else None,
-                "programadoAcum": float(r[4]) * 100 if r[4] is not None else None,
+                "comunidad":      r[2] or "",
+                "fecha":          r[3].isoformat() if r[3] else None,
+                "realAcum":       float(r[4]) * 100 if r[4] is not None else None,
+                "programadoAcum": float(r[5]) * 100 if r[5] is not None else None,
             }
             for r in rows
         ]
 
         return JSONResponse({
-            "regiones":  regiones,
-            "contratos": contratos,
-            "data":      data,
+            "regiones":    regiones,
+            "contratos":   contratos,
+            "comunidades": comunidades,
+            "fechaCorte":  SEGUIMIENTO_FECHA_CORTE,
+            "data":        data,
         })
 
     except Exception as e:

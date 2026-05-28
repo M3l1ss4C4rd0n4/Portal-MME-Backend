@@ -46,7 +46,8 @@ _FILTER_COLS = [
     ("fondo", "fondo"),
     ("estado_del_contrato", "estado"),
     ("etapa_del_contrato", "etapa"),
-    ("ejecutor", "ejecutor"),
+    ("departamento", "departamento"),
+    ("municipio", "municipio"),
 ]
 
 
@@ -74,7 +75,8 @@ def _kpi_filter_where(
     fondo: Optional[str],
     estado: Optional[str],
     etapa: Optional[str],
-    ejecutor: Optional[str],
+    departamento: Optional[str],
+    municipio: Optional[str],
 ) -> tuple[str, list[str]]:
     kpi_params: list[str] = []
     kpi_clauses: list[str] = [_base_year_where(ano_min, ano_max)]
@@ -82,7 +84,8 @@ def _kpi_filter_where(
         ("fondo", fondo),
         ("estado_del_contrato", estado),
         ("etapa_del_contrato", etapa),
-        ("ejecutor", ejecutor),
+        ("departamento", departamento),
+        ("municipio", municipio),
     ]:
         if val is not None:
             kpi_params.append(val)
@@ -101,14 +104,15 @@ async def get_supervision_dashboard(
     fondo: Optional[str] = Query(default=None),
     estado: Optional[str] = Query(default=None),
     etapa: Optional[str] = Query(default=None),
-    ejecutor: Optional[str] = Query(default=None),
+    departamento: Optional[str] = Query(default=None),
+    municipio: Optional[str] = Query(default=None),
     ano_min: int = Query(default=2003, ge=2000, le=2030, alias="anoMin"),
     ano_max: int = Query(default=2026, ge=2000, le=2030, alias="anoMax"),
     api_key: str = Depends(get_api_key),
 ):
     base_where = _base_year_where(ano_min, ano_max)
     filter_where, kpi_params = _kpi_filter_where(
-        ano_min, ano_max, fondo, estado, etapa, ejecutor
+        ano_min, ano_max, fondo, estado, etapa, departamento, municipio
     )
 
     sf2_where, sf2_params = _build_filter([("fondo", fondo)])
@@ -120,6 +124,14 @@ async def get_supervision_dashboard(
             ("fondo", fondo),
             ("estado_del_contrato", estado),
             ("etapa_del_contrato", etapa),
+        ]
+    )
+    sf5_where, sf5_params = _build_filter(
+        [
+            ("fondo", fondo),
+            ("estado_del_contrato", estado),
+            ("etapa_del_contrato", etapa),
+            ("departamento", departamento),
         ]
     )
 
@@ -241,15 +253,27 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT ejecutor AS valor, COUNT(DISTINCT contrato) AS n
+                    SELECT departamento AS valor, COUNT(DISTINCT contrato) AS n
                     FROM supervision.contratos
                     WHERE {base_where} {sf4_where}
-                      AND ejecutor IS NOT NULL AND TRIM(ejecutor) != ''
-                    GROUP BY ejecutor ORDER BY n DESC LIMIT 10
+                      AND departamento IS NOT NULL AND TRIM(departamento) != ''
+                    GROUP BY departamento ORDER BY n DESC LIMIT 15
                     """,
                     sf4_params,
                 )
-                s_ejecutor = cur.fetchall()
+                s_departamento = cur.fetchall()
+
+                cur.execute(
+                    f"""
+                    SELECT municipio AS valor, COUNT(DISTINCT contrato) AS n
+                    FROM supervision.contratos
+                    WHERE {base_where} {sf5_where}
+                      AND municipio IS NOT NULL AND TRIM(municipio) != ''
+                    GROUP BY municipio ORDER BY n DESC LIMIT 15
+                    """,
+                    sf5_params,
+                )
+                s_municipio = cur.fetchall()
 
                 cur.execute(
                     f"""
@@ -308,7 +332,8 @@ async def get_supervision_dashboard(
                     "fondo": [{"valor": r[0], "n": int(r[1])} for r in s_fondo],
                     "estado": [{"valor": r[0], "n": int(r[1])} for r in s_estado],
                     "etapa": [{"valor": r[0], "n": int(r[1])} for r in s_etapa],
-                    "ejecutor": [{"valor": r[0], "n": int(r[1])} for r in s_ejecutor],
+                    "departamento": [{"valor": r[0], "n": int(r[1])} for r in s_departamento],
+                    "municipio": [{"valor": r[0], "n": int(r[1])} for r in s_municipio],
                 },
                 "totalContratos": total,
             }
@@ -325,13 +350,14 @@ async def get_supervision_detalle(
     fondo: Optional[str] = Query(default=None),
     estado: Optional[str] = Query(default=None),
     etapa: Optional[str] = Query(default=None),
-    ejecutor: Optional[str] = Query(default=None),
+    departamento: Optional[str] = Query(default=None),
+    municipio: Optional[str] = Query(default=None),
     ano_min: int = Query(default=2003, ge=2000, le=2030, alias="anoMin"),
     ano_max: int = Query(default=2026, ge=2000, le=2030, alias="anoMax"),
     api_key: str = Depends(get_api_key),
 ):
     filter_where, kpi_params = _kpi_filter_where(
-        ano_min, ano_max, fondo, estado, etapa, ejecutor
+        ano_min, ano_max, fondo, estado, etapa, departamento, municipio
     )
 
     try:
