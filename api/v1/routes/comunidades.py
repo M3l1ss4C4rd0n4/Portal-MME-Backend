@@ -25,6 +25,23 @@ _DEPT_MAP: dict[str, str] = {
 }
 
 
+def _inv_numeric(col: str = "inversion_estimada") -> str:
+    """Expresión SQL compatible con inversion_estimada TEXT o NUMERIC."""
+    return f"""CASE WHEN {col} IS NULL THEN NULL
+         WHEN {col}::text ~ '^[0-9.-]+'
+         THEN REPLACE(REPLACE({col}::text, '$', ''), ',', '')::numeric
+         ELSE NULL END"""
+
+
+_COORD_WHERE = """
+    latitud IS NOT NULL AND longitud IS NOT NULL
+    AND NULLIF(TRIM(latitud::text), '') IS NOT NULL
+    AND NULLIF(TRIM(longitud::text), '') IS NOT NULL
+    AND TRIM(latitud::text) NOT IN ('-', 'N/A', 'nan', 'NaN')
+    AND TRIM(longitud::text) NOT IN ('-', 'N/A', 'nan', 'NaN')
+"""
+
+
 def _to_geo_id(dept: str) -> str:
     key = dept.lower().replace(" ", "_")
     return _DEPT_MAP.get(key, dept.upper().replace("_", " "))
@@ -37,17 +54,11 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
         with _cm.get_connection() as conn:
             with conn.cursor() as cur:
                 # KPIs globales
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         COUNT(*)                                                           AS implementadas,
-                        SUM(CASE WHEN inversion_estimada IS NOT NULL
-                                  AND inversion_estimada ~ '^[0-9]'
-                             THEN CAST(REPLACE(REPLACE(inversion_estimada,'$',''),',','') AS numeric)
-                             ELSE 0 END)                                                   AS inversion_estimada,
-                        AVG(CASE WHEN inversion_estimada IS NOT NULL
-                                  AND inversion_estimada ~ '^[0-9]'
-                             THEN CAST(REPLACE(REPLACE(inversion_estimada,'$',''),',','') AS numeric)
-                             END)                                                          AS avg_inversion,
+                        SUM(COALESCE({_inv_numeric()}, 0))                                AS inversion_estimada,
+                        AVG({_inv_numeric()})                                             AS avg_inversion,
                         SUM(capacidad_de_generacion_kwp)                                  AS capacidad_kwp,
                         AVG(capacidad_de_generacion_kwp)                                  AS avg_capacidad,
                         SUM(usuarios_equivalentes)                                        AS usuarios_equiv,
@@ -60,16 +71,13 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                 k = cur.fetchone()
 
                 # Desglose por departamento × zona
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         departamento,
                         COALESCE(NULLIF(TRIM(zona_sin_zni_mixto),''),'Sin clasificar') AS zona,
                         COUNT(*)                                                        AS count,
                         SUM(capacidad_de_generacion_kwp)                               AS capacidad,
-                        SUM(CASE WHEN inversion_estimada IS NOT NULL
-                                  AND inversion_estimada ~ '^[0-9]'
-                             THEN CAST(REPLACE(REPLACE(inversion_estimada,'$',''),',','') AS numeric)
-                             ELSE 0 END)                                               AS inversion
+                        SUM(COALESCE({_inv_numeric()}, 0))                             AS inversion
                     FROM comunidades.base
                     WHERE implementado = 'Si' AND departamento IS NOT NULL
                     GROUP BY departamento, zona_sin_zni_mixto
@@ -78,7 +86,7 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                 zona_rows = cur.fetchall()
 
                 # Puntos individuales con coordenadas
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         nombre_de_la_organizacion AS nombre,
                         municipio,
@@ -89,23 +97,19 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                         CAST(capacidad_de_generacion_kwp AS text)                     AS capacidad
                     FROM comunidades.base
                     WHERE implementado = 'Si'
-                      AND latitud  IS NOT NULL AND TRIM(latitud)  NOT IN ('', '-', 'N/A')
-                      AND longitud IS NOT NULL AND TRIM(longitud) NOT IN ('', '-', 'N/A')
+                      AND {_COORD_WHERE}
                     ORDER BY departamento, municipio
                 """)
                 puntos_rows = cur.fetchall()
 
                 # Municipios por departamento
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         departamento,
                         municipio,
                         COUNT(*)                                                        AS count,
                         SUM(capacidad_de_generacion_kwp)                               AS capacidad,
-                        SUM(CASE WHEN inversion_estimada IS NOT NULL
-                                  AND inversion_estimada ~ '^[0-9]'
-                             THEN CAST(REPLACE(REPLACE(inversion_estimada,'$',''),',','') AS numeric)
-                             ELSE 0 END)                                               AS inversion
+                        SUM(COALESCE({_inv_numeric()}, 0))                             AS inversion
                     FROM comunidades.base
                     WHERE implementado = 'Si' AND municipio IS NOT NULL
                     GROUP BY departamento, municipio
@@ -114,16 +118,13 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                 muni_rows = cur.fetchall()
 
                 # Promedios por departamento
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         departamento,
                         AVG(capacidad_de_generacion_kwp)  AS avg_capacidad,
                         AVG(usuarios_equivalentes)         AS avg_usuarios,
                         AVG(beneficiarios_equivalentes)    AS avg_beneficiarios,
-                        AVG(CASE WHEN inversion_estimada IS NOT NULL
-                                  AND inversion_estimada ~ '^[0-9]'
-                             THEN CAST(REPLACE(REPLACE(inversion_estimada,'$',''),',','') AS numeric)
-                             END)                          AS avg_inversion,
+                        AVG({_inv_numeric()})              AS avg_inversion,
                         SUM(usuarios_equivalentes)         AS sum_usuarios,
                         SUM(beneficiarios_equivalentes)    AS sum_beneficiarios
                     FROM comunidades.base
