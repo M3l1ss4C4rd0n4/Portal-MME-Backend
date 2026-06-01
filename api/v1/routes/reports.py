@@ -10,6 +10,7 @@ Endpoints:
     GET /v1/reports/boletines-energeticos/latest        → boletín más reciente (SharePoint)
     GET /v1/reports/informes-diarios-xm/paquete         → ZIP 3 informes XM con fallback
     GET /v1/reports/informe-diario-xm/latest            → alias boletines (compatibilidad)
+    GET /v1/reports/resumen-ejecutivo/latest            → PDF informe diario (correo/Telegram)
 """
 
 BOLETINES_ENERGETICOS_FOLDER = (
@@ -34,18 +35,24 @@ NO_CACHE_HEADERS = {
     "Pragma": "no-cache",
 }
 
-_CATALOG_CACHE: dict = {"ts": 0.0, "data": None}
-_CATALOG_TTL_SEC = 300
-
 import asyncio
 import io
+import json
 import logging
 import os
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+_CATALOG_CACHE: dict = {"ts": 0.0, "payload": None}
+_CATALOG_TTL_SEC = 30
+_CATALOG_BUST_FILE = (
+    Path(__file__).resolve().parents[3] / "logs" / ".informes_diarios_cache_bust"
+)
+_BOLETIN_CACHE_DIR = Path(__file__).resolve().parents[3] / "cache" / "boletines"
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import Response
@@ -204,6 +211,26 @@ def _graph_list_all_children(
     return items
 
 
+def _graph_list_children_recent(
+    headers: dict,
+    drive_id: str,
+    item_id: str,
+    *,
+    top: int = 30,
+) -> list[dict]:
+    """Lista hijos recientes ordenados por lastModifiedDateTime (sin paginar todo el drive)."""
+    import requests
+
+    url = (
+        f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/children"
+        f"?$select=id,name,lastModifiedDateTime,file,folder"
+        f"&$orderby=lastModifiedDateTime desc&$top={top}"
+    )
+    resp = requests.get(url, headers=headers, timeout=(15, 45))
+    resp.raise_for_status()
+    return resp.json().get("value", [])
+
+
 def _sp_headers() -> dict:
     """Token + headers para Microsoft Graph."""
     from etl.etl_sharepoint_sync import _get_access_token
@@ -321,16 +348,16 @@ def _extraer_preview_pdf(content: bytes) -> tuple[str, str]:
 def _index_informes_diarios_folders(
     headers: dict, drive_id: str, root_id: str,
 ) -> dict[date, dict[str, dict]]:
-    """folder_date → {pattern_key: driveItem}."""
+    """folder_date → {pattern_key: driveItem}. Solo escanea carpetas DD_MM_YYYY recientes."""
     folders: dict[date, dict[str, dict]] = {}
-    for item in _graph_list_all_children(headers, drive_id, root_id):
+    for item in _graph_list_children_recent(headers, drive_id, root_id, top=45):
         if "folder" not in item:
             continue
         folder_date = _parse_folder_date(item["name"])
         if folder_date is None:
             continue
         typed: dict[str, dict] = {}
-        for f in _graph_list_all_children(headers, drive_id, item["id"]):
+        for f in _graph_list_children_recent(headers, drive_id, item["id"], top=15):
             if "file" not in f:
                 continue
             for pattern, _label in INFORME_DIARIO_TIPOS:
@@ -369,6 +396,81 @@ def _resolver_informes_diarios(
             raise RuntimeError(f"Informe no encontrado: {pattern}")
 
     return resolved, resolved_from
+
+
+def _catalog_bust_mtime() -> float:
+    try:
+        return _CATALOG_BUST_FILE.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def invalidate_informes_diarios_cache() -> None:
+    """Invalida caché en todos los workers (archivo bust + memoria local)."""
+    _CATALOG_BUST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _CATALOG_BUST_FILE.write_text(str(time.time()), encoding="utf-8")
+    _CATALOG_CACHE["ts"] = 0.0
+    _CATALOG_CACHE["payload"] = None
+    logger.info("[REPORTS] Caché informes diarios invalidada")
+
+
+def _build_catalog_resumen(
+    folders: dict[date, dict[str, dict]],
+    resolved_from: dict[str, date],
+    today: date,
+) -> dict:
+    del_dia = sum(
+        1 for pattern, _ in INFORME_DIARIO_TIPOS
+        if resolved_from.get(pattern) == today
+    )
+    pendientes = [
+        label for pattern, label in INFORME_DIARIO_TIPOS
+        if resolved_from.get(pattern) != today
+    ]
+    return {
+        "fechaConsulta": today.isoformat(),
+        "completosDelDia": del_dia,
+        "totalTipos": len(INFORME_DIARIO_TIPOS),
+        "pendientes": pendientes,
+        "completo": del_dia == len(INFORME_DIARIO_TIPOS),
+        "actualizadoEn": datetime.now(ZoneInfo("America/Bogota")).isoformat(),
+    }
+
+
+def scan_informes_diarios_status(today: date | None = None) -> dict:
+    """
+    Escaneo ligero de SharePoint (sin descargar PDFs).
+    Usado por el watcher cron para detectar cambios y alertas.
+    """
+    if today is None:
+        today = datetime.now(ZoneInfo("America/Bogota")).date()
+
+    headers, drive_id, root_id = _sp_open_folder(INFORMES_DIARIOS_XM_FOLDER)
+    folders = _index_informes_diarios_folders(headers, drive_id, root_id)
+    if not folders:
+        raise RuntimeError("No se encontraron carpetas de informes diarios")
+
+    resolved, resolved_from = _resolver_informes_diarios(folders, today)
+    today_folder = folders.get(today, {})
+    resumen = _build_catalog_resumen(folders, resolved_from, today)
+
+    return {
+        "resumen": resumen,
+        "fingerprint": {
+            "fecha": today.isoformat(),
+            "carpetaHoy": {
+                pattern: today_folder[pattern].get("lastModifiedDateTime")
+                for pattern in today_folder
+            },
+            "resueltos": {
+                pattern: {
+                    "fecha": resolved_from[pattern].isoformat(),
+                    "modificado": resolved[pattern].get("lastModifiedDateTime"),
+                }
+                for pattern in resolved
+            },
+        },
+    }
 
 
 def _preview_fallback(label: str, folder_date: date) -> tuple[str, str]:
@@ -412,11 +514,17 @@ def _build_catalog_entry(
     }
 
 
-def _catalogo_informes_diarios_sync() -> list[dict]:
+def _catalogo_informes_diarios_sync() -> dict:
     """Metadatos de los 3 informes diarios (título/descripción desde PDF)."""
     now = time.time()
-    if _CATALOG_CACHE["data"] is not None and now - _CATALOG_CACHE["ts"] < _CATALOG_TTL_SEC:
-        return _CATALOG_CACHE["data"]
+    bust_mtime = _catalog_bust_mtime()
+    cached = _CATALOG_CACHE["payload"]
+    if (
+        cached is not None
+        and now - _CATALOG_CACHE["ts"] < _CATALOG_TTL_SEC
+        and _CATALOG_CACHE["ts"] >= bust_mtime
+    ):
+        return cached
 
     headers, drive_id, root_id = _sp_open_folder(INFORMES_DIARIOS_XM_FOLDER)
     today = datetime.now(ZoneInfo("America/Bogota")).date()
@@ -425,6 +533,7 @@ def _catalogo_informes_diarios_sync() -> list[dict]:
         raise RuntimeError("No se encontraron carpetas de informes diarios")
 
     resolved, resolved_from = _resolver_informes_diarios(folders, today)
+    resumen = _build_catalog_resumen(folders, resolved_from, today)
 
     tasks = [
         (pattern, label, resolved_from[pattern], resolved[pattern])
@@ -442,16 +551,19 @@ def _catalogo_informes_diarios_sync() -> list[dict]:
         ]
         catalogo = [f.result() for f in futures]
 
+    payload = {"informes": catalogo, "resumen": resumen}
     _CATALOG_CACHE["ts"] = now
-    _CATALOG_CACHE["data"] = catalogo
+    _CATALOG_CACHE["payload"] = payload
 
     logger.info(
-        "[REPORTS] Catálogo informes diarios generado | hidro=%s | oper=%s | desp=%s",
+        "[REPORTS] Catálogo informes diarios generado | hidro=%s | oper=%s | desp=%s | %d/%d del día",
         resolved_from.get("VariablesHidrologicas"),
         resolved_from.get("VariablesOperativas"),
         resolved_from.get("SeguimientoDespacho"),
+        resumen["completosDelDia"],
+        resumen["totalTipos"],
     )
-    return catalogo
+    return payload
 
 
 def _descargar_informe_diario_por_tipo_sync(tipo: str) -> tuple[bytes, str]:
@@ -472,26 +584,76 @@ def _descargar_informe_diario_por_tipo_sync(tipo: str) -> tuple[bytes, str]:
 def _descargar_ultimo_boletin_sync() -> tuple[bytes, str]:
     """
     Descarga el PDF más reciente de Boletines Energeticos (SharePoint).
-    Consulta en tiempo real — sin caché.
+    Usa consulta Graph ordenada ($top) — evita paginar miles de archivos históricos.
+    Si SharePoint falla, sirve la última copia en caché local.
     """
-    headers, drive_id, root_id = _sp_open_folder(BOLETINES_ENERGETICOS_FOLDER)
-    files = [f for f in _graph_list_all_children(headers, drive_id, root_id) if "file" in f]
-    if not files:
-        raise RuntimeError("No se encontraron boletines en SharePoint")
+    _BOLETIN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_pdf = _BOLETIN_CACHE_DIR / "latest.pdf"
+    cache_meta = _BOLETIN_CACHE_DIR / "latest.meta.json"
 
-    files.sort(
-        key=lambda x: (x.get("lastModifiedDateTime", ""), x.get("name", "")),
-        reverse=True,
-    )
-    latest = files[0]
-    content = _sp_download_item(headers, drive_id, latest)
-    logger.info(
-        "[REPORTS] Boletín energético: %s | mod=%s | %.1f KB",
-        latest["name"],
-        latest.get("lastModifiedDateTime"),
-        len(content) / 1024,
-    )
-    return content, latest["name"]
+    def _read_cache() -> tuple[bytes, str] | None:
+        if not cache_pdf.is_file() or not cache_meta.is_file():
+            return None
+        try:
+            meta = json.loads(cache_meta.read_text(encoding="utf-8"))
+            return cache_pdf.read_bytes(), meta["filename"]
+        except (json.JSONDecodeError, OSError, KeyError):
+            return None
+
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            headers, drive_id, root_id = _sp_open_folder(BOLETINES_ENERGETICOS_FOLDER)
+            files = [
+                f for f in _graph_list_children_recent(headers, drive_id, root_id, top=25)
+                if "file" in f and f.get("name", "").lower().endswith(".pdf")
+            ]
+            if not files:
+                raise RuntimeError("No se encontraron boletines en SharePoint")
+
+            latest = max(
+                files,
+                key=lambda x: (x.get("lastModifiedDateTime", ""), x.get("name", "")),
+            )
+            content = _sp_download_item(headers, drive_id, latest, read_timeout=300)
+            cache_pdf.write_bytes(content)
+            cache_meta.write_text(
+                json.dumps(
+                    {
+                        "filename": latest["name"],
+                        "modificado": latest.get("lastModifiedDateTime"),
+                        "cached_at": datetime.now(ZoneInfo("America/Bogota")).isoformat(),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            logger.info(
+                "[REPORTS] Boletín energético: %s | mod=%s | %.1f KB",
+                latest["name"],
+                latest.get("lastModifiedDateTime"),
+                len(content) / 1024,
+            )
+            return content, latest["name"]
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "[REPORTS] Boletín SharePoint intento %d/2 falló: %s",
+                attempt + 1,
+                exc,
+            )
+
+    cached = _read_cache()
+    if cached:
+        content, filename = cached
+        logger.warning(
+            "[REPORTS] Boletín servido desde caché local (%s, %.1f KB) — SharePoint no respondió",
+            filename,
+            len(content) / 1024,
+        )
+        return cached
+
+    raise RuntimeError(f"No se pudo descargar el boletín: {last_error}")
 
 
 def _descargar_paquete_informes_diarios_sync() -> tuple[bytes, str]:
@@ -526,6 +688,45 @@ def _descargar_paquete_informes_diarios_sync() -> tuple[bytes, str]:
 def _descargar_ultimo_informe_xm_sync() -> tuple[bytes, str]:
     """Alias de compatibilidad → boletines energéticos."""
     return _descargar_ultimo_boletin_sync()
+
+
+def _informes_ejecutivos_dir() -> str:
+    """Directorio donde Celery guarda copia del PDF diario (whatsapp_bot/informes)."""
+    server_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
+    return os.path.join(server_root, "whatsapp_bot", "informes")
+
+
+def _descargar_ultimo_resumen_ejecutivo_sync() -> tuple[bytes, str]:
+    """
+    Devuelve el PDF más reciente generado por send_daily_summary
+    (mismo archivo enviado por correo y Telegram).
+    """
+    informes_dir = _informes_ejecutivos_dir()
+    if not os.path.isdir(informes_dir):
+        raise RuntimeError(f"Directorio de informes no encontrado: {informes_dir}")
+
+    candidates: list[tuple[float, str, str]] = []
+    for name in os.listdir(informes_dir):
+        if not name.startswith("Informe_Ejecutivo_MME_") or not name.endswith(".pdf"):
+            continue
+        if "_test" in name.lower():
+            continue
+        path = os.path.join(informes_dir, name)
+        if os.path.isfile(path):
+            candidates.append((os.path.getmtime(path), name, path))
+
+    if not candidates:
+        raise RuntimeError("No hay informes ejecutivos disponibles")
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    _, filename, path = candidates[0]
+    with open(path, "rb") as f:
+        pdf_bytes = f.read()
+
+    logger.info("[REPORTS] Resumen ejecutivo servido: %s (%d KB)", filename, len(pdf_bytes) // 1024)
+    return pdf_bytes, filename
 
 
 # ══════════════════════════════════════════════════════════════
@@ -644,14 +845,19 @@ async def get_catalogo_informes_diarios_xm(
 ):
     try:
         loop = asyncio.get_event_loop()
-        informes = await loop.run_in_executor(None, _catalogo_informes_diarios_sync)
+        payload = await loop.run_in_executor(None, _catalogo_informes_diarios_sync)
     except Exception as e:
         logger.error("[REPORTS] Error generando catálogo informes: %s", e)
         raise HTTPException(
             status_code=502,
             detail=f"No se pudo obtener el catálogo: {e}",
         )
-    return {"informes": informes, "total": len(informes)}
+    informes = payload["informes"]
+    return {
+        "informes": informes,
+        "total": len(informes),
+        "resumen": payload["resumen"],
+    }
 
 
 @router.get(
@@ -744,6 +950,41 @@ async def get_latest_informe_diario_xm(
         raise HTTPException(
             status_code=502,
             detail=f"No se pudo descargar el informe: {e}",
+        )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            **NO_CACHE_HEADERS,
+        },
+    )
+
+
+@router.get(
+    "/resumen-ejecutivo/latest",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}},
+    summary="Resumen ejecutivo diario (correo/Telegram)",
+    description=(
+        "Descarga el PDF del informe ejecutivo diario más reciente "
+        "(mismo archivo enviado por correo y Telegram a las 8:30 AM)."
+    ),
+)
+async def get_latest_resumen_ejecutivo(
+    api_key: str = Depends(get_api_key),
+):
+    try:
+        loop = asyncio.get_event_loop()
+        pdf_bytes, filename = await loop.run_in_executor(
+            None, _descargar_ultimo_resumen_ejecutivo_sync
+        )
+    except Exception as e:
+        logger.error("[REPORTS] Error descargando resumen ejecutivo: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo descargar el resumen ejecutivo: {e}",
         )
 
     return Response(

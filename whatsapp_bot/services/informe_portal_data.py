@@ -140,9 +140,10 @@ def fetch_comunidades_full() -> Dict[str, Any]:
                 SELECT departamento,
                        COUNT(*) AS count,
                        SUM(capacidad_de_generacion_kwp) AS capacidad,
-                       SUM(CASE WHEN inversion_estimada IS NOT NULL AND inversion_estimada ~ '^[0-9]'
-                            THEN CAST(REPLACE(REPLACE(inversion_estimada,'$',''),',','') AS numeric)
-                            ELSE 0 END) AS inversion
+                       SUM(COALESCE(CASE WHEN inversion_estimada IS NULL THEN NULL
+                            WHEN inversion_estimada::text ~ '^[0-9.-]+'
+                            THEN REPLACE(REPLACE(inversion_estimada::text, '$', ''), ',', '')::numeric
+                            ELSE NULL END, 0)) AS inversion
                 FROM comunidades.base
                 WHERE implementado = 'Si' AND departamento IS NOT NULL
                 GROUP BY departamento

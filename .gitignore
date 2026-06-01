@@ -26,6 +26,11 @@ venv/
 ENV/
 env/
 
+# Caché runtime PDF (boletines SharePoint — no versionar binarios)
+cache/boletines/*.pdf
+logs/.informes_diarios_cache_bust
+etl/.informes_diarios_watcher_state.json
+
 # IDE
 .vscode/
 .idea/
