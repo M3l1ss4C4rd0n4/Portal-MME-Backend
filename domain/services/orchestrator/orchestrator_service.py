@@ -235,6 +235,9 @@ class ChatbotOrchestratorService(
             "noticias": self._handle_noticias_sector,
             "news": self._handle_noticias_sector,
 
+            "noticias_hidrocarburos": self._handle_noticias_hidrocarburos,
+            "hidrocarburos": self._handle_noticias_hidrocarburos,
+
             "pregunta_libre": self._handle_pregunta_libre,
             "pregunta": self._handle_pregunta_libre,
             "consulta_libre": self._handle_pregunta_libre,

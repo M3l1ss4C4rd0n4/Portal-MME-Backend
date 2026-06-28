@@ -39,6 +39,17 @@ handle_error() {
 }
 
 ##############################################################################
+# MUTEX — Evitar ejecuciones concurrentes
+##############################################################################
+
+LOCKFILE="/tmp/predictions_update.lock"
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ Ya hay una actualización en curso (lock activo). Saliendo sin errores." | tee -a "$LOG_FILE"
+    exit 0
+fi
+
+##############################################################################
 # INICIO DEL PROCESO
 ##############################################################################
 
@@ -329,6 +340,24 @@ log "   ✅ Monitoreo completado (${DURATION}s): $MONITOR_OK fuentes OK, $MONITO
 MONITOR_TOTAL_ALERTAS=$((MONITOR_CRITICOS + MONITOR_DRIFTS))
 
 ##############################################################################
+# PASO 4.5: RETRAIN AUTOMÁTICO POR DRIFT CONSECUTIVO
+##############################################################################
+
+if [ -f "/tmp/drift_retrain_needed.flag" ]; then
+    DRIFT_METRICA=$(cat /tmp/drift_retrain_needed.flag 2>/dev/null || echo "EMBALSES_PCT")
+    rm -f "/tmp/drift_retrain_needed.flag"
+    log ""
+    log "⚠️  PASO 4.5: DRIFT PERSISTENTE detectado en $DRIFT_METRICA — relanzando entrenamiento completo..."
+    log "   (El lock activo de este proceso previene colisiones externas)"
+    if $VENV_PYTHON "$SCRIPT_DIR/scripts/train_predictions_sector_energetico.py" >> "$LOG_FILE" 2>&1; then
+        log "   ✅ Retrain por drift completado correctamente"
+        redis-cli DEL pred:dashboard:sin > /dev/null 2>&1 || true
+    else
+        log "   ❌ Retrain por drift falló — revisar log para diagnóstico"
+    fi
+fi
+
+##############################################################################
 # PASO 5: EJECUTAR SISTEMA DE ALERTAS
 ##############################################################################
 
@@ -409,6 +438,19 @@ find "$LOG_DIR" -name "predictions_*.log" -mtime +30 -delete 2>/dev/null || true
 
 LOGS_RESTANTES=$(find "$LOG_DIR" -name "*.log" | wc -l)
 log "   ✅ Limpieza completada ($LOGS_RESTANTES logs activos)"
+
+##############################################################################
+# PASO 8: INVALIDAR CACHE REDIS
+##############################################################################
+
+log ""
+log "🔄 PASO 8: Invalidando cache Redis..."
+
+if redis-cli DEL pred:dashboard:sin > /dev/null 2>&1; then
+    log "   ✅ Cache pred:dashboard:sin invalidada — próxima petición reconstruirá con datos frescos"
+else
+    log "   ⚠️  Redis no disponible o key no existía (no crítico)"
+fi
 
 ##############################################################################
 # RESUMEN FINAL

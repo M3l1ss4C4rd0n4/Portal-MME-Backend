@@ -515,7 +515,43 @@ def main():
     if alertas_globales:
         enviar_alerta_telegram(alertas_globales, resumen)
 
+    # ── Verificar drift consecutivo y generar flag de retrain si procede ──
+    if verificar_drift_consecutivo(conn, metrica='EMBALSES_PCT', n_dias=3):
+        flag_path = '/tmp/drift_retrain_needed.flag'
+        with open(flag_path, 'w') as f:
+            f.write('EMBALSES_PCT')
+        print(f"\n⚠️  DRIFT 3 DÍAS CONSECUTIVOS en EMBALSES_PCT — flag generado: {flag_path}")
+
     conn.close()
+
+
+def verificar_drift_consecutivo(conn, metrica: str = 'EMBALSES_PCT', n_dias: int = 3) -> bool:
+    """
+    Retorna True si hubo drift (mape_expost > mape_train * 2.0) en las últimas
+    n_dias evaluaciones Y todas ocurrieron dentro de la ventana reciente
+    (últimos n_dias * 2 días calendario). Esto evita que drift histórico
+    resuelto dispare retrains espurios.
+    """
+    try:
+        cur = conn.cursor()
+        ventana_dias = n_dias * 2  # ventana de búsqueda en calendario
+        cur.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM predictions_quality_history
+                WHERE fuente = %s
+                  AND mape_expost IS NOT NULL
+                  AND mape_train  IS NOT NULL
+                  AND mape_expost > mape_train * 2.0
+                  AND fecha_evaluacion >= NOW() - INTERVAL '1 day' * %s
+                ORDER BY fecha_evaluacion DESC
+                LIMIT %s
+            ) sub
+        """, (metrica, ventana_dias, n_dias))
+        count = cur.fetchone()[0]
+        return int(count) >= n_dias
+    except Exception as e:
+        print(f"  ⚠️  verificar_drift_consecutivo error: {e}")
+        return False
 
 
 if __name__ == "__main__":

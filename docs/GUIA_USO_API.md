@@ -21,10 +21,10 @@ El servidor FastAPI está **funcionando correctamente** en:
 
 ```bash
 # Verificar estado
-sudo systemctl status api-mme
+sudo systemctl status portal-api.service
 
 # Reiniciar si es necesario
-sudo systemctl restart api-mme
+sudo systemctl restart portal-api.service
 ```
 
 **Características:**

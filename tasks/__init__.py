@@ -61,7 +61,7 @@ app.conf.beat_schedule = {
     # Resumen diario a las 8:30 AM (hora Colombia)
     # XM publica cambios entre 7:00–8:00 AM; 30 min de margen para datos frescos.
     'send-daily-summary-830am': {
-        'task': 'tasks.anomaly_tasks.send_daily_summary',
+        'task': 'tasks.anomaly_tasks.send_daily_generate',
         'schedule': crontab(hour=8, minute=30),
     },
     # Informe EnergIA app: push FCM 5 min después del resumen
@@ -74,6 +74,19 @@ app.conf.beat_schedule = {
     'calcular-cu-diario': {
         'task': 'tasks.etl_tasks.calcular_cu_diario',
         'schedule': crontab(hour=10, minute=0),  # Diario a las 10 AM
+    },
+    # Actualización ONI (NOAA CPC) — semanal, antes del reentrenamiento de modelos
+    # NOAA actualiza ONI mensualmente; bajarlo semanalmente garantiza datos frescos.
+    # Corre a las 01:30 AM del lunes, 30 min antes del reentrenamiento.
+    'actualizar-oni-semanal': {
+        'task': 'tasks.etl_tasks.actualizar_oni',
+        'schedule': crontab(hour=1, minute=30, day_of_week='1'),  # Lunes 01:30 AM
+    },
+    # Actualización PDO + SOI (NOAA) — semanal junto con ONI
+    # PDO actualiza ~mensual; SOI actualiza ~mensual. Corre 45 min antes del reentrenamiento.
+    'actualizar-pdo-soi-semanal': {
+        'task': 'tasks.etl_tasks.actualizar_pdo_soi',
+        'schedule': crontab(hour=1, minute=15, day_of_week='1'),  # Lunes 01:15 AM
     },
     # Re-entrenamiento cada 3 días (lunes/jueves/domingo) a las 02:00 AM
     # Corre DESPUÉS del ETL incremental (*/6h) para garantizar datos frescos en BD.

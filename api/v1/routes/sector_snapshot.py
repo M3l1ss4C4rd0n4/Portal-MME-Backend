@@ -235,6 +235,70 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                 pbp_rows = cur.fetchall()
                 pbp_diarios = [float(r[0]) for r in pbp_rows if r and r[0] is not None]
 
+                # ── ONI (Oceanic Niño Index) desde NOAA CPC ─────────────────────
+                cur.execute("""
+                    SELECT valor_gwh, fecha FROM sector_energetico.metrics
+                    WHERE metrica='ONI_Index' AND entidad='NOAA' AND recurso='Sistema'
+                      AND fecha <= %s
+                    ORDER BY fecha DESC LIMIT 1
+                """, [fecha_precio])
+                row_oni = cur.fetchone()
+                oni_raw = (float(row_oni[0]) - 5.0) if row_oni and row_oni[0] is not None else None
+                oni_fecha = row_oni[1] if row_oni else None
+
+                # Clasificación ONI
+                if oni_raw is not None:
+                    if oni_raw >= 0.5:
+                        oni_clasificacion = f"EL_NIÑO"
+                    elif oni_raw <= -0.5:
+                        oni_clasificacion = f"LA_NIÑA"
+                    else:
+                        oni_clasificacion = "NEUTRO"
+                else:
+                    oni_clasificacion = None
+
+                # ── Proyección ONI: estimar cuándo se alcanzaría El Niño ────
+                oni_proyeccion_inicio = None
+                if oni_raw is not None and oni_raw < 0.5:
+                    try:
+                        # Obtener últimos 6 meses de ONI para calcular tendencia
+                        cur.execute("""
+                            SELECT fecha, (valor_gwh - 5.0) AS oni_real
+                            FROM sector_energetico.metrics
+                            WHERE metrica='ONI_Index' AND entidad='NOAA' AND recurso='Sistema'
+                              AND fecha >= %s::date - INTERVAL '6 months'
+                              AND fecha <= %s
+                            ORDER BY fecha ASC
+                        """, [fecha_precio, fecha_precio])
+                        oni_rows = cur.fetchall()
+                        if oni_rows and len(oni_rows) >= 30:
+                            # Tomar muestra cada ~7 días para reducir ruido diario
+                            paso = max(1, len(oni_rows) // 24)  # ~24 puntos
+                            muestras = oni_rows[::paso]
+                            # Filtrar filas con valor no nulo
+                            muestras_validas = [(r[0], float(r[1])) for r in muestras if r[1] is not None]
+                            if len(muestras_validas) >= 3:
+                                fecha_base = muestras_validas[0][0]
+                                x_vals = [(r[0] - fecha_base).days for r in muestras_validas]
+                                y_vals = [r[1] for r in muestras_validas]
+                                if len(set(x_vals)) > 1:
+                                    n = len(y_vals)
+                                    sx = sum(x_vals)
+                                    sy = sum(y_vals)
+                                    sxx = sum(x * x for x in x_vals)
+                                    sxy = sum(x * y for x, y in zip(x_vals, y_vals))
+                                    pendiente = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+                                    if pendiente > 0:
+                                        oni_ultimo = y_vals[-1]
+                                        dias_para_05 = (0.5 - oni_ultimo) / pendiente
+                                        if 0 < dias_para_05 < 545:  # máx 18 meses
+                                            from datetime import timedelta
+                                            fecha_proy = muestras_validas[-1][0] + timedelta(days=int(dias_para_05))
+                                            if fecha_proy > muestras_validas[-1][0]:
+                                                oni_proyeccion_inicio = _fmt_fecha(fecha_proy)
+                    except Exception as e:
+                        logger.warning("[sector/snapshot] Error calculando proyección ONI: %s", e)
+
         # % embalse viene como fracción (0-1) desde la BD
         pct_embalses = round(pct_emb_raw * 100, 2)
 
@@ -335,6 +399,10 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                 "preciosOrigen":      precios_vigentes.get('origen', 'fallback'),
             },
             "tendencias":          tendencias,
+            "oniActual":           round(oni_raw, 2) if oni_raw is not None else None,
+            "oniClasificacion":    oni_clasificacion,
+            "oniFecha":            _fmt_fecha(oni_fecha),
+            "oniProyeccionInicio": oni_proyeccion_inicio,
             "ultimaActualizacion": _fmt_fecha(ultima),
             "ultimaEjecucionETL":  _fmt_fecha_hora(ultima_etl),
             "fechaGeneracion":     _fmt_fecha(fecha_gene),

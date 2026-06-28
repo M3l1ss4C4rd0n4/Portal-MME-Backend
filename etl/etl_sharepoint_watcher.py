@@ -15,6 +15,8 @@ Cron:
 
 import sys
 import json
+import os
+import fcntl
 import base64
 import logging
 import subprocess
@@ -30,6 +32,8 @@ STATE_FILE = Path(__file__).parent / ".sp_watcher_state.json"
 LOG_DIR    = BASE_DIR / "logs"
 ETL_SCRIPT = Path(__file__).parent / "etl_sharepoint_sync.py"
 PYTHON     = BASE_DIR / "venv" / "bin" / "python3"
+LOCK_FILE  = Path("/tmp/etl_sharepoint_watcher.lock")
+_lock_fd   = None
 
 LOG_DIR.mkdir(exist_ok=True)
 
@@ -54,6 +58,48 @@ from etl.etl_sharepoint_sync import (
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 # Segundos máximos para que corra el ETL de un archivo antes de rendirse
 ETL_TIMEOUT = 600
+
+
+# ── Lock singleton ────────────────────────────────────────────────────────────
+
+def _acquire_lock() -> bool:
+    """Intenta adquirir el lock file. Retorna True si se adquirió."""
+    global _lock_fd
+    if LOCK_FILE.exists():
+        try:
+            pid_str = LOCK_FILE.read_text(encoding="utf-8").strip()
+            if pid_str.isdigit():
+                stale_pid = int(pid_str)
+                try:
+                    os.kill(stale_pid, 0)
+                except (OSError, ProcessLookupError):
+                    logger.warning("⚠️  Lock huérfano (PID %d no activo) — eliminando", stale_pid)
+                    LOCK_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+    try:
+        fd = open(LOCK_FILE, "w")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd.write(str(os.getpid()))
+        fd.flush()
+        _lock_fd = fd
+        return True
+    except (IOError, OSError):
+        if 'fd' in locals():
+            fd.close()
+        return False
+
+
+def _release_lock():
+    global _lock_fd
+    try:
+        if _lock_fd is not None:
+            fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+            _lock_fd.close()
+            _lock_fd = None
+        LOCK_FILE.unlink(missing_ok=True)
+    except Exception:
+        _lock_fd = None
 
 
 # ── Estado persistido ─────────────────────────────────────────────────────────
@@ -245,4 +291,11 @@ if __name__ == "__main__":
              "Útil cuando la BD ya está actualizada y solo quieres armar el baseline.",
     )
     args = parser.parse_args()
-    check_and_sync(init_only=args.init_only)
+
+    if not _acquire_lock():
+        logger.warning("⚠️  Otra instancia del watcher ya está corriendo (%s ocupado). Saliendo.", LOCK_FILE)
+        sys.exit(0)
+    try:
+        check_and_sync(init_only=args.init_only)
+    finally:
+        _release_lock()

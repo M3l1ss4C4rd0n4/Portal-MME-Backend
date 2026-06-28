@@ -32,24 +32,32 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
         end_date: Optional[date] = None,
     ) -> "pd.DataFrame":
         metric_id = metric
-        if end_date:
-            query = """
-                SELECT fecha_prediccion, valor_gwh_predicho, intervalo_inferior, intervalo_superior, confianza
-                FROM predictions
-                WHERE fuente = %s AND fecha_prediccion BETWEEN %s AND %s
-                ORDER BY fecha_prediccion ASC
-            """
-            params = (metric_id, start_date, end_date)
-        else:
-            query = """
-                SELECT fecha_prediccion, valor_gwh_predicho, intervalo_inferior, intervalo_superior, confianza
-                FROM predictions
-                WHERE fuente = %s AND fecha_prediccion >= %s
-                ORDER BY fecha_prediccion ASC
-            """
-            params = (metric_id, start_date)
-        
-        return self.execute_dataframe(query, params)
+        # Construir WHERE dinámico
+        conditions = ["fuente = %s"]
+        params: list = [metric_id]
+
+        if start_date and end_date:
+            conditions.append("fecha_prediccion BETWEEN %s AND %s")
+            params += [start_date, end_date]
+        elif start_date:
+            conditions.append("fecha_prediccion >= %s")
+            params.append(start_date)
+
+        if model_name:
+            # Modelo explícito: filtra solo ese modelo (sin mezclar)
+            conditions.append("modelo = %s")
+            params.append(model_name)
+        # Sin model_name: devuelve todas las predicciones (comportamiento original)
+
+        where = " AND ".join(conditions)
+        query = f"""
+            SELECT fecha_prediccion, valor_gwh_predicho, intervalo_inferior,
+                   intervalo_superior, confianza
+            FROM predictions
+            WHERE {where}
+            ORDER BY fecha_prediccion ASC
+        """
+        return self.execute_dataframe(query, tuple(params))
     
     def count_predictions(self) -> int:
         query = "SELECT COUNT(*) as count FROM predictions"

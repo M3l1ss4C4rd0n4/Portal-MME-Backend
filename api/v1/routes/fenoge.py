@@ -26,6 +26,44 @@ _DEPT_MAP: dict[str, str] = {
     "san_andres_y_providencia": "ARCHIPIELAGO DE SAN ANDRES PROVIDENCIA Y SANTA CATALINA",
 }
 
+# Centroides de departamentos (calculados del GeoJSON)
+# Usados cuando una CE no tiene coordenadas geográficas
+_DEPT_CENTROID: dict[str, tuple[float, float]] = {
+    "AMAZONAS":                                               (-1.4426, -71.7341),
+    "ANTIOQUIA":                                              (6.9998, -75.8351),
+    "ARAUCA":                                                 (6.4797, -71.1813),
+    "ARCHIPIELAGO DE SAN ANDRES PROVIDENCIA Y SANTA CATALINA": (12.5493, -81.7191),
+    "ATLANTICO":                                              (10.6765, -74.9739),
+    "BOLIVAR":                                                (9.1230, -74.7633),
+    "BOYACA":                                                 (5.8476, -73.2957),
+    "CALDAS":                                                 (5.3503, -75.3816),
+    "CAQUETA":                                                (0.6652, -73.8092),
+    "CASANARE":                                               (5.4443, -71.7390),
+    "CAUCA":                                                  (2.3141, -76.8181),
+    "CESAR":                                                  (9.2880, -73.5241),
+    "CHOCO":                                                  (6.0140, -77.0042),
+    "CORDOBA":                                                (8.5294, -75.6963),
+    "CUNDINAMARCA":                                           (4.7540, -74.1737),
+    "GUAINIA":                                                (2.8304, -68.8610),
+    "GUAVIARE":                                               (1.9134, -71.8686),
+    "HUILA":                                                  (2.6641, -75.6033),
+    "LA GUAJIRA":                                             (11.4495, -72.4951),
+    "MAGDALENA":                                              (10.1873, -74.2653),
+    "META":                                                   (3.2160, -73.1139),
+    "NARIÑO":                                                 (1.5721, -77.8219),
+    "NORTE DE SANTANDER":                                     (7.8691, -72.9493),
+    "PUTUMAYO":                                               (0.3368, -75.6166),
+    "QUINDIO":                                                (4.4965, -75.7020),
+    "RISARALDA":                                              (5.0596, -75.8931),
+    "SANTAFE DE BOGOTA D.C":                                  (4.2840, -74.2118),
+    "SANTANDER":                                              (6.6089, -73.4278),
+    "SUCRE":                                                  (9.1335, -75.2053),
+    "TOLIMA":                                                 (4.0742, -75.2126),
+    "VALLE DEL CAUCA":                                        (3.9789, -76.5671),
+    "VAUPES":                                                 (0.3193, -70.5730),
+    "VICHADA":                                                (4.2500, -69.2627),
+}
+
 FASE_LABELS = {"1_0": "Fenoge 1.0", "1_1": "Fenoge 1.1", "CE": "CE"}
 
 
@@ -40,9 +78,27 @@ def _f(v):
 
 def _coord(v) -> float | None:
     try:
-        return float(v) if v and str(v).strip() not in ("", "-", "N/A") else None
+        f = float(v) if v and str(v).strip() not in ("", "-", "N/A") else None
     except (ValueError, TypeError):
         return None
+    if f is None:
+        return None
+    # Los datos pueden venir con la coma decimal del formato español
+    # eliminada:  "6,70418" → 670418 .  Detectamos valores fuera del
+    # rango colombiano y corregimos:
+    #   lat  → 1 dígito entero (ej. 670418  → 6.70418)
+    #   lng  → 2 dígitos enteros (ej. 71047444 → 71.047444)
+    if f > 15:
+        # Mangled latitud (Colombia siempre lat > 0 y < ~13)
+        s = str(abs(int(f)))
+        if len(s) >= 2:
+            f = float(f"{s[:1]}.{s[1:]}")
+    elif f < -66:
+        # Mangled longitud (Colombia siempre lng < 0 y entre -82 y -66)
+        s = str(abs(int(f)))
+        if len(s) >= 3:
+            f = -float(f"{s[:2]}.{s[2:]}")
+    return f
 
 
 # ─── /mapa ────────────────────────────────────────────────────────────────────
@@ -82,7 +138,8 @@ async def get_fenoge_mapa(request: Request, api_key: str = Depends(get_api_key))
                 """)
                 fase_rows = cur.fetchall()
 
-                # Puntos individuales con coordenadas
+                # Puntos individuales — todos los CEs, con coordenadas si existen,
+                # o centroide del departamento como fallback
                 cur.execute("""
                     SELECT
                         comunidad        AS nombre,
@@ -93,8 +150,6 @@ async def get_fenoge_mapa(request: Request, api_key: str = Depends(get_api_key))
                         COALESCE(NULLIF(TRIM(fase), ''), 'Sin clasificar') AS fase,
                         kwp              AS capacidad
                     FROM fenoge.comunidades
-                    WHERE latitud  IS NOT NULL
-                      AND longitud IS NOT NULL
                     ORDER BY departamento, municipio
                 """)
                 puntos_rows = cur.fetchall()
@@ -160,20 +215,27 @@ async def get_fenoge_mapa(request: Request, api_key: str = Depends(get_api_key))
             dept_map[gk]["inversion"] += d["inversion"]
         por_departamento = sorted(dept_map.values(), key=lambda x: -x["count"])
 
-        # puntos
-        puntos = [
-            {
-                "nombre":          r[0] or "",
-                "municipio":       r[1] or "",
-                "departamentoGeo": _to_geo_id(r[2]),
-                "fase":            r[5],
-                "lat":             _coord(r[3]),
-                "lng":             _coord(r[4]),
-                "capacidad":       _coord(r[6]),
-            }
-            for r in puntos_rows
-            if _coord(r[3]) is not None and _coord(r[4]) is not None
-        ]
+        # puntos — con fallback a centroide del departamento si falta coordenada
+        puntos = []
+        for r in puntos_rows:
+            lat = _coord(r[3])
+            lng = _coord(r[4])
+            dept_geo = _to_geo_id(r[2])
+            # Si no tiene coordenadas válidas, usar centroide del departamento
+            if lat is None or lng is None:
+                centroide = _DEPT_CENTROID.get(dept_geo)
+                if centroide:
+                    lat, lng = centroide
+            if lat is not None and lng is not None:
+                puntos.append({
+                    "nombre":          r[0] or "",
+                    "municipio":       r[1] or "",
+                    "departamentoGeo": dept_geo,
+                    "fase":            r[5],
+                    "lat":             lat,
+                    "lng":             lng,
+                    "capacidad":       _coord(r[6]),
+                })
 
         # por_municipio
         por_municipio: dict[str, list] = {}
@@ -231,39 +293,56 @@ async def get_fenoge_seguimiento(request: Request, api_key: str = Depends(get_ap
         with _cm.get_connection() as conn:
             with conn.cursor() as cur:
 
-                # Catálogos para filtros
+                # Catálogos para filtros — solo entidades con al menos un valor de avance
                 cur.execute("""
                     SELECT DISTINCT region FROM fenoge.seguimiento
-                    WHERE region IS NOT NULL ORDER BY region
+                    WHERE region IS NOT NULL
+                      AND (avance_real_acumulado_pct IS NOT NULL
+                           OR avance_programado_acumulado_pct IS NOT NULL)
+                    ORDER BY region
                 """)
                 regiones = [r[0] for r in cur.fetchall()]
 
                 cur.execute("""
                     SELECT DISTINCT numero_contrato FROM fenoge.seguimiento
-                    WHERE numero_contrato IS NOT NULL ORDER BY numero_contrato
+                    WHERE numero_contrato IS NOT NULL
+                      AND (avance_real_acumulado_pct IS NOT NULL
+                           OR avance_programado_acumulado_pct IS NOT NULL)
+                    ORDER BY numero_contrato
                 """)
                 contratos = [r[0] for r in cur.fetchall()]
 
                 cur.execute("""
                     SELECT DISTINCT nombre_comunidad FROM fenoge.seguimiento
                     WHERE nombre_comunidad IS NOT NULL AND nombre_comunidad <> ''
+                      AND (avance_real_acumulado_pct IS NOT NULL
+                           OR avance_programado_acumulado_pct IS NOT NULL)
                     ORDER BY nombre_comunidad
                 """)
                 comunidades = [r[0] for r in cur.fetchall()]
 
                 # Datos completos ordenados por fecha y contrato (hasta agosto 2026)
                 cur.execute("""
+                    SELECT MAX(fecha_carga) FROM fenoge.seguimiento
+                """)
+                ts_seg = cur.fetchone()[0]
+
+                cur.execute("""
                     SELECT
-                        region,
-                        numero_contrato,
-                        nombre_comunidad,
-                        dia_actualizacion,
-                        avance_real_acumulado_pct,
-                        avance_programado_acumulado_pct
-                    FROM fenoge.seguimiento
-                    WHERE dia_actualizacion IS NOT NULL
-                      AND dia_actualizacion <= %s
-                    ORDER BY region, numero_contrato, nombre_comunidad, dia_actualizacion
+                        s.region,
+                        s.numero_contrato,
+                        s.nombre_comunidad,
+                        s.dia_actualizacion,
+                        s.avance_real_acumulado_pct,
+                        s.avance_programado_acumulado_pct,
+                        c.beneficiarios,
+                        c.kwp
+                    FROM fenoge.seguimiento s
+                    LEFT JOIN fenoge.comunidades c
+                      ON c.comunidad = s.nombre_comunidad
+                    WHERE s.dia_actualizacion IS NOT NULL
+                      AND s.dia_actualizacion <= %s
+                    ORDER BY s.region, s.numero_contrato, s.nombre_comunidad, s.dia_actualizacion
                 """, (SEGUIMIENTO_FECHA_CORTE,))
                 rows = cur.fetchall()
 
@@ -277,11 +356,14 @@ async def get_fenoge_seguimiento(request: Request, api_key: str = Depends(get_ap
                 "fecha":          r[3].isoformat() if r[3] else None,
                 "realAcum":       float(r[4]) * 100 if r[4] is not None else None,
                 "programadoAcum": float(r[5]) * 100 if r[5] is not None else None,
+                "usuarios":       int(r[6]) if r[6] is not None else 0,
+                "potencia":       float(r[7]) if r[7] is not None else 0.0,
             }
             for r in rows
         ]
 
         return JSONResponse({
+            "ultima_actualizacion": ts_seg.strftime("%d/%m/%Y, %H:%M") if ts_seg else None,
             "regiones":    regiones,
             "contratos":   contratos,
             "comunidades": comunidades,

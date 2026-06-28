@@ -16,6 +16,7 @@ from api.v1.routes import (
     cu,
     simulation,
     reports,
+    informes_tableros,
     internal,
     energia_app,
     # Portal dashboard endpoints (Fase 1)
@@ -137,6 +138,12 @@ api_router_v1.include_router(
     reports.router,
     prefix="/reports",
     tags=["📄 Informes PDF"]
+)
+
+# 15b. Informes por tablero del portal
+api_router_v1.include_router(
+    informes_tableros.router,
+    tags=["📊 Informes por Tablero"]
 )
 
 # 16. Endpoints internos (bot Telegram, Celery) — NO exponer al exterior

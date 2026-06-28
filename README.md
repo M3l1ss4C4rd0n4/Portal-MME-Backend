@@ -367,8 +367,8 @@ celery -A tasks beat --loglevel=info
 
 ```bash
 # API FastAPI
-sudo systemctl status api-mme
-sudo systemctl restart api-mme
+sudo systemctl status portal-api.service
+sudo systemctl restart portal-api.service
 
 # Dashboard Dash
 sudo systemctl status dashboard-mme

@@ -283,8 +283,10 @@ def obtener_precios_escasez_vigentes(
       1. Consulta la tabla `sector_energetico.precios_escasez_mensuales` en
          PostgreSQL (valores oficiales actualizados mensualmente por CREG/XM).
       2. Si no hay valor para el mes solicitado, busca el más reciente anterior.
-      3. Si la BD no está disponible, devuelve los valores de referencia
-         ene-2026 (PRECIO_ESCASEZ_*_REF_2026_01).
+      3. Consulta `PrecEsca` desde `sector_energetico.metrics` (dato diario real
+         de XM, más actualizado que la tabla mensual).
+      4. Si la BD no está disponible o no hay datos, devuelve los valores de
+         referencia ene-2026 (PRECIO_ESCASEZ_*_REF_2026_01).
 
     Fuente: Resolución CREG 101 066 de 2024.
     Publicación: https://www.xm.com.co/transacciones/cargo-por-confiabilidad/precio-de-bolsa-y-escasez
@@ -346,7 +348,54 @@ def obtener_precios_escasez_vigentes(
         # BD no disponible, usar valores de referencia
         pass
 
-    # 2) Fallback: valores de referencia enero 2026
+    # 2) Intentar PrecEsca desde sector_energetico.metrics (dato real XM diario)
+    try:
+        import psycopg2
+        from core.config import settings
+        params = {
+            'host': settings.POSTGRES_HOST,
+            'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB,
+            'user': settings.POSTGRES_USER,
+        }
+        if settings.POSTGRES_PASSWORD:
+            params['password'] = settings.POSTGRES_PASSWORD
+        conn = psycopg2.connect(**params)
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT valor_gwh, fecha
+                FROM sector_energetico.metrics
+                WHERE metrica = 'PrecEsca'
+                  AND entidad = 'Sistema'
+                  AND recurso = 'Sistema'
+                ORDER BY fecha DESC
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0] is not None:
+                prec_esca = float(row[0])
+                # Determinar PEI y PES proporcionalmente según la relación
+                # original entre los valores de referencia CREG.
+                # PEI/PE = 327.67/590.56 ≈ 0.555, PES/PE = 830.34/590.56 ≈ 1.406
+                relacion_pei = PRECIO_ESCASEZ_PEI_REF_2026_01 / PRECIO_ESCASEZ_PE_REF_2026_01
+                relacion_pes = PRECIO_ESCASEZ_PES_REF_2026_01 / PRECIO_ESCASEZ_PE_REF_2026_01
+                return {
+                    'pei': round(prec_esca * relacion_pei, 2),
+                    'pe': round(prec_esca, 2),
+                    'pes': round(prec_esca * relacion_pes, 2),
+                    'fuente': f'XM PrecEsca ({row[1]})',
+                    'anio': f.year,
+                    'mes': f.month,
+                    'origen': 'XM',
+                }
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    # 3) Fallback: valores de referencia enero 2026
     return {
         'pei': PRECIO_ESCASEZ_PEI_REF_2026_01,
         'pe': PRECIO_ESCASEZ_PE_REF_2026_01,

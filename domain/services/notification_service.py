@@ -6,19 +6,23 @@ Gestiona el envío de mensajes a través de dos canales:
   2. Email (a destinatarios de la tabla alert_recipients)
 
 Usado por:
-  - Celery tasks (check_anomalies, send_daily_summary)
+  - Celery tasks (check_anomalies, send_daily_generate, send_single_daily_email)
   - Endpoint /api/broadcast-alert (bot uvicorn)
 """
 
+import json
 import logging
 import os
 import smtplib
+import socket
 import ssl
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import httpx
 import psycopg2
@@ -32,6 +36,9 @@ from core.constants import MODEL_DISPLAY_NAMES, MAPE_THRESHOLDS, mape_quality, A
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+SMTP_TIMEOUT_SECONDS = int(os.getenv('SMTP_TIMEOUT', '30'))
+EMAIL_MAX_PARALLEL_WORKERS = 6
 
 
 # ─────────────────── Configuración ───────────────────
@@ -139,13 +146,12 @@ def broadcast_telegram(
             chat_id = u['chat_id']
             try:
                 # Enviar texto (con fallback si Markdown falla)
+                payload: Dict[str, Any] = {"chat_id": chat_id, "text": message}
+                if parse_mode:
+                    payload["parse_mode"] = parse_mode
                 resp = client.post(
                     f"{base}/sendMessage",
-                    json={
-                        "chat_id": chat_id,
-                        "text": message,
-                        "parse_mode": parse_mode,
-                    },
+                    json=payload,
                 )
                 if resp.status_code != 200:
                     # Log detallado del error
@@ -252,6 +258,87 @@ def get_email_recipients(
         return []
 
 
+def _log_email_event(
+    dest: str,
+    status: str,
+    duration_ms: int,
+    error: Optional[str] = None,
+    event: str = "send_attempt",
+) -> None:
+    """Log estructurado para trazabilidad de envíos SMTP."""
+    payload = {
+        "event": event,
+        "dest": dest,
+        "status": status,
+        "duration_ms": duration_ms,
+    }
+    if error:
+        payload["error"] = error
+    logger.info("[EMAIL] %s", json.dumps(payload, ensure_ascii=False))
+
+
+def _send_one_email(
+    dest: str,
+    subject: str,
+    body_html: str,
+    pdf_path: Optional[str] = None,
+    cfg: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, Optional[str], int]:
+    """
+    Envía un email a un único destinatario.
+
+    Returns:
+        (success, error_message, duration_ms)
+    """
+    smtp_cfg = cfg or _smtp_config()
+    started = time.monotonic()
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"{smtp_cfg['from_name']} <{smtp_cfg['user']}>"
+        msg['To'] = dest
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body_html, 'html', 'utf-8'))
+
+        if pdf_path and os.path.isfile(pdf_path):
+            with open(pdf_path, 'rb') as f:
+                part = MIMEApplication(f.read(), _subtype='pdf')
+                part.add_header(
+                    'Content-Disposition',
+                    'attachment',
+                    filename=os.path.basename(pdf_path),
+                )
+                msg.attach(part)
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP(
+            smtp_cfg['server'],
+            smtp_cfg['port'],
+            timeout=SMTP_TIMEOUT_SECONDS,
+        ) as server:
+            server.ehlo()
+            server.starttls(context=context)
+            server.ehlo()
+            server.login(smtp_cfg['user'], smtp_cfg['password'])
+            server.sendmail(smtp_cfg['user'], dest, msg.as_string())
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        _log_email_event(dest, "ok", duration_ms)
+        logger.info("✅ Email enviado a %s", dest)
+        return True, None, duration_ms
+    except (socket.timeout, TimeoutError) as e:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        err = f"SMTP timeout after {SMTP_TIMEOUT_SECONDS}s: {e}"
+        _log_email_event(dest, "fail", duration_ms, error=err)
+        logger.error("❌ Timeout enviando email a %s: %s", dest, err)
+        return False, err, duration_ms
+    except Exception as e:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        err = str(e)
+        _log_email_event(dest, "fail", duration_ms, error=err)
+        logger.error("❌ Error enviando email a %s: %s", dest, e)
+        return False, err, duration_ms
+
+
 def send_email(
     to_list: List[str],
     subject: str,
@@ -261,7 +348,7 @@ def send_email(
     """
     Envía un email HTML (opcionalmente con PDF adjunto) a una lista de direcciones.
 
-    Retorna {"sent": N, "failed": M}.
+    Retorna {"sent": N, "failed": M, "failures": [...]}.
     """
     cfg = _smtp_config()
     if not cfg['user'] or not cfg['password']:
@@ -270,47 +357,48 @@ def send_email(
             f"SMTP_USER='{cfg['user']}', SMTP_SERVER='{cfg['server']}'. "
             "Configure las variables de entorno para habilitar emails."
         )
-        return {"sent": 0, "failed": 0, "reason": "smtp_not_configured"}
+        return {"sent": 0, "failed": 0, "failures": [], "reason": "smtp_not_configured"}
+
+    if not to_list:
+        return {"sent": 0, "failed": 0, "failures": []}
 
     sent = 0
     failed = 0
+    failures: List[str] = []
+    max_workers = min(len(to_list), EMAIL_MAX_PARALLEL_WORKERS)
 
-    for dest in to_list:
-        try:
-            msg = MIMEMultipart()
-            msg['From'] = f"{cfg['from_name']} <{cfg['user']}>"
-            msg['To'] = dest
-            msg['Subject'] = subject
-            msg.attach(MIMEText(body_html, 'html', 'utf-8'))
+    if max_workers <= 1:
+        for dest in to_list:
+            ok, _, _ = _send_one_email(dest, subject, body_html, pdf_path, cfg)
+            if ok:
+                sent += 1
+            else:
+                failed += 1
+                failures.append(dest)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(
+                    _send_one_email, dest, subject, body_html, pdf_path, cfg
+                ): dest
+                for dest in to_list
+            }
+            for future in as_completed(futures):
+                dest = futures[future]
+                try:
+                    ok, _, _ = future.result()
+                    if ok:
+                        sent += 1
+                    else:
+                        failed += 1
+                        failures.append(dest)
+                except Exception as e:
+                    failed += 1
+                    failures.append(dest)
+                    logger.error("❌ Error inesperado enviando email a %s: %s", dest, e)
 
-            # Adjuntar PDF si existe
-            if pdf_path and os.path.isfile(pdf_path):
-                with open(pdf_path, 'rb') as f:
-                    part = MIMEApplication(f.read(), _subtype='pdf')
-                    part.add_header(
-                        'Content-Disposition',
-                        'attachment',
-                        filename=os.path.basename(pdf_path),
-                    )
-                    msg.attach(part)
-
-            # Enviar
-            context = ssl.create_default_context()
-            with smtplib.SMTP(cfg['server'], cfg['port']) as server:
-                server.ehlo()
-                server.starttls(context=context)
-                server.ehlo()
-                server.login(cfg['user'], cfg['password'])
-                server.sendmail(cfg['user'], dest, msg.as_string())
-
-            sent += 1
-            logger.info(f"✅ Email enviado a {dest}")
-        except Exception as e:
-            failed += 1
-            logger.error(f"❌ Error enviando email a {dest}: {e}")
-
-    logger.info(f"📧 Email broadcast: {sent} enviados, {failed} fallidos")
-    return {"sent": sent, "failed": failed}
+    logger.info("📧 Email broadcast: %s enviados, %s fallidos", sent, failed)
+    return {"sent": sent, "failed": failed, "failures": failures}
 
 
 def broadcast_email_alert(
@@ -1133,136 +1221,11 @@ def build_daily_email_html(
 
     # ════════ Índices Compuestos del Sistema ════════
     if indices_compuestos:
-        _IDX_COLORS = {
-            'ÓPTIMO': '#1B5E20', 'ADECUADO': '#2E7D32', 'NORMAL': '#2E7D32', 'ESTABLE': '#2E7D32',
-            'LEVE': '#7CB342', 'BAJO': '#E65100', 'MODERADO': '#E65100', 'VIGILANCIA': '#E65100',
-            'PREOCUPANTE': '#BF360C', 'ALTO ESTR\u00c9S': '#B71C1C',
-            'CR\u00cdTICO': '#B71C1C',
-        }
-        _IDX_BG = {
-            'ÓPTIMO': '#C8E6C9', 'ADECUADO': '#E8F5E9', 'NORMAL': '#E8F5E9', 'ESTABLE': '#E8F5E9',
-            'LEVE': '#F9FBE7', 'BAJO': '#FFF3E0', 'MODERADO': '#FFF3E0', 'VIGILANCIA': '#FFF3E0',
-            'PREOCUPANTE': '#FBE9E7', 'ALTO ESTR\u00c9S': '#FFEBEE',
-            'CR\u00cdTICO': '#FFEBEE',
-        }
-        # (sigla, qué mide, textos por nivel {nivel: (descripción, impacto, acción)})
-        _IDX_META = {
-            'ISH': {
-                'titulo': 'Disponibilidad de agua en embalses para generaci\u00f3n el\u00e9ctrica',
-                'niveles': {
-                    '\u00d3PTIMO':      ('Los embalses est\u00e1n en niveles hist\u00f3ricamente altos. Hay amplia reserva h\u00eddrica.',
-                                         'El sistema opera con gran margen de seguridad. La hidroenerg\u00eda puede cubrir la demanda sin apoyos t\u00e9rmicos.',
-                                         'Mantener la gesti\u00f3n actual. Aprovechar excedentes para optimizar costos.'),
-                    'ADECUADO':         ('Los embalses tienen reservas suficientes para cubrir la demanda en el corto plazo.',
-                                         'Bajo riesgo operativo. Los precios de bolsa se mantienen estables.',
-                                         'Monitorear la tendencia. Si los aportes h\u00eddricos bajan, revisar despacho t\u00e9rmico.'),
-                    'BAJO':             ('Los embalses est\u00e1n por debajo de niveles normales. La reserva h\u00eddrica es insuficiente.',
-                                         'Presi\u00f3n al alza en precios de bolsa. Mayor dependencia de generaci\u00f3n t\u00e9rmica costosa.',
-                                         'Activar planes de contingencia t\u00e9rmica. Revisar restricciones de exportaci\u00f3n de energ\u00eda.'),
-                    'CR\u00cdTICO':     ('Los embalses est\u00e1n en niveles cr\u00edticos. Riesgo real de racionamiento.',
-                                         'El sistema enfrenta riesgo de desabastecimiento. Los precios de bolsa pueden dispararse.',
-                                         'Declarar alerta de escasez. Activar protocolos de emergencia y coordinaci\u00f3n con el regulador.'),
-                },
-            },
-            'IPM': {
-                'titulo': 'Presi\u00f3n que ejercen los precios del mercado el\u00e9ctrico mayorista',
-                'niveles': {
-                    'NORMAL':           ('Los precios de bolsa est\u00e1n dentro de rangos hist\u00f3ricos normales. No hay presi\u00f3n econ\u00f3mica.',
-                                         'Costos de generaci\u00f3n estables. Los usuarios regulados no enfrentar\u00e1n incrementos abruptos.',
-                                         'Sin acci\u00f3n inmediata. Continuar monitoreo de aportes h\u00eddricos y oferta t\u00e9rmica.'),
-                    'LEVE':             ('Los precios muestran una tendencia al alza moderada, a\u00fan dentro de rangos manejables.',
-                                         'Leve incremento en el costo de prestaci\u00f3n del servicio. M\u00e1rgenes comercializadores bajo presi\u00f3n.',
-                                         'Verificar causas (deficits h\u00eddricos, mantenimientos). Preparar alertas a agentes del mercado.'),
-                    'MODERADO':         ('Los precios de bolsa est\u00e1n por encima de lo normal. El mercado muestra tensi\u00f3n.',
-                                         'Efecto directo en tarifas reguladas si persiste. Riesgo de incumplimiento en contratos a precio fijo.',
-                                         'Emitir circular a comercializadores. Revisar opciones de gesti\u00f3n de demanda y respuesta activa.'),
-                    'ALTO ESTR\u00c9S': ('Los precios de bolsa est\u00e1n en niveles excepcionalmente altos. Crisis de precios en el mercado.',
-                                         'Impacto directo en tarifas a usuarios. Riesgo de crisis financiera en comercializadores deficitarios.',
-                                         'Intervenci\u00f3n regulatoria urgente. Activar mecanismos de precio l\u00edmite y mesas de trabajo con CREG.'),
-                },
-            },
-            'IES': {
-                'titulo': 'Nivel de estr\u00e9s operativo del sistema el\u00e9ctrico nacional',
-                'niveles': {
-                    'NORMAL':           ('El sistema opera con normalidad. No hay indicios de sobrecarga o vulnerabilidades cr\u00edticas.',
-                                         'La confiabilidad del servicio es alta. El riesgo de fallas en cascada es m\u00ednimo.',
-                                         'Mantener vigilancia rutinaria. Sin acciones especiales requeridas.'),
-                    'LEVE':             ('El sistema presenta algunas se\u00f1ales de estr\u00e9s: anomal\u00edas aisladas o m\u00e1rgenes ajustados.',
-                                         'La confiabilidad se mantiene, pero con menor margen de maniobra ante imprevistos.',
-                                         'Revisar planes de mantenimiento preventivo. Identificar los indicadores que est\u00e1n generando el estr\u00e9s.'),
-                    'MODERADO':         ('El sistema acumula m\u00faltiples indicadores en estado de alerta. La presi\u00f3n operativa es significativa.',
-                                         'Riesgo elevado ante eventos imprevistos (salida de una planta grande, ola de calor). Menor resiliencia.',
-                                         'Activar coordinaci\u00f3n operativa entre XM y generadores. Diferir mantenimientos no urgentes.'),
-                    'ALTO ESTR\u00c9S': ('El sistema est\u00e1 bajo estr\u00e9s severo con m\u00faltiples indicadores cr\u00edticos simult\u00e1neos.',
-                                         'Alta probabilidad de fallas si ocurre cualquier contingencia adicional. Estabilidad del sistema en riesgo.',
-                                         'Activar sala de crisis operativa. Notificar al MinMinas y a la CREG. Preparar protocolos de carga controlada.'),
-                },
-            },
-            'CIS': {
-                'titulo': 'Calificaci\u00f3n integral que resume el estado general del sistema el\u00e9ctrico',
-                'niveles': {
-                    'ESTABLE':          ('Todos los indicadores principales est\u00e1n en verde. El sistema opera con condiciones \u00f3ptimas.',
-                                         'Bajo riesgo en todas las dimensiones: h\u00eddrica, econ\u00f3mica y operativa.',
-                                         'Sin acciones urgentes. Aprovechar la coyuntura para planear mantenimientos mayores.'),
-                    'VIGILANCIA':       ('El sistema es estable pero uno o m\u00e1s indicadores muestran tendencias a monitorear.',
-                                         'Riesgo moderado. La situaci\u00f3n puede evolucionar negativamente si no se gestiona.',
-                                         'Aumentar frecuencia de monitoreo. Identificar el indicador que jala el \u00edndice hacia abajo.'),
-                    'PREOCUPANTE':      ('Varios indicadores est\u00e1n deteriorados. El sistema se acerca a condiciones de riesgo alto.',
-                                         'El deterioro combinado puede amplificar los efectos negativos. Tarifa, confiabilidad y reservas en tensi\u00f3n.',
-                                         'Escalar a nivel directivo. Convocar comit\u00e9 de seguimiento y preparar nota t\u00e9cnica para el despacho ministerial.'),
-                    'CR\u00cdTICO':     ('El sistema enfrenta una crisis multidimensional con varios indicadores en rojo simult\u00e1neamente.',
-                                         'Riesgo real de afectaci\u00f3n masiva del servicio. Impacto econ\u00f3mico y reputacional alto para el sector.',
-                                         'Activar el Comit\u00e9 de Crisis del Sector Energ\u00e9tico. Coordinaci\u00f3n inmediata con Presidencia de la Rep\u00fablica.'),
-                },
-            },
-        }
-        _idx_defs = [
-            ('ish', 'ISH', 'Disponibilidad H\u00eddrica', '&#128167;'),
-            ('ipm', 'IPM', 'Presi\u00f3n de Mercado', '&#128176;'),
-            ('ies', 'IES', 'Estr\u00e9s del Sistema', '&#9888;&#65039;'),
-            ('cis', 'CIS', 'Estado General', '&#127775;'),
-        ]
-        idx_cards = ''
-        for key, sigla, nombre_corto, icon in _idx_defs:
-            entry = indices_compuestos.get(key, {})
-            valor = entry.get('valor', 0)
-            nivel = str(entry.get('nivel', 'NORMAL')).upper()
-            color = _IDX_COLORS.get(nivel, '#555555')
-            bg = _IDX_BG.get(nivel, '#F5F5F5')
-            meta = _IDX_META.get(sigla, {})
-            titulo_largo = meta.get('titulo', nombre_corto)
-            textos = meta.get('niveles', {}).get(nivel, ('', '', ''))
-            descripcion_str, impacto_str, accion_str = textos if len(textos) == 3 else ('', '', '')
-            idx_cards += (
-                '<td style="width:25%;padding:5px;vertical-align:top;">'
-                '<div style="background:' + bg + ';border-radius:10px;'
-                'border:2px solid ' + color + ';padding:14px 10px;">'
-                # Valor + sigla
-                '<div style="text-align:center;margin-bottom:8px;">'
-                '<div style="font-size:18px;margin-bottom:2px;">' + icon + '</div>'
-                '<div style="font-size:22px;font-weight:700;color:' + color + ';line-height:1;">' + f'{valor:.0f}' + '</div>'
-                '<div style="font-size:10px;font-weight:700;color:#333;margin:2px 0;">' + sigla + '</div>'
-                '<div style="padding:2px 8px;border-radius:4px;display:inline-block;'
-                'background:' + color + ';color:#fff;font-size:9px;font-weight:600;">' + nivel + '</div>'
-                '</div>'
-                # Qué mide
-                '<div style="font-size:9px;font-weight:600;color:#333;border-top:1px solid ' + color + '20;padding-top:6px;margin-top:2px;">'
-                '\u00bfQu\u00e9 mide?</div>'
-                '<div style="font-size:9px;color:#444;margin-bottom:6px;line-height:1.3;">' + titulo_largo + '</div>'
-                # Situación actual
-                '<div style="font-size:9px;font-weight:600;color:#333;">'
-                'Situaci\u00f3n actual:</div>'
-                '<div style="font-size:9px;color:#444;margin-bottom:6px;line-height:1.3;">' + descripcion_str + '</div>'
-                # Impacto
-                '<div style="font-size:9px;font-weight:600;color:#333;">'
-                'Impacto en el sistema:</div>'
-                '<div style="font-size:9px;color:#444;margin-bottom:6px;line-height:1.3;">' + impacto_str + '</div>'
-                # Acción recomendada
-                '<div style="font-size:9px;font-weight:600;color:' + color + ';background:' + color + '15;'
-                'border-radius:4px;padding:4px 6px;line-height:1.3;">'
-                '&#128204; Acci\u00f3n: ' + accion_str + '</div>'
-                '</div></td>'
-            )
+        from domain.services.indices_compuestos_meta import (
+            render_indices_footnote,
+            render_indices_row_html,
+        )
+        idx_cards = render_indices_row_html(indices_compuestos, variant='email')
         p.append('<tr><td style="padding:20px 26px 8px;">')
         p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%" '
                  'style="border-radius:10px;overflow:hidden;border:1px solid #e8e8e8;">')
@@ -1272,17 +1235,7 @@ def build_daily_email_html(
         p.append('<tr><td style="padding:12px 10px;">')
         p.append('<table cellpadding="0" cellspacing="0" border="0" width="100%">')
         p.append('<tr>' + idx_cards + '</tr>')
-        _comp = indices_compuestos.get('componentes', {})
-        _n_crit = _comp.get('anomalias_criticas', 0)
-        _n_alert = _comp.get('anomalias_alertas', 0)
-        p.append(
-            '</table>'
-            '<div style="font-size:10px;color:#666;margin-top:8px;text-align:center;">'
-            'Cada indicador tiene escala 0&#8211;100 (mayor = mejor condici\u00f3n) &middot; '
-            + str(_n_crit) + ' alerta(s) cr\u00edtica(s) + '
-            + str(_n_alert) + ' alerta(s) moderada(s) computadas'
-            '</div>'
-        )
+        p.append(render_indices_footnote(indices_compuestos, variant='email'))
         p.append('</td></tr></table></td></tr>')
 
     # ════════ Noticias del sector ════════

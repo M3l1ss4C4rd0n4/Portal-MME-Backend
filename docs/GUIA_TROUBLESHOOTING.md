@@ -35,13 +35,13 @@ ss -tlnp | grep 8050
 
 ```bash
 # Verificar estado
-sudo systemctl status api-mme
+sudo systemctl status portal-api.service
 
 # Ver logs
-tail -f /home/admonctrlxm/server/logs/gunicorn_error.log
+journalctl -u portal-api.service -f --no-pager
 
 # Reiniciar
-sudo systemctl restart api-mme
+sudo systemctl restart portal-api.service
 
 # Verificar health check
 curl -s http://localhost:8000/health | python3 -m json.tool
@@ -149,7 +149,7 @@ psql -U postgres -d portal_energetico -c "SELECT COUNT(*), MAX(fecha_prediccion)
 
 ```bash
 # Estado general de servicios
-sudo systemctl status dashboard-mme api-mme postgresql redis-server
+sudo systemctl status dashboard-mme portal-api postgresql redis-server
 
 # Uso de recursos
 htop

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import fcntl
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +26,8 @@ from zoneinfo import ZoneInfo
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATE_FILE = Path(__file__).parent / ".informes_diarios_watcher_state.json"
 LOG_DIR = BASE_DIR / "logs"
+LOCK_FILE = Path("/tmp/etl_informes_diarios_watcher.lock")
+_lock_fd = None
 TZ = ZoneInfo("America/Bogota")
 ALERT_AFTER_HOUR = 10
 
@@ -41,6 +45,45 @@ logger.setLevel(logging.INFO)
 logger.propagate = False
 
 sys.path.insert(0, str(BASE_DIR))
+
+
+def _acquire_lock() -> bool:
+    global _lock_fd
+    if LOCK_FILE.exists():
+        try:
+            pid_str = LOCK_FILE.read_text(encoding="utf-8").strip()
+            if pid_str.isdigit():
+                stale_pid = int(pid_str)
+                try:
+                    os.kill(stale_pid, 0)
+                except (OSError, ProcessLookupError):
+                    logger.warning("⚠️  Lock huérfano (PID %d no activo) — eliminando", stale_pid)
+                    LOCK_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+    try:
+        fd = open(LOCK_FILE, "w")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd.write(str(os.getpid()))
+        fd.flush()
+        _lock_fd = fd
+        return True
+    except (IOError, OSError):
+        if 'fd' in locals():
+            fd.close()
+        return False
+
+
+def _release_lock():
+    global _lock_fd
+    try:
+        if _lock_fd is not None:
+            fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+            _lock_fd.close()
+            _lock_fd = None
+        LOCK_FILE.unlink(missing_ok=True)
+    except Exception:
+        _lock_fd = None
 
 
 def _load_state() -> dict:
@@ -142,4 +185,10 @@ def check_informes_diarios() -> None:
 
 
 if __name__ == "__main__":
-    check_informes_diarios()
+    if not _acquire_lock():
+        logger.warning("⚠️  Otra instancia del watcher ya está corriendo (%s ocupado). Saliendo.", LOCK_FILE)
+        sys.exit(0)
+    try:
+        check_informes_diarios()
+    finally:
+        _release_lock()

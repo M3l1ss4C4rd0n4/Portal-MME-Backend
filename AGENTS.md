@@ -29,7 +29,7 @@ El framework NO es sugerencia. Es el **contrato** operacional.
 - PostgreSQL vía asyncpg — usar `get_pool()` de `core/database/pool.py`
 - Redis (caché)
 - Celery + Celery Beat (tareas async + scheduling — RIESGO ALTO)
-- Systemd (4 servicios: `api-mme`, `dashboard-mme`, `whatsapp-bot`, `telegram-polling`)
+- Systemd (4 servicios: `portal-api`, `dashboard-mme`, `whatsapp-bot`, `telegram-polling`)
 - Producción: `https://api.portaldireccionee.minenergia.gov.co`
 
 ## Ecosistema Completo
@@ -47,7 +47,7 @@ Cualquier cambio que afecte ambos (API contracts, DB schema, deploy coordinado) 
 
 | Servicio | Propósito | Puertos | Restricción |
 |---|---|---|---|
-| `api-mme.service` | API principal FastAPI | 8000 | Tocar solo con backup + `systemctl status` pre/post |
+| `portal-api.service` | API principal FastAPI | 8000 | Tocar solo con backup + `systemctl status` pre/post |
 | `dashboard-mme.service` | Dash legacy | — | Mismo que arriba |
 | `whatsapp-bot.service` | Bot WhatsApp | 8001 | **NO tocar venv anidado** — ver Decisiones Congeladas abajo |
 | `telegram-polling.service` | Bot Telegram | — | Mismo que arriba |
@@ -85,7 +85,7 @@ Si un agente sugiere cualquiera de las acciones de arriba, mostrarle esta secci�
 cd /home/admonctrlxm/server
 pytest tests/ -q --tb=no
 curl -s http://localhost:8000/health | head -1
-sudo systemctl status api-mme --no-pager | grep "Active"
+sudo systemctl status portal-api.service --no-pager | grep "Active"
 ```
 
 ---

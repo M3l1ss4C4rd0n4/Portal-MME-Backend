@@ -864,6 +864,118 @@ METRICAS_CONFIG = {
         'criticidad': 'CRÍTICA',
         'prioridad': 1,
         'fecha_inicio_override': '2000-01-01',  # % embalses es estacionario → backfill 2000-2019 útil
+        # Horizonte extendido: ONI oficial de NOAA cubre hasta ~Feb 2027 (~240 días)
+        # Permite visualizar todo el ciclo El Niño en el dashboard
+        'horizonte_override': 240,
+        # Holdout extendido: 180 días (6 meses) cubre al menos un ciclo estacional completo
+        # Un holdout de 30 días producía MAPE artificialmente bajo (solo un ciclo corto)
+        'dias_validacion': 180,
+        # Walk-forward CV: desactivado por defecto (añade 5-10 min al entrenamiento).
+        # Activar con --prophet_cv para auditorías científicas periódicas.
+        'prophet_cv': False,
+        # SARIMAX: ONI como variable exógena en SARIMA (hace el componente estadístico climate-aware)
+        'use_sarimax': True,
+        # Prophet optimizado para hidrología colombiana bimodal andina
+        # Colombia tiene dos temporadas de lluvia: abr-may y oct-nov (no un ciclo anual único)
+        'prophet_growth': 'flat',               # serie estacionaria cíclica, sin tendencia lineal
+        'prophet_seasonality_mode': 'multiplicative',  # amplitud varía con nivel (correcto para %)
+        'prophet_weekly_seasonality': False,    # embalses no tienen ciclo semanal
+        'prophet_semi_annual_seasonality': True,  # segundo ciclo bimodal andino (oct-nov)
+        'prophet_changepoint_prior_scale': 0.01,  # menos breakpoints → curva más suave
+        'prophet_seasonality_prior_scale': 20.0,  # más peso a estacionalidad conocida
+        # Señales climáticas: precipitación actual vs promedio + índice ONI
+        'regresores': {
+            # Responde "¿estamos subiendo o bajando HOY vs lo normal?"
+            'ideam_precipitacion_anomalia': {
+                'metrica_bd': 'IDEAM_Precipitacion',
+                'recurso': 'CUENCAS_HIDRO',
+                'agg': 'AVG',
+                'escala': 1,
+                'tipo_anomalia': True,   # computa anomalía vs promedio día-del-año
+                'futura_cero': True,     # horizonte futuro = 0 (asumir precipitación normal)
+                'prior_scale': 2.0,      # confianza baja — solo 3 meses de historia disponible
+            },
+            # Responde "¿cuándo será el pico antes del Niño?"
+            # Histórico + pronóstico de 9 meses almacenados por etl_oni.py
+            # offset=-5.0 revierte el offset de almacenamiento (ver oni_service.py)
+            # futura_bd=True: carga pronóstico NOAA real del DB en vez de ffill del último valor
+            'oni_index': {
+                'metrica_bd': 'ONI_Index',
+                'recurso': 'Sistema',   # metrica='ONI_Index' + recurso='Sistema' es único
+                'agg': 'AVG',
+                'escala': 1,
+                'offset': -5.0,         # revierte offset de almacenamiento (+5.0)
+                'futura_bd': True,      # carga pronóstico NOAA del DB en vez de ffill
+                'prior_scale': 10.0,    # alta confianza — 70 años de datos, relación bien documentada
+            },
+            # Señal climática rezagada 90 días: modela el lag físico documentado
+            # entre El Niño oceánico y la respuesta hidrológica en las cuencas andinas colombianas
+            # (Magdalena-Cauca). lag_dias=90 desplaza ONI +90 días → embalse[t] ve ONI[t-90]
+            'oni_index_lag90': {
+                'metrica_bd': 'ONI_Index',
+                'recurso': 'Sistema',
+                'agg': 'AVG',
+                'escala': 1,
+                'offset': -5.0,
+                'lag_dias': 90,         # lag físico documentado 2-3 meses Andes colombianos
+                'futura_bd': True,
+                'prior_scale': 10.0,    # alta confianza — misma fuente que oni_index, lag validado
+            },
+            # GMST: anomalía de temperatura media global (NASA GISTEMP v4, °C vs 1951-1980).
+            # Captura la tendencia secular del cambio climático que intensifica los eventos ENSO.
+            # El IPCC AR6 documenta que cada +1°C global aumenta la intensidad de El Niño 10-15%.
+            # futura_ffill: el GMST cambia muy lento (décadas), propagar último valor es correcto.
+            'gmst_anomalia': {
+                'metrica_bd': 'GMST_Anomalia',
+                'entidad': 'NASA_GISS',
+                'recurso': 'Sistema',
+                'agg': 'AVG',
+                'escala': 1,
+                'offset': 0.0,
+                'futura_ffill': True,   # GMST cambia muy lentamente — propagación correcta
+                'prior_scale': 3.0,     # confianza baja — tendencia nueva, pocos ciclos en training
+            },
+            # AporEner: energía aportada por los ríos al SIN — causa física directa del nivel de embalses.
+            # 9.635 registros desde 2000-01-01. lag_dias=7 modela el tiempo de tránsito
+            # cuenca→embalse. tipo_anomalia=True convierte a desviación vs promedio día-del-año
+            # para que el modelo capture "más/menos agua de lo normal" en vez del valor absoluto.
+            'apor_ener_lag7': {
+                'metrica_bd': 'AporEner',
+                'recurso': 'Sistema',
+                'entidad': 'Sistema',
+                'agg': 'SUM',
+                'escala': 1,
+                'offset': 0.0,
+                'lag_dias': 7,              # tiempo tránsito agua cuenca→embalse (días)
+                'tipo_anomalia': True,       # anomalía vs promedio día-del-año (misma metodología que precipitación)
+                'futura_cero': True,         # sin pronóstico oficial → asumir caudal normal
+                'prior_scale': 8.0,          # alta confianza — causa física directa, 26 años de historia
+            },
+            # PDO: modula la amplitud del El Niño en décadas (PDO+ amplifica, PDO- amortigua)
+            # Datos almacenados por etl_pdo_soi.py; sin offset (valores raw, BD acepta negativos)
+            'pdo_index': {
+                'metrica_bd': 'PDO_Index',
+                'entidad': 'NOAA_ESRL',
+                'recurso': 'Sistema',
+                'agg': 'AVG',
+                'escala': 1,
+                'offset': 0.0,
+                'futura_ffill': True,   # propaga último valor conocido (PDO cambia en décadas, no meses)
+                'prior_scale': 5.0,     # confianza media — ciclo largo, pocos eventos en training
+            },
+            # SOI: componente atmosférico de ENSO (presión Tahití-Darwin)
+            # Complementa ONI (oceánico) para señal ENSO más completa
+            'soi_index': {
+                'metrica_bd': 'SOI_Index',
+                'entidad': 'NOAA_CPC',
+                'recurso': 'Sistema',
+                'agg': 'AVG',
+                'escala': 1,
+                'offset': 0.0,
+                'futura_ffill': True,   # propaga último valor conocido (−1.5 actual, El Niño atmosférico)
+                'prior_scale': 5.0,     # confianza media — complementa ONI oceánico
+            },
+        },
     },
     
     # 7. PÉRDIDAS DEL SISTEMA
@@ -1173,26 +1285,57 @@ class PredictorMetricaSectorial:
         # FASE 3: soporte para regresores Prophet
         self.regresores_nombres = []        # nombres de columnas regresoras en df_prophet
         self.regresores_completo: pd.DataFrame | None = None    # DataFrame fecha→valor para todo el rango (hist+futuro)
+        # SARIMAX: serie ONI alineada para usar como variable exógena en SARIMA
+        self._exog_oni_serie: pd.Series | None = None
         # FASE 4.3: Ajuste adaptativo basado en quality_history ex-post
         self._adjust_weights_from_history()
 
     def _adjust_weights_from_history(self):
         """
-        FASE 4.3: Ensemble adaptativo — ajusta pesos iniciales Prophet/SARIMA
-        según el rendimiento ex-post histórico de predictions_quality_history.
+        FASE 4.3: Ensemble adaptativo — ajusta pesos iniciales Prophet/SARIMA.
 
-        Lógica:
-        - Si hay evaluaciones ex-post, calcula MAPE promedio ponderado
-          (decay exponencial: evaluaciones recientes pesan más).
-        - Si MAPE ex-post > MAPE train × 1.5 → el model overfittea →
-          reducir confianza del modelo dominante (dar más peso al otro).
-        - Si MAPE ex-post < 5%: modelo funciona bien → mantener pesos.
-        - Si MAPE ex-post > 20%: modelo falla → forzar solo-Prophet
-          (Prophet tiene regularización más fuerte que SARIMA para drift).
+        Señales en orden de prioridad:
+        1. Historial de entrenamiento (mape_prophet/mape_sarima en predictions):
+           inverse-error formula sobre últimas 5 ejecuciones con decay=0.8.
+        2. Señales ex-post (predictions_quality_history): detecta drift/overfitting
+           que anula el prior del paso 1.
         """
         try:
             conn = get_postgres_connection()
             cur = conn.cursor()
+
+            # ── Señal 1: historial de per-model MAPEs de entrenamientos previos ──
+            cur.execute("""
+                SELECT mape_prophet, mape_sarima, fecha_generacion
+                FROM predictions
+                WHERE fuente = %s
+                  AND mape_prophet IS NOT NULL
+                  AND mape_sarima  IS NOT NULL
+                ORDER BY fecha_generacion DESC
+                LIMIT 5
+            """, (self.nombre,))
+            train_rows = cur.fetchall()
+
+            if train_rows:
+                tw, w_mp, w_ms = 0.0, 0.0, 0.0
+                decay = 1.0
+                for mp, ms, _ in train_rows:
+                    w_mp += float(mp) * decay
+                    w_ms += float(ms) * decay
+                    tw   += decay
+                    decay *= 0.8
+                avg_mp = w_mp / tw
+                avg_ms = w_ms / tw
+                total  = avg_mp + avg_ms
+                if total > 0:
+                    p = avg_ms / total   # inverse-error: menor MAPE → mayor peso
+                    s = avg_mp / total
+                    self.pesos = {'prophet': round(p, 3), 'sarima': round(s, 3)}
+                    print(f"  🔄 [ADAPTATIVO-HIST] {self.nombre}: "
+                          f"Prophet MAPE_hist={avg_mp:.4f}, SARIMA MAPE_hist={avg_ms:.4f} "
+                          f"→ Pesos ({p:.2f}/{s:.2f})")
+
+            # ── Señal 2: ex-post evaluation (puede sobreescribir si hay drift grave) ──
             cur.execute("""
                 SELECT mape_expost, mape_train, fecha_evaluacion, modelo
                 FROM predictions_quality_history
@@ -1204,9 +1347,8 @@ class PredictorMetricaSectorial:
             conn.close()
 
             if not rows:
-                return  # Sin historial → mantener default 0.6/0.4
+                return
 
-            # Calcular MAPE ex-post ponderado (decay=0.7 por evaluación anterior)
             total_weight = 0.0
             weighted_mape = 0.0
             avg_train_mape = 0.0
@@ -1217,7 +1359,7 @@ class PredictorMetricaSectorial:
                     if mape_tr is not None:
                         avg_train_mape += mape_tr * decay
                     total_weight += decay
-                    decay *= 0.7  # Evaluaciones más antiguas pesan menos
+                    decay *= 0.7
 
             if total_weight == 0:
                 return
@@ -1225,57 +1367,67 @@ class PredictorMetricaSectorial:
             mape_expost_avg = weighted_mape / total_weight
             mape_train_avg = avg_train_mape / total_weight if avg_train_mape > 0 else None
 
-            # Decisiones adaptativas
             if mape_expost_avg > 0.20:
-                # MAPE ex-post > 20%: modelo falla → solo Prophet (más robusto)
                 self.pesos = {'prophet': 0.85, 'sarima': 0.15}
-                print(f"  🔄 [ADAPTATIVO] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} > 20% "
+                print(f"  🔄 [ADAPTATIVO-EXPOST] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} > 20% "
                       f"→ Prophet dominante (0.85/0.15)")
             elif mape_train_avg and mape_expost_avg > mape_train_avg * 1.5:
-                # Overfitting detectado: ex-post >> train → reducir SARIMA (sobreajuste)
                 self.pesos = {'prophet': 0.70, 'sarima': 0.30}
-                print(f"  🔄 [ADAPTATIVO] {self.nombre}: Overfitting detectado "
+                print(f"  🔄 [ADAPTATIVO-EXPOST] {self.nombre}: Overfitting detectado "
                       f"(ex-post={mape_expost_avg:.1%} vs train={mape_train_avg:.1%}) "
                       f"→ Pesos ajustados (0.70/0.30)")
             elif mape_expost_avg < 0.05:
-                # Buen rendimiento: mantener balance o incluso dar más SARIMA
                 self.pesos = {'prophet': 0.55, 'sarima': 0.45}
-                print(f"  🔄 [ADAPTATIVO] {self.nombre}: Buen rendimiento ex-post={mape_expost_avg:.1%} "
+                print(f"  🔄 [ADAPTATIVO-EXPOST] {self.nombre}: Buen rendimiento ex-post={mape_expost_avg:.1%} "
                       f"→ Balance equilibrado (0.55/0.45)")
             else:
-                # Rendimiento moderado: mantener default
-                print(f"  ℹ️ [ADAPTATIVO] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} "
-                      f"→ Pesos default (0.60/0.40)")
+                if not train_rows:
+                    print(f"  ℹ️ [ADAPTATIVO] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} "
+                          f"→ Pesos default (0.60/0.40)")
 
         except Exception as e:
-            # Si falla la lookup, mantener defaults — no bloquear entrenamiento
             print(f"  ⚠️ [ADAPTATIVO] {self.nombre}: No se pudo consultar historial: {e}")
 
     def entrenar_prophet(self, df_prophet):
         """Entrena modelo Prophet con estacionalidad anual"""
         print(f"  → Entrenando Prophet para {self.nombre}...", flush=True)
-        
-        # Config overrides para métricas especiales (ej: precios spot)
+
+        # Config overrides por métrica
         growth = self.config.get('prophet_growth', 'linear')
         seasonality_mode = self.config.get('prophet_seasonality_mode', 'additive')
+        weekly_seasonality = self.config.get('prophet_weekly_seasonality', True)
+        changepoint_prior = self.config.get('prophet_changepoint_prior_scale', 0.05)
+        seasonality_prior = self.config.get('prophet_seasonality_prior_scale', 10.0)
         has_yearly = len(df_prophet) >= 365  # Solo si hay ≥1 año de datos
-        
+
         modelo = Prophet(
             growth=growth,
             yearly_seasonality=has_yearly,  # type: ignore[arg-type]
-            weekly_seasonality=True,  # type: ignore[arg-type]
+            weekly_seasonality=weekly_seasonality,  # type: ignore[arg-type]
             daily_seasonality=False,  # type: ignore[arg-type]
             interval_width=CONFIANZA,
-            changepoint_prior_scale=0.05,
-            seasonality_prior_scale=10.0,
+            changepoint_prior_scale=changepoint_prior,
+            seasonality_prior_scale=seasonality_prior,
             seasonality_mode=seasonality_mode,
             mcmc_samples=0
         )
-        
-        # FASE 3: registrar regresores en el modelo
+
+        # Bimodal andino: segundo ciclo de lluvias colombiano (abr-may + oct-nov)
+        if self.config.get('prophet_semi_annual_seasonality', False) and has_yearly:
+            modelo.add_seasonality(  # type: ignore[attr-defined]
+                name='semi_annual',
+                period=182.5,
+                fourier_order=5,
+                prior_scale=seasonality_prior,
+            )
+
+        # FASE 3: registrar regresores con prior_scale diferenciado por variable
+        # Regresor con más historia y relación documentada → prior_scale mayor → más peso
+        regs_config = self.config.get('regresores', {})
         for reg in self.regresores_nombres:
             if reg in df_prophet.columns:
-                modelo.add_regressor(reg, standardize=True)  # type: ignore[arg-type]
+                prior = regs_config.get(reg, {}).get('prior_scale', 1.0)
+                modelo.add_regressor(reg, standardize=True, prior_scale=prior)  # type: ignore[arg-type]
         
         import logging
         logging.getLogger('prophet').setLevel(logging.ERROR)
@@ -1288,14 +1440,35 @@ class PredictorMetricaSectorial:
         return modelo
     
     def entrenar_sarima(self, serie_sarima):
-        """Entrena modelo SARIMA con auto-selección de parámetros"""
-        print(f"  → Entrenando SARIMA para {self.nombre} (puede tardar)...", flush=True)
-        
+        """Entrena SARIMA o SARIMAX (si use_sarimax=True en config y ONI disponible)"""
+        use_sarimax = self.config.get('use_sarimax', False)
+        print(f"  → Entrenando {'SARIMAX' if use_sarimax else 'SARIMA'} para {self.nombre} (puede tardar)...", flush=True)
+
+        # Preparar exog ONI para SARIMAX
+        exog_train = None
+        if use_sarimax and self.regresores_completo is not None and 'oni_index' in self.regresores_completo.columns:
+            try:
+                serie_clean = serie_sarima.dropna()
+                oni_aligned = (
+                    self.regresores_completo['oni_index']
+                    .reindex(serie_clean.index)
+                    .ffill()
+                    .bfill()
+                    .fillna(0.0)
+                )
+                if len(oni_aligned) == len(serie_clean) and not oni_aligned.isna().all():
+                    exog_train = oni_aligned.values.reshape(-1, 1)
+                    self._exog_oni_serie = self.regresores_completo['oni_index']
+            except Exception as e_exog:
+                print(f"    ⚠️  SARIMAX exog prep falló ({e_exog}). Usando SARIMA univariado.", flush=True)
+                exog_train = None
+
         try:
             modelo = auto_arima(
                 serie_sarima.dropna(),
+                exogenous=exog_train,
                 seasonal=True,
-                m=7,  # Estacionalidad semanal
+                m=7,
                 max_order=5,
                 suppress_warnings=True,
                 error_action='ignore',
@@ -1303,11 +1476,12 @@ class PredictorMetricaSectorial:
                 n_jobs=-1
             )
             self.modelo_sarima = modelo
-            print(f"    ✓ SARIMA entrenado: {modelo.order} x {modelo.seasonal_order}", flush=True)
+            modo = "SARIMAX" if exog_train is not None else "SARIMA"
+            print(f"    ✓ {modo} entrenado: {modelo.order} x {modelo.seasonal_order}", flush=True)
             return modelo
-            
+
         except Exception as e:
-            print(f"    ⚠️  SARIMA falló: {e}. Usando solo Prophet.", flush=True)
+            print(f"    ⚠️  SARIMA(X) falló: {e}. Usando solo Prophet.", flush=True)
             return None
     
     def validar_y_generar(self, df_prophet, serie_sarima, dias_validacion=30):
@@ -1351,10 +1525,12 @@ class PredictorMetricaSectorial:
             mcmc_samples=0
         )
         
-        # FASE 3: registrar regresores en holdout Prophet
+        # FASE 3: registrar regresores en holdout Prophet (mismo prior_scale que entrenamiento principal)
+        regs_config_h = self.config.get('regresores', {})
         for reg in self.regresores_nombres:
             if reg in df_train_p.columns:
-                modelo_p_temp.add_regressor(reg, standardize=True)  # type: ignore[arg-type]
+                prior_h = regs_config_h.get(reg, {}).get('prior_scale', 1.0)
+                modelo_p_temp.add_regressor(reg, standardize=True, prior_scale=prior_h)  # type: ignore[arg-type]
         
         modelo_p_temp.fit(df_train_p)
         
@@ -1369,24 +1545,60 @@ class PredictorMetricaSectorial:
         
         pred_prophet = modelo_p_temp.predict(future_p)
         pred_prophet_val = pred_prophet.iloc[-dias_validacion:]['yhat'].values
-        
+        ci_prophet_lower_val = pred_prophet.iloc[-dias_validacion:]['yhat_lower'].values
+        ci_prophet_upper_val = pred_prophet.iloc[-dias_validacion:]['yhat_upper'].values
+
         if self.modelo_sarima:
-            # FASE 7B: Re-entrenar SARIMA con solo datos de entrenamiento (sin holdout)
-            # Antes: usaba self.modelo_sarima entrenado con TODOS los datos → data leak
+            # FASE 7B: Re-entrenar SARIMA/SARIMAX con solo datos de entrenamiento (sin holdout)
             try:
                 serie_train_s = serie_sarima.iloc[:-dias_validacion]
+                serie_val_s = serie_sarima.iloc[-dias_validacion:]
+
+                # Preparar exog para holdout si SARIMAX está activo
+                exog_h_train = None
+                exog_h_val = None
+                if self._exog_oni_serie is not None:
+                    try:
+                        oni_h_train = (
+                            self._exog_oni_serie.reindex(serie_train_s.dropna().index)
+                            .ffill().bfill().fillna(0.0)
+                        )
+                        oni_h_val = (
+                            self._exog_oni_serie.reindex(serie_val_s.index)
+                            .ffill().bfill().fillna(0.0)
+                        )
+                        if len(oni_h_train) == len(serie_train_s.dropna()):
+                            exog_h_train = oni_h_train.values.reshape(-1, 1)
+                            exog_h_val = oni_h_val.values.reshape(-1, 1)
+                    except Exception:
+                        exog_h_train = None
+                        exog_h_val = None
+
                 modelo_sarima_temp = auto_arima(
                     serie_train_s.dropna(),
+                    exogenous=exog_h_train,
                     seasonal=True, m=7,
                     max_order=5,
                     suppress_warnings=True, error_action='ignore',
                     stepwise=True, n_jobs=-1
                 )
-                pred_sarima_val = modelo_sarima_temp.predict(n_periods=dias_validacion)
+                pred_sarima_val = modelo_sarima_temp.predict(
+                    n_periods=dias_validacion, exogenous=exog_h_val
+                )
+                # CI SARIMAX para holdout (mismo patrón que en predecir())
+                try:
+                    sarima_conf_h = modelo_sarima_temp.predict(
+                        n_periods=dias_validacion, return_conf_int=True, exogenous=exog_h_val
+                    )
+                    ci_sarima_lower_val = sarima_conf_h[1][:, 0] if len(sarima_conf_h) > 1 else pred_sarima_val * 0.8
+                    ci_sarima_upper_val = sarima_conf_h[1][:, 1] if len(sarima_conf_h) > 1 else pred_sarima_val * 1.2
+                except Exception:
+                    ci_sarima_lower_val = pred_sarima_val * 0.8
+                    ci_sarima_upper_val = pred_sarima_val * 1.2
             except Exception as e_sarima:
-                print(f"    ⚠️  SARIMA holdout falló: {e_sarima}. Usando solo Prophet.", flush=True)
+                print(f"    ⚠️  SARIMA(X) holdout falló: {e_sarima}. Usando solo Prophet.", flush=True)
                 pred_sarima_val = None
-            
+
             if pred_sarima_val is not None:
                 # MAPE REAL
                 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
@@ -1413,45 +1625,100 @@ class PredictorMetricaSectorial:
                 # FASE 7B: Calcular RMSE
                 rmse_ensemble = np.sqrt(mean_squared_error(y_real, pred_ensemble_val))  # type: ignore[arg-type]
                 
+                # Calibración empírica del CI sobre el holdout
+                ci_ens_lower_v = (self.pesos['prophet'] * ci_prophet_lower_val
+                                  + self.pesos['sarima'] * ci_sarima_lower_val)
+                ci_ens_upper_v = (self.pesos['prophet'] * ci_prophet_upper_val
+                                  + self.pesos['sarima'] * ci_sarima_upper_val)
+                dentro = np.sum((y_real >= ci_ens_lower_v) & (y_real <= ci_ens_upper_v))
+                cobertura_empirica = float(dentro / len(y_real))
+                _TARGET_COB = 0.92
+                factor_cal = (_TARGET_COB / max(cobertura_empirica, 0.50)
+                              if cobertura_empirica < _TARGET_COB else 1.0)
+                factor_cal = min(float(factor_cal), 2.0)
+
                 self.metricas = {
                     'mape_ensemble': mape_ensemble,
                     'mape_prophet': mape_prophet,
                     'mape_sarima': mape_sarima,
                     'rmse': rmse_ensemble,
-                    'confianza': max(0.0, 1.0 - mape_ensemble)
+                    'confianza': max(0.0, 1.0 - mape_ensemble),
+                    'cobertura_ci': round(cobertura_empirica, 4),
+                    'factor_calibracion': round(factor_cal, 4),
                 }
-                
+
                 print(f"    ✓ MAPE Prophet: {mape_prophet:.2%}, SARIMA: {mape_sarima:.2%}", flush=True)
                 print(f"    ✓ MAPE Ensemble: {mape_ensemble:.2%}", flush=True)
                 print(f"    ✓ RMSE: {rmse_ensemble:.4f}, Confianza: {self.metricas['confianza']:.2%}", flush=True)
+                print(f"    ✓ CI cobertura holdout: {cobertura_empirica:.2%} → factor calibración: {factor_cal:.3f}", flush=True)
                 print(f"    Pesos óptimos: Prophet={self.pesos['prophet']:.2f}, SARIMA={self.pesos['sarima']:.2f}", flush=True)
             else:
-                # SARIMA holdout falló, usar solo Prophet
+                # SARIMA holdout falló, calibrar CI solo con Prophet
                 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
                 mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
                 rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))  # type: ignore[arg-type]
                 self.pesos = {'prophet': 1.0, 'sarima': 0.0}
+                dentro_p = np.sum((y_real >= ci_prophet_lower_val) & (y_real <= ci_prophet_upper_val))
+                cob_p = float(dentro_p / len(y_real))
+                _TARGET_COB = 0.92
+                fcal_p = min((_TARGET_COB / max(cob_p, 0.50)) if cob_p < _TARGET_COB else 1.0, 2.0)
                 self.metricas = {
                     'mape_ensemble': mape_prophet,
                     'mape_prophet': mape_prophet,
                     'mape_sarima': None,
                     'rmse': rmse_prophet,
-                    'confianza': max(0.0, 1.0 - mape_prophet)
+                    'confianza': max(0.0, 1.0 - mape_prophet),
+                    'cobertura_ci': round(cob_p, 4),
+                    'factor_calibracion': round(fcal_p, 4),
                 }
                 print(f"    ✓ MAPE Prophet (solo, SARIMA holdout falló): {mape_prophet:.2%}", flush=True)
+                print(f"    ✓ CI cobertura holdout: {cob_p:.2%} → factor calibración: {fcal_p:.3f}", flush=True)
         else:
             from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
             mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
             rmse_prophet = np.sqrt(mean_squared_error(y_real, pred_prophet_val))  # type: ignore[arg-type]
             self.pesos = {'prophet': 1.0, 'sarima': 0.0}
+            dentro_p = np.sum((y_real >= ci_prophet_lower_val) & (y_real <= ci_prophet_upper_val))
+            cob_p = float(dentro_p / len(y_real))
+            _TARGET_COB = 0.92
+            fcal_p = min((_TARGET_COB / max(cob_p, 0.50)) if cob_p < _TARGET_COB else 1.0, 2.0)
             self.metricas = {
                 'mape_ensemble': mape_prophet,
                 'mape_prophet': mape_prophet,
                 'rmse': rmse_prophet,
-                'confianza': max(0.0, 1.0 - mape_prophet)
+                'confianza': max(0.0, 1.0 - mape_prophet),
+                'cobertura_ci': round(cob_p, 4),
+                'factor_calibracion': round(fcal_p, 4),
             }
             print(f"    ✓ MAPE Prophet (solo): {mape_prophet:.2%}", flush=True)
-    
+            print(f"    ✓ CI cobertura holdout: {cob_p:.2%} → factor calibración: {fcal_p:.3f}", flush=True)
+
+        # Walk-forward CV opcional: activar con 'prophet_cv': True en el config de la métrica.
+        # Usa Prophet.diagnostics.cross_validation para evaluar sobre múltiples ventanas históricas.
+        # Requiere mínimo 5 años de datos (1825 días). Puede tomar 5-10 min en EMBALSES_PCT.
+        if self.config.get('prophet_cv') and self.modelo_prophet is not None and len(df_prophet) >= 1825:
+            try:
+                from prophet.diagnostics import cross_validation, performance_metrics
+                print(f"  → Ejecutando walk-forward CV Prophet (puede tardar)...", flush=True)
+                # initial: 15 años de historia mínima por fold
+                # period: una nueva ventana cada año
+                # horizon: evaluar predicciones a 90 días
+                df_cv = cross_validation(
+                    self.modelo_prophet,
+                    initial='5475 days',
+                    period='365 days',
+                    horizon='90 days',
+                    parallel='processes',
+                )
+                df_perf = performance_metrics(df_cv)
+                mape_cv = float(df_perf['mape'].mean())
+                rmse_cv = float(df_perf['rmse'].mean())
+                self.metricas['mape_cv_walkforward'] = mape_cv
+                self.metricas['rmse_cv_walkforward'] = rmse_cv
+                print(f"    ✓ MAPE walk-forward CV: {mape_cv:.2%} | RMSE walk-forward: {rmse_cv:.4f}", flush=True)
+            except Exception as e_cv:
+                print(f"    ⚠️  Walk-forward CV falló (no afecta predicciones): {e_cv}", flush=True)
+
     def predecir(self, horizonte_dias, allow_negative=False):
         """Genera predicciones combinadas con intervalos estadísticos reales"""
         print(f"  → Generando predicciones {horizonte_dias} días...", flush=True)
@@ -1470,12 +1737,28 @@ class PredictorMetricaSectorial:
         pred_prophet = self.modelo_prophet.predict(future)
         pred_prophet = pred_prophet.tail(horizonte_dias)
         
-        # SARIMA
+        # SARIMA / SARIMAX
         if self.modelo_sarima:
             try:
-                pred_sarima = self.modelo_sarima.predict(n_periods=horizonte_dias)
+                # Preparar exog futuro si SARIMAX está activo (ONI forecast de NOAA)
+                exog_future = None
+                if self._exog_oni_serie is not None:
+                    try:
+                        future_dates = pred_prophet['ds'].dt.normalize()
+                        oni_future = (
+                            self._exog_oni_serie.reindex(future_dates)
+                            .ffill().bfill().fillna(0.0)
+                        )
+                        if len(oni_future) == horizonte_dias:
+                            exog_future = oni_future.values.reshape(-1, 1)
+                    except Exception:
+                        exog_future = None
+
+                pred_sarima = self.modelo_sarima.predict(n_periods=horizonte_dias, exogenous=exog_future)
                 # Obtener intervalos de confianza REALES de SARIMA (no ±20%)
-                sarima_conf = self.modelo_sarima.predict(n_periods=horizonte_dias, return_conf_int=True)
+                sarima_conf = self.modelo_sarima.predict(
+                    n_periods=horizonte_dias, return_conf_int=True, exogenous=exog_future
+                )
                 sarima_lower = sarima_conf[1][:, 0] if len(sarima_conf) > 1 else pred_sarima * 0.8
                 sarima_upper = sarima_conf[1][:, 1] if len(sarima_conf) > 1 else pred_sarima * 1.2
                 
@@ -1501,12 +1784,30 @@ class PredictorMetricaSectorial:
             intervalo_inferior = pred_prophet['yhat_lower'].values
             intervalo_superior = pred_prophet['yhat_upper'].values
         
+        # Calibración empírica de CI: ajuste proporcional al factor medido en holdout
+        factor_cal = float(self.metricas.get('factor_calibracion', 1.0))
+        if factor_cal != 1.0:
+            semi_inf = predicciones_ensemble - intervalo_inferior
+            semi_sup = intervalo_superior - predicciones_ensemble
+            intervalo_inferior = predicciones_ensemble - semi_inf * factor_cal
+            intervalo_superior = predicciones_ensemble + semi_sup * factor_cal
+
+        # Asimetría El Niño: CI inferior más ancho cuando ONI > 0.5 (droughts caen más rápido)
+        _oni_val = float((self.regresores_completo['oni_index'].dropna().iloc[-1]
+                          if self.regresores_completo is not None and 'oni_index' in (self.regresores_completo.columns if self.regresores_completo is not None else [])
+                          else 0.0))
+        _UMBRAL_NINO = 0.5
+        if _oni_val > _UMBRAL_NINO:
+            _asimetria = min(0.30, (_oni_val - _UMBRAL_NINO) / 5.0)
+            semi_inf_nino = predicciones_ensemble - intervalo_inferior
+            intervalo_inferior = predicciones_ensemble - semi_inf_nino * (1.0 + _asimetria)
+
         # CLAMP: Para métricas que no pueden ser negativas (demanda, generación, embalses, etc.)
         if not allow_negative:
             predicciones_ensemble = np.maximum(predicciones_ensemble, 0.0)  # type: ignore[call-overload,arg-type]
             intervalo_inferior = np.maximum(intervalo_inferior, 0.0)  # type: ignore[call-overload,arg-type]
             intervalo_superior = np.maximum(intervalo_superior, 0.0)  # type: ignore[call-overload,arg-type]
-        
+
         # Piso histórico configurable (ej: precio de bolsa nunca < 86 $/kWh)
         piso = self.config.get('piso_historico', 0.0)
         if piso > 0:
@@ -1795,11 +2096,25 @@ def construir_regresores_calendario(fechas_series):
 
     return df_cal
 
+
+def calcular_anomalia_precipitacion(serie: pd.Series) -> pd.Series:
+    """
+    Anomalía de precipitación = valor real − promedio histórico para ese día del año.
+    Cuantifica cuánto más (o menos) llovió vs el promedio estacional (1 = 1 mm/día extra).
+    """
+    df = serie.to_frame('precip')
+    df['doy'] = df.index.dayofyear
+    doy_means = df.groupby('doy')['precip'].transform('mean')
+    return (df['precip'] - doy_means).rename(serie.name)
+
+
 def cargar_regresores_historicos(regresores_config, fecha_inicio):
     """
     Carga datos históricos de regresores desde la BD.
     Retorna DataFrame indexado por fecha con una columna por regresor.
     FASE 18: Soporta filtro por recurso (IDEAM metrics).
+    Soporta lag_dias: desplaza el índice temporal +lag_dias para modelar el retraso
+    físico entre señal climática y efecto hidro (ej. ONI → cuencas andinas = 90 días).
     """
     conn = get_postgres_connection()
     series = {}
@@ -1811,24 +2126,36 @@ def cargar_regresores_historicos(regresores_config, fecha_inicio):
         agg_fn = reg_cfg.get('agg', 'SUM')
         escala = reg_cfg.get('escala', 1)
         recurso = reg_cfg.get('recurso')
+        lag_dias = reg_cfg.get('lag_dias', 0)
+
+        # Retroceder la fecha de inicio lag_dias días para no perder datos al inicio del período
+        if lag_dias > 0:
+            from datetime import datetime, timedelta
+            try:
+                dt_inicio = datetime.strptime(fecha_inicio, '%Y-%m-%d')
+                fecha_inicio_query = (dt_inicio - timedelta(days=lag_dias)).strftime('%Y-%m-%d')
+            except Exception:
+                fecha_inicio_query = fecha_inicio
+        else:
+            fecha_inicio_query = fecha_inicio
 
         if recurso:
             # FASE 18: filtro por recurso (IDEAM, ríos específicos)
             query = f"""
             SELECT fecha, {agg_fn}(valor_gwh) as valor
             FROM metrics
-            WHERE metrica = %s AND fecha >= %s AND recurso = %s AND valor_gwh > 0
+            WHERE metrica = %s AND fecha >= %s AND recurso = %s AND valor_gwh IS NOT NULL
             GROUP BY fecha ORDER BY fecha
             """
-            params = (metrica, fecha_inicio, recurso)
+            params = (metrica, fecha_inicio_query, recurso)
         elif entidad:
             query = f"""
             SELECT fecha, {agg_fn}(valor_gwh) as valor
             FROM metrics
-            WHERE metrica = %s AND fecha >= %s AND entidad = %s AND valor_gwh > 0
+            WHERE metrica = %s AND fecha >= %s AND entidad = %s AND valor_gwh IS NOT NULL
             GROUP BY fecha ORDER BY fecha
             """
-            params = (metrica, fecha_inicio, entidad)
+            params = (metrica, fecha_inicio_query, entidad)
         elif prefer_sistema:
             query = f"""
             SELECT fecha,
@@ -1837,24 +2164,38 @@ def cargar_regresores_historicos(regresores_config, fecha_inicio):
                    ELSE {agg_fn}(valor_gwh)
               END as valor
             FROM metrics
-            WHERE metrica = %s AND fecha >= %s AND valor_gwh > 0
+            WHERE metrica = %s AND fecha >= %s AND valor_gwh IS NOT NULL
             GROUP BY fecha ORDER BY fecha
             """
-            params = (metrica, fecha_inicio)
+            params = (metrica, fecha_inicio_query)
         else:
             query = f"""
             SELECT fecha, {agg_fn}(valor_gwh) as valor
             FROM metrics
-            WHERE metrica = %s AND fecha >= %s AND valor_gwh > 0
+            WHERE metrica = %s AND fecha >= %s AND valor_gwh IS NOT NULL
             GROUP BY fecha ORDER BY fecha
             """
-            params = (metrica, fecha_inicio)
+            params = (metrica, fecha_inicio_query)
 
         df = pd.read_sql_query(query, conn, params=params)
+        if df.empty:
+            print(f"  ⚠️  {nombre_reg}: 0 filas en BD para metrica='{metrica}' — regresor omitido")
+            continue
         df['fecha'] = pd.to_datetime(df['fecha']).dt.normalize()
         if escala != 1:
             df['valor'] = df['valor'] * escala
-        series[nombre_reg] = df.set_index('fecha')['valor']
+        offset = reg_cfg.get('offset', 0.0)
+        if offset != 0.0:
+            df['valor'] = df['valor'] + offset
+        serie_raw = df.set_index('fecha')['valor']
+        # Aplicar lag temporal: desplaza el índice +lag_dias días
+        # Semántica: el valor en fecha t es el ONI de (t - lag_dias)
+        # Uso: embalse[t] se empareja con oni[t-lag], equiv. a mover ONI hacia adelante lag días
+        if lag_dias > 0:
+            serie_raw.index = serie_raw.index + pd.Timedelta(days=lag_dias)
+        if reg_cfg.get('tipo_anomalia'):
+            serie_raw = calcular_anomalia_precipitacion(serie_raw)
+        series[nombre_reg] = serie_raw
 
     conn.close()
 
@@ -1862,37 +2203,246 @@ def cargar_regresores_historicos(regresores_config, fecha_inicio):
     df_regs = pd.DataFrame(series)
     df_regs = df_regs.sort_index().ffill().bfill()
 
-    print(f"  📈 Regresores históricos cargados: {list(regresores_config.keys())}")
-    print(f"     Rango: {df_regs.index.min().date()} → {df_regs.index.max().date()} ({len(df_regs)} días)")
-    for col in df_regs.columns:
-        print(f"     {col}: μ={df_regs[col].mean():.2f}, σ={df_regs[col].std():.2f}")
+    if df_regs.empty:
+        print(f"  ⚠️  Regresores históricos: DataFrame vacío — ningún regresor retornó datos")
+        for nombre_reg, reg_cfg in regresores_config.items():
+            m = reg_cfg.get('metrica_bd', '?')
+            r = reg_cfg.get('recurso', reg_cfg.get('entidad', '?'))
+            print(f"     {nombre_reg}: metrica={m}, filtro={r} → 0 filas en BD")
+    else:
+        print(f"  📈 Regresores históricos cargados: {list(df_regs.columns.tolist())}")
+        print(f"     Rango: {df_regs.index.min().date()} → {df_regs.index.max().date()} ({len(df_regs)} días)")
+        for col in df_regs.columns:
+            print(f"     {col}: μ={df_regs[col].mean():.2f}, σ={df_regs[col].std():.2f}")
 
     return df_regs
 
 
-def construir_regresores_futuros(regresores_config, predicciones_memoria):
+# Regressores de anomalía climática que reciben decay neutral en lugar de ffill plano
+_REGRESSORES_CON_DECAY = frozenset({'pdo_index', 'soi_index', 'gmst_anomalia'})
+
+
+def _aplicar_decay_neutral(
+    ultimo_valor: float,
+    fechas_futuras,
+    dias_persistencia: int = 90,
+    dias_transicion: int = 90,
+) -> 'pd.Series':
     """
-    Construye DataFrame de regresores futuros usando predicciones
-    ya generadas en este mismo pipeline.
+    Crea una serie futura que conserva el último valor conocido los primeros
+    dias_persistencia días, luego lo interpola linealmente hacia 0.0 durante
+    dias_transicion días, y mantiene 0.0 (neutral climatológico) en adelante.
+
+    Justificación: PDO, SOI y GMST son índices de anomalía con autocorrelación
+    real de ~3-6 meses. Más allá de ese horizonte, el mejor estimador no sesgado
+    es el neutral (0.0). Ffill plano introduce sesgo cuando el valor actual es extremo.
+    """
+    resultado = []
+    for i in range(len(fechas_futuras)):
+        if i < dias_persistencia:
+            resultado.append(ultimo_valor)
+        elif i < dias_persistencia + dias_transicion:
+            t = (i - dias_persistencia) / dias_transicion
+            resultado.append(ultimo_valor * (1.0 - t))
+        else:
+            resultado.append(0.0)
+    return pd.Series(resultado, index=fechas_futuras)
+
+
+def construir_regresores_futuros(regresores_config, predicciones_memoria, fechas_futuras=None):
+    """
+    Construye DataFrame de regresores futuros.
+    Soporta cuatro modos:
+    - fuente_prediccion: lee predicciones ya generadas en este pipeline
+    - futura_cero=True: rellena el horizonte futuro con 0 (baseline conservador para anomalías)
+    - futura_bd=True: carga el pronóstico directamente de la BD (ej. ONI oficial NOAA)
+    - futura_ffill=True: propaga el último valor histórico conocido (para índices sin pronóstico oficial
+                         cuyo valor actual es significativo, ej. PDO=−2.71, SOI=−1.5)
     """
     series = {}
 
     for nombre_reg, reg_cfg in regresores_config.items():
-        fuente = reg_cfg['fuente_prediccion']
+        fuente = reg_cfg.get('fuente_prediccion')
+        futura_cero = reg_cfg.get('futura_cero', False)
+        futura_bd = reg_cfg.get('futura_bd', False)
+        futura_ffill = reg_cfg.get('futura_ffill', False)
 
-        if fuente in predicciones_memoria:
+        if fuente and fuente in predicciones_memoria:
             df_pred = predicciones_memoria[fuente]
             idx = pd.to_datetime(df_pred['fecha_prediccion']).dt.normalize()
             serie = pd.Series(df_pred['valor_predicho'].values, index=idx)
             series[nombre_reg] = serie
             print(f"     {nombre_reg}: {len(serie)} días de predicciones de {fuente}")
-        else:
+
+        elif futura_bd:
+            # Carga pronóstico NOAA (u otro índice) directamente de la BD.
+            # Los registros con fecha > hoy son el pronóstico oficial almacenado por el ETL.
+            # También incluimos los últimos 90 días históricos para transición suave.
+            try:
+                conn = get_postgres_connection()
+                metrica = reg_cfg['metrica_bd']
+                recurso = reg_cfg.get('recurso')
+                entidad = reg_cfg.get('entidad')
+                agg_fn = reg_cfg.get('agg', 'AVG')
+                hoy = pd.Timestamp.today().normalize()
+                fecha_inicio_bd = (hoy - pd.Timedelta(days=90)).strftime('%Y-%m-%d')
+
+                if recurso:
+                    q = f"""
+                    SELECT fecha, {agg_fn}(valor_gwh) as valor
+                    FROM metrics
+                    WHERE metrica = %s AND recurso = %s AND fecha >= %s
+                      AND valor_gwh IS NOT NULL
+                    GROUP BY fecha ORDER BY fecha
+                    """
+                    params = (metrica, recurso, fecha_inicio_bd)
+                elif entidad:
+                    q = f"""
+                    SELECT fecha, {agg_fn}(valor_gwh) as valor
+                    FROM metrics
+                    WHERE metrica = %s AND entidad = %s AND fecha >= %s
+                      AND valor_gwh IS NOT NULL
+                    GROUP BY fecha ORDER BY fecha
+                    """
+                    params = (metrica, entidad, fecha_inicio_bd)
+                else:
+                    q = f"""
+                    SELECT fecha, {agg_fn}(valor_gwh) as valor
+                    FROM metrics
+                    WHERE metrica = %s AND fecha >= %s AND valor_gwh IS NOT NULL
+                    GROUP BY fecha ORDER BY fecha
+                    """
+                    params = (metrica, fecha_inicio_bd)
+
+                df_bd = pd.read_sql_query(q, conn, params=params)
+                conn.close()
+
+                if not df_bd.empty:
+                    df_bd['fecha'] = pd.to_datetime(df_bd['fecha']).dt.normalize()
+                    escala = reg_cfg.get('escala', 1)
+                    if escala != 1:
+                        df_bd['valor'] = df_bd['valor'] * escala
+                    offset = reg_cfg.get('offset', 0.0)
+                    if offset != 0.0:
+                        df_bd['valor'] = df_bd['valor'] + offset
+                    lag_dias = reg_cfg.get('lag_dias', 0)
+                    if lag_dias > 0:
+                        df_bd['fecha'] = df_bd['fecha'] + pd.Timedelta(days=lag_dias)
+                    serie_bd = df_bd.set_index('fecha')['valor']
+                    # Interpolar gaps (datos mensuales → diarios)
+                    if len(serie_bd) > 1:
+                        idx_diario = pd.date_range(serie_bd.index.min(), serie_bd.index.max(), freq='D')
+                        serie_bd = serie_bd.reindex(idx_diario).interpolate('linear')
+                    series[nombre_reg] = serie_bd
+                    dias_futuros = (serie_bd.index > hoy).sum()
+                    print(f"     {nombre_reg}: {len(serie_bd)} días desde BD ({dias_futuros} futuros, futura_bd)")
+                else:
+                    print(f"     ⚠️  {nombre_reg}: futura_bd=True pero 0 filas en BD para {metrica}")
+            except Exception as e:
+                print(f"     ⚠️  {nombre_reg}: error cargando BD para futuro: {e}")
+
+        elif futura_cero and fechas_futuras is not None and len(fechas_futuras) > 0:
+            series[nombre_reg] = pd.Series(0.0, index=fechas_futuras)
+            print(f"     {nombre_reg}: {len(fechas_futuras)} días con valor=0 (baseline conservador)")
+
+        elif futura_ffill and fechas_futuras is not None and len(fechas_futuras) > 0:
+            # Carga el último valor histórico disponible en la BD y lo propaga hacia el futuro.
+            # Correcto para PDO (cambia en décadas) y SOI (cambia mensualmente pero sin pronóstico
+            # oficial): usar el valor actual es más fiel que resetear a 0 (media histórica).
+            try:
+                conn = get_postgres_connection()
+                metrica = reg_cfg['metrica_bd']
+                recurso = reg_cfg.get('recurso')
+                entidad = reg_cfg.get('entidad')
+                agg_fn = reg_cfg.get('agg', 'AVG')
+                hoy = pd.Timestamp.today().normalize()
+                fecha_inicio_bd = (hoy - pd.Timedelta(days=90)).strftime('%Y-%m-%d')
+
+                if recurso:
+                    q = f"""
+                    SELECT fecha, {agg_fn}(valor_gwh) as valor
+                    FROM metrics
+                    WHERE metrica = %s AND recurso = %s AND fecha <= %s
+                      AND valor_gwh IS NOT NULL
+                    GROUP BY fecha ORDER BY fecha DESC LIMIT 1
+                    """
+                    params = (metrica, recurso, hoy.strftime('%Y-%m-%d'))
+                elif entidad:
+                    q = f"""
+                    SELECT fecha, {agg_fn}(valor_gwh) as valor
+                    FROM metrics
+                    WHERE metrica = %s AND entidad = %s AND fecha <= %s
+                      AND valor_gwh IS NOT NULL
+                    GROUP BY fecha ORDER BY fecha DESC LIMIT 1
+                    """
+                    params = (metrica, entidad, hoy.strftime('%Y-%m-%d'))
+                else:
+                    q = f"""
+                    SELECT fecha, {agg_fn}(valor_gwh) as valor
+                    FROM metrics
+                    WHERE metrica = %s AND fecha <= %s AND valor_gwh IS NOT NULL
+                    GROUP BY fecha ORDER BY fecha DESC LIMIT 1
+                    """
+                    params = (metrica, hoy.strftime('%Y-%m-%d'))
+
+                df_bd = pd.read_sql_query(q, conn, params=params)
+                conn.close()
+
+                if not df_bd.empty:
+                    ultimo_valor = float(df_bd.iloc[0]['valor'])
+                    offset = reg_cfg.get('offset', 0.0)
+                    ultimo_valor += offset
+                    if nombre_reg in _REGRESSORES_CON_DECAY:
+                        series[nombre_reg] = _aplicar_decay_neutral(ultimo_valor, fechas_futuras)
+                        print(f"     {nombre_reg}: {len(fechas_futuras)} días decay climatológico "
+                              f"({ultimo_valor:.3f} → 0.0 en 180d)")
+                    else:
+                        series[nombre_reg] = pd.Series(ultimo_valor, index=fechas_futuras)
+                        print(f"     {nombre_reg}: {len(fechas_futuras)} días con valor={ultimo_valor:.3f} (futura_ffill)")
+                else:
+                    series[nombre_reg] = pd.Series(0.0, index=fechas_futuras)
+                    print(f"     ⚠️  {nombre_reg}: futura_ffill sin datos en BD, usando 0")
+            except Exception as e:
+                print(f"     ⚠️  {nombre_reg}: error en futura_ffill: {e}, usando 0")
+                if fechas_futuras is not None:
+                    series[nombre_reg] = pd.Series(0.0, index=fechas_futuras)
+
+        elif fuente:
             print(f"     ⚠️  {nombre_reg}: {fuente} no disponible aún")
 
     if series:
         df_fut = pd.DataFrame(series).sort_index()
         return df_fut
     return pd.DataFrame()
+
+
+def get_horizonte_desde_oni() -> int:
+    """
+    Calcula el horizonte de predicción EMBALSES_PCT basado en la última
+    fecha del pronóstico ONI oficial en la BD. Actualiza automáticamente
+    cuando NOAA publica nuevas temporadas (cada segundo jueves del mes).
+    """
+    try:
+        conn = get_postgres_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT GREATEST(90, LEAST(365,
+                EXTRACT(epoch FROM (MAX(fecha)::timestamp - CURRENT_TIMESTAMP))::int / 86400
+            )) as dias
+            FROM metrics
+            WHERE metrica = 'ONI_Index' AND entidad = 'NOAA'
+              AND recurso = 'Sistema' AND fecha > CURRENT_DATE
+        """)
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row[0]:
+            dias = int(row[0])
+            print(f"  📅 EMBALSES_PCT horizonte dinámico: {dias} días (hasta último ONI oficial)")
+            return dias
+    except Exception as e:
+        print(f"  ⚠️ No se pudo calcular horizonte dinámico ONI: {e}")
+    return 240  # fallback
 
 
 def preparar_regresores(config, df_target, predicciones_memoria):
@@ -1922,8 +2472,9 @@ def preparar_regresores(config, df_target, predicciones_memoria):
     # ── Regresores de calendario (FASE 4.B) ──
     if tiene_calendario:
         # Generar rango completo: histórico + horizonte futuro
+        horizonte_cal = config.get('horizonte_override', HORIZONTE_DIAS)
         fecha_min = df_target['ds'].min()
-        fecha_max = df_target['ds'].max() + pd.Timedelta(days=HORIZONTE_DIAS + 30)
+        fecha_max = df_target['ds'].max() + pd.Timedelta(days=horizonte_cal + 30)
         rango_completo = pd.date_range(fecha_min, fecha_max, freq='D')
 
         df_cal = construir_regresores_calendario(rango_completo)
@@ -1961,8 +2512,17 @@ def preparar_regresores(config, df_target, predicciones_memoria):
         df_hist = cargar_regresores_historicos(bd_config, fecha_inicio)
 
         # 2. Construir futuros
+        # Fechas futuras: desde el día siguiente al último histórico hasta HORIZONTE_DIAS
+        if len(df_hist) > 0:
+            fecha_inicio_futuro = df_hist.index.max() + pd.Timedelta(days=1)
+        else:
+            fecha_inicio_futuro = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
+        horizonte_futuro = config.get('horizonte_override', HORIZONTE_DIAS)
+        fecha_fin_futuro = pd.Timestamp.today().normalize() + pd.Timedelta(days=horizonte_futuro + 30)
+        fechas_futuras = pd.date_range(fecha_inicio_futuro, fecha_fin_futuro, freq='D')
+
         print(f"  📈 Construyendo regresores futuros:")
-        df_fut = construir_regresores_futuros(bd_config, predicciones_memoria)
+        df_fut = construir_regresores_futuros(bd_config, predicciones_memoria, fechas_futuras)
 
         # 3. Combinar hist + futuro
         if len(df_fut) > 0:
@@ -2022,29 +2582,51 @@ def guardar_predicciones_bd(metrica_nombre, df_predicciones, config,
         confianza_real = config.get('confianza_real', CONFIANZA_SIN_VALIDACION)
         mape_val = config.get('mape_real')    # MAPE real del ensemble
         rmse_val = config.get('rmse_real')     # RMSE real del ensemble
-        
+
+        # Per-model MAPEs y pesos del ensemble (NULL si no aplica — e.g. LightGBM)
+        mape_prophet_val = config.get('mape_prophet')
+        mape_sarima_val  = config.get('mape_sarima')
+        peso_prophet_val = config.get('peso_prophet')
+        peso_sarima_val  = config.get('peso_sarima')
+        # Calibración CI empírica (Mejora 1)
+        factor_cal_val   = config.get('factor_calibracion')
+        cobertura_ci_val = config.get('cobertura_ci')
+
         # Cast numpy → Python float para psycopg2
-        confianza_real = float(confianza_real) if confianza_real is not None else CONFIANZA_SIN_VALIDACION
-        mape_val = float(mape_val) if mape_val is not None else None
-        rmse_val = float(rmse_val) if rmse_val is not None else None
-        
+        confianza_real   = float(confianza_real)     if confianza_real   is not None else CONFIANZA_SIN_VALIDACION
+        mape_val         = float(mape_val)           if mape_val         is not None else None
+        rmse_val         = float(rmse_val)           if rmse_val         is not None else None
+        mape_prophet_val = float(mape_prophet_val)   if mape_prophet_val is not None else None
+        mape_sarima_val  = float(mape_sarima_val)    if mape_sarima_val  is not None else None
+        peso_prophet_val = float(peso_prophet_val)   if peso_prophet_val is not None else None
+        peso_sarima_val  = float(peso_sarima_val)    if peso_sarima_val  is not None else None
+        factor_cal_val   = float(factor_cal_val)     if factor_cal_val   is not None else None
+        cobertura_ci_val = float(cobertura_ci_val)   if cobertura_ci_val is not None else None
+
         print(f"    métricas: confianza={confianza_real:.2f}, "
               f"mape={f'{mape_val:.4f}' if mape_val is not None else 'N/A'}, "
               f"rmse={f'{rmse_val:.2f}' if rmse_val is not None else 'N/A'}")
+        if mape_prophet_val is not None:
+            print(f"    pesos ensemble: prophet={peso_prophet_val:.2f} (MAPE={mape_prophet_val:.4f}), "
+                  f"sarima={peso_sarima_val:.2f} (MAPE={mape_sarima_val:.4f})")
+        if cobertura_ci_val is not None:
+            print(f"    CI calibración: cobertura={cobertura_ci_val:.2%}, factor={factor_cal_val:.3f}")
         print(f"    método: {metodo_prediccion}, modelo: {modelo_v}")
-        
+
         # Insertar nuevas predicciones
         for _, row in df_predicciones.iterrows():
             # FASE 8: columna metodo_prediccion per-row si existe en df
             metodo_row = row.get('metodo_prediccion', metodo_prediccion)
-            
+
             cursor.execute("""
                 INSERT INTO predictions (
                     fecha_prediccion, fecha_generacion, fuente,
                     valor_gwh_predicho, intervalo_inferior, intervalo_superior,
                     horizonte_dias, modelo, confianza, mape, rmse,
-                    metodo_prediccion
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    metodo_prediccion,
+                    mape_prophet, mape_sarima, peso_prophet, peso_sarima,
+                    factor_calibracion, cobertura_ci
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 row['fecha_prediccion'],
                 datetime.now(),
@@ -2058,6 +2640,12 @@ def guardar_predicciones_bd(metrica_nombre, df_predicciones, config,
                 mape_val,
                 rmse_val,
                 metodo_row,
+                mape_prophet_val,
+                mape_sarima_val,
+                peso_prophet_val,
+                peso_sarima_val,
+                factor_cal_val,
+                cobertura_ci_val,
             ))
         
         conn.commit()
@@ -6323,6 +6911,10 @@ def main():
             
             serie_sarima = df.set_index('fecha')['valor'].asfreq('D')
             
+            # Para EMBALSES_PCT: horizonte dinámico según último ONI oficial disponible
+            if categoria == 'EMBALSES_PCT':
+                config['horizonte_override'] = get_horizonte_desde_oni()
+
             # FASE 3: preparar regresores si están configurados
             if 'regresores' in config:
                 df_prophet, df_regs_completo, reg_nombres = preparar_regresores(
@@ -6340,12 +6932,15 @@ def main():
                 print(f"  ℹ️  Modo solo-Prophet para {categoria} (SARIMA deshabilitado)", flush=True)
             
             # 5. Validar con holdout REAL
-            predictor.validar_y_generar(df_prophet, serie_sarima)
+            # dias_validacion se lee del config de cada métrica (default 30); EMBALSES_PCT usa 180
+            dias_val = config.get('dias_validacion', 30)
+            predictor.validar_y_generar(df_prophet, serie_sarima, dias_validacion=dias_val)
             
             # 6. Predecir
             # FASE 4: PERDIDAS_TOTALES puede ser negativa (P_NT range [-6%, 4%])
             allow_neg = config.get('allow_negative', False)
-            df_pred = predictor.predecir(HORIZONTE_DIAS, allow_negative=allow_neg)
+            horizonte = config.get('horizonte_override', HORIZONTE_DIAS)
+            df_pred = predictor.predecir(horizonte, allow_negative=allow_neg)
             
             # FASE 3: almacenar predicciones para uso como regresores
             predicciones_memoria[categoria] = df_pred
@@ -6355,6 +6950,18 @@ def main():
             config['confianza_real'] = predictor.metricas.get('confianza', CONFIANZA_SIN_VALIDACION)
             config['mape_real'] = float(mape_ens) if mape_ens is not None and mape_ens >= 0 else None
             config['rmse_real'] = predictor.metricas.get('rmse')
+            # Per-model MAPEs y pesos del ensemble para historial adaptativo
+            _mp = predictor.metricas.get('mape_prophet')
+            _ms = predictor.metricas.get('mape_sarima')
+            config['mape_prophet'] = float(_mp) if _mp is not None else None
+            config['mape_sarima']  = float(_ms) if _ms is not None else None
+            config['peso_prophet'] = float(predictor.pesos.get('prophet', 0.6))
+            config['peso_sarima']  = float(predictor.pesos.get('sarima', 0.4))
+            # Calibración CI empírica (Mejora 1)
+            _fcal = predictor.metricas.get('factor_calibracion')
+            _ccov = predictor.metricas.get('cobertura_ci')
+            config['factor_calibracion'] = float(_fcal) if _fcal is not None else None
+            config['cobertura_ci']       = float(_ccov) if _ccov is not None else None
             
             # ── FASE 8: Quality gate — descartar si MAPE > umbral ──
             if config['mape_real'] is not None and config['mape_real'] > UMBRAL_MAPE_MAXIMO:
@@ -6532,6 +7139,186 @@ def main():
     print("\n✅ Proceso completado\n")
 
 
+def main_backtest(backtest_year: int):
+    """
+    Backtesting out-of-sample de EMBALSES_PCT.
+    Entrena con datos hasta {backtest_year}-12-31 usando señales climáticas reales
+    del período de test (perfect-foresight sobre índices climáticos).
+    No modifica la BD ni el cache. Solo guarda un JSON de diagnóstico.
+    """
+    import json
+    from pathlib import Path
+
+    fecha_corte = pd.Timestamp(f"{backtest_year}-12-31")
+    fecha_test_start = pd.Timestamp(f"{backtest_year + 1}-01-01")
+
+    print(f"\n{'='*70}")
+    print(f"🔬 BACKTESTING EMBALSES_PCT — Corte: {fecha_corte.date()}")
+    print(f"{'='*70}\n")
+
+    # 1. Cargar EMBALSES_PCT completo (el corte se hace por DataFrame, no por SQL)
+    conn = get_postgres_connection()
+    df_raw = pd.read_sql_query("""
+        SELECT fecha::date AS fecha, AVG(valor_gwh) * 100 AS valor
+        FROM metrics
+        WHERE metrica = 'PorcVoluUtilDiar' AND entidad = 'Sistema'
+          AND fecha >= '2000-01-01' AND valor_gwh > 0
+        GROUP BY fecha::date ORDER BY fecha
+    """, conn)
+    conn.close()
+
+    if len(df_raw) == 0:
+        print("❌ No hay datos de EMBALSES_PCT en la BD")
+        return
+
+    df_raw['fecha'] = pd.to_datetime(df_raw['fecha'])
+    df_train_raw = df_raw[df_raw['fecha'] <= fecha_corte].copy()
+    df_actuals   = df_raw[df_raw['fecha'] >= fecha_test_start].copy().set_index('fecha')
+
+    n_test = min(730, len(df_actuals))
+    if n_test < 60:
+        print("❌ Datos reales insuficientes post-corte para evaluar (< 60 días)")
+        return
+
+    print(f"  Entrenamiento : {len(df_train_raw)} días "
+          f"({df_train_raw['fecha'].min().date()} → {df_train_raw['fecha'].max().date()})")
+    print(f"  Período test  : {n_test} días desde {df_actuals.index.min().date()}")
+
+    # 2. Cargar regressores históricos completos (training + test con valores reales del DB)
+    config = METRICAS_CONFIG['EMBALSES_PCT']
+    regresores_bd_config = {
+        k: v for k, v in config['regresores'].items()
+        if v.get('tipo') != 'calendario' and 'metrica_bd' in v
+    }
+
+    conn = get_postgres_connection()
+    series: dict = {}
+    for nombre_reg, reg_cfg in regresores_bd_config.items():
+        metrica = reg_cfg['metrica_bd']
+        recurso = reg_cfg.get('recurso')
+        offset  = reg_cfg.get('offset', 0.0)
+        escala  = reg_cfg.get('escala', 1.0)
+        lag_dias = reg_cfg.get('lag_dias', 0)
+
+        try:
+            if recurso:
+                df_reg = pd.read_sql_query(
+                    "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
+                    "FROM metrics WHERE metrica=%s AND recurso=%s AND valor_gwh IS NOT NULL "
+                    "GROUP BY fecha::date ORDER BY fecha",
+                    conn, params=(metrica, recurso)
+                )
+            else:
+                df_reg = pd.read_sql_query(
+                    "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
+                    "FROM metrics WHERE metrica=%s AND valor_gwh IS NOT NULL "
+                    "GROUP BY fecha::date ORDER BY fecha",
+                    conn, params=(metrica,)
+                )
+        except Exception as exc:
+            print(f"  ⚠️  Error cargando {nombre_reg}: {exc}")
+            continue
+
+        if len(df_reg) == 0:
+            print(f"  ⚠️  Sin datos para {nombre_reg} — excluido del backtest")
+            continue
+
+        df_reg['fecha'] = pd.to_datetime(df_reg['fecha'])
+        s = df_reg.set_index('fecha')['valor'].astype(float) * escala + offset
+        if lag_dias > 0:
+            s = s.shift(lag_dias, freq='D')
+        series[nombre_reg] = s
+
+    conn.close()
+
+    if not series:
+        print("❌ No se pudo cargar ningún regresor climático")
+        return
+
+    # Combinar regressores en DataFrame diario con interpolación
+    df_regs_completo = pd.DataFrame(series).sort_index()
+    df_regs_completo = df_regs_completo.resample('D').mean().interpolate('linear').ffill().bfill()
+    reg_cols = list(df_regs_completo.columns)
+    print(f"  Regressores cargados: {reg_cols}")
+
+    # 3. Construir df_prophet de entrenamiento con regressores
+    df_prophet = df_train_raw.rename(columns={'fecha': 'ds', 'valor': 'y'})
+    df_regs_hist = df_regs_completo[df_regs_completo.index <= fecha_corte]
+
+    for col in reg_cols:
+        if col in df_regs_hist.columns:
+            df_prophet[col] = df_prophet['ds'].map(df_regs_hist[col])
+
+    df_prophet = df_prophet.dropna(subset=['y'])
+    serie_sarima = df_train_raw.set_index('fecha')['valor'].asfreq('D')
+
+    # 4. Entrenar predictor
+    predictor = EnsemblePredictor('EMBALSES_PCT', config)
+    predictor.regresores_nombres = reg_cols
+    predictor.regresores_completo = df_regs_completo
+
+    print(f"\n  🤖 Entrenando Prophet (datos hasta {fecha_corte.date()})...")
+    predictor.entrenar_prophet(df_prophet)
+    print(f"  🤖 Entrenando SARIMAX...")
+    predictor.entrenar_sarima(serie_sarima)
+    print(f"  📊 Validando holdout 180 días...")
+    predictor.validar_y_generar(df_prophet, serie_sarima, dias_validacion=180)
+
+    mape_train = predictor.metricas.get('mape_ensemble')
+    print(f"  MAPE holdout in-sample: {mape_train:.2%}" if mape_train else "  MAPE holdout: N/A")
+
+    # 5. Predecir horizonte de test
+    print(f"\n  🔮 Prediciendo {n_test} días post-corte...")
+    df_pred = predictor.predecir(n_test, allow_negative=False)
+
+    # 6. Evaluar contra valores reales
+    fechas_pred = pd.DatetimeIndex(df_pred['fecha_prediccion'])
+    y_pred     = df_pred['valor_predicho'].values
+    ci_lower   = df_pred['intervalo_inferior'].values
+    ci_upper   = df_pred['intervalo_superior'].values
+
+    y_real_aligned = df_actuals['valor'].reindex(fechas_pred)
+    mask = y_real_aligned.notna().values
+
+    n_overlap = int(mask.sum())
+    if n_overlap < 10:
+        print("❌ Muy pocos días con datos reales comparables")
+        return
+
+    y_pred_eval   = y_pred[mask]
+    y_real_eval   = y_real_aligned.values[mask]
+    ci_lower_eval = ci_lower[mask]
+    ci_upper_eval = ci_upper[mask]
+
+    mape_expost  = float(np.mean(np.abs((y_real_eval - y_pred_eval) / np.clip(y_real_eval, 1.0, None))))
+    cobertura_ci = float(np.mean((y_real_eval >= ci_lower_eval) & (y_real_eval <= ci_upper_eval)))
+    robusto      = mape_expost < (mape_train or 0.10) * 2.0
+
+    print(f"\n  📈 RESULTADOS BACKTEST {backtest_year}:")
+    print(f"     MAPE in-sample  (holdout)  : {mape_train:.2%}" if mape_train else "")
+    print(f"     MAPE out-of-sample {backtest_year + 1}   : {mape_expost:.2%}")
+    print(f"     Cobertura CI 95% empírica  : {cobertura_ci:.2%}")
+    print(f"     Diagnóstico : {'✅ Modelo robusto (MAPE OOS < 2× holdout)' if robusto else '⚠️ Posible sobreajuste (MAPE OOS ≥ 2× holdout)'}")
+
+    resultado = {
+        "corte_entrenamiento": str(fecha_corte.date()),
+        "periodo_test": [str(fecha_test_start.date()), str(fechas_pred[mask][-1].date())],
+        "n_dias_test": n_overlap,
+        "regressores_usados": reg_cols,
+        "mape_train_holdout": round(float(mape_train), 4) if mape_train else None,
+        "mape_expost": round(mape_expost, 4),
+        "cobertura_ci_95": round(cobertura_ci, 4),
+        "modelo_robusto": robusto,
+    }
+
+    log_path = Path("/home/admonctrlxm/server/logs") / f"backtest_{backtest_year}.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(resultado, indent=2, ensure_ascii=False))
+
+    print(f"\n  ✅ Guardado en: {log_path}")
+    print(json.dumps(resultado, indent=2))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description='Sistema de Predicciones Estratégicas — Sector Eléctrico Colombiano',
@@ -6663,6 +7450,18 @@ Ejemplos:
         metavar='NAME',
         help='Nombre del experimento MLflow (default: auto-generado por modo).',
     )
+    parser.add_argument(
+        '--prophet_cv', action='store_true', default=False,
+        help='Activar walk-forward cross-validation con Prophet.diagnostics (añade ~5-10 min). '
+             'Solo aplica a métricas con prophet_cv configurado.',
+    )
+    parser.add_argument(
+        '--backtest', type=int, default=None,
+        metavar='YYYY',
+        help='Backtesting out-of-sample: entrena hasta YYYY-12-31 y evalúa en período '
+             'siguiente. Solo para EMBALSES_PCT. No modifica BD ni Redis. '
+             'Guarda resultado en logs/backtest_YYYY.json. Ejemplo: --backtest 2014',
+    )
     args = parser.parse_args()
     
     # ── FASE 17: Activar MLflow si se solicitó ──
@@ -6672,6 +7471,11 @@ Ejemplos:
             print(f"\n  \U0001f4e6 MLflow tracking ACTIVADO (URI: {MLFLOW_TRACKING_URI})")
             if args.mlflow_experiment:
                 print(f"     Experiment: {args.mlflow_experiment}")
+
+    # ── Walk-forward CV: inyectar en config de EMBALSES_PCT si se pasó --prophet_cv ──
+    if args.prophet_cv:
+        METRICAS_CONFIG['EMBALSES_PCT']['prophet_cv'] = True
+        print(f"\n  📊 Walk-forward CV activado para EMBALSES_PCT (Prophet.diagnostics)")
 
     # ── FASE 21: Inyectar usar_optuna en el config antes del dispatch ──
     if args.optuna:
@@ -6707,7 +7511,10 @@ Ejemplos:
         print(f"\n  🔬 Optuna activado — búsqueda bayesiana de hiperparámetros (FASE 21)")
 
     dual_args = args.horizonte_dual if args.horizonte_dual is not None else args.test_horizonte_dual
-    if args.cv_all:
+    if args.backtest is not None:
+        # Backtesting out-of-sample (diagnóstico, no modifica BD)
+        main_backtest(args.backtest)
+    elif args.cv_all:
         # FASE 14: CV todas las métricas
         main_cross_validation()
     elif args.cv is not None:

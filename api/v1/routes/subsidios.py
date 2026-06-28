@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from decimal import Decimal
 from api.dependencies import get_api_key
 from infrastructure.database.connection import PostgreSQLConnectionManager
 
@@ -112,13 +113,47 @@ async def get_validaciones(
     anio_desde: int = None,
     anio_hasta: int = None,
     prestador: str = None,
+    fechaActualizacion: str = None,
 ):
+    # CASE SQL igual al route Next.js: mapea estado_validacion cuando organizado es NULL
+    _ESTADO_SQL = """
+        CASE
+          WHEN estado_validacion_organizado IS NOT NULL THEN estado_validacion_organizado
+          WHEN estado_validacion = 'VF'    THEN 'e. VF'
+          WHEN estado_validacion = 'VP'    THEN 'd. VP'
+          WHEN estado_validacion = 'VI'    THEN 'b. VI'
+          WHEN estado_validacion = 'VI SP' THEN 'c. VI SP'
+          ELSE 'a. Otros'
+        END
+    """
+
+    # Parsear fechaActualizacion "YYYY-MM" en year/month para EXTRACT
+    fa_year: int | None = None
+    fa_month: int | None = None
+    if fechaActualizacion:
+        parts = fechaActualizacion.split("-")
+        if len(parts) == 2:
+            try:
+                fa_year, fa_month = int(parts[0]), int(parts[1])
+            except ValueError:
+                pass
+
     try:
         with _cm.get_connection() as conn:
             with conn.cursor() as cur:
-                # Filtros dinámicos
-                filtros = ["estado_validacion_organizado IS NOT NULL", "area IN ('SIN', 'ZNI')"]
+                # Filtros base: condición de estado (ambas columnas) — sin restricción de área
+                filtros = [
+                    "(estado_validacion IS NOT NULL OR estado_validacion_organizado IS NOT NULL)",
+                ]
                 params = []
+
+                # Fecha de actualización (EXTRACT, igual que Next.js)
+                if fa_year and fa_month:
+                    filtros.append("EXTRACT(YEAR FROM fecha_actualizacion) = %s")
+                    params.append(fa_year)
+                    filtros.append("EXTRACT(MONTH FROM fecha_actualizacion) = %s")
+                    params.append(fa_month)
+
                 if fondo:
                     filtros.append("fondo = %s")
                     params.append(fondo)
@@ -137,19 +172,19 @@ async def get_validaciones(
 
                 where = " AND ".join(filtros)
 
-                # Serie principal: conteo por area / anio / trimestre / estado_organizado
+                # Serie: usa el mismo CASE expression que Next.js
                 cur.execute(f"""
                     SELECT
                         area,
                         anio,
                         trimestre,
-                        estado_validacion_organizado AS estado,
+                        {_ESTADO_SQL} AS estado,
                         COUNT(*) AS conteo
                     FROM subsidios.subsidios_validaciones
                     WHERE {where}
                       AND trimestre IS NOT NULL
-                    GROUP BY area, anio, trimestre, estado_validacion_organizado
-                    ORDER BY area, anio, trimestre, estado_validacion_organizado
+                    GROUP BY 1, 2, 3, 4
+                    ORDER BY 1, 2, 3, 4
                 """, params)
                 serie = [
                     {"area": r[0], "anio": r[1], "trimestre": r[2], "estado": r[3], "conteo": r[4]}
@@ -169,24 +204,21 @@ async def get_validaciones(
                 cur.execute("SELECT DISTINCT departamento FROM subsidios.subsidios_empresas WHERE departamento IS NOT NULL ORDER BY 1")
                 departamentos = [r[0] for r in cur.fetchall()]
 
-                # Resumen general (KPIs del tablero)
-                cur.execute("""
-                    SELECT
-                        estado_validacion_organizado,
-                        COUNT(*) AS total
+                # Resumen KPIs — mismos filtros + CASE expression (igual que Next.js)
+                cur.execute(f"""
+                    SELECT {_ESTADO_SQL} AS estado, COUNT(*) AS total
                     FROM subsidios.subsidios_validaciones
-                    WHERE area IN ('SIN','ZNI')
-                      AND estado_validacion_organizado IS NOT NULL
-                    GROUP BY estado_validacion_organizado
-                    ORDER BY estado_validacion_organizado
-                """)
+                    WHERE {where}
+                    GROUP BY 1
+                    ORDER BY 1
+                """, params)
                 resumen = {r[0]: r[1] for r in cur.fetchall()}
 
-                cur.execute("""
+                cur.execute(f"""
                     SELECT COUNT(DISTINCT nombre_prestador)
                     FROM subsidios.subsidios_validaciones
-                    WHERE area IN ('SIN','ZNI')
-                """)
+                    WHERE {where}
+                """, params)
                 total_prestadores = cur.fetchone()[0]
 
                 cur.execute("SELECT MAX(fecha_actualizacion) FROM subsidios.subsidios_validaciones")
@@ -223,9 +255,25 @@ async def get_deficit_historico(request: Request, api_key: str = Depends(get_api
                     ORDER BY anio
                 """)
                 cols = [d[0] for d in cur.description]
-                rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+                rows = []
+                for r in cur.fetchall():
+                    row = {}
+                    for k, v in zip(cols, r):
+                        if isinstance(v, Decimal):
+                            row[k] = float(v) if v is not None else None
+                        elif hasattr(v, 'isoformat'):
+                            row[k] = v.isoformat()
+                        else:
+                            row[k] = v
+                    rows.append(row)
 
-        return JSONResponse(rows)
+                cur.execute("SELECT MAX(fecha_carga) FROM subsidios.deficit_historico")
+                ts_def = cur.fetchone()[0]
+
+        return JSONResponse({
+            "ultima_actualizacion": ts_def.strftime("%d/%m/%Y, %H:%M") if ts_def else None,
+            "data": rows,
+        })
     except Exception as e:
         logger.error("[subsidios/deficit] %s", e)
         raise HTTPException(status_code=500, detail="Error al obtener déficit histórico")

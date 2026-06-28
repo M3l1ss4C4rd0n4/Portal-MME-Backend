@@ -78,7 +78,7 @@ Esto significa:
 │                                          │
 │  ┌──────────────────────────────────┐   │
 │  │  API (Puerto 8000)               │   │
-│  │  • Systemd: api-mme.service      │   │
+│  │  • Systemd: portal-api.service   │   │
 │  │  • Cron @reboot: ✅               │   │
 │  │  • Monitoreo cada 5 min: ✅       │   │
 │  │  • Workers dinámicos: ✅          │   │
@@ -164,7 +164,7 @@ sudo systemctl status dashboard-mme
 
 ### Estado de la API
 ```bash
-sudo systemctl status api-mme
+sudo systemctl status portal-api.service
 ```
 
 ### Probar API manualmente

@@ -1,10 +1,11 @@
 #!/bin/bash
 # Script para iniciar la API en modo daemon
 # Se asegura de que solo haya una instancia corriendo
+# NOTA: En producción, usar systemd: sudo systemctl start portal-api.service
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$(dirname "$SCRIPT_DIR")"
-PID_FILE="/tmp/api-mme.pid"
+PID_FILE="/tmp/portal-api.pid"
 
 cd "$SERVER_DIR" || exit 1
 
