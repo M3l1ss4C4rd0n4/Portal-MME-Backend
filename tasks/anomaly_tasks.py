@@ -4,17 +4,19 @@ Tareas Celery para detección de anomalías y envío de alertas automáticas.
 - check_anomalies: Cada 30 minutos evalúa el sistema energético.
   SOLO envía notificación cuando detecta anomalías CRÍTICAS realmente urgentes.
   NO envía si la misma alerta ya fue notificada en las últimas 6 horas.
-- send_daily_summary: Resumen diario a las 8:30 AM (siempre se envía).
+- send_daily_generate: Resumen diario a las 8:30 AM (genera PDF + Telegram, dispara emails).
+- send_daily_summary: Alias deprecated → send_daily_generate.
 
 Cuando detecta anomalías críticas, envía por Telegram + email
 usando NotificationService.
 """
+import json
 import logging
 import re as _re
 import sys
 import os
 from datetime import datetime, date, timedelta
-from celery import shared_task
+from celery import shared_task, group, chord
 
 # Asegurar que el directorio raíz del proyecto esté en el path
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +31,55 @@ BOT_TIMEOUT = 60
 
 # ── Cooldown: no reenviar la misma alerta más de una vez por día ──
 ALERT_COOLDOWN_HOURS = 24  # valor de respaldo; en práctica se usa TTL hasta medianoche
+DAILY_LOCK_TTL_SECONDS = 72000  # 20 horas — expira antes del próximo informe
+
+
+def _get_redis():
+    """Cliente Redis para locks de idempotencia (DB 1, mismo backend Celery)."""
+    import redis as _redis
+    return _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
+
+
+def _informes_dir() -> str:
+    return os.path.join(_PROJECT_ROOT, "whatsapp_bot", "informes")
+
+
+def _daily_gen_lock_key(day: date) -> str:
+    return f"daily_summary_gen_{day.isoformat()}"
+
+
+def _daily_email_lock_key(day: date, dest: str) -> str:
+    return f"daily_email_sent_{day.isoformat()}_{dest.lower()}"
+
+
+def _is_daily_generation_done(day: date) -> bool:
+    try:
+        return bool(_get_redis().get(_daily_gen_lock_key(day)))
+    except Exception as e:
+        logger.warning("[RESUMEN DIARIO] No se pudo verificar lock de generación: %s", e)
+        return False
+
+
+def _mark_daily_generation_done(day: date) -> None:
+    try:
+        _get_redis().setex(_daily_gen_lock_key(day), DAILY_LOCK_TTL_SECONDS, "generated")
+    except Exception as e:
+        logger.warning("[RESUMEN DIARIO] No se pudo marcar lock de generación: %s", e)
+
+
+def _is_daily_email_sent(day: date, dest: str) -> bool:
+    try:
+        return bool(_get_redis().get(_daily_email_lock_key(day, dest)))
+    except Exception as e:
+        logger.warning("[RESUMEN DIARIO] No se pudo verificar lock email %s: %s", dest, e)
+        return False
+
+
+def _mark_daily_email_sent(day: date, dest: str) -> None:
+    try:
+        _get_redis().setex(_daily_email_lock_key(day, dest), DAILY_LOCK_TTL_SECONDS, "sent")
+    except Exception as e:
+        logger.warning("[RESUMEN DIARIO] No se pudo marcar lock email %s: %s", dest, e)
 
 
 def _clean_markdown_for_telegram(text: str) -> str:
@@ -481,50 +532,40 @@ def check_anomalies(self):
         raise self.retry(exc=e, countdown=120)
 
 
-@shared_task(name='tasks.anomaly_tasks.send_daily_summary')
-def send_daily_summary():
+@shared_task(
+    name='tasks.anomaly_tasks.send_daily_generate',
+    time_limit=600,
+    soft_time_limit=540,
+)
+def send_daily_generate():
     """
     Tarea diaria (8:30 AM): genera el informe ejecutivo completo.
 
-    Combina:
-      - Texto narrativo generado por IA (informe_ejecutivo)
-      - Datos estructurados reales (KPIs, predicciones, anomalías, noticias)
-      - 3 gráficos PNG (generación pie, embalses mapa, precio evolución)
+    Combina generación de datos, gráficos y PDF; envía Telegram;
+    persiste artefactos en disco y dispara envío de emails en subtareas.
 
-    Envía por Telegram (texto + PDF) y email (HTML premium + PDF adjunto).
-
-    Incluye guarda anti-duplicación: si el informe ya se envió hoy
-    (por reinicios de beat), no se vuelve a enviar.
+    Lock anti-duplicación: se marca solo tras persistir PDF + HTML.
     """
     try:
-        # ── Guarda anti-duplicación ──
-        # Los reinicios de celery-beat pueden re-disparar esta tarea
-        # múltiples veces el mismo día. Verificamos si ya se envió hoy.
-        try:
-            _lock_key = f"daily_summary_{date.today().isoformat()}"
-            import redis as _redis
-            _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
-            if _r.get(_lock_key):
-                logger.info(
-                    f"⏭️ [RESUMEN DIARIO] Ya se envió hoy ({date.today()}). "
-                    f"Omitido por guarda anti-duplicación."
-                )
-                return {
-                    "status": "skipped",
-                    "reason": "already_sent_today",
-                    "date": date.today().isoformat(),
-                }
-            # Marcar como enviado con TTL de 20 horas (expira antes del próximo día)
-            _r.setex(_lock_key, 72000, "sent")
-        except Exception as e_lock:
-            logger.warning(f"[RESUMEN DIARIO] Guarda anti-dup no disponible: {e_lock}")
+        today = date.today()
+        if _is_daily_generation_done(today):
+            logger.info(
+                "⏭️ [RESUMEN DIARIO] Informe ya generado hoy (%s). "
+                "Omitido por guarda anti-duplicación.",
+                today,
+            )
+            return {
+                "status": "skipped",
+                "reason": "already_generated_today",
+                "date": today.isoformat(),
+            }
 
         logger.info("📊 [RESUMEN DIARIO] Generando informe ejecutivo completo…")
 
         import requests
         from domain.services.report_service import generar_pdf_informe
         from domain.services.notification_service import (
-            broadcast_alert as ns_broadcast,
+            broadcast_telegram,
             build_daily_email_html,
         )
 
@@ -554,12 +595,38 @@ def send_daily_summary():
         # ══════════════════════════════════════════════
         # 1. Texto narrativo IA (informe_ejecutivo)
         # ══════════════════════════════════════════════
+        import time as _time
+
         informe_texto = None
         generado_con_ia = False
         fecha_generacion = datetime.now().strftime('%Y-%m-%d %H:%M')
+        d_informe: dict = {}
+        _INFORME_TIMEOUT = 180
 
-        d_informe = _api_call('informe_ejecutivo')
+        for _attempt in range(2):
+            d_informe = _api_call('informe_ejecutivo', timeout=_INFORME_TIMEOUT)
+            if d_informe.get('contexto_datos'):
+                break
+            if _attempt == 0:
+                logger.warning(
+                    "[RESUMEN DIARIO] informe_ejecutivo sin contexto_datos — "
+                    "reintento en 5s (timeout=%ss)",
+                    _INFORME_TIMEOUT,
+                )
+                _time.sleep(5)
+
         _contexto_datos = d_informe.get('contexto_datos') if d_informe else None
+        if not _contexto_datos:
+            logger.error(
+                "[RESUMEN DIARIO] Sin contexto_datos tras 2 intentos — "
+                "abortando sin marcar lock (re-ejecución manual permitida)"
+            )
+            return {
+                "status": "error",
+                "error": "informe_ejecutivo_sin_contexto",
+                "date": today.isoformat(),
+            }
+
         if d_informe:
             informe_texto = d_informe.get('informe')
             generado_con_ia = d_informe.get('generado_con_ia', False)
@@ -842,11 +909,9 @@ def send_daily_summary():
             logger.warning(f"[RESUMEN DIARIO] Error leyendo anomalías: {e}")
 
         # ══════════════════════════════════════════════
-        # 3. Generar gráficos PNG (sector + portal)
+        # 3. Generar gráficos PNG (sector)
         # ══════════════════════════════════════════════
         chart_paths = []
-        portal_data = {}
-        portal_chart_paths = {}
         try:
             from whatsapp_bot.services.informe_charts import generate_all_informe_charts
             charts = generate_all_informe_charts()
@@ -858,15 +923,6 @@ def send_daily_summary():
             logger.info(f"[RESUMEN DIARIO] Gráficos sector: {len(chart_paths)}")
         except Exception as e:
             logger.warning(f"[RESUMEN DIARIO] Error generando gráficos sector: {e}")
-
-        try:
-            from whatsapp_bot.services.informe_portal_data import fetch_all_portal_dashboards
-            from whatsapp_bot.services.informe_portal_charts import generate_all_portal_charts
-            portal_data = fetch_all_portal_dashboards()
-            portal_chart_paths = generate_all_portal_charts(portal_data)
-            logger.info(f"[RESUMEN DIARIO] Gráficos portal: {len(portal_chart_paths)}")
-        except Exception as e:
-            logger.warning(f"[RESUMEN DIARIO] Error datos/gráficos portal: {e}")
 
         # ══════════════════════════════════════════════
         # 4. Generar PDF (narrativa + gráficos)
@@ -881,8 +937,6 @@ def send_daily_summary():
                 anomalias=anomalias,
                 noticias=noticias,
                 contexto_datos=_contexto_datos,
-                portal_data=portal_data or None,
-                portal_chart_paths=portal_chart_paths or None,
             )
             if pdf_path:
                 size_kb = os.path.getsize(pdf_path) / 1024
@@ -927,38 +981,8 @@ def send_daily_summary():
                         )
             tg_message += "\n"
 
-        # ── CU/PNT KPIs (Fase 7) ──
-        try:
-            from core.container import container as _ctnr
-            _cu = _ctnr.get_cu_service().get_cu_current()
-            _pnt = _ctnr.losses_nt_service.get_losses_statistics()
-            if _cu:
-                cu_val = _cu.get('cu_total', 0)
-                tg_message += f"💰 *CU:* {cu_val:.2f} COP/kWh ({_cu.get('fecha', '')})\n"
-            if _pnt:
-                pnt_30d = _pnt.get('pct_promedio_nt_30d', 0)
-                tend = _pnt.get('tendencia_nt', '')
-                # Enriquecer con análisis híbrido CREG+estadístico
-                try:
-                    from domain.services.losses_nt_service import OPERATOR_PROFILES
-                    _p = OPERATOR_PROFILES['DEFAULT']
-                    _emoji_pnt = '🔴' if pnt_30d > _p.pnt_crit_pct else ('🟡' if pnt_30d > _p.pnt_warn_pct else '🟢')
-                    _estado_pnt = 'CRÍTICO' if pnt_30d > _p.pnt_crit_pct else ('ALERTA' if pnt_30d > _p.pnt_warn_pct else 'Normal')
-                    tg_message += (
-                        f"🔌 *P\_NT 30d:* {pnt_30d:.2f}% ({tend}) "
-                        f"{_emoji_pnt} {_estado_pnt} "
-                        f"\[warn>{_p.pnt_warn_pct}% crit>{_p.pnt_crit_pct}%\]\n"
-                    )
-                except Exception:
-                    tg_message += f"🔌 *P\_NT 30d:* {pnt_30d:.2f}% ({tend})\n"
-            if _cu or _pnt:
-                tg_message += "\n"
-        except Exception as _e:
-            logger.warning(f"[RESUMEN] CU/PNT para Telegram falló: {_e}")
-
         # ── Predicciones compactas (del contexto) ──
-        _ctx = d_informe.get('contexto_datos', {}) if d_informe else {}
-        _pred_mes = _ctx.get('predicciones_mes', {})
+        _pred_mes = (_contexto_datos or {}).get('predicciones_mes', {})
         _metricas = _pred_mes.get('metricas_clave', {})
         if _metricas:
             tg_message += "📈 *Proyecciones próximo mes:*\n"
@@ -978,7 +1002,7 @@ def send_daily_summary():
             tg_message += f"⚠️ *Anomalías detectadas ({len(anomalias)}):*\n"
             for a in anomalias[:5]:
                 sev = a.get('severidad', 'ALERTA')
-                met = a.get('metrica', '')
+                met = a.get('metrica') or a.get('indicador', '')
                 desc_short = a.get('descripcion', '')[:80]
                 tg_message += f"  {'🔴' if 'CRIT' in sev.upper() else '🟡'} {met}: {desc_short}\n"
             tg_message += "\n"
@@ -1003,7 +1027,7 @@ def send_daily_summary():
         )
 
         # ══════════════════════════════════════════════
-        # 6. Construir email HTML y enviar
+        # 6. Construir email HTML, Telegram y persistir artefactos
         # ══════════════════════════════════════════════
         email_html = build_daily_email_html(
             informe_texto,
@@ -1015,42 +1039,61 @@ def send_daily_summary():
             indices_compuestos=_contexto_datos.get('indices_compuestos') if _contexto_datos else None,
         )
 
-        result = ns_broadcast(
+        email_subject = (
+            f"📊 Informe Ejecutivo del Sector Eléctrico — "
+            f"{datetime.now().strftime('%Y-%m-%d')}"
+        )
+
+        tg_result = broadcast_telegram(
             message=tg_message,
-            severity="INFO",
             pdf_path=pdf_path,
-            email_subject=(
-                f"📊 Informe Ejecutivo del Sector Eléctrico — "
-                f"{datetime.now().strftime('%Y-%m-%d')}"
-            ),
-            email_body_html=email_html,
-            is_daily=True,
+            parse_mode=None,
         )
 
-        total_sent = (
-            result.get("telegram", {}).get("sent", 0)
-            + result.get("email", {}).get("sent", 0)
+        date_str = today.isoformat()
+        informes_dir = _informes_dir()
+        os.makedirs(informes_dir, exist_ok=True)
+        persisted_pdf = os.path.join(
+            informes_dir, f"Informe_Ejecutivo_MME_{date_str}.pdf"
         )
-        logger.info(
-            f"📤 [RESUMEN DIARIO] Completado: {total_sent} notificaciones "
-            f"(TG={result['telegram']['sent']}, "
-            f"Email={result['email']['sent']})"
+        persisted_html = os.path.join(
+            informes_dir, f"Informe_Ejecutivo_MME_{date_str}.html"
         )
 
-        # Guardar copia del PDF en informes/ antes de limpiar
         if pdf_path and os.path.isfile(pdf_path):
-            try:
-                informes_dir = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    "whatsapp_bot", "informes"
-                )
-                os.makedirs(informes_dir, exist_ok=True)
-                import shutil
-                copia_pdf = os.path.join(informes_dir, os.path.basename(pdf_path))
-                shutil.copy2(pdf_path, copia_pdf)
-                logger.info(f"[RESUMEN DIARIO] Copia PDF guardada: {copia_pdf}")
-            except Exception as e_copy:
-                logger.warning(f"[RESUMEN DIARIO] No se pudo copiar PDF: {e_copy}")
+            import shutil
+            shutil.copy2(pdf_path, persisted_pdf)
+            logger.info("[RESUMEN DIARIO] PDF persistido: %s", persisted_pdf)
+        else:
+            persisted_pdf = None
+            logger.warning("[RESUMEN DIARIO] PDF no disponible para persistir")
+
+        with open(persisted_html, 'w', encoding='utf-8') as html_file:
+            html_file.write(email_html)
+        logger.info("[RESUMEN DIARIO] HTML persistido: %s", persisted_html)
+
+        _mark_daily_generation_done(today)
+
+        fanout_result = None
+        if persisted_pdf and os.path.isfile(persisted_pdf):
+            fanout_result = send_daily_emails_fanout.delay(
+                date_str, email_subject, persisted_html, persisted_pdf
+            )
+            logger.info(
+                "[RESUMEN DIARIO] Fanout de emails encolado: task_id=%s",
+                fanout_result.id if fanout_result else None,
+            )
+        else:
+            logger.error(
+                "[RESUMEN DIARIO] No se encoló fanout de emails: PDF persistido ausente"
+            )
+
+        logger.info(
+            "📤 [RESUMEN DIARIO] Generación completada: Telegram=%s, "
+            "emails encolados=%s",
+            tg_result.get("sent", 0),
+            "sí" if fanout_result else "no",
+        )
 
         # Limpiar archivos temporales
         if pdf_path and os.path.isfile(pdf_path):
@@ -1068,8 +1111,10 @@ def send_daily_summary():
         return {
             "status": "completed",
             "informe_ia": generado_con_ia,
-            "telegram_sent": result["telegram"]["sent"],
-            "email_sent": result["email"]["sent"],
+            "telegram_sent": tg_result.get("sent", 0),
+            "email_fanout_task_id": fanout_result.id if fanout_result else None,
+            "pdf_path": persisted_pdf,
+            "html_path": persisted_html,
         }
 
     except Exception as e:
@@ -1077,6 +1122,163 @@ def send_daily_summary():
             f"❌ [RESUMEN DIARIO] Error: {str(e)}", exc_info=True
         )
         return {"status": "error", "error": str(e)}
+
+
+@shared_task(name='tasks.anomaly_tasks.send_daily_summary')
+def send_daily_summary():
+    """Alias deprecated — delega a send_daily_generate."""
+    logger.warning(
+        "[RESUMEN DIARIO] send_daily_summary está deprecated; "
+        "use send_daily_generate"
+    )
+    return send_daily_generate()
+
+
+@shared_task(name='tasks.anomaly_tasks.email_batch_complete')
+def email_batch_complete(results: list, date_str: str) -> dict:
+    """Callback del chord: resume envíos de email del informe diario."""
+    sent = 0
+    failed = 0
+    skipped = 0
+    failed_recipients: list[str] = []
+
+    for item in results or []:
+        if isinstance(item, Exception):
+            failed += 1
+            failed_recipients.append("unknown")
+            continue
+        if not isinstance(item, dict):
+            failed += 1
+            continue
+        status = item.get("status")
+        dest = item.get("dest", "unknown")
+        if status == "sent":
+            sent += 1
+        elif status == "skipped":
+            skipped += 1
+        else:
+            failed += 1
+            failed_recipients.append(dest)
+
+    summary = {
+        "date": date_str,
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped,
+        "failed_recipients": failed_recipients,
+    }
+    logger.info("[EMAIL] %s", json.dumps({
+        "event": "daily_batch_complete",
+        **summary,
+    }, ensure_ascii=False))
+
+    if failed > 0:
+        logger.warning(
+            "[RESUMEN DIARIO] %s email(s) fallidos para %s: %s",
+            failed,
+            date_str,
+            ", ".join(failed_recipients),
+        )
+
+    return summary
+
+
+@shared_task(
+    name='tasks.anomaly_tasks.send_single_daily_email',
+    bind=True,
+    time_limit=90,
+    soft_time_limit=60,
+    max_retries=2,
+    default_retry_delay=120,
+)
+def send_single_daily_email(
+    self,
+    dest: str,
+    subject: str,
+    html_path: str,
+    pdf_path: str,
+    date_str: str,
+) -> dict:
+    """Envía el informe diario a un único destinatario."""
+    from domain.services.notification_service import _send_one_email
+
+    day = date.fromisoformat(date_str)
+
+    if _is_daily_email_sent(day, dest):
+        logger.info("[RESUMEN DIARIO] Email ya enviado hoy a %s — omitido", dest)
+        return {"status": "skipped", "dest": dest, "reason": "already_sent_today"}
+
+    if not os.path.isfile(html_path):
+        err = f"HTML no encontrado: {html_path}"
+        logger.error("[RESUMEN DIARIO] %s", err)
+        return {"status": "failed", "dest": dest, "error": err}
+
+    if not os.path.isfile(pdf_path):
+        err = f"PDF no encontrado: {pdf_path}"
+        logger.error("[RESUMEN DIARIO] %s", err)
+        return {"status": "failed", "dest": dest, "error": err}
+
+    try:
+        with open(html_path, encoding='utf-8') as html_file:
+            body_html = html_file.read()
+    except OSError as e:
+        err = f"No se pudo leer HTML: {e}"
+        logger.error("[RESUMEN DIARIO] %s", err)
+        return {"status": "failed", "dest": dest, "error": err}
+
+    ok, error, duration_ms = _send_one_email(dest, subject, body_html, pdf_path)
+    if ok:
+        _mark_daily_email_sent(day, dest)
+        return {
+            "status": "sent",
+            "dest": dest,
+            "duration_ms": duration_ms,
+        }
+
+    try:
+        raise self.retry(exc=RuntimeError(error or "smtp_send_failed"))
+    except self.MaxRetriesExceededError:
+        return {
+            "status": "failed",
+            "dest": dest,
+            "error": error,
+            "duration_ms": duration_ms,
+        }
+
+
+@shared_task(name='tasks.anomaly_tasks.send_daily_emails_fanout')
+def send_daily_emails_fanout(
+    date_str: str,
+    subject: str,
+    html_path: str,
+    pdf_path: str,
+) -> dict:
+    """Encola envío paralelo de emails del informe diario (una subtarea por destinatario)."""
+    from domain.services.notification_service import get_email_recipients
+
+    recipients = get_email_recipients(diario=True)
+    if not recipients:
+        logger.info("[RESUMEN DIARIO] No hay destinatarios de email diario")
+        return {"status": "no_recipients", "date": date_str}
+
+    emails = [r['correo'] for r in recipients]
+    logger.info(
+        "[RESUMEN DIARIO] Encolando %s emails para %s",
+        len(emails),
+        date_str,
+    )
+
+    header = group(
+        send_single_daily_email.s(dest, subject, html_path, pdf_path, date_str)
+        for dest in emails
+    )
+    workflow = chord(header, email_batch_complete.s(date_str)).apply_async()
+    return {
+        "status": "fanout_enqueued",
+        "date": date_str,
+        "recipients": len(emails),
+        "chord_id": workflow.id if workflow else None,
+    }
 
 
 def _build_kpi_fallback() -> str:

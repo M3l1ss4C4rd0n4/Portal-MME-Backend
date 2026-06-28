@@ -11,12 +11,33 @@ from domain.services.orchestrator.utils.decorators import handle_service_error
 
 logger = logging.getLogger(__name__)
 
+# Keywords de hidrocarburos para filtrar en el servidor
+_HYDRO_FILTER_KEYWORDS = [
+    "petróleo", "petroleo", "gas", "combustible", "gasolina", "acpm",
+    "gas natural", "glp", "oleoducto", "gasoducto", "exploración",
+    "exploracion", "refinación", "refinacion", "barril", "brent", "wti",
+    "opep", "ecopetrol", "reficar", "yacimiento", "pozo petrolero",
+    "hidrocarburo", "downstream", "upstream", "midstream",
+    "regalías petroleras", "regalias petroleras",
+    "diésel", "diesel", "fuel oil", "gas licuado", "gnl", "lng",
+    "shale", "fracking", "offshore",
+    "precio del crudo", "crudo colombiano", "producción petrolera",
+    "derivado del petróleo", "derivado del petroleo",
+    "petroquímica", "petroquimica", "estación de servicio",
+    "gasolinera", "gasocentro", "grifo",
+    "carbón", "carbon mineral", "minería", "mineria",
+    "niquel", "litio", "cobre",
+    "drummond", "cerrejón", "cerrejon", "prodeco",
+    "exportación de carbón", "puerto de carbón",
+]
+
 
 class LibreNoticiasHandlerMixin:
     """
     Mixin que agrupa:
     - _handle_pregunta_libre   (handler)
     - _handle_noticias_sector  (handler)
+    - _handle_noticias_hidrocarburos (handler)
     - _generar_resumen_noticias
     - _handle_menu             (handler)
     """
@@ -370,6 +391,106 @@ class LibreNoticiasHandlerMixin:
             errors.append(ErrorDetail(
                 code="NEWS_ERROR",
                 message="Error al obtener noticias del sector"
+            ))
+
+        return data, errors
+
+    @handle_service_error
+    async def _handle_noticias_hidrocarburos(
+        self,
+        parameters: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """
+        Handler: Noticias de hidrocarburos (petróleo, gas, carbón, minería).
+        Obtiene un pool más grande del servicio de noticias y filtra
+        estrictamente por términos de hidrocarburos.
+        """
+        data: Dict[str, Any] = {}
+        errors: List[ErrorDetail] = []
+
+        if not self.news_service:
+            errors.append(ErrorDetail(
+                code="NEWS_UNAVAILABLE",
+                message="Servicio de noticias no disponible"
+            ))
+            return data, errors
+
+        try:
+            # 1. Intentar servicio dedicado de hidrocarburos
+            hydro_result = await asyncio.wait_for(
+                self.news_service.get_hydrocarbon_news(max_items=10),
+                timeout=self.SERVICE_TIMEOUT
+            )
+
+            hydro_items = hydro_result.get("noticias", [])
+
+            logger.info(
+                f"[HIDROCARBUROS] {len(hydro_items)} noticias del servicio dedicado"
+            )
+
+            selected = list(hydro_items)
+
+            # 2. Si quedan espacios, complementar con pool general filtrado
+            if len(selected) < 3:
+                try:
+                    enriched = await asyncio.wait_for(
+                        self.news_service.get_enriched_news(max_top=5, max_extra=5),
+                        timeout=self.SERVICE_TIMEOUT
+                    )
+                    top = enriched.get("top", [])
+                    otras = enriched.get("otras", [])
+                    general_pool = top + otras
+
+                    for n in general_pool:
+                        if len(selected) >= 3:
+                            break
+                        text = (
+                            (n.get("titulo") or "").lower() + " " +
+                            (n.get("resumen_corto") or n.get("resumen") or "").lower()
+                        )
+                        hits = sum(1 for kw in _HYDRO_FILTER_KEYWORDS if kw in text)
+                        if hits >= 1:
+                            # Evitar duplicados por URL
+                            if not any(s.get("url") == n.get("url") for s in selected):
+                                selected.append(n)
+
+                    logger.info(
+                        f"[HIDROCARBUROS] {len(selected)} tras fallback pool general "
+                        f"(se agregaron {len(selected) - len(hydro_items)} del pool)"
+                    )
+                except Exception as e:
+                    logger.warning(f"[HIDROCARBUROS] Fallback falló: {e}")
+
+            # 3. Formatear respuesta (máximo 3)
+            top3 = selected[:3]
+            data["noticias"] = [
+                {
+                    "titulo": n["titulo"],
+                    "resumen": n.get("resumen") or n.get("resumen_corto") or "",
+                    "url": n["url"],
+                    "fuente": n.get("fuente", ""),
+                    "source_url": n.get("source_url") or "",
+                    "fecha": n.get("fecha_publicacion") or n.get("fecha") or "",
+                    "imagen": n.get("imagen") or n.get("image") or "",
+                }
+                for n in top3
+            ]
+            data["total"] = len(top3)
+
+            logger.info(
+                f"[HIDROCARBUROS] {len(top3)} noticias devueltas"
+            )
+
+        except asyncio.TimeoutError:
+            errors.append(ErrorDetail(
+                code="NEWS_TIMEOUT",
+                message="El servicio de noticias tardó demasiado"
+            ))
+        except Exception as e:
+            logger.error(f"Error en noticias hidrocarburos: {e}", exc_info=True)
+            errors.append(ErrorDetail(
+                code="NEWS_ERROR",
+                message="Error al obtener noticias de hidrocarburos"
             ))
 
         return data, errors

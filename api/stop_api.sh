@@ -1,7 +1,8 @@
 #!/bin/bash
 # Script para detener la API
+# NOTA: En producción, usar systemd: sudo systemctl stop portal-api.service
 
-PID_FILE="/tmp/api-mme.pid"
+PID_FILE="/tmp/portal-api.pid"
 
 if [ ! -f "$PID_FILE" ]; then
     echo "⚠️  No se encontró el archivo PID. Buscando procesos..."

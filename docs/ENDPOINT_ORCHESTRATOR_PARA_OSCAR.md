@@ -480,7 +480,7 @@ curl -X POST "https://portalenergetico.minenergia.gov.co/api/v1/chatbot/orchestr
 - **Connection timeout:** 10 segundos
 
 ### Disponibilidad 24/7
-- **Servicio:** systemd (api-mme.service)
+- **Servicio:** systemd (portal-api.service)
 - **Auto-restart:** Habilitado
 - **Logs:** `/home/admonctrlxm/server/logs/`
   - `api-access.log` - Logs de acceso

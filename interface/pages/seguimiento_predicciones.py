@@ -683,14 +683,37 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
                 showlegend=True,
             ))
     
-    # Línea predicha
+    # Línea predicha (con intervalo de confianza en hover)
+    hover_text_pred = []
+    custom_data_pred = []
+    for _, row in df_merged.iterrows():
+        ic_inf = float(row['intervalo_inferior']) if pd.notna(row.get('intervalo_inferior')) else None
+        ic_sup = float(row['intervalo_superior']) if pd.notna(row.get('intervalo_superior')) else None
+        
+        fecha_str = row['fecha'].strftime('%Y-%m-%d') if hasattr(row['fecha'], 'strftime') else str(row['fecha'])
+        val_str = f"{float(row['predicho']):,.2f}" if pd.notna(row.get('predicho')) else "—"
+        
+        if ic_inf is not None and ic_sup is not None:
+            ic_line = f"IC 95%: [{ic_inf:,.2f} – {ic_sup:,.2f}] {unidad}"
+        else:
+            ic_line = "IC 95%: —"
+        
+        hover_text_pred.append(
+            f"<b>Predicho</b><br>"
+            f"Fecha: {fecha_str}<br>"
+            f"Valor: {val_str} {unidad}<br>"
+            f"<span style='color:#27ae60'>{ic_line}</span><extra></extra>"
+        )
+        custom_data_pred.append([ic_inf, ic_sup])
+    
     fig.add_trace(go.Scatter(
         x=df_merged['fecha'], y=df_merged['predicho'],
         mode='lines+markers',
         name=f'Predicho ({modelo})',
         line=dict(color=color_metrica, width=2),
         marker=dict(size=4),
-        hovertemplate=f'<b>Predicho</b><br>Fecha: %{{x|%Y-%m-%d}}<br>Valor: %{{y:,.2f}} {unidad}<extra></extra>',
+        text=hover_text_pred,
+        hoverinfo='text',
     ))
     
     # Línea real
@@ -725,11 +748,32 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
         margin=dict(l=60, r=30, t=60, b=40),
     )
     
-    grafica_pred_vs_real = crear_chart_card_custom(
-        titulo=f"Predicción vs Realidad — {label}",
-        subtitulo=f"Modelo: {modelo} · Horizonte {horizonte_dias} días",  # modelo ya es legible
-        children=dcc.Graph(figure=fig, config={'displayModeBar': True}),
-    )
+    grafica_pred_vs_real = html.Div([
+        crear_chart_card_custom(
+            titulo=f"Predicción vs Realidad — {label}",
+            subtitulo=f"Modelo: {modelo} · Horizonte {horizonte_dias} días",
+            children=dcc.Graph(figure=fig, config={'displayModeBar': True}),
+        ),
+        # Nota explicativa sobre el abanico de incertidumbre
+        html.Div([
+            html.I(className="fas fa-info-circle me-2", style={'color': '#3498db'}),
+            html.Span(
+                "¿Por qué se ensancha la banda sombreada (IC 95%)? ",
+                style={'fontWeight': '600', 'color': '#2c3e50'},
+            ),
+            html.Span(
+                "Cuanto más lejos del último dato conocido, mayor la incertidumbre. "
+                "A 7 días: ±3%. A 90 días: ±15%. A 365 días: ±30%+. "
+                "No es un error: es una propiedad matemática inevitable de toda predicción estadística. "
+                "Pase el cursor sobre los puntos para ver el intervalo exacto de cada día.",
+                style={'color': '#5d6d7e', 'fontSize': '0.78rem'},
+            ),
+        ], className='mt-2 px-3 py-2 rounded', style={
+            'backgroundColor': '#eaf2f8',
+            'borderLeft': '3px solid #3498db',
+            'fontSize': '0.8rem',
+        }),
+    ])
     
     # ═══ TABLA DÍA A DÍA ═══
     tabla_records = []

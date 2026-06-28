@@ -200,18 +200,18 @@ print_header("INSPECCIÓN 6: CONFIGURACIÓN SERVICIO 24/7")
 import subprocess
 
 try:
-    # Verificar estado del servicio
+    # Verificar estado del servicio (portal-api es el activo; api-mme quedó deprecado)
     result = subprocess.run(
-        ["systemctl", "is-active", "api-mme"],
+        ["systemctl", "is-active", "portal-api.service"],
         capture_output=True,
         text=True
     )
     servicio_activo = result.stdout.strip() == "active"
-    print_test("Servicio systemd activo", servicio_activo)
+    print_test("Servicio portal-api.service activo", servicio_activo)
     
     # Verificar auto-start
     result = subprocess.run(
-        ["systemctl", "is-enabled", "api-mme"],
+        ["systemctl", "is-enabled", "portal-api.service"],
         capture_output=True,
         text=True
     )

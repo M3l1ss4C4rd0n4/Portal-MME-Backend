@@ -12,7 +12,7 @@
 | Servicio | Puerto | Proceso | Servicio systemd |
 |---|---|---|---|
 | Dashboard Dash | 127.0.0.1:8050 | gunicorn + sync workers | `dashboard-mme` |
-| API FastAPI | 127.0.0.1:8000 | gunicorn + uvicorn workers | `api-mme` |
+| API FastAPI | 127.0.0.1:8000 | uvicorn | `portal-api` |
 | PostgreSQL 16 | 127.0.0.1:5432 | postgresql | `postgresql` |
 | Redis | 127.0.0.1:6379 | redis-server | `redis-server` |
 | Celery Worker | background | celery worker | `celery-worker@1` |
@@ -30,7 +30,7 @@
 | Cada 6h (0, 6, 12, 18) | `etl_incremental_all_metrics` | ETL incremental datos XM → PostgreSQL |
 | 03:00 | `clean_old_logs` | Limpieza de logs antiguos |
 | Cada 30 min | `check_anomalies` | Detección de anomalías (gene, precio, embalses, CU, PNT) |
-| 08:00 | `send_daily_summary` | Informe ejecutivo diario → Telegram + PDF |
+| 08:30 | `send_daily_generate` | Informe ejecutivo: genera PDF, Telegram, encola emails en paralelo |
 | 10:00 | `calcular_cu_diario` | Cálculo Costo Unitario + Pérdidas NT |
 
 ---
@@ -40,7 +40,7 @@
 ### 3.1 Verificar estado de todos los servicios
 
 ```bash
-systemctl is-active api-mme dashboard-mme postgresql redis-server nginx
+systemctl is-active portal-api dashboard-mme postgresql redis-server nginx
 # Debe mostrar "active" para cada uno
 
 # Health check completo de la API:
@@ -66,9 +66,9 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8050/
 ### 3.3 Reiniciar la API
 
 ```bash
-sudo systemctl restart api-mme
+sudo systemctl restart portal-api.service
 # o bien hot-reload sin downtime:
-kill -HUP $(pgrep -f 'gunicorn.*api.main' | head -1)
+kill -HUP $(pgrep -f 'uvicorn.*api.main' | head -1)
 
 # Verificar:
 sleep 5
@@ -151,8 +151,8 @@ Si en `/health` aparece `xm_api.circuit_state: "OPEN"`:
 4. Si persiste por > 1 hora → verificar https://www.simem.co manualmente
 5. Si XM funciona pero el circuit sigue abierto:
    ```bash
-   # Forzar reset (reiniciar workers API):
-   sudo systemctl restart api-mme
+   # Forzar reset (reiniciar API):
+   sudo systemctl restart portal-api.service
    ```
 
 ### 3.8 Enviar informe diario manualmente
@@ -160,10 +160,47 @@ Si en `/health` aparece `xm_api.circuit_state: "OPEN"`:
 ```bash
 cd /home/admonctrlxm/server && source venv/bin/activate
 python3 -c "
-from tasks.anomaly_tasks import send_daily_summary
-send_daily_summary()
+from tasks.anomaly_tasks import send_daily_generate
+send_daily_generate()
 "
 ```
+
+La tarea `send_daily_generate` persiste artefactos en `whatsapp_bot/informes/`:
+- `Informe_Ejecutivo_MME_YYYY-MM-DD.pdf`
+- `Informe_Ejecutivo_MME_YYYY-MM-DD.html`
+
+El envío de email se encola en subtareas Celery (`send_daily_emails_fanout` → `send_single_daily_email`).
+
+**Documentación de contenido:** ver [`docs/INFORME_EJECUTIVO_CONTENIDO.md`](docs/INFORME_EJECUTIVO_CONTENIDO.md) (estructura del PDF, fuentes de datos por página).
+
+**Alcance PDF:** solo sector eléctrico + gestión de riesgos + noticias. Los tableros portal (comunidades, subsidios, etc.) están suspendidos — ver [`docs/INFORME_PORTAL_CAPITULOS_PENDIENTES.md`](docs/INFORME_PORTAL_CAPITULOS_PENDIENTES.md).
+
+### 3.9 Reintentar emails fallidos (sin regenerar PDF)
+
+Si la generación completó pero algunos correos fallaron, reencolar solo el fanout:
+
+```bash
+cd /home/admonctrlxm/server && source venv/bin/activate
+DATE=$(date +%Y-%m-%d)
+python3 -c "
+from tasks.anomaly_tasks import send_daily_emails_fanout
+send_daily_emails_fanout.delay(
+    '${DATE}',
+    '📊 Informe Ejecutivo del Sector Eléctrico — ${DATE}',
+    'whatsapp_bot/informes/Informe_Ejecutivo_MME_${DATE}.html',
+    'whatsapp_bot/informes/Informe_Ejecutivo_MME_${DATE}.pdf',
+)
+print('Fanout encolado')
+"
+```
+
+Para forzar reenvío a un destinatario específico, borrar su lock Redis antes:
+
+```bash
+redis-cli -n 1 DEL "daily_email_sent_${DATE}_correo@minenergia.gov.co"
+```
+
+Logs estructurados de email: buscar `[EMAIL]` en logs Celery. El callback `email_batch_complete` lista destinatarios fallidos.
 
 ---
 
@@ -189,7 +226,7 @@ send_daily_summary()
 | Dashboard acceso | `/home/admonctrlxm/server/logs/gunicorn_access.log` |
 | Dashboard errores | `/home/admonctrlxm/server/logs/gunicorn_error.log` |
 | Celery / ETL | `/home/admonctrlxm/server/logs/celery*.log` |
-| Systemd services | `journalctl -u api-mme -f` / `journalctl -u dashboard-mme -f` |
+| Systemd services | `journalctl -u portal-api -f` / `journalctl -u dashboard-mme -f` |
 
 ```bash
 # Ver errores recientes API:

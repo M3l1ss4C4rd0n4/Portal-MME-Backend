@@ -89,7 +89,7 @@ SERVICIOS=(
     "celery-worker.service"
     "celery-flower.service"
     "dashboard-mme.service"
-    "api-mme.service"
+    "portal-api.service"
 )
 
 for servicio in "${SERVICIOS[@]}"; do

@@ -3240,145 +3240,18 @@ def _build_page_noticias(
     # ── Índices Compuestos (ISH / IPM / IES / CIS) ──
     idx_html = ''
     if include_riesgos and indices_compuestos:
-        _IDX_COLORS = {
-            'ÓPTIMO': '#1B5E20', 'ADECUADO': '#2E7D32', 'NORMAL': '#2E7D32', 'ESTABLE': '#2E7D32',
-            'LEVE': '#7CB342', 'BAJO': '#E65100', 'MODERADO': '#E65100', 'VIGILANCIA': '#E65100',
-            'PREOCUPANTE': '#BF360C', 'ALTO ESTRÉS': '#B71C1C',
-            'CRÍTICO': '#B71C1C',
-        }
-        _IDX_BG = {
-            'ÓPTIMO': '#C8E6C9', 'ADECUADO': '#E8F5E9', 'NORMAL': '#E8F5E9', 'ESTABLE': '#E8F5E9',
-            'LEVE': '#F9FBE7', 'BAJO': '#FFF3E0', 'MODERADO': '#FFF3E0', 'VIGILANCIA': '#FFF3E0',
-            'PREOCUPANTE': '#FBE9E7', 'ALTO ESTRÉS': '#FFEBEE',
-            'CRÍTICO': '#FFEBEE',
-        }
-        _IDX_META = {
-            'ISH': {
-                'titulo': 'Disponibilidad de agua en embalses para generaci\u00f3n el\u00e9ctrica',
-                'niveles': {
-                    '\u00d3PTIMO':      ('Embalses en niveles hist\u00f3ricamente altos. Amplia reserva h\u00eddrica.',
-                                         'Gran margen de seguridad. Hidroenerg\u00eda cubre la demanda sin apoyo t\u00e9rmico.',
-                                         'Mantener gesti\u00f3n actual. Optimizar costos con excedentes.'),
-                    'ADECUADO':         ('Reservas suficientes para cubrir la demanda en el corto plazo.',
-                                         'Bajo riesgo operativo. Precios de bolsa estables.',
-                                         'Monitorear tendencia. Si aportes bajan, revisar despacho t\u00e9rmico.'),
-                    'BAJO':             ('Embalses por debajo de niveles normales. Reserva insuficiente.',
-                                         'Presi\u00f3n al alza en precios. Mayor dependencia de generaci\u00f3n t\u00e9rmica costosa.',
-                                         'Activar contingencia t\u00e9rmica. Revisar restricciones de exportaci\u00f3n.'),
-                    'CR\u00cdTICO':     ('Embalses en niveles cr\u00edticos. Riesgo real de racionamiento.',
-                                         'Riesgo de desabastecimiento y precios de bolsa disparados.',
-                                         'Declarar alerta de escasez. Activar protocolos de emergencia.'),
-                },
-            },
-            'IPM': {
-                'titulo': 'Presi\u00f3n que ejercen los precios del mercado mayorista',
-                'niveles': {
-                    'NORMAL':           ('Precios de bolsa en rangos hist\u00f3ricos normales.',
-                                         'Costos estables. Usuarios regulados sin incrementos abruptos.',
-                                         'Sin acci\u00f3n inmediata. Continuar monitoreo de aportes y oferta t\u00e9rmica.'),
-                    'LEVE':             ('Tendencia al alza moderada, a\u00fan en rangos manejables.',
-                                         'Leve incremento en costo del servicio. M\u00e1rgenes bajo presi\u00f3n.',
-                                         'Verificar causas. Preparar alertas a agentes del mercado.'),
-                    'MODERADO':         ('Precios por encima de lo normal. Mercado en tensi\u00f3n.',
-                                         'Efecto en tarifas si persiste. Riesgo en contratos a precio fijo.',
-                                         'Emitir circular a comercializadores. Revisar gesti\u00f3n de demanda.'),
-                    'ALTO ESTR\u00c9S': ('Precios en niveles excepcionalmente altos. Crisis de precios.',
-                                         'Impacto directo en tarifas. Riesgo de crisis en comercializadores.',
-                                         'Intervenci\u00f3n regulatoria urgente. Mesas de trabajo con CREG.'),
-                },
-            },
-            'IES': {
-                'titulo': 'Nivel de estr\u00e9s operativo del sistema el\u00e9ctrico nacional',
-                'niveles': {
-                    'NORMAL':           ('Sistema opera con normalidad. Sin sobrecargas ni vulnerabilidades.',
-                                         'Confiabilidad alta. Riesgo de fallas en cascada m\u00ednimo.',
-                                         'Vigilancia rutinaria. Sin acciones especiales requeridas.'),
-                    'LEVE':             ('Se\u00f1ales de estr\u00e9s aisladas o m\u00e1rgenes ajustados.',
-                                         'Confiabilidad mantenida con menor margen ante imprevistos.',
-                                         'Revisar mantenimientos preventivos. Identificar indicadores con estr\u00e9s.'),
-                    'MODERADO':         ('M\u00faltiples indicadores en alerta. Presi\u00f3n operativa significativa.',
-                                         'Riesgo elevado ante eventos imprevistos. Menor resiliencia del sistema.',
-                                         'Coordinaci\u00f3n operativa XM-generadores. Diferir mantenimientos no urgentes.'),
-                    'ALTO ESTR\u00c9S': ('Estr\u00e9s severo con m\u00faltiples indicadores cr\u00edticos simult\u00e1neos.',
-                                         'Alta probabilidad de fallas ante cualquier contingencia adicional.',
-                                         'Activar sala de crisis. Notificar al MinMinas y la CREG.'),
-                },
-            },
-            'CIS': {
-                'titulo': 'Calificaci\u00f3n integral del estado general del sistema',
-                'niveles': {
-                    'ESTABLE':          ('Todos los indicadores en verde. Condiciones \u00f3ptimas.',
-                                         'Bajo riesgo en todas las dimensiones: h\u00eddrica, econ\u00f3mica y operativa.',
-                                         'Aprovechar coyuntura para planear mantenimientos mayores.'),
-                    'VIGILANCIA':       ('El sistema es estable pero con indicadores a monitorear.',
-                                         'Riesgo moderado. Puede evolucionar negativamente si no se gestiona.',
-                                         'Aumentar frecuencia de monitoreo. Identificar indicador de riesgo.'),
-                    'PREOCUPANTE':      ('Varios indicadores deteriorados. Sistema cerca de riesgo alto.',
-                                         'Deterioro combinado amplifica efectos negativos en tarifa y confiabilidad.',
-                                         'Escalar a nivel directivo. Preparar nota t\u00e9cnica para el despacho.'),
-                    'CR\u00cdTICO':     ('Crisis multidimensional con varios indicadores en rojo.',
-                                         'Riesgo real de afectaci\u00f3n masiva del servicio e impacto econ\u00f3mico alto.',
-                                         'Activar Comit\u00e9 de Crisis del Sector. Coordinaci\u00f3n con Presidencia.'),
-                },
-            },
-        }
-        _idx_defs = [
-            ('ish', 'ISH', 'Disponibilidad H\u00eddrica'),
-            ('ipm', 'IPM', 'Presi\u00f3n de Mercado'),
-            ('ies', 'IES', 'Estr\u00e9s del Sistema'),
-            ('cis', 'CIS', 'Estado General'),
-        ]
-        cells = ''
-        for key, sigla, nombre_corto in _idx_defs:
-            entry = indices_compuestos.get(key, {})
-            valor = entry.get('valor', 0)
-            nivel = str(entry.get('nivel', 'NORMAL')).upper()
-            color = _IDX_COLORS.get(nivel, '#555555')
-            bg = _IDX_BG.get(nivel, '#F5F5F5')
-            meta = _IDX_META.get(sigla, {})
-            titulo_largo = meta.get('titulo', nombre_corto)
-            textos = meta.get('niveles', {}).get(nivel, ('', '', ''))
-            descripcion_str, impacto_str, accion_str = textos if len(textos) == 3 else ('', '', '')
-            cells += (
-                f'<td style="width:25%;padding:4px;vertical-align:top;">'
-                f'<div style="background:{bg};border:2px solid {color};'
-                f'border-radius:6px;padding:8px 6px;">'
-                # Encabezado valor/nivel
-                f'<div style="text-align:center;margin-bottom:6px;">'
-                f'<div style="font-size:16pt;font-weight:700;color:{color};line-height:1;">{valor:.0f}</div>'
-                f'<div style="font-size:8pt;font-weight:700;color:#333;">{sigla}</div>'
-                f'<div style="padding:1px 5px;border-radius:3px;display:inline-block;'
-                f'background:{color};color:#fff;font-size:7pt;">{nivel}</div>'
-                f'</div>'
-                # Qué mide
-                f'<div style="font-size:6.5pt;font-weight:700;color:#333;border-top:1px solid {color}30;padding-top:4px;">'
-                f'Qu\u00e9 mide:</div>'
-                f'<div style="font-size:6.5pt;color:#444;margin-bottom:4px;line-height:1.3;">{titulo_largo}</div>'
-                # Situación
-                f'<div style="font-size:6.5pt;font-weight:700;color:#333;">Situaci\u00f3n:</div>'
-                f'<div style="font-size:6.5pt;color:#444;margin-bottom:4px;line-height:1.3;">{descripcion_str}</div>'
-                # Impacto
-                f'<div style="font-size:6.5pt;font-weight:700;color:#333;">Impacto:</div>'
-                f'<div style="font-size:6.5pt;color:#444;margin-bottom:4px;line-height:1.3;">{impacto_str}</div>'
-                # Acción
-                f'<div style="font-size:6.5pt;font-weight:700;color:{color};background:{color}18;'
-                f'border-radius:3px;padding:3px 4px;line-height:1.3;">'
-                f'Acci\u00f3n: {accion_str}</div>'
-                f'</div></td>'
-            )
-        _comp = indices_compuestos.get('componentes', {})
-        _n_crit = _comp.get('anomalias_criticas', 0)
-        _n_alert = _comp.get('anomalias_alertas', 0)
+        from domain.services.indices_compuestos_meta import (
+            render_indices_footnote,
+            render_indices_row_html,
+        )
+        cells = render_indices_row_html(indices_compuestos, variant='pdf')
         idx_html = f"""
         {_section_hdr('&Iacute;ndices del Sistema El&eacute;ctrico Nacional', '#4527A0')}
         <div style="margin:0 10px;">
           <table cellpadding="0" cellspacing="0" border="0" width="100%">
             <tr>{cells}</tr>
           </table>
-          <div style="font-size:7pt;color:#666;margin-top:6px;text-align:center;">
-            Escala 0&#8211;100 (mayor = mejor condici&#243;n) &middot;
-            {_n_crit} alerta(s) cr&#237;tica(s) + {_n_alert} alerta(s) moderada(s) computadas
-          </div>
+          {render_indices_footnote(indices_compuestos, variant='pdf')}
         </div>
         """
 
@@ -3560,18 +3433,25 @@ def generar_pdf_informe(
     """
     Genera un PDF estilo modelo XM del informe ejecutivo diario.
 
-    Estructura del PDF (multi-capítulo cuando portal_data está presente):
-      Cap. 1: Gestión del sector (mercado, generación, hidrología, IA, riesgos)
-      Cap. 2: Comunidades energéticas
-      Cap. 3: Subsidios
-      Cap. 4: Supervisión
-      Cap. 5: Presupuesto DEE
-      Cap. 6: Noticias (3 ítems) + canales
+    Estructura del PDF:
+      1. Mercado / resumen ejecutivo
+      2. Generación por fuente
+      3. Hidrología y embalses
+      4. Análisis ejecutivo (IA)
+      5. Gestión de riesgos (índices ISH/IPM/IES/CIS + anomalías)
+      6. Noticias del sector (3 ítems) + canales
 
-    Sin portal_data conserva la estructura legacy de 5 bloques HTML.
+    Los parámetros portal_data y portal_chart_paths se conservan por compatibilidad
+    pero se ignoran (capítulos portal suspendidos — ver INFORME_PORTAL_CAPITULOS_PENDIENTES.md).
     """
     try:
         from weasyprint import HTML
+
+        if portal_data or portal_chart_paths:
+            logger.debug(
+                '[REPORT_SERVICE] portal_data/portal_chart_paths ignorados '
+                '(capítulos portal suspendidos del informe ejecutivo)'
+            )
 
         # ── Preparar datos ──
         hoy = fecha_generacion or datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -3619,80 +3499,22 @@ def generar_pdf_informe(
             informe_texto or '',
         )
 
-        pages_extra: List[str] = []
+        from domain.services.report_chapters import (
+            build_chapter_gestion_riesgos,
+            build_chapter_noticias,
+        )
 
-        if portal_data:
-            from domain.services.report_chapters import (
-                build_chapter_colombia_solar,
-                build_chapter_comunidades,
-                build_chapter_contratos_or,
-                build_chapter_fenoge,
-                build_chapter_gestion_riesgos,
-                build_chapter_noticias,
-                build_chapter_presupuesto,
-                build_chapter_subsidios,
-                build_chapter_supervision,
-            )
+        page_riesgos = build_chapter_gestion_riesgos(
+            logo_b64, fecha_label,
+            anomalias or [],
+            indices_compuestos=indices_compuestos,
+        )
+        page_noticias = build_chapter_noticias(
+            logo_b64, fecha_label,
+            noticias or [],
+        )
 
-            page_riesgos = build_chapter_gestion_riesgos(
-                logo_b64, fecha_label,
-                anomalias or [],
-                indices_compuestos=indices_compuestos,
-            )
-            pages_extra = [
-                page_riesgos,
-                build_chapter_comunidades(
-                    logo_b64, fecha_label,
-                    portal_data.get("comunidades") or {},
-                    portal_chart_paths,
-                ),
-                build_chapter_contratos_or(
-                    logo_b64, fecha_label,
-                    portal_data.get("contratos_or") or {},
-                    portal_chart_paths,
-                ),
-                build_chapter_fenoge(
-                    logo_b64, fecha_label,
-                    portal_data.get("fenoge") or {},
-                    portal_chart_paths,
-                ),
-                build_chapter_colombia_solar(
-                    logo_b64, fecha_label,
-                    portal_chart_paths,
-                ),
-                build_chapter_subsidios(
-                    logo_b64, fecha_label,
-                    portal_data.get("subsidios") or {},
-                    portal_chart_paths,
-                ),
-                build_chapter_supervision(
-                    logo_b64, fecha_label,
-                    portal_data.get("supervision") or {},
-                    portal_chart_paths,
-                ),
-                build_chapter_presupuesto(
-                    logo_b64, fecha_label,
-                    portal_data.get("presupuesto") or {},
-                    portal_chart_paths,
-                ),
-                build_chapter_noticias(
-                    logo_b64, fecha_label,
-                    noticias or [],
-                ),
-            ]
-            page5 = ''
-        else:
-            page5 = _build_page_noticias(
-                logo_b64, fecha_label,
-                anomalias or [], noticias or [],
-                indices_compuestos=indices_compuestos,
-            )
-
-        # ── Ensamblar HTML ──
-        body_pages = [page1, page2, page3, page4]
-        if page5:
-            body_pages.append(page5)
-        body_pages.extend(pages_extra)
+        body_pages = [page1, page2, page3, page4, page_riesgos, page_noticias]
 
         full_html = f"""<!DOCTYPE html>
 <html lang="es">

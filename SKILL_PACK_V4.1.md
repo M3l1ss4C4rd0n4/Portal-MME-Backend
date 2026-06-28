@@ -1043,10 +1043,10 @@ psql -d portal_energetico -c "SELECT pg_size_pretty(pg_relation_size('tabla')) F
 
 # Servicios
 pm2 status --no-color
-systemctl status api-mme --no-pager | grep "Active"
+systemctl status portal-api.service --no-pager | grep "Active"
 
 # Logs
-pm2 logs api-mme --lines 30 --nostream
+journalctl -u portal-api.service --no-pager -n 30
 
 # ═══ NIVEL 2: AST ═══
 

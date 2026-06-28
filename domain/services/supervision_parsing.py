@@ -13,9 +13,13 @@ _INT_SKIP = _COP_SKIP
 
 
 def sql_parse_cop(column: str) -> str:
-    """Expresión SQL → numeric | NULL para valores en pesos."""
+    """Expresión SQL → numeric | NULL para valores en pesos.
+
+    Castea la columna a text para soportar tanto columnas TEXT como NUMERIC
+    (el ETL puede inferir NUMERIC cuando los valores del Excel son numéricos).
+    """
     skip = ", ".join(f"'{s}'" for s in _COP_SKIP)
-    col = column.strip()
+    col = f"({column.strip()})::text"
     return f"""
     CASE
       WHEN {col} IS NULL OR TRIM({col}) = '' THEN NULL
@@ -41,9 +45,12 @@ def sql_parse_cop(column: str) -> str:
 
 
 def sql_parse_int(column: str) -> str:
-    """Expresión SQL → entero | NULL para conteos de usuarios."""
+    """Expresión SQL → entero | NULL para conteos de usuarios.
+
+    Castea la columna a text para soportar tanto columnas TEXT como NUMERIC.
+    """
     skip = ", ".join(f"'{s}'" for s in _INT_SKIP)
-    col = column.strip()
+    col = f"({column.strip()})::text"
     return f"""
     CASE
       WHEN {col} IS NULL OR TRIM({col}) = '' THEN NULL

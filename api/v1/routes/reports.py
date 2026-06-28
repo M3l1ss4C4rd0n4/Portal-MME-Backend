@@ -581,24 +581,49 @@ def _descargar_informe_diario_por_tipo_sync(tipo: str) -> tuple[bytes, str]:
     return content, item["name"]
 
 
+_BOLETIN_CACHE_TTL_HOURS = 6
+
+
 def _descargar_ultimo_boletin_sync() -> tuple[bytes, str]:
     """
     Descarga el PDF más reciente de Boletines Energeticos (SharePoint).
-    Usa consulta Graph ordenada ($top) — evita paginar miles de archivos históricos.
-    Si SharePoint falla, sirve la última copia en caché local.
+    Sirve desde caché local si tiene menos de _BOLETIN_CACHE_TTL_HOURS horas
+    para evitar descargar 20 MB de SharePoint en cada solicitud.
     """
     _BOLETIN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_pdf = _BOLETIN_CACHE_DIR / "latest.pdf"
     cache_meta = _BOLETIN_CACHE_DIR / "latest.meta.json"
 
-    def _read_cache() -> tuple[bytes, str] | None:
+    def _read_cache() -> tuple[bytes, str, dict] | None:
         if not cache_pdf.is_file() or not cache_meta.is_file():
             return None
         try:
             meta = json.loads(cache_meta.read_text(encoding="utf-8"))
-            return cache_pdf.read_bytes(), meta["filename"]
+            return cache_pdf.read_bytes(), meta["filename"], meta
         except (json.JSONDecodeError, OSError, KeyError):
             return None
+
+    def _cache_age_hours(meta: dict) -> float:
+        try:
+            cached_at = datetime.fromisoformat(meta["cached_at"])
+            now = datetime.now(ZoneInfo("America/Bogota"))
+            if cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=ZoneInfo("America/Bogota"))
+            return (now - cached_at).total_seconds() / 3600
+        except (KeyError, ValueError):
+            return float("inf")
+
+    # Servir desde caché si es reciente
+    cached = _read_cache()
+    if cached:
+        content, filename, meta = cached
+        age_h = _cache_age_hours(meta)
+        if age_h < _BOLETIN_CACHE_TTL_HOURS:
+            logger.info(
+                "[REPORTS] Boletín servido desde caché (%.1fh < %dh TTL): %s, %.1f KB",
+                age_h, _BOLETIN_CACHE_TTL_HOURS, filename, len(content) / 1024,
+            )
+            return content, filename
 
     last_error: Exception | None = None
     for attempt in range(2):
@@ -615,6 +640,19 @@ def _descargar_ultimo_boletin_sync() -> tuple[bytes, str]:
                 files,
                 key=lambda x: (x.get("lastModifiedDateTime", ""), x.get("name", "")),
             )
+
+            # Si el archivo en SharePoint no cambió respecto al caché, devolver caché
+            if cached:
+                content_c, filename_c, meta_c = cached
+                if latest.get("lastModifiedDateTime") == meta_c.get("modificado"):
+                    # Actualizar solo el timestamp de caché para reiniciar TTL
+                    meta_c["cached_at"] = datetime.now(ZoneInfo("America/Bogota")).isoformat()
+                    cache_meta.write_text(json.dumps(meta_c, ensure_ascii=False), encoding="utf-8")
+                    logger.info(
+                        "[REPORTS] Boletín sin cambios en SharePoint — TTL renovado: %s", filename_c
+                    )
+                    return content_c, filename_c
+
             content = _sp_download_item(headers, drive_id, latest, read_timeout=300)
             cache_pdf.write_bytes(content)
             cache_meta.write_text(
@@ -629,7 +667,7 @@ def _descargar_ultimo_boletin_sync() -> tuple[bytes, str]:
                 encoding="utf-8",
             )
             logger.info(
-                "[REPORTS] Boletín energético: %s | mod=%s | %.1f KB",
+                "[REPORTS] Boletín actualizado desde SharePoint: %s | mod=%s | %.1f KB",
                 latest["name"],
                 latest.get("lastModifiedDateTime"),
                 len(content) / 1024,
@@ -643,15 +681,14 @@ def _descargar_ultimo_boletin_sync() -> tuple[bytes, str]:
                 exc,
             )
 
-    cached = _read_cache()
     if cached:
-        content, filename = cached
+        content, filename, _ = cached
         logger.warning(
-            "[REPORTS] Boletín servido desde caché local (%s, %.1f KB) — SharePoint no respondió",
+            "[REPORTS] Boletín servido desde caché vencida (%s, %.1f KB) — SharePoint no respondió",
             filename,
             len(content) / 1024,
         )
-        return cached
+        return content, filename
 
     raise RuntimeError(f"No se pudo descargar el boletín: {last_error}")
 
@@ -688,6 +725,147 @@ def _descargar_paquete_informes_diarios_sync() -> tuple[bytes, str]:
 def _descargar_ultimo_informe_xm_sync() -> tuple[bytes, str]:
     """Alias de compatibilidad → boletines energéticos."""
     return _descargar_ultimo_boletin_sync()
+
+
+def _graph_list_all_children_full(
+    headers: dict,
+    drive_id: str,
+    item_id: str,
+) -> list[dict]:
+    """Como _graph_list_all_children pero incluye el campo size."""
+    import requests
+
+    items: list[dict] = []
+    url: str | None = (
+        f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/children"
+        f"?$select=id,name,lastModifiedDateTime,file,folder,size"
+    )
+    while url:
+        resp = requests.get(url, headers=headers, timeout=(15, 60))
+        resp.raise_for_status()
+        body = resp.json()
+        items.extend(body.get("value", []))
+        url = body.get("@odata.nextLink")
+    return items
+
+
+def _listar_boletines_sync(
+    pagina: int, limite: int,
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+) -> dict:
+    """Lista todos los boletines energéticos de SharePoint con paginación y filtro de fecha."""
+    headers, drive_id, root_id = _sp_open_folder(BOLETINES_ENERGETICOS_FOLDER)
+    all_files = [
+        f for f in _graph_list_all_children_full(headers, drive_id, root_id)
+        if "file" in f and f.get("name", "").lower().endswith(".pdf")
+    ]
+    all_files.sort(key=lambda x: x.get("lastModifiedDateTime", ""), reverse=True)
+
+    if fecha_desde or fecha_hasta:
+        def _in_range(f: dict) -> bool:
+            raw = f.get("lastModifiedDateTime", "")
+            if not raw:
+                return True
+            try:
+                d = datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+            except ValueError:
+                return True
+            if fecha_desde and d < fecha_desde:
+                return False
+            if fecha_hasta and d > fecha_hasta:
+                return False
+            return True
+        all_files = [f for f in all_files if _in_range(f)]
+
+    total = len(all_files)
+    inicio = (pagina - 1) * limite
+    page_files = all_files[inicio: inicio + limite]
+    items = [
+        {
+            "nombre": f["name"],
+            "fecha": f.get("lastModifiedDateTime", ""),
+            "driveId": drive_id,
+            "itemId": f["id"],
+            "tamano": f.get("size", 0),
+        }
+        for f in page_files
+    ]
+    return {"items": items, "total": total, "pagina": pagina, "limite": limite}
+
+
+def _listar_xm_sync(
+    pagina: int, limite: int, tipo: str | None,
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+) -> dict:
+    """
+    Lista todos los informes XM históricos de SharePoint con paginación.
+    La carpeta raíz contiene subcarpetas DD_MM_YYYY, cada una con 3 PDFs.
+    """
+    headers, drive_id, root_id = _sp_open_folder(INFORMES_DIARIOS_XM_FOLDER)
+
+    subfolders = [
+        f for f in _graph_list_all_children_full(headers, drive_id, root_id)
+        if "folder" in f
+    ]
+
+    valid_tipos = {p for p, _ in INFORME_DIARIO_TIPOS}
+    tipo_labels = {p: lbl for p, lbl in INFORME_DIARIO_TIPOS}
+
+    all_items: list[dict] = []
+    for folder in subfolders:
+        folder_date = _parse_folder_date(folder["name"])
+        if folder_date is None:
+            continue
+        if fecha_desde and folder_date < fecha_desde:
+            continue
+        if fecha_hasta and folder_date > fecha_hasta:
+            continue
+        for f in _graph_list_all_children_full(headers, drive_id, folder["id"]):
+            if "file" not in f:
+                continue
+            if not f.get("name", "").lower().endswith(".pdf"):
+                continue
+            tipo_inferido: str | None = None
+            for pattern in valid_tipos:
+                if pattern in f["name"]:
+                    tipo_inferido = pattern
+                    break
+            if tipo and tipo_inferido != tipo:
+                continue
+            all_items.append({
+                "nombre": f["name"],
+                "fecha": folder_date.isoformat(),
+                "fechaModificado": f.get("lastModifiedDateTime", ""),
+                "tipo": tipo_inferido,
+                "tipoLabel": tipo_labels.get(tipo_inferido, tipo_inferido) if tipo_inferido else None,
+                "driveId": drive_id,
+                "itemId": f["id"],
+                "tamano": f.get("size", 0),
+            })
+
+    all_items.sort(key=lambda x: x["fecha"], reverse=True)
+    total = len(all_items)
+    inicio = (pagina - 1) * limite
+    page_items = all_items[inicio: inicio + limite]
+    return {"items": page_items, "total": total, "pagina": pagina, "limite": limite}
+
+
+def _descargar_archivo_por_id_sync(drive_id: str, item_id: str) -> tuple[bytes, str]:
+    """Descarga cualquier archivo de OneDrive por drive_id + item_id."""
+    headers = _sp_headers()
+    item = {"id": item_id}
+    content = _sp_download_item(headers, drive_id, item, read_timeout=300)
+    import requests as _req
+    meta = _req.get(
+        f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}"
+        "?$select=name",
+        headers=headers,
+        timeout=(10, 20),
+    )
+    filename = meta.json().get("name", f"informe_{item_id}.pdf") if meta.ok else f"informe_{item_id}.pdf"
+    return content, filename
 
 
 def _informes_ejecutivos_dir() -> str:
@@ -951,6 +1129,90 @@ async def get_latest_informe_diario_xm(
             status_code=502,
             detail=f"No se pudo descargar el informe: {e}",
         )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            **NO_CACHE_HEADERS,
+        },
+    )
+
+
+@router.get(
+    "/boletines-energeticos/lista",
+    summary="Lista histórica de boletines energéticos",
+    description="Retorna todos los boletines PDF disponibles en SharePoint, paginados y ordenados del más reciente al más antiguo.",
+)
+async def get_lista_boletines(
+    pagina: int = Query(default=1, ge=1, description="Página (desde 1)"),
+    limite: int = Query(default=30, ge=1, le=100, description="Resultados por página"),
+    fecha_desde: date | None = Query(default=None, description="Filtrar desde esta fecha (YYYY-MM-DD)"),
+    fecha_hasta: date | None = Query(default=None, description="Filtrar hasta esta fecha (YYYY-MM-DD)"),
+    api_key: str = Depends(get_api_key),
+):
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, _listar_boletines_sync, pagina, limite, fecha_desde, fecha_hasta
+        )
+    except Exception as e:
+        logger.error("[REPORTS] Error listando boletines: %s", e)
+        raise HTTPException(status_code=502, detail=f"No se pudo listar los boletines: {e}")
+    return result
+
+
+@router.get(
+    "/informes-diarios-xm/lista",
+    summary="Lista histórica de informes XM",
+    description="Retorna todos los informes XM históricos disponibles en SharePoint, paginados. Filtra por tipo y/o fecha.",
+)
+async def get_lista_informes_xm(
+    pagina: int = Query(default=1, ge=1, description="Página (desde 1)"),
+    limite: int = Query(default=30, ge=1, le=100, description="Resultados por página"),
+    tipo: str | None = Query(
+        default=None,
+        description="Filtrar por tipo: SeguimientoDespacho | VariablesOperativas | VariablesHidrologicas",
+    ),
+    fecha_desde: date | None = Query(default=None, description="Filtrar desde esta fecha (YYYY-MM-DD)"),
+    fecha_hasta: date | None = Query(default=None, description="Filtrar hasta esta fecha (YYYY-MM-DD)"),
+    api_key: str = Depends(get_api_key),
+):
+    valid_tipos = {p for p, _ in INFORME_DIARIO_TIPOS}
+    if tipo and tipo not in valid_tipos:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido: {tipo}. Valores: {sorted(valid_tipos)}")
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, _listar_xm_sync, pagina, limite, tipo, fecha_desde, fecha_hasta
+        )
+    except Exception as e:
+        logger.error("[REPORTS] Error listando informes XM: %s", e)
+        raise HTTPException(status_code=502, detail=f"No se pudo listar los informes XM: {e}")
+    return result
+
+
+@router.get(
+    "/archivo",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}},
+    summary="Descargar archivo por driveId + itemId",
+    description="Descarga cualquier archivo histórico de OneDrive usando su driveId e itemId devueltos por los endpoints de lista.",
+)
+async def get_archivo_por_id(
+    drive_id: str = Query(..., description="driveId del archivo (de /lista)"),
+    item_id: str = Query(..., description="itemId del archivo (de /lista)"),
+    api_key: str = Depends(get_api_key),
+):
+    try:
+        loop = asyncio.get_event_loop()
+        pdf_bytes, filename = await loop.run_in_executor(
+            None, _descargar_archivo_por_id_sync, drive_id, item_id
+        )
+    except Exception as e:
+        logger.error("[REPORTS] Error descargando archivo %s/%s: %s", drive_id, item_id, e)
+        raise HTTPException(status_code=502, detail=f"No se pudo descargar el archivo: {e}")
 
     return Response(
         content=pdf_bytes,

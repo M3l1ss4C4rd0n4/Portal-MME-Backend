@@ -1160,7 +1160,59 @@ class InformeHandlerMixin:
     # ═════════════════════════════════════════════════════════════════════════════
     # ÍNDICES COMPUESTOS DE ESTRÉS Y SOSTENIBILIDAD (Quick Win #3)
     # ═════════════════════════════════════════════════════════════════════════════
-    
+
+    @staticmethod
+    def _ficha_label(ficha: Dict[str, Any]) -> str:
+        """Etiqueta buscable de una ficha (indicador preferido sobre metrica)."""
+        return (ficha.get('indicador') or ficha.get('metrica') or '').lower()
+
+    @classmethod
+    def _ficha_por_keyword(
+        cls, fichas: Optional[List[Dict[str, Any]]], keyword: str
+    ) -> Optional[Dict[str, Any]]:
+        """Busca ficha por keyword en indicador o metrica."""
+        kw = keyword.lower()
+        for ficha in fichas or []:
+            if kw in cls._ficha_label(ficha):
+                return ficha
+        return None
+
+    @staticmethod
+    def _normalizar_severidad(severidad: str) -> str:
+        """Normaliza severidad sin acentos ni variantes EN."""
+        s = (severidad or '').lower()
+        s = s.replace('í', 'i').replace('ó', 'o').replace('á', 'a')
+        s = s.replace('é', 'e').replace('ú', 'u')
+        if s in ('critico', 'critica', 'critical'):
+            return 'critico'
+        if s in ('alerta', 'warning', 'alto'):
+            return 'alerta'
+        return s
+
+    @classmethod
+    def _baseline_precio_ficha(cls, precio_ficha: Dict[str, Any]) -> float:
+        """Baseline de precio: promedio 7d/30d del contexto o historico_30d."""
+        ctx = precio_ficha.get('contexto') or {}
+        for key in ('promedio_7_dias', 'promedio_30d'):
+            val = ctx.get(key)
+            if val is not None:
+                try:
+                    baseline = float(val)
+                    if baseline > 0:
+                        return baseline
+                except (ValueError, TypeError):
+                    pass
+        hist = precio_ficha.get('historico_30d') or {}
+        val = hist.get('promedio')
+        if val is not None:
+            try:
+                baseline = float(val)
+                if baseline > 0:
+                    return baseline
+            except (ValueError, TypeError):
+                pass
+        return 0.0
+
     def _build_indices_compuestos(self, fichas, predicciones_mes, anomalias):
         """
         Calcula índices compuestos de estrés y sostenibilidad del sistema.
@@ -1181,22 +1233,36 @@ class InformeHandlerMixin:
         
         # ── 1. Índice de Sostenibilidad Hídrica (ISH) ──
         ish_score = 50  # Base neutral
-        embalse_ficha = next((f for f in fichas if 'embalse' in f.get('metrica', '').lower()), None)
+        ish_fuente = 'fallback_50'
+        ish_embalse_pct = None
+        fecha_dato_embalse = None
+        embalse_ficha = self._ficha_por_keyword(fichas, 'embalse')
         if embalse_ficha:
+            fecha_dato_embalse = embalse_ficha.get('fecha')
             try:
                 valor_emb = embalse_ficha.get('valor', 0)
                 if isinstance(valor_emb, str):
                     valor_emb = float(valor_emb.replace('%', '').replace(',', '.'))
                 # Score: 0-30 = crítico, 31-50 = alerta, 51-70 = vigilancia, 71-100 = normal
                 ish_score = min(100, max(0, valor_emb))
+                ish_embalse_pct = round(float(valor_emb), 2)
+                ish_fuente = 'ficha_embalse'
             except (ValueError, TypeError):
-                pass
-        
+                logger.warning(
+                    '[INFORME] ISH: ficha embalse encontrada pero valor no numérico: %s',
+                    embalse_ficha.get('valor'),
+                )
+        else:
+            logger.warning(
+                '[INFORME] ISH: no se encontró ficha de embalses — usando fallback 50'
+            )
+
         # Ajustar por anomalías de embalses
         for anom in anomalias or []:
-            if 'embalse' in anom.get('indicador', '').lower():
-                sev = anom.get('severidad', '').lower()
-                if sev == 'crítico':
+            ind_lower = (anom.get('indicador') or anom.get('metrica') or '').lower()
+            if 'embalse' in ind_lower:
+                sev = self._normalizar_severidad(anom.get('severidad', ''))
+                if sev == 'critico':
                     ish_score -= 25
                 elif sev == 'alerta':
                     ish_score -= 15
@@ -1211,24 +1277,23 @@ class InformeHandlerMixin:
         # que precio bajando también elevara el índice).
         # Baseline = 0 (sin presión). Score sube solo si precio > histórico.
         ipm_score = 0  # Sin presión alcista por defecto
-        precio_ficha = next((f for f in fichas if 'precio' in f.get('metrica', '').lower()), None)
+        precio_ficha = self._ficha_por_keyword(fichas, 'precio')
         if precio_ficha:
             try:
-                valor_precio = precio_ficha.get('valor', 0)
-                historico_precio = precio_ficha.get('historico_30d', {}).get('promedio', 0)
-                if historico_precio and historico_precio > 0 and valor_precio > historico_precio:
-                    # Solo presión alcista: % de incremento sobre el histórico
+                valor_precio = float(precio_ficha.get('valor', 0))
+                historico_precio = self._baseline_precio_ficha(precio_ficha)
+                if historico_precio > 0 and valor_precio > historico_precio:
                     incremento_pct = (valor_precio - historico_precio) / historico_precio * 100
                     ipm_score = min(100, max(0, incremento_pct))
             except (ValueError, TypeError, ZeroDivisionError):
                 pass
-        
+
         # Ajustar por anomalías de precios
         for anom in anomalias or []:
-            ind_lower = anom.get('indicador', '').lower()
+            ind_lower = (anom.get('indicador') or anom.get('metrica') or '').lower()
             if 'precio' in ind_lower or 'bolsa' in ind_lower:
-                sev = anom.get('severidad', '').lower()
-                if sev == 'crítico':
+                sev = self._normalizar_severidad(anom.get('severidad', ''))
+                if sev == 'critico':
                     ipm_score += 30
                 elif sev == 'alerta':
                     ipm_score += 15
@@ -1239,8 +1304,14 @@ class InformeHandlerMixin:
         
         # ── 3. Índice de Estrés del Sistema (IES) ──
         # Combinación ponderada: 40% ISH + 35% IPM + 25% Anomalías
-        n_criticas = sum(1 for a in anomalias or [] if a.get('severidad') == 'crítico')
-        n_alertas = sum(1 for a in anomalias or [] if a.get('severidad') == 'alerta')
+        n_criticas = sum(
+            1 for a in anomalias or []
+            if self._normalizar_severidad(a.get('severidad', '')) == 'critico'
+        )
+        n_alertas = sum(
+            1 for a in anomalias or []
+            if self._normalizar_severidad(a.get('severidad', '')) == 'alerta'
+        )
         factor_anomalias = min(100, (n_criticas * 40) + (n_alertas * 20))
         
         ies_score = (0.40 * (100 - indices['ish']['valor'])) + \
@@ -1274,6 +1345,9 @@ class InformeHandlerMixin:
             'factor_anomalias': round(factor_anomalias, 1),
             'pesos_aplicados': {'ish': 0.40, 'ipm': 0.35, 'anomalias': 0.25},
             'caracter': 'DESCRIPTIVO — no usado para disparar alertas operativas',
+            'ish_embalse_pct': ish_embalse_pct,
+            'ish_fuente': ish_fuente,
+            'fecha_dato_embalse': fecha_dato_embalse,
         }
         
         return indices

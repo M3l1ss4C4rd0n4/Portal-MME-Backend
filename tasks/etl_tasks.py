@@ -641,3 +641,89 @@ def refresh_senda_referencia(self):
     except Exception as exc:
         logger.error("[SENDA] Error refrescando senda: %s", exc)
         raise self.retry(exc=exc)
+
+
+@app.task(
+    name='tasks.etl_tasks.actualizar_oni',
+    bind=True,
+    base=SafeETLTask,
+)
+def actualizar_oni(self):
+    """
+    Actualiza el índice ONI (Oceanic Niño Index) desde NOAA CPC.
+
+    Descarga el histórico mensual confirmado + genera un pronóstico de
+    persistencia de 9 meses e interpola a resolución diaria. Los valores
+    se almacenan con offset +5.0 en metrics para compatibilidad con la
+    arquitectura (valor_gwh > 0).
+
+    Ejecuta semanalmente (lunes 01:30 AM) antes del reentrenamiento de modelos,
+    para que las predicciones de embalses dispongan de la señal climática ONI
+    más reciente.
+
+    Manual: python3 etl/etl_oni.py
+    """
+    try:
+        from etl.etl_oni import run_etl_oni
+
+        resultado = run_etl_oni(
+            meses_historico=36,
+            meses_pronostico=9,
+        )
+
+        if resultado['status'] != 'OK':
+            raise RuntimeError(f"ETL ONI falló: {resultado.get('error', 'desconocido')}")
+
+        logger.info(
+            "[ONI] Actualización OK — %d días hist, %d días pronóstico, ONI actual=%.2f",
+            resultado['registros_historico'],
+            resultado['registros_pronostico'],
+            resultado.get('oni_actual', 0.0),
+        )
+        return resultado
+    except Exception as exc:
+        logger.error("[ONI] Error actualizando ONI: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@app.task(
+    name='tasks.etl_tasks.actualizar_pdo_soi',
+    bind=True,
+    base=SafeETLTask,
+)
+def actualizar_pdo_soi(self):
+    """
+    Actualiza los índices PDO y SOI desde NOAA.
+
+    PDO (Pacific Decadal Oscillation): modula la amplitud de El Niño en escalas
+    decadales. SOI (Southern Oscillation Index): componente atmosférico de ENSO.
+    Ambos complementan ONI para mejorar las predicciones de embalses colombianos.
+
+    Ejecuta semanalmente (lunes 01:15 AM) antes del reentrenamiento de modelos.
+
+    Manual: python3 etl/etl_pdo_soi.py
+    """
+    try:
+        from etl.etl_pdo_soi import run_etl_pdo, run_etl_soi
+
+        res_pdo = run_etl_pdo()
+        res_soi = run_etl_soi()
+
+        errores = []
+        if res_pdo['status'] != 'OK':
+            errores.append(f"PDO: {res_pdo.get('error', '?')}")
+        if res_soi['status'] != 'OK':
+            errores.append(f"SOI: {res_soi.get('error', '?')}")
+
+        if errores:
+            raise RuntimeError(f"ETL PDO/SOI falló: {', '.join(errores)}")
+
+        logger.info(
+            "[PDO_SOI] Actualización OK — PDO: %d registros, SOI: %d registros",
+            res_pdo.get('registros', 0),
+            res_soi.get('registros', 0),
+        )
+        return {'pdo': res_pdo, 'soi': res_soi}
+    except Exception as exc:
+        logger.error("[PDO_SOI] Error actualizando PDO/SOI: %s", exc)
+        raise self.retry(exc=exc)

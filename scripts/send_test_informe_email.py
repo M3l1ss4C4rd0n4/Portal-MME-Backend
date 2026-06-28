@@ -57,7 +57,7 @@ def _validar_destinatario(email: str) -> None:
         sys.exit(1)
 
 
-def _api_call(intent: str, parameters: dict = None) -> dict:
+def _api_call(intent: str, parameters: dict = None, timeout: int = 120) -> dict:
     API_KEY = os.getenv('API_KEY')
     if not API_KEY:
         raise ValueError("API_KEY no configurada en variables de entorno")
@@ -80,10 +80,87 @@ def _api_call(intent: str, parameters: dict = None) -> dict:
     return {}
 
 
+_METRICAS_TECNICAS = {
+    'TEST', 'DATOS_CONGELADOS', 'STALENESS', 'DATA_QUALITY',
+    'CONNECTION_ERROR', 'SYNC_ERROR',
+}
+_SEV_ORDER = {
+    'CRITICA': 3, 'CRITICO': 3, 'CRITICAL': 3, 'CRÍTICO': 3,
+    'ALERTA': 2, 'WARNING': 2,
+    'NORMAL': 1, 'INFO': 0,
+}
+
+
+def _resolver_anomalias_informe(contexto_datos: dict) -> list:
+    """
+    Misma lógica que send_daily_generate: prioriza contexto del informe_ejecutivo
+    (KPIs + alertas_historial inyectadas) y cae a BD si la lista viene vacía.
+    """
+    anomalias: list = []
+    try:
+        if contexto_datos:
+            anom_ctx = contexto_datos.get('anomalias', {})
+            if isinstance(anom_ctx, dict):
+                lista_orq = anom_ctx.get('lista', [])
+            else:
+                lista_orq = anom_ctx if isinstance(anom_ctx, list) else []
+            if lista_orq:
+                anomalias = lista_orq[:5]
+                print(
+                    f"   ✅ Anomalías del contexto informe_ejecutivo: {len(anomalias)}"
+                )
+                for a in anomalias:
+                    ind = a.get('indicador') or a.get('metrica', '')
+                    print(f"      • {ind}: {a.get('severidad', '')}")
+                return anomalias
+
+        from infrastructure.database.manager import db_manager
+        df_anom = db_manager.query_df("""
+            SELECT metrica, severidad, descripcion, valor_promedio,
+                   fecha_evaluacion
+            FROM alertas_historial
+            WHERE fecha_evaluacion >= CURRENT_DATE - INTERVAL '1 day'
+            ORDER BY fecha_evaluacion DESC
+        """)
+        if df_anom.empty:
+            return []
+
+        seen: dict = {}
+        for rec in df_anom.to_dict('records'):
+            metrica = str(rec.get('metrica', '')).strip().upper()
+            if any(tec in metrica for tec in _METRICAS_TECNICAS):
+                continue
+            key = (metrica, str(rec.get('descripcion', '')).strip().upper())
+            prev = seen.get(key)
+            if prev is None:
+                seen[key] = rec
+            else:
+                prev_rank = _SEV_ORDER.get(str(prev.get('severidad', '')).upper(), 1)
+                cur_rank = _SEV_ORDER.get(str(rec.get('severidad', '')).upper(), 1)
+                if cur_rank > prev_rank:
+                    seen[key] = rec
+
+        deduped = sorted(
+            seen.values(),
+            key=lambda r: _SEV_ORDER.get(str(r.get('severidad', '')).upper(), 1),
+            reverse=True,
+        )[:5]
+        for r in deduped:
+            r.pop('fecha_evaluacion', None)
+            if 'indicador' not in r and r.get('metrica'):
+                r['indicador'] = r['metrica']
+        anomalias = deduped
+        print(f"   ✅ Anomalías fallback BD (alertas_historial): {len(anomalias)}")
+        for a in anomalias:
+            ind = a.get('indicador') or a.get('metrica', '')
+            print(f"      • {ind}: {a.get('severidad', '')}")
+    except Exception as e:
+        print(f"   ⚠️  Error resolviendo anomalías: {e}")
+    return anomalias
+
+
 def generar_charts_y_pdf(informe_texto, fecha_gen, con_ia, fichas, predicciones, anomalias, noticias, contexto_datos):
     chart_paths = []
-    portal_data = {}
-    portal_chart_paths = {}
     try:
         sys.path.insert(0, os.path.join(PROJECT_ROOT, 'whatsapp_bot'))
         from services.informe_charts import generate_all_informe_charts
@@ -98,15 +175,6 @@ def generar_charts_y_pdf(informe_texto, fecha_gen, con_ia, fichas, predicciones,
     except Exception as e:
         print(f"   ⚠️  No se pudieron generar gráficos sector: {e}")
 
-    try:
-        from services.informe_portal_data import fetch_all_portal_dashboards
-        from services.informe_portal_charts import generate_all_portal_charts
-        portal_data = fetch_all_portal_dashboards()
-        portal_chart_paths = generate_all_portal_charts(portal_data)
-        print(f"   Gráficos portal: {len(portal_chart_paths)}")
-    except Exception as e:
-        print(f"   ⚠️  No se pudieron generar datos/gráficos portal: {e}")
-
     pdf_path = generar_pdf_informe(
         informe_texto,
         fecha_generacion=fecha_gen,
@@ -117,8 +185,6 @@ def generar_charts_y_pdf(informe_texto, fecha_gen, con_ia, fichas, predicciones,
         anomalias=anomalias,
         noticias=noticias,
         contexto_datos=contexto_datos,
-        portal_data=portal_data or None,
-        portal_chart_paths=portal_chart_paths or None,
     )
     return pdf_path, chart_paths
 
@@ -152,7 +218,7 @@ if __name__ == "__main__":
 
     # ── 1. Informe IA ──
     print("1️⃣  Obteniendo informe ejecutivo IA...")
-    d_informe = _api_call('informe_ejecutivo')
+    d_informe = _api_call('informe_ejecutivo', timeout=180)
     informe_texto = d_informe.get('informe', '')
     generado_con_ia = d_informe.get('generado_con_ia', False)
     fecha_generacion = d_informe.get('fecha_generacion', datetime.now().strftime('%Y-%m-%d %H:%M'))
@@ -174,11 +240,11 @@ if __name__ == "__main__":
     predicciones = d_pred.get('predicciones', [])
     print(f"   ✅ Predicciones: {len(predicciones)} puntos")
 
-    # ── 4. Anomalías ──
-    print("\n4️⃣  Obteniendo anomalías detectadas...")
-    d_anomalias = _api_call('anomalias_detectadas')
-    anomalias = d_anomalias.get('anomalias', [])
-    print(f"   ✅ Anomalías: {len(anomalias)}")
+    # ── 4. Anomalías (contexto informe_ejecutivo, igual que Celery) ──
+    print("\n4️⃣  Resolviendo anomalías para el informe...")
+    anomalias = _resolver_anomalias_informe(contexto_datos)
+    if not anomalias:
+        print("   ℹ️  Sin anomalías operativas para hoy")
 
     # ── 5. Noticias ──
     print("\n5️⃣  Obteniendo noticias del sector...")

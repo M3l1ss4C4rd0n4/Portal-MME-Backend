@@ -2,6 +2,12 @@
 Endpoint supervision dashboard — Portal Dirección EE
 GET /v1/supervision/dashboard → supervision.contratos (Sankey + KPIs)
 GET /v1/supervision/detalle   → filas para exportación Excel
+
+CORRECCIONES DE DATOS (2026-06-20):
+- _PARSE_FIN: filtra valores > 1 (100%) como anómalos → NULL
+- _PARSE_AR/AU/AV: filtra valores con escala incorrecta (> 1e15) como anómalos → NULL
+- Esto corrige el problema de valores como 4626.0 en % desembolsos y
+  valores por desembolsar de ~49 cuatrillones por errores de entrada en Excel.
 """
 
 import logging
@@ -26,19 +32,53 @@ limiter = Limiter(key_func=get_remote_address)
 
 _cm = PostgreSQLConnectionManager()
 
+# ─── Parsers con validación de rango ────────────────────────────────────────
+# _PARSE_FIN: parsea % desembolsos y descarta valores > 1 (100%) como anómalos
 _PARSE_FIN = """
     CASE
-      WHEN porcentaje_de_desembolsos ~ '[0-9]' AND porcentaje_de_desembolsos ~ '%%'
-        THEN CAST(REPLACE(REPLACE(TRIM(porcentaje_de_desembolsos),'%%',''),',','.') AS numeric) / 100
-      WHEN porcentaje_de_desembolsos ~ '^[0-9.]'
-           AND TRIM(porcentaje_de_desembolsos) ~ '^[0-9. ]+$'
-        THEN CAST(TRIM(porcentaje_de_desembolsos) AS numeric)
+      WHEN (porcentaje_de_desembolsos)::text ~ '[0-9]' AND (porcentaje_de_desembolsos)::text ~ '%%'
+        THEN CASE
+          WHEN CAST(REPLACE(REPLACE(TRIM((porcentaje_de_desembolsos)::text),'%%',''),',','.') AS numeric) / 100 <= 1
+            THEN CAST(REPLACE(REPLACE(TRIM((porcentaje_de_desembolsos)::text),'%%',''),',','.') AS numeric) / 100
+          ELSE NULL
+        END
+      WHEN (porcentaje_de_desembolsos)::text ~ '^[0-9.]'
+           AND TRIM((porcentaje_de_desembolsos)::text) ~ '^[0-9. ]+$'
+        THEN CASE
+          WHEN CAST(TRIM((porcentaje_de_desembolsos)::text) AS numeric) <= 1
+            THEN CAST(TRIM((porcentaje_de_desembolsos)::text) AS numeric)
+          ELSE NULL
+        END
     END
 """
 
-_PARSE_AR = sql_parse_cop("valor_por_proyecto_informacion_apoyos_tecnicos")
-_PARSE_AU = sql_parse_cop("valor_desembolsado_informacion_apoyos_financieros")
-_PARSE_AV = sql_parse_cop("valor_por_desembolsar")
+# _PARSE_AR: valor por proyecto — descarta valores con escala incorrecta (> 1e11)
+_PARSE_AR = f"""
+    CASE
+      WHEN ({sql_parse_cop("valor_por_proyecto_informacion_apoyos_tecnicos")}) > 1e11
+        THEN NULL
+      ELSE ({sql_parse_cop("valor_por_proyecto_informacion_apoyos_tecnicos")})
+    END
+"""
+
+# _PARSE_AU: valor desembolsado — descarta valores con escala incorrecta (> 1e11)
+_PARSE_AU = f"""
+    CASE
+      WHEN ({sql_parse_cop("valor_desembolsado_informacion_apoyos_financieros")}) > 1e11
+        THEN NULL
+      ELSE ({sql_parse_cop("valor_desembolsado_informacion_apoyos_financieros")})
+    END
+"""
+
+# _PARSE_AV: valor por desembolsar — descarta valores con escala incorrecta (> 1e11)
+_PARSE_AV = f"""
+    CASE
+      WHEN ({sql_parse_cop("valor_por_desembolsar")}) > 1e11
+        THEN NULL
+      ELSE ({sql_parse_cop("valor_por_desembolsar")})
+    END
+"""
+
 _PARSE_UC = sql_parse_int("numero_de_usuarios_totales_contratados")
 _PARSE_UF = sql_parse_int("numero_de_usuarios_totales_finales")
 
@@ -159,6 +199,7 @@ async def get_supervision_dashboard(
                                             THEN contrato END) AS perdida_competencia,
                         ROUND(AVG(avance_de_obra) * 100, 2) AS avg_avance_fisico,
                         ROUND(AVG({_PARSE_FIN}) * 100, 2) AS avg_avance_financiero,
+                        ROUND(AVG(avance_contrato) * 100, 2) AS avg_avance_contrato,
                         ROUND(AVG(CASE WHEN etapa_del_contrato LIKE 'EJECUCI%%'
                                        THEN avance_de_obra END) * 100, 2) AS avg_fisico_activos,
                         ROUND(AVG(CASE WHEN etapa_del_contrato LIKE 'EJECUCI%%'
@@ -288,9 +329,9 @@ async def get_supervision_dashboard(
                 cur.execute("SELECT MAX(fecha_carga) FROM supervision.contratos")
                 ts_sup = cur.fetchone()[0]
 
-        sum_ar = _float(k[11])
-        sum_au = _float(k[12])
-        sum_av = _float(k[13])
+        sum_ar = _float(k[12])
+        sum_au = _float(k[13])
+        sum_av = _float(k[14])
         ejecutado_total = sum_au + sum_av
         pct_desembolsado = round(sum_au / ejecutado_total * 100, 1) if ejecutado_total > 0 else 0.0
 
@@ -306,23 +347,24 @@ async def get_supervision_dashboard(
                 "perdidaCompetencia": int(k[6] or 0),
                 "avanceFisico": _float(k[7]),
                 "avanceFinanciero": _float(k[8]),
-                "avanceFisicoActivos": _float(k[9]),
-                "avanceFinancieroActivos": _float(k[10]),
+                "avanceContrato": _float(k[9]),
+                "avanceFisicoActivos": _float(k[10]),
+                "avanceFinancieroActivos": _float(k[11]),
                 "financiero": {
                     "valorProyecto": sum_ar,
                     "valorDesembolsado": sum_au,
                     "valorPorDesembolsar": sum_av,
                     "pctDesembolsado": pct_desembolsado,
-                    "filasConValor": int(k[16] or 0),
-                    "filasConDesembolso": int(k[17] or 0),
+                    "filasConValor": int(k[17] or 0),
+                    "filasConDesembolso": int(k[18] or 0),
                 },
                 "usuarios": {
-                    "contratados": int(k[14] or 0),
-                    "finales": int(k[15] or 0),
-                    "filasContratados": int(k[18] or 0),
-                    "filasFinales": int(k[19] or 0),
+                    "contratados": int(k[15] or 0),
+                    "finales": int(k[16] or 0),
+                    "filasContratados": int(k[19] or 0),
+                    "filasFinales": int(k[20] or 0),
                 },
-                "nFotovoltaicos": int(k[20] or 0),
+                "nFotovoltaicos": int(k[21] or 0),
                 "porTipoSolucion": [{"tipo": r[0], "proyectos": int(r[1])} for r in por_tipo],
                 "porFondo": [{"fondo": r[0], "contratos": int(r[1])} for r in fondos],
                 "avancePorAnio": [

@@ -1,0 +1,795 @@
+\documentclass[11pt,a4paper]{article}
+
+% ─── PAQUETES ─────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{geometry}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{tcolorbox}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{colortbl}
+
+% ─── CONFIGURACIÓN DE PÁGINA ──────────────────────────────────────────────────
+\geometry{top=3cm,bottom=2.5cm,left=2.5cm,right=2.5cm}
+\linespread{1.3}
+\setlength{\parskip}{6pt plus 2pt minus 1pt}
+\setlength{\parindent}{0pt}
+
+% ─── COLORES ──────────────────────────────────────────────────────────────────
+\definecolor{titleblue}{RGB}{10,61,98}
+\definecolor{accentred}{RGB}{192,57,43}
+\definecolor{okgreen}{RGB}{39,174,96}
+\definecolor{warnorange}{RGB}{230,126,34}
+\definecolor{lightgray}{RGB}{189,195,199}
+\definecolor{highlightbg}{RGB}{255,248,220}
+\definecolor{highlightborder}{RGB}{133,100,4}
+\definecolor{alertbg}{RGB}{253,235,236}
+\definecolor{alertborder}{RGB}{160,40,40}
+\definecolor{subtitleblue}{RGB}{41,128,185}
+\definecolor{infobg}{RGB}{232,244,253}
+\definecolor{infoborder}{RGB}{30,100,160}
+
+% ─── HEADER / FOOTER ──────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textcolor{gray}{PROYECCIÓN HIDROLÓGICA \textperiodcentered\ Portal Energético MME \textperiodcentered\ Junio 2026}}
+\fancyhead[R]{\small\textcolor{gray}{Página \thepage}}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{lightgray}\leaders\hrule height \headrulewidth\hfill}}
+
+% ─── TÍTULOS ──────────────────────────────────────────────────────────────────
+\titleformat{\section}{\Large\bfseries\color{titleblue}}{\thesection.}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{subtitleblue}}{\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{4ex plus 1ex minus .5ex}{1.5ex plus .3ex}
+\titlespacing*{\subsection}{0pt}{2.5ex plus .5ex minus .3ex}{1ex plus .2ex}
+
+% ─── CAJAS DE TEXTO ───────────────────────────────────────────────────────────
+\tcbuselibrary{skins,breakable}
+
+\newtcolorbox{highlightbox}[1][]{
+  colback=highlightbg, colframe=highlightborder, boxrule=0.5pt, arc=3pt,
+  left=12pt, right=12pt, top=10pt, bottom=10pt,
+  fonttitle=\bfseries\small\color{highlightborder}, title=#1, breakable
+}
+
+\newtcolorbox{alertbox}[1][]{
+  colback=alertbg, colframe=alertborder, boxrule=0.5pt, arc=3pt,
+  left=12pt, right=12pt, top=10pt, bottom=10pt,
+  fonttitle=\bfseries\small\color{alertborder}, title=#1, breakable
+}
+
+\newtcolorbox{infobox}[1][]{
+  colback=infobg, colframe=infoborder, boxrule=0.5pt, arc=3pt,
+  left=12pt, right=12pt, top=10pt, bottom=10pt,
+  fonttitle=\bfseries\small\color{infoborder}, title=#1, breakable
+}
+
+\newtcolorbox{metricbox}[1][]{
+  colback=white, colframe=lightgray, boxrule=0.5pt, arc=3pt,
+  left=6pt, right=6pt, top=6pt, bottom=6pt,
+  width=0.31\textwidth, halign=center
+}
+
+% ─── DATOS REALES ─────────────────────────────────────────────────────────────
+\newcommand{\REALMAPEEMBAVG}{7.3\%}
+\newcommand{\REALMAPEEMBMIN}{1.4\%}
+\newcommand{\REALMAPEEMBMAX}{31.9\%}
+\newcommand{\REALMAPEHID}{32.8\%}
+\newcommand{\REALMAPEDEM}{4.1\%}
+\newcommand{\REALMAPESOL}{13.1\%}
+\newcommand{\REALMAPEEOL}{38.2\%}
+\newcommand{\REALMAPEPRE}{35.9\%}
+\newcommand{\EMBALSEACTUAL}{73.82\%}
+\newcommand{\METAXM}{80\%}
+\newcommand{\PREDAGOSTO}{77.31\%}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ─── PÁGINA 0: CONTEXTO ENERGÉTICO ───────────────────────────────────────────
+\thispagestyle{empty}
+
+\begin{center}
+{\Huge\bfseries\color{titleblue} CONTEXTO ENERGÉTICO COLOMBIANO}\\[5mm]
+{\large\color{gray}\itshape
+  Una introducción para quienes no son expertos en el sector.\\
+  Si ya conoce el Sistema Interconectado Nacional, puede comenzar directamente en la página siguiente.
+}
+\end{center}
+
+\vspace{6mm}
+
+\subsection*{¿Qué es el Sistema Interconectado Nacional (SIN)?}
+
+El SIN es la red eléctrica que conecta a todo Colombia. Funciona como una gran autopista de energía: las plantas generadoras —hidroeléctricas, térmicas, solares y eólicas— \textit{inyectan} electricidad a la red, y los consumidores —hogares, fábricas, comercios— la \textit{extraen}. El sistema debe mantener un equilibrio permanente: la electricidad que entra debe ser exactamente igual a la que sale. Cuando ese equilibrio se rompe porque hay más demanda que generación, se producen los racionamientos.
+
+\subsection*{¿Qué es XM?}
+
+XM S.A. E.S.P. es la empresa responsable de operar el SIN. Actúa como el \textit{controlador de tráfico} de la red eléctrica: decide qué plantas deben encenderse cada hora, administra el mercado de energía mayorista y fija el precio de bolsa. XM publica datos diarios sobre generación, demanda y nivel de los embalses. Esos datos son la materia prima del sistema de predicción que describe este documento.
+
+\subsection*{¿Qué es un embalse y por qué es tan importante?}
+
+Un embalse es un lago artificial formado al represar un río con una presa. El agua almacenada se libera de forma controlada para mover las turbinas de una central hidroeléctrica y producir electricidad. Colombia genera entre el 65 y el 70\% de toda su electricidad a partir de fuentes hidráulicas, lo que convierte el nivel de los embalses en el indicador más crítico de la seguridad energética del país.
+
+\begin{highlightbox}[PARA ENTENDERLO DE FORMA SENCILLA]
+Imagine que el embalse es una \textbf{cuenta de ahorros de agua}. Durante la temporada de lluvias (abril--noviembre) la cuenta se llena: los ríos crecen y el embalse sube. Durante la temporada seca (diciembre--marzo) se gasta el ahorro: se consume el agua almacenada para producir electricidad. Si la cuenta llega a cero, no hay electricidad hidroeléctrica y el país debe recurrir a plantas térmicas, que queman carbón o gas y resultan más costosas y contaminantes.
+
+El sistema de predicción que describe este documento intenta anticipar con meses de antelación cuánto ``ahorro'' quedará en los embalses, para que los operadores puedan planificar y tomar decisiones a tiempo.
+\end{highlightbox}
+
+\subsection*{¿Qué es El Niño y cómo afecta la electricidad en Colombia?}
+
+El Niño es un fenómeno climático natural que calienta las aguas del océano Pacífico ecuatorial y altera los patrones de lluvia en gran parte de América del Sur. En Colombia, su efecto más temido es la reducción de las precipitaciones en las cuencas hidrográficas estratégicas —principalmente los ríos Magdalena, Cauca y Nechí— lo que disminuye los aportes de agua a los embalses. Un episodio de intensidad ``muy fuerte'' puede reducir el nivel de los embalses en 20 a 30 puntos porcentuales en el transcurso de varios meses. Colombia ya vivió este riesgo con el racionamiento de 2009--2010 y el episodio de 2015--2016.
+
+\begin{alertbox}[POR QUÉ ESTE CONTEXTO ES ESENCIAL]
+Sin entender que Colombia depende del 65--70\% de hidroelectricidad, no se entiende por qué predecir el nivel de los embalses con meses de anticipación es tan valioso. Sin entender qué hace XM, no se entiende de dónde vienen los datos. Y sin entender El Niño, no se comprende por qué el modelo actual tiene limitaciones importantes ante eventos climáticos extremos.
+\end{alertbox}
+
+\newpage
+
+% ─── PÁGINA 1: PORTADA ───────────────────────────────────────────────────────
+\thispagestyle{empty}
+
+\begin{center}
+{\fontsize{28}{34}\selectfont\bfseries\color{titleblue} PROYECCIÓN HIDROLÓGICA}\\[4mm]
+{\Large\color{gray} Sistema de Predicciones del Portal Energético}\\[2mm]
+{\large\color{gray}\itshape Análisis del estado actual, capacidad del modelo y propuesta de mejora ante el fenómeno El Niño 2026}
+\end{center}
+
+\vspace{7mm}
+
+\begin{center}
+\begin{tabular}{ccc}
+\begin{metricbox}
+\textcolor{gray}{\small Fecha del análisis}\\[2pt]
+\textbf{\large Junio 2026}
+\end{metricbox} &
+\begin{metricbox}
+\textcolor{gray}{\small Fenómeno evaluado}\\[2pt]
+\textbf{\large\textcolor{accentred}{El Niño $>$95\%}}
+\end{metricbox} &
+\begin{metricbox}
+\textcolor{gray}{\small Horizonte de predicción}\\[2pt]
+\textbf{\large 31 agosto 2026}
+\end{metricbox} \\[5mm]
+\begin{metricbox}
+\textcolor{gray}{\small Meta de seguridad (XM)}\\[2pt]
+\textbf{\large\textcolor{okgreen}{\METAXM\ de capacidad}}
+\end{metricbox} &
+\begin{metricbox}
+\textcolor{gray}{\small Nivel actual embalses}\\[2pt]
+\textbf{\large\textcolor{accentred}{\EMBALSEACTUAL}}
+\end{metricbox} &
+\begin{metricbox}
+\textcolor{gray}{\small Predicción para agosto}\\[2pt]
+\textbf{\large\textcolor{warnorange}{\PREDAGOSTO}}
+\end{metricbox}
+\end{tabular}
+\end{center}
+
+\vspace{6mm}
+
+\begin{alertbox}[RESULTADO PRINCIPAL]
+El modelo de predicción proyecta que los embalses alcanzarán el \textbf{\PREDAGOSTO} el 31 de agosto de 2026, lo que representa una recuperación de 3.5 puntos porcentuales frente al nivel actual. Sin embargo, esta cifra se queda \textbf{2.7 puntos por debajo de la meta del \METAXM} recomendada por XM como umbral mínimo de seguridad para enfrentar El Niño. Las proyecciones climáticas del IDEAM agravan aún más este panorama.
+\end{alertbox}
+
+\vspace{4mm}
+
+\begin{infobox}[SOBRE ESTE DOCUMENTO]
+Este informe explica, en lenguaje accesible para economistas y tomadores de decisiones, cómo funciona el sistema de predicción hidrológica, qué tan confiables son sus resultados, cuáles son sus limitaciones ante el fenómeno climático actual, y qué investigación se propone para superarlas. Se presentan datos reales del sistema. Cuando existe incertidumbre, se declara con transparencia. \textbf{Los términos técnicos se definen en el Glosario al final del documento.}
+\end{infobox}
+
+\vspace{5mm}
+
+\noindent{\large\bfseries\color{titleblue} CONTENIDO}
+
+\vspace{3mm}
+
+\begin{small}
+\begin{tabular}{@{}p{0.88\textwidth}@{}}
+\toprule
+\textbf{Secciones} \\
+\midrule
+0.\ \ Contexto energético colombiano \\
+1.\ \ El Niño 2026: la amenaza climática y su impacto en los embalses \\
+2.\ \ ¿Cómo funciona el sistema de predicción? \\
+3.\ \ ¿Qué tan preciso es el modelo? Datos reales de error \\
+4.\ \ ¿Por qué se eligió este enfoque y no otro? \\
+5.\ \ Lo que el modelo no puede ver: sus limitaciones fundamentales \\
+6.\ \ La contradicción: matemáticas versus clima real \\
+7.\ \ ¿Cuándo será el pico de los embalses? Por qué se necesitan pronósticos del IDEAM \\
+8.\ \ La solución propuesta: un modelo que entiende la física \\
+9.\ \ ¿Qué ganaríamos? El impacto económico de mejorar las predicciones \\
+10.\ Conclusiones y recomendaciones \\
+Apéndice:\ \ Glosario de términos \\
+\bottomrule
+\end{tabular}
+\end{small}
+
+\newpage
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{El Niño 2026: la amenaza climática y su impacto en los embalses}
+
+El 11 de junio de 2026, el IDEAM —Instituto de Hidrología, Meteorología y Estudios Ambientales de Colombia— confirmó oficialmente que el fenómeno El Niño ya está activo, con condiciones anómalas presentes tanto en la atmósfera como en las aguas superficiales del océano Pacífico ecuatorial. Esta no es una amenaza futura: ya comenzó.
+
+\subsection{¿Qué tan grave puede ser este episodio?}
+
+Según el comunicado del IDEAM, la probabilidad de que el fenómeno se fortalezca durante el segundo semestre de 2026 y se extienda hasta el primer trimestre de 2027 supera el \textbf{95\%}. Más preocupante aún: existe un \textbf{63\% de probabilidad} de que alcance la categoría de ``muy fuerte'' entre noviembre de 2026 y enero de 2027, lo que lo colocaría entre los episodios más intensos registrados desde 1950. Para Colombia, un episodio ``muy fuerte'' implica una reducción significativa de las lluvias en las cuencas que alimentan los grandes embalses del país, en particular en las regiones Andina, Caribe y Pacífica.
+
+\subsection{El estado de los embalses: entre la recuperación y la preocupación}
+
+XM ha establecido que Colombia debe llegar a la temporada seca del segundo semestre de 2026 con los embalses por encima del \textbf{\METAXM\ de su capacidad útil}. Este no es un número arbitrario: es el colchón mínimo calculado por los operadores del sistema para garantizar el suministro eléctrico incluso si El Niño reduce drásticamente los aportes hídricos durante los meses siguientes.
+
+\begin{infobox}[EVOLUCIÓN RECIENTE DE LOS EMBALSES (diciembre 2025 -- junio 2026)]
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Mes} & \textbf{Nivel de embalses} \\
+\midrule
+Diciembre 2025 & 80.28\% \\
+Enero 2026 & 76.24\% \\
+Febrero 2026 & 73.81\% \\
+Marzo 2026 & 64.54\% \\
+Abril 2026 & 64.03\% \\
+Mayo 2026 & 69.12\% \\
+Junio 2026 \textit{(actual)} & \textbf{\EMBALSEACTUAL} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\vspace{2mm}
+Los embalses tocaron su punto más bajo en abril (64.03\%) y muestran una recuperación desde mayo. Sin embargo, el nivel actual (\EMBALSEACTUAL) aún se encuentra aproximadamente \textbf{6 puntos porcentuales por debajo de la meta del \METAXM}.
+\end{infobox}
+
+\subsection{Proyecciones climáticas regionales: lo que viene mes a mes}
+
+El IDEAM proyecta el comportamiento de las lluvias región por región para los próximos meses. Esta información es crucial porque las cuencas que alimentan los grandes embalses del país se ubican principalmente en las regiones Andina y Caribe, que son precisamente las que enfrentan el mayor déficit de precipitaciones.
+
+\begin{center}
+\small
+{\linespread{1.1}\selectfont
+\begin{tabular}{@{}p{3.2cm}p{3.7cm}p{3.7cm}p{3.7cm}@{}}
+\toprule
+\textbf{Región} & \textbf{Junio 2026} & \textbf{Julio 2026} & \textbf{Agosto 2026} \\
+\midrule
+\textbf{Andina y Caribe Oriental} &
+Transición hacia la segunda temporada seca &
+Segunda temporada seca en curso &
+Temporada seca persistente; vientos alisios más intensos \\
+\addlinespace
+\textbf{Caribe Norte} &
+Lluvias persisten por migración de la ZCIT y actividad ciclónica &
+Precipitaciones continúan por ondas tropicales y actividad ciclónica &
+Precipitaciones continúan por actividad ciclónica \\
+\addlinespace
+\textbf{Orinoquía} &
+Inicio de temporada lluviosa influenciada por la SACZ &
+Temporada de mayor precipitación por la SACZ &
+Lluvias disminuyen levemente pero se mantienen significativas \\
+\addlinespace
+\textbf{Amazonía} &
+Lluvias aumentan en el noreste; disminuyen en centro y sur &
+Lluvias disminuyen respecto a junio, aunque siguen frecuentes &
+Lluvias importantes en el piedemonte; Trapecio Amazónico con menos precipitación \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+\vspace{2mm}
+
+La conclusión más relevante es clara: para los meses de julio y agosto, las regiones Andina, Caribe y Pacífica —donde se concentran las cuencas que abastecen a los embalses más importantes del sistema— tienen una probabilidad \textbf{mayor a lo normal} de registrar precipitaciones \textbf{por debajo de lo esperado}. Solo la Orinoquía y la Amazonía mantienen perspectivas de lluvia normal o superior.
+
+\begin{alertbox}[¿POR QUÉ ESTO IMPORTA PARA LA ELECTRICIDAD?]
+Las grandes hidroeléctricas de Colombia dependen del agua que llega desde las cuencas andinas y del Caribe. Si estas regiones registran lluvias por debajo de lo normal durante julio y agosto, los embalses recibirán menos agua de la que necesitan para recuperarse. El resultado: llegar a septiembre con reservas más bajas de lo que el modelo matemático proyecta, y más cerca de un escenario de riesgo de racionamiento.
+\end{alertbox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{¿Cómo funciona el sistema de predicción?}
+
+El Portal Energético del Ministerio de Minas y Energía cuenta con un sistema automático de predicción que, a partir de datos históricos publicados por XM, genera pronósticos del nivel de los embalses y de otras variables del sistema eléctrico con hasta 90 días de anticipación.
+
+\subsection{¿Qué es un modelo de predicción estadística?}
+
+Un modelo de predicción estadística es un sistema que aprende los patrones históricos de una variable —por ejemplo, el nivel de los embalses mes a mes durante los últimos años— y los utiliza para estimar qué pasará en el futuro. No adivina: extrapola tendencias y ciclos que ya estaban presentes en el pasado.
+
+\begin{highlightbox}[PARA ENTENDERLO DE FORMA SENCILLA]
+Imagine que un economista estudia 20 años de datos del PIB de un país y observa que cada vez que la tasa de desempleo supera cierto umbral, el consumo interno cae en los dos trimestres siguientes. A partir de ese patrón, puede hacer una proyección. El modelo de predicción hidrológica hace algo análogo: estudia cómo se han comportado los embalses en los últimos años, identifica los ciclos anuales de lluvia y sequía, y usa esos patrones para estimar el nivel futuro. La diferencia con un pronóstico humano es que lo hace de forma sistemática, con todos los datos disponibles, sin fatiga y sin sesgos.
+\end{highlightbox}
+
+\subsection{¿Qué herramientas combina el sistema?}
+
+El sistema no depende de un único modelo, sino de la combinación de dos herramientas complementarias cuyos resultados se promedian de forma inteligente:
+
+\vspace{2mm}
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{3cm}p{5.8cm}p{5.8cm}@{}}
+\toprule
+\textbf{Herramienta} & \textbf{¿En qué sobresale?} & \textbf{¿Para qué se usa?} \\
+\midrule
+\textbf{Prophet} \newline (desarrollado por Meta) &
+Identifica tendencias de largo plazo y ciclos estacionales. Maneja bien los períodos con datos incompletos o irregulares. &
+Predicción de embalses y otras variables con ciclos anuales marcados. \\
+\addlinespace
+\textbf{ARIMA estacional} &
+Captura con precisión las dependencias de corto plazo: lo que pasó esta semana influye en lo que pasará la siguiente. &
+Variables con alta autocorrelación reciente, como la generación térmica y la eólica. \\
+\addlinespace
+\textbf{Ensemble} \newline (combinación de ambos) &
+Toma lo mejor de cada herramienta. Le asigna más peso a la que ha acertado más recientemente, y menos a la que ha fallado. &
+Embalses, donde la combinación supera consistentemente a cada modelo por separado. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+La lógica de la combinación es intuitiva: si en las últimas dos semanas Prophet ha estado acertando mejor, el sistema le asigna mayor peso en el promedio. Si ARIMA mejora su desempeño, el peso se redistribuye automáticamente. Esta adaptación ocurre cada vez que el sistema se actualiza.
+
+\subsection{¿Con qué frecuencia se actualiza el sistema?}
+
+El sistema se actualiza de forma automática \textbf{cada tres días}, incorporando los datos más recientes publicados por XM. Cada actualización implica que el modelo vuelve a aprender desde los datos más recientes, lo que le permite adaptarse a cambios en el comportamiento del sistema. Tres días es el balance óptimo entre frescura de la predicción y eficiencia operativa.
+
+\subsection{¿Qué datos utiliza el modelo?}
+
+El modelo aprende exclusivamente a partir de la \textbf{serie histórica de la variable que quiere predecir}. Para los embalses, utiliza el registro diario del porcentaje de capacidad útil publicado por XM, con datos que se remontan hasta el año 2000.
+
+\begin{infobox}[LO QUE EL MODELO VE Y LO QUE NO]
+\textbf{Datos que sí utiliza:} el historial del nivel de los embalses (o de la variable que predice), con registros de hasta 26 años hacia atrás.
+
+\textbf{Datos que NO utiliza actualmente:} el índice ONI (que mide la intensidad de El Niño), las precipitaciones del IDEAM, los caudales de los ríos en tiempo real, la irradiancia solar o la velocidad del viento. Esta limitación es la más importante del sistema actual y es el punto de partida de la propuesta de mejora que se describe en la Sección 8.
+\end{infobox}
+
+El modelo genera dos resultados para cada día futuro: una \textbf{predicción puntual} (el valor más probable, como ``77.31\% el 31 de agosto'') y un \textbf{intervalo de confianza} (el rango dentro del cual se espera que caiga el valor real con una probabilidad determinada). El intervalo se ajusta con una técnica estadística avanzada que garantiza que el rango prometido sea honesto.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{¿Qué tan preciso es el modelo? Datos reales de error}
+
+La precisión del modelo se mide con una métrica llamada \textbf{MAPE} (Error Porcentual Absoluto Medio). Un MAPE del 5\% significa que, en promedio, la predicción se equivoca en 5 puntos porcentuales respecto al valor real. Los datos que se presentan a continuación son reales, extraídos del registro de desempeño del sistema en junio de 2026.
+
+\subsection{Precisión por tipo de variable (datos reales, junio 2026)}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Variable} & \textbf{Error promedio} & \textbf{Error mínimo} & \textbf{Error máximo} & \textbf{Evaluaciones} \\
+\midrule
+Embalses (\%) & \REALMAPEEMBAVG & \REALMAPEEMBMIN & \REALMAPEEMBMAX & 31 \\
+Demanda nacional & \REALMAPEDEM & 0.6\% & 26.4\% & 20 \\
+Generación solar & \REALMAPESOL & 1.8\% & 62.9\% & 18 \\
+Generación hidráulica & \REALMAPEHID & 2.5\% & 48.1\% & 135 \\
+Generación eólica & \REALMAPEEOL & 9.1\% & 91.1\% & 17 \\
+Precio de bolsa & \REALMAPEPRE & 9.2\% & 58.5\% & 17 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+\begin{highlightbox}[¿CÓMO LEER ESTA TABLA?]
+La columna más importante no es el error promedio, sino el \textbf{rango entre el mínimo y el máximo}. Un promedio de 7.3\% para los embalses suena bien, pero el hecho de que el error haya llegado hasta 31.9\% en algunos períodos indica que el modelo puede fallar significativamente durante episodios de clima inusual —precisamente cuando más se necesita la predicción. Los períodos de mayor error corresponden probablemente a episodios de El Niño o La Niña, cuando el comportamiento hidrológico se aleja de los patrones históricos que el modelo ha aprendido.
+\end{highlightbox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{¿Por qué se eligió este enfoque y no otro?}
+
+La elección de combinar Prophet y ARIMA no fue arbitraria. Se evaluaron varias alternativas antes de optar por esta combinación, buscando el mejor balance entre precisión, adaptabilidad, velocidad de actualización y transparencia en los resultados.
+
+\subsection{Comparativa de enfoques evaluados}
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{2.8cm}p{4.5cm}p{3.5cm}p{3.5cm}@{}}
+\toprule
+\textbf{Enfoque} & \textbf{¿Qué hace bien?} & \textbf{¿Dónde falla?} & \textbf{Estado} \\
+\midrule
+\textbf{Prophet} &
+Tendencias de largo plazo, estacionalidad anual, tolerancia a datos faltantes &
+Cambios abruptos no anticipados &
+\textcolor{okgreen}{En producción} \\
+\addlinespace
+\textbf{ARIMA estacional} &
+Dependencias de corto plazo, ciclos semanales, intervalos estadísticos &
+Requiere que el comportamiento de la serie sea relativamente estable en el tiempo &
+\textcolor{okgreen}{En producción} \\
+\addlinespace
+\textbf{Redes neuronales (LSTM)} &
+Patrones temporales complejos, memoria de largo plazo &
+Requiere grandes volúmenes de datos y capacidad computacional especializada; difícil de interpretar &
+\textcolor{warnorange}{En investigación} \\
+\addlinespace
+\textbf{Modelos de árbol (XGBoost)} &
+Robusto ante valores atípicos &
+No captura la evolución temporal de las variables &
+\textcolor{warnorange}{En evaluación} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{La lógica de la combinación}
+
+La razón principal para combinar los dos modelos es que tienen \textit{fortalezas complementarias}: Prophet es mejor capturando la tendencia general de los embalses a lo largo de los meses, mientras que ARIMA es más preciso para anticipar los movimientos de corto plazo semana a semana. Cuando se promedian sus predicciones dándole más peso a quien ha acertado más recientemente, el resultado es consistentemente mejor que el de cualquiera de los dos por separado. Esta lógica es equivalente a la de cualquier comité de expertos en economía: en lugar de confiar en una sola proyección, se pondera la opinión de varios analistas según su historial reciente de aciertos.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Lo que el modelo no puede ver: sus limitaciones fundamentales}
+
+El sistema actual de predicción es funcional para condiciones climáticas normales, pero tiene tres limitaciones fundamentales que no pueden superarse sin cambiar su arquitectura. Comprender estas limitaciones es esencial para interpretar correctamente la predicción del \PREDAGOSTO\ para agosto de 2026.
+
+\subsection{Limitación 1: no puede anticipar eventos climáticos extremos}
+
+El modelo aprende patrones históricos. Si en los últimos años no ha ocurrido un episodio de El Niño comparable en intensidad al que se proyecta para 2026--2027, el modelo simplemente no tiene información para saber cómo se comportarán los embalses ante ese escenario. Asume, implícitamente, que el futuro se parecerá al pasado reciente.
+
+Este problema se agrava porque el modelo no incorpora el \textbf{índice ONI} —la medida oficial de la intensidad de El Niño— como variable de entrada. Desde el punto de vista del modelo, El Niño no existe: es invisible. Por eso puede seguir proyectando una recuperación de los embalses incluso cuando las señales climáticas apuntan en dirección contraria.
+
+\begin{highlightbox}[ANALOGÍA ECONÓMICA]
+Imagine un modelo de predicción del PIB que, por diseño, no puede leer los indicadores de confianza empresarial, los datos de comercio exterior ni las decisiones de política monetaria. Funcionaría razonablemente bien en períodos de estabilidad, pero fallaría ante una crisis externa inesperada, precisamente porque no ve las señales que la anuncian. Eso es exactamente lo que ocurre con el modelo hidrológico actual ante El Niño.
+\end{highlightbox}
+
+\subsection{Limitación 2: no conoce las leyes físicas de la generación de energía}
+
+El modelo es puramente estadístico: trabaja con series de números sin entender qué representan. No sabe que la electricidad que produce una hidroeléctrica depende del caudal del río que la alimenta. No sabe que la generación solar es imposible de noche. No sabe que la energía eólica crece con el cubo de la velocidad del viento. Esto significa que el modelo puede generar predicciones que son estadísticamente plausibles pero físicamente imposibles.
+
+\subsection{Limitación 3: trabaja solo con la historia de una variable a la vez}
+
+El modelo predice el nivel de los embalses usando únicamente el historial del nivel de los embalses. No incorpora la precipitación real de las cuencas, ni los caudales de los ríos en tiempo real, ni la demanda proyectada, ni el índice de El Niño.
+
+\begin{infobox}[VARIABLES QUE MEJORARÍAN SIGNIFICATIVAMENTE LAS PREDICCIONES]
+Si el modelo pudiera incorporar estas fuentes de información, su capacidad de anticipación ante eventos como El Niño mejoraría de forma notable:
+\begin{itemize}[noitemsep,leftmargin=*]
+\item \textbf{Precipitación del IDEAM} en las cuencas Magdalena, Cauca y Nechí
+\item \textbf{Caudales reales de los ríos} que alimentan los embalses
+\item \textbf{Índice ONI de NOAA}: la señal climática global más predictiva de El Niño
+\item \textbf{Irradiancia solar de NASA POWER} para mejorar la predicción de generación fotovoltaica
+\item \textbf{Velocidad del viento} para la predicción de generación eólica
+\end{itemize}
+\end{infobox}
+
+\subsection{La incertidumbre que crece con el tiempo: el ``efecto abanico''}
+
+Cuanto más lejano es el horizonte temporal, mayor es la incertidumbre. En las gráficas del sistema, esta incertidumbre se representa como una zona sombreada que se va ensanchando progresivamente —el ``efecto abanico''.
+
+\begin{highlightbox}[PARA ENTENDERLO DE FORMA SENCILLA]
+Pedirle a alguien que diga dónde estará dentro de una hora es una pregunta fácil de responder con precisión. Pedirle que diga dónde estará dentro de seis meses es casi imposible. El modelo enfrenta exactamente el mismo problema: a medida que avanza el horizonte de pronóstico, se acumula más incertidumbre y el rango de posibilidades se amplía. Para los embalses, la zona de incertidumbre puede ser de $\pm$3 puntos porcentuales a 7 días, pero puede superar los $\pm$15 puntos a 90 días. Por eso el sistema clasifica las predicciones superiores a 90 días como \textit{experimentales}.
+\end{highlightbox}
+
+\begin{alertbox}[CONCLUSIÓN DE ESTA SECCIÓN]
+El modelo actual es \textbf{adecuado} para condiciones climáticas normales y horizontes de hasta 60--90 días. Es \textbf{insuficiente} para anticipar con precisión episodios de El Niño intenso, porque es ciego a las señales climáticas que los anuncian.
+\end{alertbox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{La contradicción: matemáticas versus clima real}
+
+Este es el punto central de todo el análisis. El modelo de predicción proyecta \textbf{\PREDAGOSTO\ para el 31 de agosto de 2026}, lo que representaría una recuperación positiva de los embalses. Sin embargo, las proyecciones climáticas del IDEAM pintan un panorama considerablemente más difícil.
+
+\subsection{Lo que dice el modelo matemático}
+
+El modelo Prophet + ARIMA analiza el historial del nivel de los embalses y observa que, en condiciones normales, los meses de julio y agosto traen lluvias que recuperan parcialmente las reservas hídricas. Basándose en esa tendencia histórica, proyecta que los embalses subirán desde el \EMBALSEACTUAL\ actual hasta el \PREDAGOSTO\ al final de agosto. Desde el punto de vista estadístico, esta proyección es coherente con los patrones históricos.
+
+\subsection{Lo que dice el IDEAM}
+
+Las proyecciones climáticas del IDEAM para julio y agosto de 2026 establecen que las regiones Andina, Caribe y Pacífica —que concentran las cuencas que abastecen los embalses más importantes— tienen \textbf{mayor probabilidad que lo normal de registrar precipitaciones por debajo de lo esperado}. Si hay menos lluvia, los ríos llevan menos agua. Si los ríos llevan menos agua, los embalses reciben menos aportes de lo que el modelo estadístico anticipa.
+
+\subsection{¿Cuál es la verdad?}
+
+Ambas fuentes tienen razón desde su propia perspectiva. El modelo matemático hace una buena predicción \textit{condicionada a que el clima sea normal}. El IDEAM advierte que el clima \textit{no será normal}. La brecha entre ambas no es un error del modelo: es una demostración de su limitación fundamental ---no puede leer las señales climáticas.
+
+\begin{alertbox}[IMPLICACIÓN DIRECTA PARA LA PLANIFICACIÓN ENERGÉTICA]
+La coexistencia de estas dos proyecciones contradictorias exige una respuesta de gestión de riesgo. Las recomendaciones concretas son:
+\begin{itemize}[noitemsep,leftmargin=*]
+\item \textbf{Evaluar de forma anticipada la generación térmica de respaldo:} si los embalses no recuperan el nivel proyectado por el modelo, las plantas térmicas deberán compensar el déficit. Planificar esta transición con anticipación reduce significativamente los costos.
+\item \textbf{Diseñar estrategias de gestión de la demanda:} programas de eficiencia energética, tarifas diferenciadas por horario y acuerdos con grandes consumidores industriales pueden reducir la presión sobre el sistema en los momentos críticos.
+\item \textbf{Adoptar la proyección del IDEAM como escenario base de riesgo:} el \PREDAGOSTO\ del modelo matemático debe interpretarse como el escenario optimista. El escenario realista, incorporando la señal climática, es más bajo y menos favorable.
+\end{itemize}
+\end{alertbox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{¿Cuándo será el pico de los embalses? Por qué se necesitan pronósticos del IDEAM}
+
+Una de las preguntas más concretas que enfrenta hoy el sector energético colombiano es esta: \textit{¿en qué momento alcanzarán los embalses su nivel máximo antes de que El Niño empiece a reducir las lluvias?} Esa fecha es crítica para la planificación: es el punto a partir del cual el sistema comienza a perder reservas y el riesgo de racionamiento empieza a crecer.
+
+La pregunta parece simple, pero no lo es. A continuación se explica por qué, y qué se necesita para responderla correctamente.
+
+\subsection{El modelo actual no puede responder esta pregunta}
+
+El modelo estadístico actual calcula una curva de predicción para los próximos 90 días basándose en el comportamiento histórico promedio de los embalses. Dentro de esa curva existe un punto máximo —la cima de la proyección antes de que empiece a descender. Sin embargo, ese pico está calculado asumiendo que julio y agosto serán climáticamente similares a los años anteriores. Si el IDEAM advierte que habrá menos lluvia de lo normal, ese pico proyectado es una \textit{sobreestimación}: el nivel real de los embalses probablemente no llegará tan alto.
+
+En otras palabras, el modelo puede decir ``el pico estimado será el 15 de agosto al 78\%'', pero esa cifra asume un clima que el IDEAM ya está diciendo que no ocurrirá.
+
+\subsection{¿Por qué no bastan los datos de precipitación en tiempo real?}
+
+Una mejora parcial sería monitorear la precipitación real que está cayendo hoy en las cuencas del Magdalena, el Cauca y el Nechí, y compararla con el promedio histórico. Esto permitiría responder la pregunta: \textit{¿en este momento los embalses están en fase de recuperación o de pérdida?}
+
+Es información útil, pero insuficiente para responder la pregunta del pico futuro. Saber lo que está lloviendo \textit{hoy} no dice cuánto lloverá \textit{en las próximas semanas}. Y la fecha del pico depende precisamente de cuándo cambiarán las condiciones climáticas hacia adelante, no de lo que ya ocurrió.
+
+\begin{highlightbox}[ANALOGÍA PARA ENTENDERLO SIN SER EXPERTO]
+Imagine que quiere saber cuándo alcanzará su nivel más alto el agua en una piscina que se está llenando. Observar cuánta agua entra \textit{ahora mismo} solo le dice si en este momento está entrando más de la que sale. Pero para saber \textit{cuándo} dejará de subir, necesita saber cuándo van a cerrar la llave de paso. Esa información sobre el futuro es lo que el IDEAM puede proporcionar con sus pronósticos.
+\end{highlightbox}
+
+\subsection{Lo que se necesita: los pronósticos del IDEAM y el índice ONI}
+
+El Niño no tiene una fecha de inicio única y precisa —es un fenómeno gradual. Lo que sí existe son pronósticos con alta probabilidad de ocurrencia que señalan cuándo se intensificará su impacto en las lluvias. Tanto el IDEAM como la agencia climática de los Estados Unidos (NOAA) publican estas proyecciones de forma periódica y gratuita:
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+\item \textbf{IDEAM --- Boletines mensuales de perspectiva climática:} publican, cuenca por cuenca y mes a mes, la probabilidad de que las precipitaciones estén por debajo de lo normal, en lo normal o por encima de lo normal. Este es exactamente el insumo que necesita el modelo para ajustar su proyección de los embalses.
+\item \textbf{NOAA --- Pronóstico del índice ONI:} la NOAA publica proyecciones del índice ONI —que mide la intensidad de El Niño— con hasta 9 meses de anticipación. El documento del IDEAM que se analiza en este informe ya cita esas proyecciones: 63\% de probabilidad de intensidad ``muy fuerte'' entre noviembre 2026 y enero 2027.
+\end{itemize}
+
+Con estos pronósticos integrados al modelo, la pregunta ``¿cuándo será el pico?'' se convierte en algo respondible: el modelo combinaría su conocimiento del ciclo histórico con la señal climática prospectiva del IDEAM para estimar una fecha y un nivel de pico más realistas.
+
+\subsection{La hoja de ruta: dos pasos concretos}
+
+La integración de datos del IDEAM no requiere esperar la implementación completa del modelo PINN-LSTM descrito en la Sección 8. Se puede avanzar en dos pasos incrementales:
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{0.5cm}p{4.5cm}p{4.5cm}p{3.5cm}@{}}
+\toprule
+ & \textbf{¿Qué se hace?} & \textbf{¿Qué pregunta responde?} & \textbf{Tiempo estimado} \\
+\midrule
+\textbf{1} &
+Conectar datos reales de precipitación del IDEAM por cuenca (Magdalena, Cauca, Nechí) al modelo actual &
+¿Están los embalses subiendo o bajando \textit{ahora mismo} respecto a lo que debería ocurrir en esta época del año? &
+Semanas \\
+\addlinespace
+\textbf{2} &
+Incorporar los pronósticos mensuales del IDEAM y el índice ONI de NOAA como variables de entrada al modelo &
+¿Cuándo será el pico máximo de los embalses antes de que El Niño reduzca las lluvias? &
+Semanas adicionales \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{3mm}
+
+El Paso 1 es más inmediato y tiene valor propio: convierte el monitor de embalses de un sistema que mira al pasado en uno que también lee el presente climático. El Paso 2 añade la capacidad de mirar hacia adelante con señal climática real, que es precisamente lo que se necesita para responder la pregunta del pico. Ambos pasos son compatibles con el modelo actual y no requieren reemplazarlo.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{La solución de fondo: un modelo que entiende la física}
+
+Los dos pasos descritos en la sección anterior son mejoras incrementales que se pueden implementar en semanas. Sin embargo, para una solución completa y duradera que responda con mayor precisión y confianza a este tipo de preguntas —incluyendo escenarios extremos— se necesita un cambio más profundo en la arquitectura del modelo. La investigación de Melissa Cardona, desarrollada en el marco del Programa de Física de la Universidad del Atlántico (2026), propone exactamente esa solución.
+
+\subsection{¿Cuál es la idea central?}
+
+La propuesta de Cardona es desarrollar un modelo que combine dos innovaciones:
+
+\begin{enumerate}[leftmargin=*,itemsep=4pt]
+\item \textbf{Una red neuronal con memoria de largo plazo (LSTM):} capaz de aprender patrones temporales complejos que se extienden a lo largo de meses. A diferencia de ARIMA o Prophet, una LSTM puede incorporar simultáneamente decenas de variables —precipitaciones, caudales, temperatura, índice ONI, irradiancia solar, velocidad del viento— y aprender cómo interactúan entre sí para determinar el nivel de los embalses o la generación de energía.
+
+\item \textbf{Restricciones físicas incorporadas al aprendizaje (PINN):} el modelo no solo aprende de los datos históricos, sino que también está obligado a respetar las leyes de la física. Si las ecuaciones de la física dicen que no puede haber generación hidroeléctrica sin agua en el río, el modelo aprende a no predecir eso, sin importar lo que digan los datos.
+\end{enumerate}
+
+La combinación de estas dos ideas da nombre al modelo: \textbf{PINN-LSTM} (Physics-Informed Neural Network con Long Short-Term Memory).
+
+\begin{highlightbox}[PARA ENTENDERLO DE FORMA SENCILLA]
+El modelo actual es como un analista que solo puede consultar el historial de precios de una acción para predecir su valor futuro. El modelo PINN-LSTM propuesto es como un analista que puede leer los estados financieros de la empresa, los indicadores macroeconómicos, el precio de las materias primas y las decisiones de política monetaria, \textit{y además} sabe que el precio de una acción no puede ser negativo. Tiene más información y está sujeto a restricciones lógicas.
+\end{highlightbox}
+
+\subsection{¿Qué leyes físicas incorpora el modelo?}
+
+El modelo incorpora las ecuaciones que gobiernan la generación de energía de cada fuente, traducidas como restricciones que el modelo debe respetar durante su aprendizaje:
+
+\vspace{2mm}
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{2.8cm}p{4cm}p{7.5cm}@{}}
+\toprule
+\textbf{Fuente} & \textbf{Ecuación física} & \textbf{¿Qué le enseña al modelo?} \\
+\midrule
+\textbf{Hidroeléctrica} &
+$P = \rho \cdot g \cdot Q \cdot H \cdot \eta$ &
+La potencia generada depende directamente del caudal $Q$ que llega al embalse. Sin agua en el río (sequía por El Niño), la generación no puede ser alta. \\
+\addlinespace
+\textbf{Solar fotovoltaica} &
+$P = \eta(T) \cdot A \cdot G$ &
+La generación depende de la irradiancia solar $G$. De noche o con cielos nublados, la generación es cero. El modelo no puede predecir generación solar nocturna. \\
+\addlinespace
+\textbf{Eólica} &
+$P = C_p \cdot \tfrac{1}{2} \cdot \rho \cdot A \cdot v^3$ &
+La generación crece con el \textit{cubo} de la velocidad del viento $v$. Esta relación altamente no lineal es difícil de capturar con estadística tradicional. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+Para el lector no técnico: estas ecuaciones no son más que la traducción matemática de relaciones físicas intuitivas. La clave no está en los símbolos, sino en la idea: \textit{el modelo aprende de los datos históricos, pero sin la posibilidad de violar las leyes de la naturaleza}.
+
+\subsection{Un sistema de alertas tempranas: el análisis de sensibilidad inversa}
+
+Uno de los aportes más valiosos de la propuesta de Cardona es el diseño de un \textbf{sistema de alertas tempranas} para crisis energéticas. La idea es la siguiente: en lugar de solo predecir qué pasará, el modelo identifica \textit{qué combinación de condiciones previas} lleva históricamente a una situación de déficit.
+
+\begin{infobox}[¿CÓMO FUNCIONA EL SISTEMA DE ALERTAS?]
+El modelo analiza los episodios históricos de racionamiento en Colombia (2009--2010, 2015--2016) y determina qué combinación de señales —nivel de embalses, caudales, índice ONI, demanda proyectada— precede a esas crisis con 30, 60 o 90 días de anticipación. Una vez identificados esos umbrales críticos, el sistema puede emitir alertas automáticas cuando las condiciones actuales se aproximan peligrosamente a ese patrón.
+
+\textbf{Valor económico directo:} con una alerta de 30 a 90 días antes de una crisis, los operadores tienen tiempo suficiente para activar generación térmica de respaldo, negociar importaciones de energía con países vecinos, implementar programas de ahorro con grandes consumidores industriales y tomar decisiones de despacho económico más eficientes.
+\end{infobox}
+
+\subsection{Cronograma y estado de la investigación}
+
+La propuesta de Cardona tiene un horizonte de implementación de \textbf{12 meses} (agosto 2026 -- julio 2027), divididos en cuatro fases: recopilación de datos históricos (meses 1--3), diseño y entrenamiento del modelo (meses 4--7), análisis de sensibilidad inversa y cuantificación de incertidumbre (meses 8--10), y validación contra los episodios históricos de racionamiento (meses 11--12).
+
+\begin{alertbox}[ESTADO ACTUAL]
+Esta propuesta es investigación académica en curso, no un sistema implementado en el Portal. Requiere financiamiento, recopilación de datos y desarrollo técnico especializado. El Portal Energético actualmente utiliza el modelo Prophet + ARIMA descrito en las secciones anteriores. La mejora incremental con datos del IDEAM descrita en la Sección 7 puede realizarse en semanas y es el primer paso concreto hacia esta solución de fondo.
+\end{alertbox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{¿Qué ganaríamos? El impacto económico de mejorar las predicciones}
+
+La pregunta más relevante para un economista o tomador de decisiones no es técnica: no es ``¿cuánto mejora el error promedio?'' sino \textit{``¿cuánto dinero ahorramos y cuánto riesgo reducimos?''}
+
+\subsection{Mejoras proyectadas en la precisión}
+
+Los siguientes datos son \textbf{proyecciones basadas en la literatura científica} sobre modelos similares. No son garantías, sino metas de investigación respaldadas por resultados publicados en estudios comparables.
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{4cm}p{3.5cm}p{4cm}p{3cm}@{}}
+\toprule
+\textbf{Indicador} & \textbf{Sistema actual} & \textbf{Proyección PINN-LSTM} & \textbf{Fuente de la mejora} \\
+\midrule
+Error en embalses (promedio) & 1.4\% -- 31.9\% & $<$2.5\% estable & Incorporación de ONI y caudales \\
+\addlinespace
+Error en demanda (promedio) & 0.6\% -- 26.4\% & $<$3\% estable & Modelo físico + señal climática \\
+\addlinespace
+Cobertura del intervalo de confianza & 85--90\% (estimado) & 90--95\% (garantizado) & Monte Carlo con 200 simulaciones \\
+\addlinespace
+Horizonte de predicción confiable & 90 días & 365 días & Restricciones físicas + variables exógenas \\
+\addlinespace
+Sistema de alertas tempranas & No disponible & 30--90 días de anticipación & Análisis de sensibilidad inversa \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Impacto en la toma de decisiones energéticas}
+
+\begin{itemize}[leftmargin=*,itemsep=4pt]
+\item \textbf{Despacho económico más eficiente:} con predicciones confiables a 90--365 días, los operadores pueden programar la entrada de generación térmica con semanas o meses de anticipación, en lugar de hacerlo de forma reactiva. Esto reduce los costos de operación y estabiliza el precio de bolsa.
+\item \textbf{Reducción del riesgo de racionamiento:} el costo de un racionamiento en Colombia no es solo la electricidad que no se produce; incluye el impacto en la producción industrial, el comercio, los hogares y la confianza inversora. Cada día de racionamiento evitado tiene un valor económico significativo.
+\item \textbf{Gestión proactiva de reservas hídricas:} con alertas tempranas de 30 a 90 días, XM puede iniciar protocolos de conservación de agua antes de que la crisis sea inminente, preservando las reservas para los momentos más críticos.
+\item \textbf{Base para políticas públicas de seguridad energética:} predicciones precisas con incertidumbre bien calibrada permiten al Ministerio de Minas y Energía diseñar políticas basadas en evidencia: cuándo activar la generación de respaldo, cuándo lanzar campañas de ahorro energético, cómo establecer las tarifas en períodos de estrés hídrico.
+\end{itemize}
+
+\begin{infobox}[LA INVERSIÓN EN PERSPECTIVA]
+La propuesta de investigación tiene un presupuesto estimado de 13.2 millones de pesos colombianos para 12 meses de trabajo. En comparación con el costo de un solo día de racionamiento eléctrico en una ciudad mediana colombiana —que puede superar los miles de millones de pesos en pérdidas productivas— la inversión en mejorar el sistema de predicción representa una relación costo-beneficio extraordinariamente favorable. No es un gasto: es un seguro.
+\end{infobox}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Conclusiones y recomendaciones}
+
+\subsection{Síntesis del diagnóstico}
+
+El sistema actual de predicción hidrológica del Portal Energético es funcional y ofrece resultados útiles para la planificación operativa en condiciones climáticas normales. Sin embargo, el análisis presentado en este documento revela tres hechos que no pueden ignorarse en el contexto del El Niño 2026:
+
+\begin{enumerate}[leftmargin=*,itemsep=4pt]
+\item Los embalses se encuentran al \EMBALSEACTUAL, aproximadamente 6 puntos porcentuales por debajo de la meta de seguridad del \METAXM\ establecida por XM para enfrentar El Niño.
+\item El modelo matemático proyecta una recuperación hasta el \PREDAGOSTO\ para el 31 de agosto, pero esta proyección asume condiciones climáticas históricamente normales. Las proyecciones del IDEAM indican que el clima no será normal.
+\item El modelo actual no puede incorporar las señales del IDEAM ni del índice ONI porque fue diseñado para trabajar únicamente con series históricas de las propias variables energéticas. Esta limitación es corregible en el corto plazo, antes de que el PINN-LSTM esté listo.
+\end{enumerate}
+
+\subsection{Recomendaciones de acción inmediata}
+
+\begin{itemize}[leftmargin=*,itemsep=4pt]
+\item \textbf{Adoptar el escenario climático del IDEAM como marco de riesgo principal.} El \PREDAGOSTO\ del modelo matemático debe tratarse como escenario optimista, no como proyección central.
+\item \textbf{Conectar datos reales de precipitación del IDEAM por cuenca al modelo actual.} Esta mejora (Paso 1 de la Sección 7) permite monitorear en tiempo real si los embalses están en fase de recuperación o de pérdida frente al promedio histórico.
+\item \textbf{Incorporar los pronósticos del IDEAM y el índice ONI como variables de entrada.} Esta mejora (Paso 2 de la Sección 7) permite responder con fundamento cuándo será el pico máximo de los embalses antes de que El Niño reduzca las lluvias.
+\item \textbf{Evaluar y pre-posicionar la generación térmica de respaldo.} Con los datos disponibles, es posible calcular cuánta capacidad térmica adicional se necesitaría si los embalses no alcanzan el umbral del \METAXM\ en septiembre.
+\item \textbf{Diseñar e implementar medidas de gestión de la demanda.} Programas de reducción voluntaria con grandes consumidores industriales, incentivos tarifarios para desplazar consumo a horas valle y campañas de ahorro energético reducen la presión sobre el sistema.
+\end{itemize}
+
+\subsection{Recomendaciones de mediano plazo}
+
+\begin{itemize}[leftmargin=*,itemsep=4pt]
+\item \textbf{Financiar y desarrollar la propuesta PINN-LSTM de Melissa Cardona.} La investigación en curso en la Universidad del Atlántico representa la ruta más directa y fundamentada hacia un sistema de predicción capaz de anticipar episodios de El Niño con meses de anticipación.
+\item \textbf{Establecer una alianza formal entre el Portal Energético y la Universidad del Atlántico.} El Portal aporta los datos reales del sistema eléctrico; la investigación académica aporta la metodología avanzada.
+\item \textbf{Validar el modelo con los episodios históricos de racionamiento.} Antes de implementar cualquier modelo nuevo en producción, debe demostrarse que habría anticipado correctamente los episodios de 2009--2010 y 2015--2016.
+\end{itemize}
+
+\begin{alertbox}[MENSAJE FINAL]
+Colombia no necesita un sistema de predicción perfecto. Necesita uno que sea \textbf{honesto sobre sus limitaciones} y que \textbf{mejore continuamente}. El sistema actual cumple el primer requisito. Las mejoras incrementales con datos del IDEAM apuntan al segundo en el corto plazo. La propuesta PINN-LSTM consolida esa mejora en el mediano plazo. Juntas, estas tres etapas representan una estrategia de predicción energética robusta, transparente y capaz de responder las preguntas que el país necesita responder ante El Niño 2026.
+\end{alertbox}
+
+\vspace{5mm}
+
+\noindent{\bfseries Referencias}
+
+\begin{small}
+\begin{itemize}[leftmargin=*,noitemsep]
+\item Cardona Navarro, M. (2026). \textit{Estudio de la generación de potencia del SIN mediante redes neuronales profundas y validación Monte Carlo}. Propuesta de Trabajo de Grado, Programa de Física, Universidad del Atlántico.
+\item IDEAM (2026). \textit{Comunicado de prensa: condiciones El Niño, 11 de junio de 2026}. Instituto de Hidrología, Meteorología y Estudios Ambientales de Colombia.
+\item XM S.A. E.S.P. (2026). \textit{Informe de seguimiento de embalses}. Sistema Interconectado Nacional.
+\item Vovk, V., Gammerman, A., \& Shafer, G. (2005). \textit{Algorithmic Learning in a Random World}. Springer.
+\end{itemize}
+\end{small}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section*{Apéndice: Glosario de términos}
+\addcontentsline{toc}{section}{Apéndice: Glosario de términos}
+
+\begin{small}
+{\linespread{1.2}\selectfont
+\begin{description}[leftmargin=*,style=nextline,font=\bfseries\color{titleblue},itemsep=5pt]
+
+\item[ARIMA]
+Modelo estadístico de predicción de series de tiempo. Su nombre proviene de ``AutoRegresivo, Integrado, de Medias Móviles''. Predice el valor futuro de una variable usando sus propios valores pasados y los errores de predicciones anteriores.
+
+\item[Calibración conformal]
+Técnica estadística que ajusta los intervalos de confianza de una predicción para que cumplan su promesa de cobertura. Si el sistema dice ``rango de confianza del 90\%'', la calibración conformal garantiza que el valor real caiga dentro de ese rango al menos el 90\% de las veces.
+
+\item[Capacidad útil]
+Porcentaje del agua almacenada en los embalses respecto a su máxima capacidad operativa. Un embalse al 80\% de capacidad útil tiene el 80\% del agua que puede almacenar.
+
+\item[Caudal]
+Volumen de agua que fluye por un punto de un río en una unidad de tiempo, generalmente expresado en metros cúbicos por segundo (m$^3$/s). Es la variable física más directamente relacionada con la generación hidroeléctrica.
+
+\item[Cuenca hidrográfica]
+Territorio delimitado por las crestas de las montañas desde donde toda el agua de lluvia drena hacia un mismo río o sistema de ríos. Las cuencas del Magdalena, el Cauca y el Nechí son las más importantes para la generación eléctrica de Colombia.
+
+\item[Despacho económico]
+Proceso por el cual XM decide, hora a hora, qué plantas generadoras de electricidad deben producir y a qué nivel. El criterio es minimizar el costo total del sistema mientras se satisface la demanda. Las predicciones hidrológicas son insumo fundamental para este proceso.
+
+\item[Ensemble]
+Técnica de predicción que combina los resultados de varios modelos independientes. En el sistema actual, Prophet y ARIMA generan cada uno su propia predicción, y el ensemble las promedia dándole más peso al modelo que ha demostrado mejor desempeño recientemente.
+
+\item[IDEAM]
+Instituto de Hidrología, Meteorología y Estudios Ambientales de Colombia. Es la autoridad científica que publica las proyecciones climáticas oficiales del país, incluyendo las alertas por El Niño, los pronósticos de precipitación regional y los datos históricos de temperatura y lluvia.
+
+\item[Índice ONI]
+Oceanic Niño Index. Medida oficial de la NOAA que cuantifica la intensidad del fenómeno El Niño. Se basa en la temperatura anómala del océano Pacífico ecuatorial. Valores superiores a $+$1.5°C indican El Niño fuerte; valores superiores a $+$2.0°C indican El Niño muy fuerte.
+
+\item[Intervalo de confianza]
+Rango de valores dentro del cual el modelo estima que caerá el valor real con una probabilidad determinada. Por ejemplo, un intervalo del 90\% entre el 62\% y el 93\% para los embalses significa que hay un 90\% de probabilidad de que el nivel real quede en ese rango.
+
+\item[LSTM]
+Long Short-Term Memory. Tipo de red neuronal artificial especialmente diseñada para aprender patrones que se extienden en el tiempo, incluyendo relaciones entre eventos separados por semanas o meses. Es la arquitectura propuesta en la investigación de Melissa Cardona.
+
+\item[MAPE]
+Mean Absolute Percentage Error. Error Porcentual Absoluto Medio. Un MAPE del 7.3\% para los embalses significa que, en promedio, la predicción se equivoca en 7.3 puntos porcentuales respecto al nivel real.
+
+\item[Meta del 80\%]
+Nivel de capacidad útil de los embalses que XM ha establecido como umbral mínimo de seguridad para afrontar El Niño. Ingresar a la temporada seca del segundo semestre de 2026 con los embalses por encima del 80\% garantiza reservas suficientes para mantener el suministro incluso con lluvias por debajo de lo normal.
+
+\item[NOAA]
+National Oceanic and Atmospheric Administration. Agencia climática de los Estados Unidos que publica los pronósticos oficiales del índice ONI y las proyecciones de El Niño con hasta 9 meses de anticipación.
+
+\item[PINN]
+Physics-Informed Neural Network. Red neuronal que no solo aprende de datos históricos, sino que también está restringida a respetar ecuaciones físicas conocidas. Impide que el modelo genere predicciones físicamente imposibles.
+
+\item[Precio de bolsa]
+Precio al que se transa la electricidad en el mercado mayorista de Colombia en cada hora. En períodos de escasez hídrica, cuando se debe recurrir más a la generación térmica (más costosa), el precio de bolsa tiende a aumentar.
+
+\item[Prophet]
+Herramienta de predicción de series de tiempo desarrollada por Meta (Facebook). Descompone automáticamente los datos históricos en tres componentes: tendencia de largo plazo, estacionalidad (ciclos anuales, semanales) y efectos de eventos especiales.
+
+\item[Racionamiento eléctrico]
+Restricción al suministro de electricidad impuesta cuando la demanda supera la capacidad de generación disponible. Implica cortes programados o rotativos del servicio. Colombia vivió episodios de racionamiento en 1992--1993 y 2009--2010.
+
+\item[SIN]
+Sistema Interconectado Nacional. La red de infraestructura eléctrica que conecta las plantas generadoras con los consumidores en todo el territorio colombiano.
+
+\item[XM]
+XM S.A. E.S.P. Empresa que actúa como operador del SIN y administrador del mercado de energía mayorista en Colombia. Publica diariamente los datos de generación, demanda, niveles de embalse y precios que son la materia prima del sistema de predicción descrito en este documento.
+
+\item[ZCIT]
+Zona de Convergencia Intertropical. Franja donde los vientos del hemisferio norte y del sur convergen cerca del ecuador. Su posición determina el régimen de lluvias en Colombia y su migración estacional explica las dos temporadas húmedas (marzo--mayo y septiembre--noviembre) que caracterizan el ciclo hidrológico del país.
+
+\end{description}
+}
+\end{small}
+
+\end{document}

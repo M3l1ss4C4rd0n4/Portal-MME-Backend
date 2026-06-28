@@ -424,10 +424,40 @@ def _find_similar_article(titulo: str, seen_articles: List[dict], umbral: float 
     return None
 
 
+HYDROCARBON_QUERIES = [
+    "petróleo OR gas natural OR hidrocarburos Colombia",
+    "gasolina OR diésel OR combustible OR crudo Colombia",
+    "ecopetrol OR refinación OR refinería OR regalías petroleras Colombia",
+    "gasoducto OR oleoducto OR licuefacción OR valorización Colombia",
+    "reficar OR explotación OR yacimiento OR pozo petrolero Colombia",
+    "carbón OR carbon mineral OR minería OR cerrejón OR drummond Colombia",
+]
+
+# Keywords para filtrar artículos de hidrocarburos en el propio servicio
+HYDROCARBON_FILTER_KEYWORDS = [
+    "petróleo", "petroleo", "gas", "combustible", "gasolina", "acpm",
+    "gas natural", "glp", "oleoducto", "gasoducto", "exploración",
+    "exploracion", "refinación", "refinacion", "barril", "brent", "wti",
+    "opep", "ecopetrol", "reficar", "yacimiento", "pozo petrolero",
+    "hidrocarburo", "downstream", "upstream", "midstream",
+    "regalías petroleras", "regalias petroleras",
+    "diésel", "diesel", "fuel oil", "gas licuado", "gnl", "lng",
+    "shale", "fracking", "offshore",
+    "precio del crudo", "crudo colombiano", "producción petrolera",
+    "derivado del petróleo", "derivado del petroleo",
+    "petroquímica", "petroquimica", "estación de servicio",
+    "gasolinera", "gasocentro", "grifo",
+    "carbón", "carbon mineral", "minería", "mineria",
+    "niquel", "litio", "cobre",
+    "drummond", "cerrejón", "cerrejon", "prodeco",
+    "exportación de carbón", "puerto de carbón",
+]
+
+
 class NewsService:
     """Servicio de noticias multi-fuente con scoring y cache."""
 
-    CACHE_TTL = 1200  # 20 minutos en segundos
+    CACHE_TTL = 28800  # 8 horas en segundos
 
     def __init__(self, api_key: Optional[str] = None):
         self.gnews_client = NewsClient(api_key=api_key)
@@ -726,5 +756,128 @@ class NewsService:
             f"scores top: {[r['_score'] for r in top]})"
         )
         self._set_cache(cache_key, result)
+        return result
+
+    async def get_hydrocarbon_news(
+        self,
+        max_items: int = 3,
+    ) -> Dict:
+        """
+        Obtiene noticias específicas de hidrocarburos usando
+        queries dedicadas a GNews + las demás fuentes.
+        Cache separado del de noticias generales.
+        """
+        cache_key = "hydrocarbon_news"
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return {
+                "noticias": cached["noticias"][:max_items],
+                "total": min(len(cached["noticias"]), max_items),
+            }
+
+        all_normalized: List[dict] = []
+
+        # ── GNews con queries de hidrocarburos ──
+        for query in HYDROCARBON_QUERIES:
+            try:
+                raw = await self.gnews_client.fetch_raw_news(
+                    query=query, country="co", lang="es", max_results=10
+                )
+                from infrastructure.news.news_client import DEFAULT_QUERY
+                for art in raw:
+                    all_normalized.append(_normalize_gnews(art))
+                logger.info(
+                    f"[HYDRO_NEWS] GNews query '{query[:30]}...' "
+                    f"aportó {len(raw)} artículos"
+                )
+                if len(raw) >= 10:
+                    break  # Ya tenemos suficientes candidatos
+            except Exception as e:
+                logger.warning(f"[HYDRO_NEWS] Error GNews query '{query[:30]}': {e}")
+
+        # ── Mediastack ──
+        if self.mediastack_client.is_available:
+            try:
+                ms_raw = await self.mediastack_client.fetch_energy_news(limit=20)
+                for art in ms_raw:
+                    all_normalized.append(_normalize_mediastack(art))
+                logger.info(
+                    f"[HYDRO_NEWS] Mediastack aportó {len(ms_raw)} artículos"
+                )
+            except Exception as e:
+                logger.warning(f"[HYDRO_NEWS] Error Mediastack: {e}")
+
+        # ── Google News RSS ──
+        try:
+            grss_raw = await fetch_google_news_rss(max_per_query=10)
+            for art in grss_raw:
+                all_normalized.append(_normalize_google_rss(art))
+            logger.info(
+                f"[HYDRO_NEWS] Google RSS aportó {len(grss_raw)} artículos"
+            )
+        except Exception as e:
+            logger.warning(f"[HYDRO_NEWS] Error Google RSS: {e}")
+
+        # ── La República RSS ──
+        try:
+            lr_raw = await fetch_larepublica_rss()
+            for art in lr_raw:
+                all_normalized.append(art)
+            logger.info(
+                f"[HYDRO_NEWS] La República RSS aportó {len(lr_raw)} artículos"
+            )
+        except Exception as e:
+            logger.warning(f"[HYDRO_NEWS] Error La República RSS: {e}")
+
+        if not all_normalized:
+            return {"noticias": [], "total": 0}
+
+        # Filtrar solo artículos que mencionen hidrocarburos
+        before = len(all_normalized)
+        filtered = []
+        for art in all_normalized:
+            text = (
+                (art.get("titulo") or "").lower() + " " +
+                (art.get("resumen") or "").lower()
+            )
+            hits = sum(1 for kw in HYDROCARBON_FILTER_KEYWORDS if kw in text)
+            if hits >= 1:
+                filtered.append(art)
+
+        logger.info(
+            f"[HYDRO_NEWS] Filtro: {len(filtered)}/{before} artículos "
+            f"mencionan hidrocarburos"
+        )
+
+        if not filtered:
+            return {"noticias": [], "total": 0}
+
+        # Scoring y ranking
+        ranked = self._score_and_rank(filtered)
+
+        def _fmt(art: dict) -> dict:
+            return {
+                "titulo": art["titulo"],
+                "resumen": _clean_text(art.get("resumen", ""), 180),
+                "url": art.get("url", ""),
+                "fuente": art.get("fuente", ""),
+                "source_url": art.get("source_url", ""),
+                "fecha_publicacion": art.get("fecha", ""),
+                "_score": art.get("_score", 0),
+                "imagen": art.get("imagen", ""),
+            }
+
+        noticias = [_fmt(a) for a in ranked[:max_items]]
+
+        result = {
+            "noticias": noticias,
+            "total": len(noticias),
+        }
+
+        self._set_cache(cache_key, result)
+        logger.info(
+            f"[HYDRO_NEWS] {len(noticias)} noticias de hidrocarburos "
+            f"(total analizadas: {len(all_normalized)})"
+        )
         return result
 

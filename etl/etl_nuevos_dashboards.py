@@ -85,10 +85,14 @@ def _pg_type(series: pd.Series) -> str:
             numericish = sum(_is_numericish(v) for v in sample)
             if numericish / len(sample) >= 0.7:
                 return 'NUMERIC'
-        if len(sample) > 0 and all(isinstance(v, str) for v in sample):
+        # Use ALL non-null values for TIMESTAMP detection to avoid sampling bias
+        # (a column is TIMESTAMP only if every non-null value parses as a date).
+        all_vals = series.dropna()
+        if len(all_vals) > 0 and all(isinstance(v, str) for v in all_vals):
             try:
-                pd.to_datetime(sample, errors='raise', format='mixed')
-                return 'TIMESTAMP'
+                parsed = pd.to_datetime(all_vals, errors='coerce', format='mixed')
+                if parsed.notna().all():
+                    return 'TIMESTAMP'
             except Exception:
                 pass
     return 'TEXT'
@@ -131,13 +135,22 @@ def _cell_for_pg(val, pg_type: str):
             return None
         if pg_type == 'NUMERIC':
             try:
-                return float(s.replace(',', '').replace('$', '').strip())
+                cleaned = s.replace('$', '').strip()
+                if cleaned.endswith('%'):
+                    cleaned = cleaned[:-1].replace(',', '.').strip()
+                    return float(cleaned) / 100
+                return float(cleaned.replace(',', '').strip())
             except ValueError:
                 return None
         if pg_type == 'BIGINT':
             try:
                 return int(float(s.replace(',', '').replace('$', '').strip()))
             except ValueError:
+                return None
+        if pg_type == 'TIMESTAMP':
+            try:
+                return pd.to_datetime(s, format='mixed', dayfirst=True).to_pydatetime()
+            except Exception:
                 return None
         return s
     if pg_type in ('NUMERIC', 'BIGINT') and hasattr(val, 'item'):
@@ -151,6 +164,9 @@ def _cell_for_pg(val, pg_type: str):
             return None
     except (TypeError, ValueError):
         pass
+    # Unrecognized type for numeric columns (e.g. datetime.time) → NULL
+    if pg_type in ('NUMERIC', 'BIGINT'):
+        return None
     return val
 
 

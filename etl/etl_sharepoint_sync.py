@@ -15,7 +15,7 @@ Archivos configurados:
   6. Deficit_Historico_Subsidios → Deficit_Historico_Subsidios.xlsx → subsidios.deficit_historico
   7. Comunidades_Energeticas_FENOGE → Comunidades_Energeticas_fenoge.xlsx → fenoge.comunidades
   8. Colombia_Solar_OR        → Colombia_Solar_OR.xlsx       → schema colombia_solar
-  9. Resumen_Implementacion_CE → Resumen_Implementación.xlsx → schema comunidades (base, implementadas)
+  9. Resumen_Implementacion_CE → Data_Implementadas_Tablero.xlsx → schema comunidades (base, implementadas)
 
 NOTA: Matriz_Subsidios_KPIs.xlsx tiene handler pero NO está en SHAREPOINT_FILES (ver Error #2)
 
@@ -181,10 +181,8 @@ SHAREPOINT_FILES = [
     },
     {
         "nombre": "Resumen_Implementacion_CE",
-        # url = archivo hermano en Data_CE (resuelve drive_id); graph_path = Excel real de comunidades
-        "url": "https://minenergiacol.sharepoint.com/:x:/r/sites/msteams_c07b9d_609752/Shared%20Documents/General/01.%20Comunidades%20Energ%C3%A9ticas/Data_CE/Seguimiento%20Completo_CE_Contratos.xlsx?d=w0a6a50a7545b4dde8da1897bc546d23e&csf=1&web=1&e=eJXmPx",
-        "graph_path": "/General/01. Comunidades Energéticas/Data_CE/Resumen_Implementación_Sinergia-Ajuste.xlsx",
-        "archivo_local": "Resumen_Implementación.xlsx",
+        "url": "https://minenergiacol.sharepoint.com/:x:/r/sites/msteams_c07b9d_609752/Shared%20Documents/General/01.%20Comunidades%20Energ%C3%A9ticas/Data_CE/Data_Implementadas_Tablero.xlsx?d=w08a33dc8ae044e628286c19851b65ffd&csf=1&web=1&e=VVwju8",
+        "archivo_local": "Data_Implementadas_Tablero.xlsx",
         "directorio": "base_de_datos_comunidades_energeticas",
         "etl_handler": "etl_comunidades",
         "activo": True,
@@ -657,6 +655,7 @@ def _load_sheets_to_schema(
     schema: str,
     truncate: bool = True,
     header_overrides: dict | None = None,
+    table_name_overrides: dict | None = None,
     fecha_carga_override: datetime | None = None,
     sheets_exclude: set[str] | frozenset[str] | None = None,
     skip_duplicate_tables: bool = True,
@@ -682,6 +681,7 @@ def _load_sheets_to_schema(
     xl = pd.ExcelFile(xlsx_path)
     logger.info("  Hojas disponibles: %s", xl.sheet_names)
     overrides = header_overrides or {}
+    tname_overrides = table_name_overrides or {}
     exclude = set(sheets_exclude or [])
     results: dict = {}
     loaded_tables: set[str] = set()
@@ -693,7 +693,7 @@ def _load_sheets_to_schema(
                 for sheet in xl.sheet_names:
                     if sheet in exclude:
                         continue
-                    table_name = _clean_col(sheet)
+                    table_name = tname_overrides.get(sheet, _clean_col(sheet))
                     if skip_duplicate_tables and table_name in loaded_tables:
                         continue
                     loaded_tables.add(table_name)
@@ -705,7 +705,7 @@ def _load_sheets_to_schema(
                     logger.info("  Hoja '%s' excluida por configuración", sheet)
                     continue
 
-                table_name = _clean_col(sheet)
+                table_name = tname_overrides.get(sheet, _clean_col(sheet))
                 if skip_duplicate_tables and table_name in loaded_tables:
                     logger.info(
                         "  Hoja '%s' omitida (tabla '%s' ya cargada desde otra hoja)",
@@ -910,10 +910,21 @@ def handler_etl_presupuesto_onedrive(xlsx_path: Path, fecha_fuente: datetime | N
 
 def handler_etl_contratos_or_onedrive(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
-    Carga Seguimiento_Contratos_CE.xlsx → schema contratos_or.
+    Carga Seguimiento_Contratos_CE.xlsx -> schema contratos_or.
+    El Excel se reestructuró: ahora tiene 6 hojas en lugar de "Hoja1".
+    Los headers están en fila 2 (index 1) en varias hojas.
     """
     logger.info("  ETL contratos_or: %s", xlsx_path.name)
-    return _load_sheets_to_schema(xlsx_path, schema="contratos_or", truncate=True, fecha_carga_override=fecha_fuente)
+    return _load_sheets_to_schema(
+        xlsx_path, schema="contratos_or", truncate=True,
+        header_overrides={
+            "Seguimiento_Avance_Fisico": 1,
+            "Seguimiento_Avance_Documental": 1,
+            "Seguimiento Electrocqueta": 1,
+        },
+        drop_orphan_tables=False,
+        fecha_carga_override=fecha_fuente,
+    )
 
 
 def _nan_to_none(v):
@@ -967,6 +978,11 @@ def handler_etl_supervision_onedrive(xlsx_path: Path, fecha_fuente: datetime | N
 
     ATÓMICO: las 3 tablas se cargan en una sola transacción.
     Si una falla, se hace ROLLBACK y ninguna tabla se modifica.
+
+    CORRECCIONES (2026-06-20):
+    - Detecta y loguea valores anómalos en % desembolsos (> 100%)
+    - Detecta y loguea valores financieros con escala incorrecta (> 1e15)
+    - Estos valores se cargan a la BD pero el backend los filtra.
     """
     import pandas as pd
     sys.path.insert(0, str(BASE_DIR))
@@ -995,6 +1011,27 @@ def handler_etl_supervision_onedrive(xlsx_path: Path, fecha_fuente: datetime | N
                 if df.empty:
                     logger.info("  Hoja '%s' vacía, omitida", sheet)
                     continue
+                # Coerce object columns that contain datetime values to ISO strings
+                # to avoid numeric/timestamp mismatch in PostgreSQL.
+                # Limpiar columnas de moneda COP ($ 297.983.971,00) antes de la inferencia de tipos
+                # Excluir columnas de porcentaje (avance, porcentaje) — sus valores son decimales 0-1,
+                # no moneda COP, y _parse_cop_currency destruiría el punto decimal ("0.70" → 70).
+                for col in df.select_dtypes(include="object").columns:
+                    if col and any(kw in col.lower() for kw in ("valor", "desembols", "apoyo", "monto", "pesos", "presupuesto", "financier")) \
+                            and not any(skip in col.lower() for skip in ("porcentaje", "avance", "%")):
+                        try:
+                            df[col] = _parse_cop_currency(df[col])
+                        except Exception:
+                            pass
+
+                # ─── Validación de datos anómalos (2026-06-20) ────────────────────
+                _validate_supervision_data(df, sheet)
+
+                for col in df.select_dtypes(include="object").columns:
+                    if df[col].dropna().apply(lambda v: isinstance(v, __import__("datetime").datetime)).any():
+                        df[col] = df[col].apply(
+                            lambda v: v.isoformat() if isinstance(v, __import__("datetime").datetime) else v
+                        )
                 n = load_dataframe(conn, "supervision", table, df, truncate=True, commit=False, fecha_carga_override=fecha_fuente)
                 results[table] = n
 
@@ -1006,6 +1043,64 @@ def handler_etl_supervision_onedrive(xlsx_path: Path, fecha_fuente: datetime | N
             raise
 
     return results
+
+
+def _validate_supervision_data(df: "pd.DataFrame", sheet_name: str) -> None:
+    """
+    Detecta valores anómalos en el DataFrame de supervisión y los loguea.
+    No modifica el DataFrame — solo reporta para auditoría.
+    """
+    import pandas as pd
+
+    # 1. Detectar % desembolsos > 100%
+    pct_cols = [c for c in df.columns if "porcentaje" in c.lower() and "desembols" in c.lower()]
+    for col in pct_cols:
+        numeric = pd.to_numeric(df[col], errors="coerce")
+        anomalous = df[(numeric > 1.0) | (numeric < 0.0)]
+        if not anomalous.empty:
+            logger.warning(
+                "  ⚠️  Hoja '%s' — Columna '%s': %d filas con %% desembolsos fuera de rango [0-1]",
+                sheet_name, col, len(anomalous),
+            )
+            # Loguear primeros 5 ejemplos
+            for idx, row in anomalous.head(5).iterrows():
+                contrato = row.get("CONTRATO", "N/A")
+                val = row.get(col, "N/A")
+                logger.warning("     Ejemplo: contrato=%s, %s=%s", contrato, col, val)
+
+    # 2. Detectar valores financieros con escala incorrecta (> 1e15)
+    fin_cols = [c for c in df.columns if any(kw in c.lower() for kw in ("valor", "desembols", "monto"))]
+    for col in fin_cols:
+        numeric = pd.to_numeric(df[col], errors="coerce")
+        anomalous = df[numeric > 1e15]
+        if not anomalous.empty:
+            logger.warning(
+                "  ⚠️  Hoja '%s' — Columna '%s': %d filas con valor financiero > 1e15 (escala incorrecta)",
+                sheet_name, col, len(anomalous),
+            )
+            for idx, row in anomalous.head(5).iterrows():
+                contrato = row.get("CONTRATO", "N/A")
+                val = row.get(col, "N/A")
+                logger.warning("     Ejemplo: contrato=%s, %s=%s", contrato, col, val)
+
+    # 3. Detectar valor desembolsado > valor proyecto × 10
+    vp_col = next((c for c in df.columns if "valor por proyecto" in c.lower()), None)
+    vd_col = next((c for c in df.columns if "valor desembolsado" in c.lower()), None)
+    if vp_col and vd_col:
+        vp = pd.to_numeric(df[vp_col], errors="coerce")
+        vd = pd.to_numeric(df[vd_col], errors="coerce")
+        anomalous = df[(vd > vp * 10) & (vp > 0)]
+        if not anomalous.empty:
+            logger.warning(
+                "  ⚠️  Hoja '%s': %d filas donde desembolsado > 10× valor proyecto",
+                sheet_name, len(anomalous),
+            )
+            for idx, row in anomalous.head(5).iterrows():
+                contrato = row.get("CONTRATO", "N/A")
+                logger.warning(
+                    "     Ejemplo: contrato=%s, VP=%s, VD=%s",
+                    contrato, row.get(vp_col, "N/A"), row.get(vd_col, "N/A"),
+                )
 
 
 _FENOGE_SEG_MAP = {
@@ -1059,6 +1154,23 @@ def handler_etl_fenoge_seguimiento(xlsx_path: Path, fecha_fuente: datetime | Non
     df = df.rename(columns=_FENOGE_SEG_MAP)
     db_cols = [c for c in _FENOGE_SEG_MAP.values() if c in df.columns]
     logger.info("  Columnas mapeadas: %s", db_cols)
+
+    # Limpiar columnas de moneda COP que el Excel trae como strings con formato "$ X.XXX.XXX,YY"
+    for col in ("real_financiero", "programado", "real_acumulado_pesos", "programado_acumulado_pesos"):
+        if col in df.columns and df[col].dtype == object:
+            df[col] = _parse_cop_currency(df[col])
+
+    # Limpiar columnas de porcentaje con formato colombiano ("75,5%", "1.234,56")
+    for col in ("avance_real_pct", "avance_programado_pct", "avance_real_acumulado_pct", "avance_programado_acumulado_pct"):
+        if col in df.columns and df[col].dtype == object:
+            df[col] = (
+                df[col].astype(str)
+                .str.replace("%", "", regex=False)
+                .str.replace(r"[\$\s]", "", regex=True)
+                .str.replace(".", "", regex=False)
+                .str.replace(",", ".", regex=False)
+                .pipe(pd.to_numeric, errors="coerce")
+            )
 
     # Forzar formato DD/MM/YYYY para fechas (evita MDY por defecto en PostgreSQL)
     if "dia_actualizacion" in df.columns:
@@ -1170,6 +1282,8 @@ COLOMBIA_SOLAR_SHEETS_EXCLUDE = frozenset({
     "Hoja3",
     "TD ",                      # duplicado de "TD" (misma tabla td)
     "Base General_OR_Inicial",  # duplicado de "Base General OR_Inicial"
+    "Curva S_GECELCA",          # columnas con tipos mixtos (num+datetime) — no usadas por la API
+    "Curva S_Becerril",         # idem
 })
 
 
@@ -1196,9 +1310,69 @@ def handler_etl_colombia_solar(xlsx_path: Path, fecha_fuente: datetime | None = 
     )
 
 
+# ─── Column mappings para Data_Implementadas_Tablero.xlsx ─────────────────
+# Hoja "Base recomendada" → comunidades.base
+_COM_BASE_MAP: dict[str, str] = {
+    "Nombre de la Comunidad Energética": "nombre_de_la_organizacion",
+    "Departamento": "departamento",
+    "Municipio": "municipio",
+    "Potencia de Generación (KWp)": "capacidad_de_generacion_kwp",
+    "USUARIOS FINAL": "usuarios_equivalentes",
+    "BENEFICIARIOS EQ": "beneficiarios_equivalentes",
+    "Inversión Inicial Estimada": "inversion_estimada",
+    "Inversión Final Reportada": "inversion_final",
+    "Estado Actual RCE (Resolución 40509 de 2024)": "estado_actual",
+    "Fecha de Registro": "fecha_registro",
+    "Fecha de Entrada en Operación": "fecha_operacion",
+    "NO. RESOLUCIÓN": "no_resolucion",
+    "Fuentes de Energía Implementadas": "fuentes_energia",
+    "Tipo de CE": "tipo_ce",
+    "Fuente de financiación/Entidades participantes": "fuente_financiacion",
+    "Nombre R/L CE": "nombre_rl_ce",
+    "Teléfono": "telefono",
+    "Correo Electrónico": "correo_electronico",
+    "NURIN": "nurin",
+    "ID": "id_comunidad",
+}
+
+# Hoja "Análisis" → comunidades.implementadas (header row 3, filas 0-2 son títulos)
+_COM_ANALISIS_MAP: dict[str, str] = {
+    "Nombre de la Comunidad Energética": "nombre_comunidad",
+    "Departamento": "departamento",
+    "Municipio": "municipio",
+    "Potencia de Generación (KWp)": "capacidad_kwp",
+    "Beneficiarios": "beneficiarios",
+    "Inversión Inicial Estimada": "inversion_inicial",
+    "Inversión Final Reportada": "inversion_final",
+    "Usuarios": "usuarios",
+    "USUARIOS B (EQ)": "usuarios_b_eq",
+    "USUARIOS B": "usuarios_b",
+    "USUARIOS FINAL": "usuarios_final",
+    "KWH B": "kwh_b",
+    "DIFER KWH": "difer_kwh",
+    "BENEFICIARIOS B": "beneficiarios_b",
+    "DIFER BEN": "difer_ben",
+    "BENEFICIARIOS EQ": "beneficiarios_eq",
+}
+
+
+def _apply_col_map(df: "pd.DataFrame", col_map: dict[str, str]) -> "pd.DataFrame":
+    """Renombra columnas del DataFrame según el mapa. Solo las que existen."""
+    present = {k: v for k, v in col_map.items() if k in df.columns}
+    df = df.rename(columns=present)
+    # Quedarse solo con las columnas que están en el mapa (más fecha_carga se agrega después)
+    expected = set(present.values())
+    df = df[[c for c in df.columns if c in expected]]
+    return df
+
+
 def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
-    Carga Resumen_Implementación.xlsx → comunidades.base + comunidades.implementadas.
+    Carga Data_Implementadas_Tablero.xlsx → comunidades.base + comunidades.implementadas.
+
+    Hojas esperadas:
+      - "Base recomendada" → comunidades.base (header row 0)
+      - "Análisis"         → comunidades.implementadas (header row 3)
     """
     import pandas as pd
 
@@ -1208,29 +1382,82 @@ def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = Non
 
     logger.info("  ETL comunidades: %s", xlsx_path.name)
     xl = pd.ExcelFile(xlsx_path)
-    base_sheet = next((s for s in xl.sheet_names if s.lower() == "base"), None)
-    impl_sheet = next((s for s in xl.sheet_names if s.lower() == "implementadas"), None)
-    if not base_sheet:
-        raise ValueError(f"Hoja 'Base' no encontrada en {xlsx_path.name} (hojas: {xl.sheet_names})")
+    logger.info("  Hojas disponibles: %s", xl.sheet_names)
 
-    df_base = pd.read_excel(xlsx_path, sheet_name=base_sheet)
+    # Buscar hojas por nombre aproximado
+    base_sheet = next((s for s in xl.sheet_names if "base" in s.lower()), None)
+    analisis_sheet = next((s for s in xl.sheet_names if "analisis" in s.lower() or "análisis" in s.lower()), None)
+
+    if not base_sheet:
+        raise ValueError(f"No se encontró hoja 'Base recomendada' en {xlsx_path.name} (hojas: {xl.sheet_names})")
+
     results: dict = {}
 
     with connection_manager.get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DROP TABLE IF EXISTS comunidades.base CASCADE")
-            cur.execute("DROP TABLE IF EXISTS comunidades.implementadas CASCADE")
-        conn.commit()
-        results["base"] = load_dataframe(
-            conn, "comunidades", "base", df_base, fecha_carga_override=fecha_fuente
-        )
-        if impl_sheet:
-            df_impl = pd.read_excel(xlsx_path, sheet_name=impl_sheet)
-            results["implementadas"] = load_dataframe(
-                conn, "comunidades", "implementadas", df_impl, fecha_carga_override=fecha_fuente
-            )
-        else:
-            logger.warning("  ⚠ Hoja 'Implementadas' no encontrada — solo se cargó base")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DROP TABLE IF EXISTS comunidades.base CASCADE")
+                cur.execute("DROP TABLE IF EXISTS comunidades.implementadas CASCADE")
+            conn.commit()
+
+            # ── 1. Cargar "Base recomendada" → comunidades.base ──────────────
+            logger.info("  Leyendo hoja '%s' → comunidades.base", base_sheet)
+            df_base = pd.read_excel(xlsx_path, sheet_name=base_sheet, header=0)
+            df_base = df_base.dropna(how="all").dropna(axis=1, how="all")
+            logger.info("    Filas leídas: %d, Columnas originales: %d", len(df_base), len(df_base.columns))
+
+            # Limpiar nombres de columna: normalizar saltos de línea y espacios
+            df_base.columns = [str(c).replace("\n", " ").strip() for c in df_base.columns]
+            logger.info("    Columnas disponibles: %s", list(df_base.columns))
+
+            df_base = _apply_col_map(df_base, _COM_BASE_MAP)
+            # Agregar columnas fijas que la API espera
+            df_base["implementado"] = "Si"
+            df_base["latitud"] = None
+            df_base["longitud"] = None
+            df_base["zona_sin_zni_mixto"] = None
+            logger.info("    Columnas finales (%d): %s", len(df_base.columns), list(df_base.columns))
+
+            n_base = load_dataframe(conn, "comunidades", "base", df_base, truncate=True, commit=False, fecha_carga_override=fecha_fuente)
+            results["base"] = n_base
+            logger.info("  ✅ comunidades.base: %d filas", n_base)
+
+            # Garantizar columnas que la API espera (load_dataframe puede eliminarlas si son todas NULL)
+            for col, dtype in [("latitud", "DOUBLE PRECISION"), ("longitud", "DOUBLE PRECISION"), ("zona_sin_zni_mixto", "TEXT")]:
+                cur.execute(f"""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                       WHERE table_schema='comunidades' AND table_name='base' AND column_name='{col}') THEN
+                            EXECUTE 'ALTER TABLE comunidades.base ADD COLUMN {col} {dtype}';
+                        END IF;
+                    END $$;
+                """)
+
+            # ── 2. Cargar "Análisis" → comunidades.implementadas ────────────
+            if analisis_sheet:
+                logger.info("  Leyendo hoja '%s' → comunidades.implementadas (header=4)", analisis_sheet)
+                df_impl = pd.read_excel(xlsx_path, sheet_name=analisis_sheet, header=4)
+                df_impl = df_impl.dropna(how="all").dropna(axis=1, how="all")
+
+                # Limpiar nombres de columna
+                df_impl.columns = [str(c).replace("\n", " ").strip() for c in df_impl.columns]
+                logger.info("    Filas leídas: %d, Columnas: %s", len(df_impl), list(df_impl.columns))
+
+                df_impl = _apply_col_map(df_impl, _COM_ANALISIS_MAP)
+                n_impl = load_dataframe(conn, "comunidades", "implementadas", df_impl, truncate=True, commit=False, fecha_carga_override=fecha_fuente)
+                results["implementadas"] = n_impl
+                logger.info("  ✅ comunidades.implementadas: %d filas", n_impl)
+            else:
+                logger.warning("  ⚠️  Hoja 'Análisis' no encontrada — solo se cargó base")
+
+            conn.commit()
+            logger.info("  ✅ Transacción commiteada")
+
+        except Exception as e:
+            conn.rollback()
+            logger.error("  ❌ Error atómico en comunidades — ROLLBACK: %s", e, exc_info=True)
+            raise
 
     logger.info("  comunidades: %s", results)
     return results
