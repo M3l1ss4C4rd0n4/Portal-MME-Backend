@@ -181,22 +181,22 @@ async def get_supervision_dashboard(
                 cur.execute(
                     f"""
                     SELECT
-                        (SELECT COUNT(DISTINCT contrato) FROM supervision.contratos
-                          WHERE contrato IS NOT NULL AND TRIM(contrato) != ''
+                        (SELECT COUNT(DISTINCT contratos) FROM supervision.contratos
+                          WHERE contratos IS NOT NULL AND TRIM(contratos) != ''
                             AND FLOOR(ano)::integer BETWEEN {ano_min} AND {ano_max}) AS n_contratos,
                         (SELECT COUNT(*) FROM supervision.contratos
-                          WHERE contrato IS NOT NULL AND TRIM(contrato) != ''
+                          WHERE contratos IS NOT NULL AND TRIM(contratos) != ''
                             AND FLOOR(ano)::integer BETWEEN {ano_min} AND {ano_max}) AS n_proyectos,
                         COUNT(DISTINCT CASE WHEN etapa_del_contrato LIKE 'EJECUCI%%'
-                                            THEN contrato END) AS en_ejecucion,
+                                            THEN contratos END) AS en_ejecucion,
                         COUNT(DISTINCT CASE WHEN etapa_del_contrato IN ('AOM','ATBF - AOM','ATEI - AOM')
-                                            THEN contrato END) AS en_aom,
+                                            THEN contratos END) AS en_aom,
                         COUNT(DISTINCT CASE WHEN etapa_del_contrato LIKE 'LIQUIDACI%%'
-                                            THEN contrato END) AS en_liquidacion,
+                                            THEN contratos END) AS en_liquidacion,
                         COUNT(DISTINCT CASE WHEN etapa_del_contrato IN ('LIQUIDADO','LIQUIDADO - AOM')
-                                            THEN contrato END) AS liquidados,
+                                            THEN contratos END) AS liquidados,
                         COUNT(DISTINCT CASE WHEN etapa_del_contrato LIKE 'PERDIDA%%'
-                                            THEN contrato END) AS perdida_competencia,
+                                            THEN contratos END) AS perdida_competencia,
                         ROUND(AVG(avance_de_obra) * 100, 2) AS avg_avance_fisico,
                         ROUND(AVG({_PARSE_FIN}) * 100, 2) AS avg_avance_financiero,
                         ROUND(AVG(avance_contrato) * 100, 2) AS avg_avance_contrato,
@@ -235,7 +235,7 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT fondo, COUNT(DISTINCT contrato) AS contratos
+                    SELECT fondo, COUNT(DISTINCT contratos) AS contratos
                     FROM supervision.contratos
                     WHERE {filter_where}
                       AND fondo IS NOT NULL AND TRIM(fondo) != ''
@@ -260,7 +260,7 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT fondo AS valor, COUNT(DISTINCT contrato) AS n
+                    SELECT fondo AS valor, COUNT(DISTINCT contratos) AS n
                     FROM supervision.contratos
                     WHERE {base_where}
                       AND fondo IS NOT NULL AND TRIM(fondo) != ''
@@ -271,7 +271,7 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT estado_del_contrato AS valor, COUNT(DISTINCT contrato) AS n
+                    SELECT estado_del_contrato AS valor, COUNT(DISTINCT contratos) AS n
                     FROM supervision.contratos
                     WHERE {base_where} {sf2_where}
                     GROUP BY estado_del_contrato ORDER BY n DESC
@@ -282,7 +282,7 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT etapa_del_contrato AS valor, COUNT(DISTINCT contrato) AS n
+                    SELECT etapa_del_contrato AS valor, COUNT(DISTINCT contratos) AS n
                     FROM supervision.contratos
                     WHERE {base_where} {sf3_where}
                       AND etapa_del_contrato IS NOT NULL AND TRIM(etapa_del_contrato) != ''
@@ -294,7 +294,7 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT departamento AS valor, COUNT(DISTINCT contrato) AS n
+                    SELECT departamento AS valor, COUNT(DISTINCT contratos) AS n
                     FROM supervision.contratos
                     WHERE {base_where} {sf4_where}
                       AND departamento IS NOT NULL AND TRIM(departamento) != ''
@@ -306,7 +306,7 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT municipio AS valor, COUNT(DISTINCT contrato) AS n
+                    SELECT municipio AS valor, COUNT(DISTINCT contratos) AS n
                     FROM supervision.contratos
                     WHERE {base_where} {sf5_where}
                       AND municipio IS NOT NULL AND TRIM(municipio) != ''
@@ -318,9 +318,9 @@ async def get_supervision_dashboard(
 
                 cur.execute(
                     f"""
-                    SELECT COUNT(DISTINCT contrato) AS total
+                    SELECT COUNT(DISTINCT contratos) AS total
                     FROM supervision.contratos
-                    WHERE contrato IS NOT NULL AND TRIM(contrato) != ''
+                    WHERE contratos IS NOT NULL AND TRIM(contratos) != ''
                       AND FLOOR(ano)::integer BETWEEN {ano_min} AND {ano_max}
                     """
                 )
@@ -409,7 +409,7 @@ async def get_supervision_detalle(
                     f"""
                     SELECT
                         FLOOR(ano)::integer,
-                        contrato,
+                        contratos,
                         nombre_del_proyecto,
                         fondo,
                         tipo_de_solucion,
@@ -427,8 +427,8 @@ async def get_supervision_detalle(
                         ROUND(COALESCE(({_PARSE_FIN}), 0) * 100, 2)
                     FROM supervision.contratos
                     WHERE {filter_where}
-                      AND contrato IS NOT NULL AND TRIM(contrato) != ''
-                    ORDER BY FLOOR(ano)::integer DESC, contrato, nombre_del_proyecto
+                      AND contratos IS NOT NULL AND TRIM(contratos) != ''
+                    ORDER BY FLOOR(ano)::integer DESC, contratos, nombre_del_proyecto
                     """,
                     kpi_params,
                 )

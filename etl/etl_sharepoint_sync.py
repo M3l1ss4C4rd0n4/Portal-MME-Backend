@@ -1423,16 +1423,17 @@ def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = Non
             logger.info("  ✅ comunidades.base: %d filas", n_base)
 
             # Garantizar columnas que la API espera (load_dataframe puede eliminarlas si son todas NULL)
-            for col, dtype in [("latitud", "DOUBLE PRECISION"), ("longitud", "DOUBLE PRECISION"), ("zona_sin_zni_mixto", "TEXT")]:
-                cur.execute(f"""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                                       WHERE table_schema='comunidades' AND table_name='base' AND column_name='{col}') THEN
-                            EXECUTE 'ALTER TABLE comunidades.base ADD COLUMN {col} {dtype}';
-                        END IF;
-                    END $$;
-                """)
+            with conn.cursor() as cur2:
+                for col, dtype in [("latitud", "DOUBLE PRECISION"), ("longitud", "DOUBLE PRECISION"), ("zona_sin_zni_mixto", "TEXT")]:
+                    cur2.execute(f"""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                           WHERE table_schema='comunidades' AND table_name='base' AND column_name='{col}') THEN
+                                EXECUTE 'ALTER TABLE comunidades.base ADD COLUMN {col} {dtype}';
+                            END IF;
+                        END $$;
+                    """)
 
             # ── 2. Cargar "Análisis" → comunidades.implementadas ────────────
             if analisis_sheet:
