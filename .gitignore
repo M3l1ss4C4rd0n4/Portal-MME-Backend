@@ -185,6 +185,9 @@ whatsapp_bot/whatsapp-web-service/node_modules/
 whatsapp_bot/whatsapp-web-service/.wwebjs_auth/
 whatsapp_bot/venv/
 
+# Informes ejecutivos diarios generados automáticamente (se acumulan a diario, no versionar)
+whatsapp_bot/informes/
+
 # OneDrive test files
 data/onedrive/test_*
 data/onedrive/Test_*
