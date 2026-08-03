@@ -12,7 +12,6 @@ Responsabilidades:
 """
 
 import html
-import logging
 import re
 import time
 from datetime import datetime
@@ -23,8 +22,10 @@ from infrastructure.news.mediastack_client import MediastackClient
 from infrastructure.news.google_news_rss import fetch_google_news_rss
 from infrastructure.news.larepublica_rss import fetch_larepublica_rss
 from infrastructure.cache.redis_client import redis_get_json, redis_set_json
+from domain.services.news_keywords import filter_tier1, filter_tier2_fill
+from infrastructure.logging.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── Scoring keywords ──────────────────────────────────────
 
@@ -424,34 +425,18 @@ def _find_similar_article(titulo: str, seen_articles: List[dict], umbral: float 
     return None
 
 
+# Consolidadas de 6 a 3 queries (mismos términos, agrupados con OR en menos
+# llamadas) para gastar menos de la cuota gratuita de GNews (100/día) — con
+# 6 queries por refresco de caché (cada 8h) se agotaba en pocos ciclos.
 HYDROCARBON_QUERIES = [
-    "petróleo OR gas natural OR hidrocarburos Colombia",
-    "gasolina OR diésel OR combustible OR crudo Colombia",
-    "ecopetrol OR refinación OR refinería OR regalías petroleras Colombia",
-    "gasoducto OR oleoducto OR licuefacción OR valorización Colombia",
-    "reficar OR explotación OR yacimiento OR pozo petrolero Colombia",
+    "petróleo OR gas natural OR hidrocarburos OR crudo OR ANH Colombia",
+    "gasolina OR diésel OR combustible OR ecopetrol OR refinería OR "
+    "gasoducto OR oleoducto OR yacimiento OR pozo petrolero Colombia",
     "carbón OR carbon mineral OR minería OR cerrejón OR drummond Colombia",
 ]
 
-# Keywords para filtrar artículos de hidrocarburos en el propio servicio
-HYDROCARBON_FILTER_KEYWORDS = [
-    "petróleo", "petroleo", "gas", "combustible", "gasolina", "acpm",
-    "gas natural", "glp", "oleoducto", "gasoducto", "exploración",
-    "exploracion", "refinación", "refinacion", "barril", "brent", "wti",
-    "opep", "ecopetrol", "reficar", "yacimiento", "pozo petrolero",
-    "hidrocarburo", "downstream", "upstream", "midstream",
-    "regalías petroleras", "regalias petroleras",
-    "diésel", "diesel", "fuel oil", "gas licuado", "gnl", "lng",
-    "shale", "fracking", "offshore",
-    "precio del crudo", "crudo colombiano", "producción petrolera",
-    "derivado del petróleo", "derivado del petroleo",
-    "petroquímica", "petroquimica", "estación de servicio",
-    "gasolinera", "gasocentro", "grifo",
-    "carbón", "carbon mineral", "minería", "mineria",
-    "niquel", "litio", "cobre",
-    "drummond", "cerrejón", "cerrejon", "prodeco",
-    "exportación de carbón", "puerto de carbón",
-]
+# Keywords para filtrar artículos de hidrocarburos: ver domain/services/news_keywords.py
+# (fuente única compartida con el fallback de libre_noticias_handler.py).
 
 
 class NewsService:
@@ -832,28 +817,28 @@ class NewsService:
         if not all_normalized:
             return {"noticias": [], "total": 0}
 
-        # Filtrar solo artículos que mencionen hidrocarburos
+        # Filtrar por niveles: tier 1 (petróleo/gas genuino) siempre tiene
+        # prioridad; tier 2 (minería) solo rellena si tier 1 no alcanza
+        # max_items — nunca debe desplazar a una noticia de tier 1.
         before = len(all_normalized)
-        filtered = []
-        for art in all_normalized:
-            text = (
-                (art.get("titulo") or "").lower() + " " +
-                (art.get("resumen") or "").lower()
-            )
-            hits = sum(1 for kw in HYDROCARBON_FILTER_KEYWORDS if kw in text)
-            if hits >= 1:
-                filtered.append(art)
+        tier1 = filter_tier1(all_normalized)
+        ranked_tier1 = self._score_and_rank(tier1)
+
+        if len(ranked_tier1) >= max_items:
+            ranked = ranked_tier1
+        else:
+            tier2 = filter_tier2_fill(all_normalized, already_included=tier1)
+            ranked_tier2 = self._score_and_rank(tier2)
+            ranked = ranked_tier1 + ranked_tier2
 
         logger.info(
-            f"[HYDRO_NEWS] Filtro: {len(filtered)}/{before} artículos "
-            f"mencionan hidrocarburos"
+            f"[HYDRO_NEWS] Filtro: {len(ranked_tier1)} tier1 + "
+            f"{max(0, len(ranked) - len(ranked_tier1))} tier2 relleno, "
+            f"de {before} artículos totales"
         )
 
-        if not filtered:
+        if not ranked:
             return {"noticias": [], "total": 0}
-
-        # Scoring y ranking
-        ranked = self._score_and_rank(filtered)
 
         def _fmt(art: dict) -> dict:
             return {

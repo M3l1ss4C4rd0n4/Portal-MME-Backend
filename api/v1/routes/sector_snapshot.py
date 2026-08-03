@@ -299,6 +299,20 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
                     except Exception as e:
                         logger.warning("[sector/snapshot] Error calculando proyección ONI: %s", e)
 
+                # Capacidad instalada total del SIN (MW) — suma de CapEfecNeta por
+                # recurso en su fecha más reciente (mismo patrón que energia_dashboard.py:96-115).
+                cur.execute("""
+                    SELECT SUM(m.valor_gwh)
+                    FROM sector_energetico.metrics m
+                    WHERE m.metrica='CapEfecNeta' AND m.entidad='Recurso'
+                      AND m.fecha = (
+                        SELECT MAX(fecha) FROM sector_energetico.metrics
+                        WHERE metrica='CapEfecNeta' AND entidad='Recurso'
+                      )
+                """)
+                row_cap = cur.fetchone()
+                capacidad_instalada_mw = round(float(row_cap[0]) / 1000, 2) if row_cap and row_cap[0] else None
+
         # % embalse viene como fracción (0-1) desde la BD
         pct_embalses = round(pct_emb_raw * 100, 2)
 
@@ -375,6 +389,7 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
             "pctEmbalses":      pct_embalses,
             "embalseGwh":       round(embalse_gwh, 2) if embalse_gwh else None,
             "capacidadEmbalseGwh": capacidad_gwh,
+            "capacidadInstaladaMw": capacidad_instalada_mw,
             "estadoSin":        estado_sin,
             "colorSin":         color_sin,
             "aportesHidricos": {

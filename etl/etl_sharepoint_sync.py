@@ -15,7 +15,7 @@ Archivos configurados:
   6. Deficit_Historico_Subsidios → Deficit_Historico_Subsidios.xlsx → subsidios.deficit_historico
   7. Comunidades_Energeticas_FENOGE → Comunidades_Energeticas_fenoge.xlsx → fenoge.comunidades
   8. Colombia_Solar_OR        → Colombia_Solar_OR.xlsx       → schema colombia_solar
-  9. Resumen_Implementacion_CE → Data_Implementadas_Tablero.xlsx → schema comunidades (base, implementadas)
+  9. Resumen_Implementacion_CE → Data_Implementadas_Tablero.xlsx → schema comunidades (base)
 
 NOTA: Matriz_Subsidios_KPIs.xlsx tiene handler pero NO está en SHAREPOINT_FILES (ver Error #2)
 
@@ -181,10 +181,18 @@ SHAREPOINT_FILES = [
     },
     {
         "nombre": "Resumen_Implementacion_CE",
-        "url": "https://minenergiacol.sharepoint.com/:x:/r/sites/msteams_c07b9d_609752/Shared%20Documents/General/01.%20Comunidades%20Energ%C3%A9ticas/Data_CE/Data_Implementadas_Tablero.xlsx?d=w08a33dc8ae044e628286c19851b65ffd&csf=1&web=1&e=VVwju8",
+        "url": "https://minenergiacol-my.sharepoint.com/:x:/g/personal/comunidadesenergeticas_minenergia_gov_co/IQDjuOxtfwEAT7KS_SEpACKwAVKE3fhMVzccudibTHL10t4?email=mjcardona%40minenergia.gov.co&e=QRBMFH",
         "archivo_local": "Data_Implementadas_Tablero.xlsx",
         "directorio": "base_de_datos_comunidades_energeticas",
         "etl_handler": "etl_comunidades",
+        "activo": True,
+    },
+    {
+        "nombre": "Direccion_Hidrocarburos",
+        "url": "https://minenergiacol-my.sharepoint.com/:x:/r/personal/dmgutierrez_minenergia_gov_co/Documents/4.%20Data/Direcci%C3%B3n_Hidrocarburos.xlsx?d=wc4558874485d46d48a540eb02497649b&csf=1&web=1&e=1qAT6b",
+        "archivo_local": "Direccion_Hidrocarburos.xlsx",
+        "directorio": "onedrive",
+        "etl_handler": "etl_hidrocarburos",
         "activo": True,
     },
 ]
@@ -1311,50 +1319,35 @@ def handler_etl_colombia_solar(xlsx_path: Path, fecha_fuente: datetime | None = 
 
 
 # ─── Column mappings para Data_Implementadas_Tablero.xlsx ─────────────────
-# Hoja "Base recomendada" → comunidades.base
+# Hoja "LISTADO RCE" → comunidades.base (formato desde 2026-07-31: hoja única
+# con usuarios/beneficiarios partidos en INICIAL/OPERACIÓN — se combinan en
+# _combinar_usuarios_beneficiarios() — y fechas de vuelta).
+# "TIPO DE RCE" es el sucesor de la vieja "Estado Actual RCE" — mismo concepto
+# (Resolución 40509 de 2024), por eso se mapea al mismo campo `estado_actual`.
 _COM_BASE_MAP: dict[str, str] = {
-    "Nombre de la Comunidad Energética": "nombre_de_la_organizacion",
-    "Departamento": "departamento",
-    "Municipio": "municipio",
-    "Potencia de Generación (KWp)": "capacidad_de_generacion_kwp",
-    "USUARIOS FINAL": "usuarios_equivalentes",
-    "BENEFICIARIOS EQ": "beneficiarios_equivalentes",
-    "Inversión Inicial Estimada": "inversion_estimada",
-    "Inversión Final Reportada": "inversion_final",
-    "Estado Actual RCE (Resolución 40509 de 2024)": "estado_actual",
-    "Fecha de Registro": "fecha_registro",
-    "Fecha de Entrada en Operación": "fecha_operacion",
-    "NO. RESOLUCIÓN": "no_resolucion",
-    "Fuentes de Energía Implementadas": "fuentes_energia",
-    "Tipo de CE": "tipo_ce",
-    "Fuente de financiación/Entidades participantes": "fuente_financiacion",
-    "Nombre R/L CE": "nombre_rl_ce",
-    "Teléfono": "telefono",
-    "Correo Electrónico": "correo_electronico",
     "NURIN": "nurin",
     "ID": "id_comunidad",
+    "COMUNIDAD ENERGÉTICA": "nombre_de_la_organizacion",
+    "DEPARTAMENTO": "departamento",
+    "MUNICIPIO": "municipio",
+    "TIPO DE COMUNIDAD": "tipo_ce",
+    "TIPO DE RCE (Res. 40509 de 2024)": "estado_actual",
+    "NÚMERO DE RESOLUCIÓN": "no_resolucion",
+    "NÚMERO DE USUARIOS EN INICIAL": "usuarios_inicial_tmp",
+    "NÚMERO DE USUARIOS EN OPERACIÓN": "usuarios_operacion_tmp",
+    "NÚMERO DE PERSONAS BENEFICIADAS EN INICIAL": "beneficiarios_inicial_tmp",
+    "NÚMERO DE PERSONAS BENEFICIADAS EN OPERACIÓN": "beneficiarios_operacion_tmp",
+    "ZONA": "zona_sin_zni_mixto",
+    "ETNIA": "etnia",
+    "EJECUTOR": "ejecutor",
+    "TIPO DE SOLUCIÓN ENERGÉTICA": "fuentes_energia",
+    "CAPACIDAD INSTALADA (kWp)": "capacidad_de_generacion_kwp",
+    "INVERSIÓN REPORTADA": "inversion_estimada",
+    "LATITUD": "latitud",
+    "LONGITUD": "longitud",
+    "FECHA PUESTA EN  MARCHA": "fecha_operacion",
+    "FECHA DE REGISTRO": "fecha_registro",
 }
-
-# Hoja "Análisis" → comunidades.implementadas (header row 3, filas 0-2 son títulos)
-_COM_ANALISIS_MAP: dict[str, str] = {
-    "Nombre de la Comunidad Energética": "nombre_comunidad",
-    "Departamento": "departamento",
-    "Municipio": "municipio",
-    "Potencia de Generación (KWp)": "capacidad_kwp",
-    "Beneficiarios": "beneficiarios",
-    "Inversión Inicial Estimada": "inversion_inicial",
-    "Inversión Final Reportada": "inversion_final",
-    "Usuarios": "usuarios",
-    "USUARIOS B (EQ)": "usuarios_b_eq",
-    "USUARIOS B": "usuarios_b",
-    "USUARIOS FINAL": "usuarios_final",
-    "KWH B": "kwh_b",
-    "DIFER KWH": "difer_kwh",
-    "BENEFICIARIOS B": "beneficiarios_b",
-    "DIFER BEN": "difer_ben",
-    "BENEFICIARIOS EQ": "beneficiarios_eq",
-}
-
 
 def _apply_col_map(df: "pd.DataFrame", col_map: dict[str, str]) -> "pd.DataFrame":
     """Renombra columnas del DataFrame según el mapa. Solo las que existen."""
@@ -1366,13 +1359,104 @@ def _apply_col_map(df: "pd.DataFrame", col_map: dict[str, str]) -> "pd.DataFrame
     return df
 
 
+def _com_numeric(series: "pd.Series"):
+    """Normaliza una columna numérica con formato inconsistente (fórmulas rotas,
+    placeholders de texto, coma decimal '9,82' vs coma de miles) a float real.
+
+    Sin esto, una sola celda como "Sin Información" o "9,82" hace que pandas
+    infiera la columna entera como texto (rompe SUM() en SQL más adelante), y
+    una coma decimal sin normalizar se leería como 982 en vez de 9.82.
+    Cualquier celda que no se pueda interpretar como número queda en NULL —
+    no bloquea la carga ni el resto de la suma.
+    """
+    import pandas as pd
+
+    _placeholders = {"", "sin información", "sin informacion", "por definir", "n/a", "nd", "-", "—"}
+
+    def _parse(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).strip()
+        if s.lower() in _placeholders:
+            return None
+        s = s.replace("$", "").replace(" ", "").replace("\xa0", "")
+        if "," in s and "." not in s:
+            s = s.replace(",", ".")  # coma decimal ("9,82" -> 9.82)
+        else:
+            s = s.replace(",", "")  # coma de miles ("1,234" -> 1234)
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    return series.apply(_parse)
+
+
+def _com_money(series: "pd.Series"):
+    """Normaliza una columna de moneda colombiana ('$ X.XXX.XXX,XX') a float.
+
+    A diferencia de _com_numeric, aquí el punto SIEMPRE es separador de miles
+    (nunca decimal) — necesario porque, a diferencia de capacidad/usuarios
+    (números pequeños donde el punto ya es un decimal correcto), esta columna
+    mezcla valores ya numéricos con texto tipo "$ 508.274.150,04" donde
+    _com_numeric confundiría el punto de miles con un decimal y perdería el dato.
+    """
+    import pandas as pd
+
+    _placeholders = {"", "sin información", "sin informacion", "por definir", "n/a", "nd", "-", "—"}
+
+    def _parse(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).strip()
+        if s.lower() in _placeholders:
+            return None
+        s = s.replace("$", "").replace(" ", "").replace("\xa0", "")
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")  # punto=miles, coma=decimal
+        else:
+            s = s.replace(".", "")  # solo miles, sin decimales
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    return series.apply(_parse)
+
+
+def _normalize_case_by_frequency(series: "pd.Series"):
+    """Agrupa valores que solo difieren en mayúsculas/minúsculas y los reemplaza
+    por la variante más frecuente de cada grupo (no title-case genérico, para no
+    dañar siglas como SSFV/IPSE/FENOGE que deben quedar en mayúscula)."""
+    import pandas as pd
+
+    non_null = series.dropna()
+    if non_null.empty:
+        return series
+    freq = non_null.value_counts()
+    canonical: dict[str, object] = {}
+    for val, count in freq.items():
+        key = str(val).strip().lower()
+        if key not in canonical or count > freq[canonical[key]]:
+            canonical[key] = val
+    return series.apply(lambda v: canonical.get(str(v).strip().lower(), v) if pd.notna(v) else v)
+
+
 def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
     """
-    Carga Data_Implementadas_Tablero.xlsx → comunidades.base + comunidades.implementadas.
+    Carga Data_Implementadas_Tablero.xlsx → comunidades.base.
 
-    Hojas esperadas:
-      - "Base recomendada" → comunidades.base (header row 0)
-      - "Análisis"         → comunidades.implementadas (header row 3)
+    La hoja y la fila de encabezado se detectan dinámicamente (ya cambiaron de
+    formato varias veces): se busca la hoja por nombre aproximado ("rce") y,
+    dentro de ella, la primera fila que contenga "DEPARTAMENTO" como encabezado
+    real (algunas versiones traen una fila de título fusionada encima).
+
+    "Implementada" = cualquier valor de Tipo de RCE (estado_actual) EXCEPTO
+    "Desistida" (incluye vacío/sin registrar/inicial/operación/prórroga).
     """
     import pandas as pd
 
@@ -1384,12 +1468,25 @@ def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = Non
     xl = pd.ExcelFile(xlsx_path)
     logger.info("  Hojas disponibles: %s", xl.sheet_names)
 
-    # Buscar hojas por nombre aproximado
-    base_sheet = next((s for s in xl.sheet_names if "base" in s.lower()), None)
-    analisis_sheet = next((s for s in xl.sheet_names if "analisis" in s.lower() or "análisis" in s.lower()), None)
+    # Buscar hoja principal: si solo hay una, usarla; si hay varias, la que
+    # contenga "rce" evitando las de control/conciliación (ej. "02_DIF_CLAVE_RCE").
+    if len(xl.sheet_names) == 1:
+        base_sheet = xl.sheet_names[0]
+    else:
+        candidates = [s for s in xl.sheet_names if "rce" in s.lower()]
+        base_sheet = next((s for s in candidates if not s.strip().lower().startswith(("02_", "control"))), candidates[0] if candidates else None)
 
     if not base_sheet:
-        raise ValueError(f"No se encontró hoja 'Base recomendada' en {xlsx_path.name} (hojas: {xl.sheet_names})")
+        raise ValueError(f"No se encontró hoja principal en {xlsx_path.name} (hojas: {xl.sheet_names})")
+
+    # Detectar la fila real de encabezados (puede no ser la fila 0 si hay un título fusionado encima)
+    raw_peek = pd.read_excel(xlsx_path, sheet_name=base_sheet, header=None, nrows=5)
+    header_row_idx = 0
+    for i in range(len(raw_peek)):
+        if any("DEPARTAMENTO" in str(v).upper() for v in raw_peek.iloc[i].tolist()):
+            header_row_idx = i
+            break
+    logger.info("  Fila de encabezado detectada: %d", header_row_idx)
 
     results: dict = {}
 
@@ -1400,9 +1497,9 @@ def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = Non
                 cur.execute("DROP TABLE IF EXISTS comunidades.implementadas CASCADE")
             conn.commit()
 
-            # ── 1. Cargar "Base recomendada" → comunidades.base ──────────────
+            # ── Cargar hoja principal → comunidades.base ──────────────
             logger.info("  Leyendo hoja '%s' → comunidades.base", base_sheet)
-            df_base = pd.read_excel(xlsx_path, sheet_name=base_sheet, header=0)
+            df_base = pd.read_excel(xlsx_path, sheet_name=base_sheet, header=header_row_idx)
             df_base = df_base.dropna(how="all").dropna(axis=1, how="all")
             logger.info("    Filas leídas: %d, Columnas originales: %d", len(df_base), len(df_base.columns))
 
@@ -1411,12 +1508,49 @@ def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = Non
             logger.info("    Columnas disponibles: %s", list(df_base.columns))
 
             df_base = _apply_col_map(df_base, _COM_BASE_MAP)
-            # Agregar columnas fijas que la API espera
-            df_base["implementado"] = "Si"
-            df_base["latitud"] = None
-            df_base["longitud"] = None
-            df_base["zona_sin_zni_mixto"] = None
+            # Normalizar columnas numéricas: evita que celdas rotas ("Sin Información",
+            # "9,82" con coma decimal) tumben el tipo de columna o corrompan la suma.
+            for _num_col in ("capacidad_de_generacion_kwp", "usuarios_inicial_tmp", "usuarios_operacion_tmp", "beneficiarios_inicial_tmp", "beneficiarios_operacion_tmp"):
+                if _num_col in df_base.columns:
+                    df_base[_num_col] = _com_numeric(df_base[_num_col])
+            # Inversión usa su propio parser: el punto es siempre separador de miles aquí
+            # (a diferencia de capacidad, donde el punto ya es un decimal correcto).
+            if "inversion_estimada" in df_base.columns:
+                df_base["inversion_estimada"] = _com_money(df_base["inversion_estimada"])
+            # Usuarios/beneficiarios vienen partidos en INICIAL/OPERACIÓN (mutuamente
+            # excluyentes por fila) — se combinan en el campo único que espera la API.
+            for _campo, _col_inicial, _col_operacion in [
+                ("usuarios_equivalentes", "usuarios_inicial_tmp", "usuarios_operacion_tmp"),
+                ("beneficiarios_equivalentes", "beneficiarios_inicial_tmp", "beneficiarios_operacion_tmp"),
+            ]:
+                if _col_inicial in df_base.columns or _col_operacion in df_base.columns:
+                    inicial = df_base.get(_col_inicial, pd.Series(0, index=df_base.index)).fillna(0)
+                    operacion = df_base.get(_col_operacion, pd.Series(0, index=df_base.index)).fillna(0)
+                    df_base[_campo] = inicial + operacion
+                    df_base = df_base.drop(columns=[c for c in (_col_inicial, _col_operacion) if c in df_base.columns])
+            # Normalizar mayúsculas/minúsculas duplicadas (ej. "Otros" vs "OTROS"):
+            # se agrupan y se usa la variante más frecuente como forma canónica.
+            for _cat_col in ("tipo_ce", "ejecutor", "fuentes_energia"):
+                if _cat_col in df_base.columns:
+                    df_base[_cat_col] = _normalize_case_by_frequency(df_base[_cat_col])
+            # Fechas mezclan datetime nativo con texto "dd/mm/yyyy" y placeholders
+            # ("SIN INFORMACIÓN", "EN FIRMA") — sin esto la columna queda TEXT en vez
+            # de TIMESTAMP y rompe MIN()/MAX() más adelante en la API.
+            for _date_col in ("fecha_operacion", "fecha_registro"):
+                if _date_col in df_base.columns:
+                    df_base[_date_col] = pd.to_datetime(df_base[_date_col], format="mixed", dayfirst=True, errors="coerce")
+            # "Implementada" = todo lo que no sea "Desistida" en Tipo de RCE (estado_actual)
+            df_base["implementado"] = df_base.get("estado_actual", pd.Series(dtype=object)).apply(
+                lambda v: "No" if isinstance(v, str) and v.strip().lower() == "desistida" else "Si"
+            )
+            # "0" en Zona (texto o numérico) es un error de captura del Excel — se agrupa
+            # con los valores en blanco, que la API ya reporta como "Sin clasificar"
+            if "zona_sin_zni_mixto" in df_base.columns:
+                df_base["zona_sin_zni_mixto"] = df_base["zona_sin_zni_mixto"].apply(
+                    lambda v: None if not (isinstance(v, float) and pd.isna(v)) and str(v).strip() == "0" else v
+                )
             logger.info("    Columnas finales (%d): %s", len(df_base.columns), list(df_base.columns))
+            logger.info("    implementado: %s", df_base["implementado"].value_counts().to_dict())
 
             n_base = load_dataframe(conn, "comunidades", "base", df_base, truncate=True, commit=False, fecha_carga_override=fecha_fuente)
             results["base"] = n_base
@@ -1435,23 +1569,6 @@ def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = Non
                         END $$;
                     """)
 
-            # ── 2. Cargar "Análisis" → comunidades.implementadas ────────────
-            if analisis_sheet:
-                logger.info("  Leyendo hoja '%s' → comunidades.implementadas (header=4)", analisis_sheet)
-                df_impl = pd.read_excel(xlsx_path, sheet_name=analisis_sheet, header=4)
-                df_impl = df_impl.dropna(how="all").dropna(axis=1, how="all")
-
-                # Limpiar nombres de columna
-                df_impl.columns = [str(c).replace("\n", " ").strip() for c in df_impl.columns]
-                logger.info("    Filas leídas: %d, Columnas: %s", len(df_impl), list(df_impl.columns))
-
-                df_impl = _apply_col_map(df_impl, _COM_ANALISIS_MAP)
-                n_impl = load_dataframe(conn, "comunidades", "implementadas", df_impl, truncate=True, commit=False, fecha_carga_override=fecha_fuente)
-                results["implementadas"] = n_impl
-                logger.info("  ✅ comunidades.implementadas: %d filas", n_impl)
-            else:
-                logger.warning("  ⚠️  Hoja 'Análisis' no encontrada — solo se cargó base")
-
             conn.commit()
             logger.info("  ✅ Transacción commiteada")
 
@@ -1462,6 +1579,19 @@ def handler_etl_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = Non
 
     logger.info("  comunidades: %s", results)
     return results
+
+
+def handler_etl_hidrocarburos(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
+    """
+    Carga Direccion_Hidrocarburos.xlsx → schema hidrocarburos.
+    Usa el ETL especializado de etl_hidrocarburos.py (parsing manual: ambas
+    hojas tienen layout irregular, no aplica el loader genérico por hoja).
+    """
+    sys.path.insert(0, str(BASE_DIR))
+    from etl.etl_hidrocarburos import run_etl
+
+    logger.info("  ETL hidrocarburos: %s", xlsx_path.name)
+    return run_etl(xlsx_path)
 
 
 # Mapa handler_name → función
@@ -1475,6 +1605,7 @@ ETL_HANDLERS = {
     "etl_deficit_historico": handler_etl_deficit_historico,
     "etl_colombia_solar": handler_etl_colombia_solar,
     "etl_comunidades": handler_etl_comunidades,
+    "etl_hidrocarburos": handler_etl_hidrocarburos,
 }
 
 

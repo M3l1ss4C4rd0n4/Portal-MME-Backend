@@ -23,11 +23,14 @@ from api.v1.routes import (
     presupuesto,
     subsidios,
     sector_snapshot,
+    sector_despacho,
     contratos_or,
     comunidades,
     supervision_portal,
     energia_dashboard,
     fenoge,
+    ontologia,
+    riesgo,
 )
 
 # Router principal de v1
@@ -183,6 +186,13 @@ api_router_v1.include_router(
     tags=["⚡ Portal — Sector Snapshot"]
 )
 
+# 20b. Despacho diario (disponibilidad de plantas, precio predespacho ideal)
+api_router_v1.include_router(
+    sector_despacho.router,
+    prefix="/sector",
+    tags=["⚡ Portal — Sector Snapshot"]
+)
+
 # 21. Contratos OR (seguimiento desembolsos)
 api_router_v1.include_router(
     contratos_or.router,
@@ -216,6 +226,20 @@ api_router_v1.include_router(
     fenoge.router,
     prefix="/fenoge",
     tags=["🌿 Portal — Fenoge"]
+)
+
+# 26. Ontología unificada — geografía DANE + empresas/prestadores (Fase 1 Palantir-IA)
+api_router_v1.include_router(
+    ontologia.router,
+    prefix="/ontologia",
+    tags=["🗺️ Portal — Ontología"]
+)
+
+# 27. Riesgo de atraso — analítica predictiva expandida (Fase 4 Palantir-IA)
+api_router_v1.include_router(
+    riesgo.router,
+    prefix="/riesgo",
+    tags=["⚠️ Portal — Riesgo"]
 )
 
 __all__ = ["api_router_v1"]

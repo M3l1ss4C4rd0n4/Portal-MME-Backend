@@ -19,6 +19,10 @@ from domain.interfaces.repositories import (
     IDistributionRepository,
     ITransmissionRepository,
     IPredictionsRepository,
+    IGeografiaRepository,
+    IEmpresaRepository,
+    ISemanticSearchRepository,
+    IProyectoRepository,
 )
 from domain.interfaces.data_sources import IXMDataSource
 from domain.interfaces.database import IDatabaseManager
@@ -29,6 +33,10 @@ from infrastructure.database.repositories.commercial_repository import Commercia
 from infrastructure.database.repositories.distribution_repository import DistributionRepository
 from infrastructure.database.repositories.transmission_repository import TransmissionRepository
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
+from infrastructure.database.repositories.geografia_repository import GeografiaRepository
+from infrastructure.database.repositories.empresa_repository import EmpresaRepository
+from infrastructure.database.repositories.semantic_search_repository import SemanticSearchRepository
+from infrastructure.database.repositories.proyecto_repository import ProyectoRepository
 from infrastructure.database.manager import db_manager
 from infrastructure.external.xm_adapter import XMDataSourceAdapter
 
@@ -72,7 +80,12 @@ class DependencyContainer:
         self._predictions_repository: Optional[IPredictionsRepository] = None
         self._database_manager: Optional[IDatabaseManager] = None
         self._xm_datasource: Optional[IXMDataSource] = None
-        
+        self._geografia_repository: Optional[IGeografiaRepository] = None
+        self._empresa_repository: Optional[IEmpresaRepository] = None
+        self._semantic_search_repository: Optional[ISemanticSearchRepository] = None
+        self._proyecto_repository: Optional[IProyectoRepository] = None
+        self._ontologia_service = None
+
         logger.debug("DependencyContainer inicializado")
     
     # ============================================================================
@@ -114,6 +127,34 @@ class DependencyContainer:
             logger.debug("PredictionsRepository creado")
         return self._predictions_repository
     
+    def get_geografia_repository(self) -> IGeografiaRepository:
+        """Obtiene repositorio de geografía DANE / ontologia (singleton)."""
+        if self._geografia_repository is None:
+            self._geografia_repository = GeografiaRepository()
+            logger.debug("GeografiaRepository creado")
+        return self._geografia_repository
+
+    def get_empresa_repository(self) -> IEmpresaRepository:
+        """Obtiene repositorio de empresas/prestadores / ontologia (singleton)."""
+        if self._empresa_repository is None:
+            self._empresa_repository = EmpresaRepository()
+            logger.debug("EmpresaRepository creado")
+        return self._empresa_repository
+
+    def get_proyecto_repository(self) -> IProyectoRepository:
+        """Obtiene repositorio de proyectos / ontologia (singleton)."""
+        if self._proyecto_repository is None:
+            self._proyecto_repository = ProyectoRepository()
+            logger.debug("ProyectoRepository creado")
+        return self._proyecto_repository
+
+    def get_semantic_search_repository(self) -> ISemanticSearchRepository:
+        """Obtiene repositorio de búsqueda semántica / RAG (singleton)."""
+        if self._semantic_search_repository is None:
+            self._semantic_search_repository = SemanticSearchRepository()
+            logger.debug("SemanticSearchRepository creado")
+        return self._semantic_search_repository
+
     def get_database_manager(self) -> IDatabaseManager:
         """Obtiene database manager (usa instancia global)."""
         if self._database_manager is None:
@@ -197,6 +238,40 @@ class DependencyContainer:
             self._losses_nt_service = LossesNTService()
             logger.debug("LossesNTService creado (singleton)")
         return self._losses_nt_service
+
+    @property
+    def graph_service(self):
+        """Obtiene GraphService como singleton lazy."""
+        if not hasattr(self, '_graph_service') or self._graph_service is None:
+            from domain.services.graph_service import GraphService
+            self._graph_service = GraphService(
+                empresa_repository=self.get_empresa_repository(),
+            )
+            logger.debug("GraphService creado (singleton)")
+        return self._graph_service
+
+    @property
+    def risk_service(self):
+        """Obtiene RiskService como singleton lazy."""
+        if not hasattr(self, '_risk_service') or self._risk_service is None:
+            from domain.services.risk_service import RiskService
+            self._risk_service = RiskService()
+            logger.debug("RiskService creado (singleton)")
+        return self._risk_service
+
+    @property
+    def ontologia_service(self):
+        """Obtiene OntologiaService como singleton lazy."""
+        if self._ontologia_service is None:
+            from domain.services.ontologia_service import OntologiaService
+            self._ontologia_service = OntologiaService(
+                geografia_repository=self.get_geografia_repository(),
+                empresa_repository=self.get_empresa_repository(),
+                semantic_search_repository=self.get_semantic_search_repository(),
+                proyecto_repository=self.get_proyecto_repository(),
+            )
+            logger.debug("OntologiaService creado (singleton)")
+        return self._ontologia_service
 
     @property
     def simulation_service(self):
@@ -350,6 +425,13 @@ class DependencyContainer:
         self._predictions_repository = None
         self._database_manager = None
         self._xm_datasource = None
+        self._geografia_repository = None
+        self._empresa_repository = None
+        self._semantic_search_repository = None
+        self._proyecto_repository = None
+        self._ontologia_service = None
+        self._risk_service = None
+        self._graph_service = None
         self._orchestrator_service = None
         self._cu_service = None
         self._losses_nt_service = None
@@ -461,3 +543,18 @@ def get_intelligent_analysis_service():
 def get_predictions_extended_service():
     """Función de conveniencia para obtener PredictionsService (extended/ML)."""
     return container.predictions_extended_service
+
+
+def get_ontologia_service():
+    """Función de conveniencia para obtener OntologiaService."""
+    return container.ontologia_service
+
+
+def get_risk_service():
+    """Función de conveniencia para obtener RiskService."""
+    return container.risk_service
+
+
+def get_graph_service():
+    """Función de conveniencia para obtener GraphService."""
+    return container.graph_service

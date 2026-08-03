@@ -19,16 +19,21 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
-import logging
 from typing import Dict, Any
 from datetime import datetime
 
 from core.config import settings
 from core.constants import APP_VERSION
 from api.v1 import api_router_v1
+from infrastructure.logging.logger import configure_root_logger, get_logger, reduce_noisy_loggers
 
-# Configurar logging
-logger = logging.getLogger(__name__)
+# Configurar logging — sin esto, este proceso (uvicorn) nunca inicializa el
+# logger raíz y los logger.info/warning de servicios como NewsService se
+# pierden en silencio (solo los ERROR sobreviven por el handler de último
+# recurso de Python, y solo en el stdout redirigido de systemd, no en logs/).
+configure_root_logger()
+reduce_noisy_loggers()
+logger = get_logger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════

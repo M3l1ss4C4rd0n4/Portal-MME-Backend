@@ -138,19 +138,42 @@ def crear_tabla_si_no_existe(conn):
     print("✅ Tabla predictions_quality_history lista\n")
 
 
-def cargar_predicciones(conn, fuente):
-    """Carga predicciones vigentes de una fuente."""
+def cargar_predicciones_batches(conn, fuente):
+    """
+    Carga TODAS las predicciones de una fuente agrupadas por batch
+    (fecha_generacion), combinando la tabla viva (predictions) y el
+    archivo histórico (predictions_history) poblado por el trigger
+    trg_predictions_archive_on_delete. Esto permite evaluar batches ya
+    reemplazados por un reentrenamiento posterior, no solo el vigente.
+    """
     query = """
-    SELECT fecha_prediccion AS fecha,
-           valor_gwh_predicho AS predicho,
-           mape, rmse, modelo
+    SELECT fecha_prediccion AS fecha, valor_gwh_predicho AS predicho,
+           mape, rmse, modelo, fecha_generacion
     FROM predictions
     WHERE fuente = %s
-    ORDER BY fecha_prediccion
+    UNION ALL
+    SELECT fecha_prediccion AS fecha, valor_gwh_predicho AS predicho,
+           mape, rmse, modelo, fecha_generacion
+    FROM predictions_history
+    WHERE fuente = %s
+    """
+    df = pd.read_sql_query(query, conn, params=(fuente, fuente))
+    df['fecha'] = pd.to_datetime(df['fecha'])
+    df['fecha_generacion'] = pd.to_datetime(df['fecha_generacion'])
+    return df
+
+
+def cargar_evaluaciones_previas(conn, fuente):
+    """Overlap ya evaluado por batch (fecha_generacion) para esta fuente,
+    para no reevaluar un batch cuyo overlap no creció desde la última corrida."""
+    query = """
+    SELECT fecha_generacion, MAX(dias_overlap) AS dias_overlap
+    FROM predictions_quality_history
+    WHERE fuente = %s AND fecha_generacion IS NOT NULL
+    GROUP BY fecha_generacion
     """
     df = pd.read_sql_query(query, conn, params=(fuente,))
-    df['fecha'] = pd.to_datetime(df['fecha'])
-    return df
+    return dict(zip(df['fecha_generacion'], df['dias_overlap']))
 
 
 def cargar_reales_metrica(conn, cfg, fecha_desde, fecha_hasta):
@@ -216,27 +239,12 @@ def cargar_reales_generacion(conn, tipo_catalogo, fecha_desde, fecha_hasta):
     return df
 
 
-def evaluar_fuente(conn, fuente, cfg):
+def _evaluar_batch(df_pred, df_real, fuente):
     """
-    Evalúa la calidad ex‑post de una fuente.
-    Retorna dict con métricas, o None si no hay overlap.
+    Aplica la lógica de merge/filtro/MAPE de un solo batch de predicciones
+    (todas las filas comparten fecha_generacion) contra los datos reales.
+    Retorna dict con métricas, o None si no hay overlap suficiente.
     """
-    df_pred = cargar_predicciones(conn, fuente)
-    if df_pred.empty:
-        return None, "sin predicciones en BD"
-
-    fecha_desde = df_pred['fecha'].min().date()
-    fecha_hasta = df_pred['fecha'].max().date()
-
-    # Cargar datos reales
-    if 'tipo_catalogo' in cfg:
-        df_real = cargar_reales_generacion(conn, cfg['tipo_catalogo'], fecha_desde, fecha_hasta)
-    else:
-        df_real = cargar_reales_metrica(conn, cfg, fecha_desde, fecha_hasta)
-
-    if df_real.empty:
-        return None, "sin datos reales en el rango de predicción"
-
     # Merge por fecha
     df_merge = pd.merge(
         df_pred[['fecha', 'predicho']],
@@ -259,10 +267,10 @@ def evaluar_fuente(conn, fuente, cfg):
             if len(parciales) > 0:
                 fechas_excl = parciales['fecha'].dt.date.tolist()
                 df_merge = df_merge[df_merge['valor'] >= umbral_parcial]
-                print(f"  ⚠️  Excluidos {len(parciales)} datos parciales: {fechas_excl}")
+                print(f"    ⚠️  Excluidos {len(parciales)} datos parciales: {fechas_excl}")
 
     if len(df_merge) < MIN_DIAS_OVERLAP:
-        return None, f"solo {len(df_merge)} días de overlap (mín: {MIN_DIAS_OVERLAP})"
+        return None
 
     y_real = df_merge['valor'].values
     y_pred = df_merge['predicho'].values
@@ -278,7 +286,7 @@ def evaluar_fuente(conn, fuente, cfg):
         if n_excluidos > 0 and mask_validos.sum() >= MIN_DIAS_OVERLAP:
             y_real_mape = y_real[mask_validos]
             y_pred_mape = y_pred[mask_validos]
-            print(f"  ℹ️  Eólica: {n_excluidos} días <0.10 GWh excluidos del MAPE (días sin viento)")
+            print(f"    ℹ️  Eólica: {n_excluidos} días <0.10 GWh excluidos del MAPE (días sin viento)")
         else:
             y_real_mape, y_pred_mape = y_real, y_pred
         # SMAPE simétrico como métrica complementaria (rangos 0-1, no explota con ceros)
@@ -292,7 +300,7 @@ def evaluar_fuente(conn, fuente, cfg):
     mape_expost = mean_absolute_percentage_error(y_real_mape, y_pred_mape)  # type: ignore[arg-type]
     rmse_expost = float(np.sqrt(mean_squared_error(y_real, y_pred)))  # type: ignore[arg-type]
 
-    # MAPE/RMSE de entrenamiento (del batch más reciente)
+    # MAPE/RMSE de entrenamiento (del batch evaluado)
     mape_train = df_pred['mape'].iloc[0]
     rmse_train = df_pred['rmse'].iloc[0]
     modelo = df_pred['modelo'].iloc[0]
@@ -311,7 +319,53 @@ def evaluar_fuente(conn, fuente, cfg):
         'rmse_train': rmse_train,
         'modelo': modelo,
         'notas': smape_notas,
-    }, None
+    }
+
+
+def evaluar_fuente(conn, fuente, cfg):
+    """
+    Evalúa la calidad ex‑post de una fuente, batch por batch (agrupado por
+    fecha_generacion). Cada batch archivado en predictions_history se evalúa
+    de forma independiente, para no depender de que siga vigente en
+    `predictions` — así un reentrenamiento posterior ya no le "gana de mano"
+    a la evaluación.
+    Retorna (lista_de_resultados, motivo_si_nada_se_pudo_evaluar).
+    """
+    df_all = cargar_predicciones_batches(conn, fuente)
+    if df_all.empty:
+        return [], "sin predicciones en BD ni en predictions_history"
+
+    fecha_desde_global = df_all['fecha'].min().date()
+    fecha_hasta_global = df_all['fecha'].max().date()
+
+    # Cargar datos reales (una sola vez, cubre el rango de todos los batches)
+    if 'tipo_catalogo' in cfg:
+        df_real = cargar_reales_generacion(conn, cfg['tipo_catalogo'], fecha_desde_global, fecha_hasta_global)
+    else:
+        df_real = cargar_reales_metrica(conn, cfg, fecha_desde_global, fecha_hasta_global)
+
+    if df_real.empty:
+        return [], "sin datos reales en el rango de predicción"
+
+    ya_evaluados = cargar_evaluaciones_previas(conn, fuente)
+
+    resultados = []
+    for fecha_gen, df_pred in df_all.groupby('fecha_generacion', dropna=False):
+        resultado = _evaluar_batch(df_pred, df_real, fuente)
+        if resultado is None:
+            continue
+
+        prev_overlap = ya_evaluados.get(fecha_gen, -1)
+        if resultado['dias_overlap'] <= prev_overlap:
+            continue  # ya evaluado con igual o mejor overlap, sin novedad
+
+        resultado['fecha_generacion'] = fecha_gen
+        resultados.append(resultado)
+
+    if not resultados:
+        return [], f"sin batches nuevos con ≥{MIN_DIAS_OVERLAP} días de overlap"
+
+    return resultados, None
 
 
 def enviar_alerta_telegram(alertas_globales, resumen):
@@ -397,8 +451,9 @@ def guardar_evaluacion(conn, resultado, notas=""):
     cur.execute("""
         INSERT INTO predictions_quality_history
             (fuente, fecha_desde, fecha_hasta, dias_overlap,
-             mape_expost, rmse_expost, mape_train, rmse_train, modelo, notas)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             mape_expost, rmse_expost, mape_train, rmse_train, modelo, notas,
+             fecha_generacion)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         resultado['fuente'],
         resultado['fecha_desde'],
@@ -410,6 +465,7 @@ def guardar_evaluacion(conn, resultado, notas=""):
         resultado['rmse_train'],
         resultado['modelo'],
         notas,
+        resultado.get('fecha_generacion'),
     ))
     conn.commit()
     cur.close()
@@ -436,43 +492,51 @@ def main():
     for fuente, cfg in FUENTES_MAPPING.items():
         print(f"\n─── {fuente} ───")
 
-        resultado, motivo = evaluar_fuente(conn, fuente, cfg)
+        resultados, motivo = evaluar_fuente(conn, fuente, cfg)
 
-        if resultado is None:
+        if not resultados:
             print(f"  ⏭️  Omitida: {motivo}")
             resumen.append({'fuente': fuente, 'status': motivo})
             continue
 
-        # Mostrar resultados
-        mape_tr_str = f"{resultado['mape_train']:.2%}" if resultado['mape_train'] is not None else "N/A"
-        print(f"  Overlap: {resultado['dias_overlap']} días "
-              f"({resultado['fecha_desde']} → {resultado['fecha_hasta']})")
-        print(f"  MAPE ex‑post:  {resultado['mape_expost']:.2%}")
-        print(f"  RMSE ex‑post:  {resultado['rmse_expost']:.2f}")
-        print(f"  MAPE entrena:  {mape_tr_str}")
+        # Cada batch (fecha_generacion) con overlap nuevo se evalúa por separado
+        for resultado in resultados:
+            fecha_gen = resultado.get('fecha_generacion')
+            fecha_gen_str = (
+                fecha_gen.strftime('%Y-%m-%d %H:%M')
+                if fecha_gen is not None and not pd.isna(fecha_gen) else "N/A"
+            )
+            print(f"  · Batch fecha_generacion={fecha_gen_str}")
 
-        # Alertas
-        alertas = generar_alertas(resultado)
-        for a in alertas:
-            print(f"  {a}")
-            alertas_globales.append(f"{fuente}: {a}")
+            mape_tr_str = f"{resultado['mape_train']:.2%}" if resultado['mape_train'] is not None else "N/A"
+            print(f"    Overlap: {resultado['dias_overlap']} días "
+                  f"({resultado['fecha_desde']} → {resultado['fecha_hasta']})")
+            print(f"    MAPE ex‑post:  {resultado['mape_expost']:.2%}")
+            print(f"    RMSE ex‑post:  {resultado['rmse_expost']:.2f}")
+            print(f"    MAPE entrena:  {mape_tr_str}")
 
-        if not alertas:
-            print(f"  ✅ OK")
+            # Alertas
+            alertas = generar_alertas(resultado)
+            for a in alertas:
+                print(f"    {a}")
+                alertas_globales.append(f"{fuente}: {a}")
 
-        # Guardar en BD
-        notas_str = "; ".join(alertas) if alertas else "OK"
-        if resultado.get('notas'):
-            notas_str = resultado['notas'] + ("; " + notas_str if notas_str != "OK" else "")
-        guardar_evaluacion(conn, resultado, notas_str)
+            if not alertas:
+                print(f"    ✅ OK")
 
-        resumen.append({
-            'fuente': fuente,
-            'dias': resultado['dias_overlap'],
-            'mape_expost': resultado['mape_expost'],
-            'mape_train': resultado['mape_train'],
-            'status': 'ALERTA' if alertas else 'OK',
-        })
+            # Guardar en BD
+            notas_str = "; ".join(alertas) if alertas else "OK"
+            if resultado.get('notas'):
+                notas_str = resultado['notas'] + ("; " + notas_str if notas_str != "OK" else "")
+            guardar_evaluacion(conn, resultado, notas_str)
+
+            resumen.append({
+                'fuente': fuente,
+                'dias': resultado['dias_overlap'],
+                'mape_expost': resultado['mape_expost'],
+                'mape_train': resultado['mape_train'],
+                'status': 'ALERTA' if alertas else 'OK',
+            })
 
     # ── Resumen final ──
     print("\n" + "=" * 70)

@@ -221,6 +221,15 @@ class LossesNTService:
                 )
                 row = cur.fetchone()
                 if not row or row[0] is None or row[1] is None:
+                    faltantes = []
+                    if not row or row[0] is None:
+                        faltantes.append('Gene')
+                    if not row or row[1] is None:
+                        faltantes.append('DemaReal')
+                    logger.warning(
+                        "%s Sin dato de %s en metrics para %s — se omite el día",
+                        _PREFIX, '/'.join(faltantes), fecha_str,
+                    )
                     return None
 
                 gene_gwh = float(row[0])

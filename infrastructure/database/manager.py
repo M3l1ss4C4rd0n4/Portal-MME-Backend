@@ -43,6 +43,12 @@ class DatabaseManager(IDatabaseManager):
         finally:
             if conn and not conn.closed:
                 try:
+                    # commit ANTES de reset(): reset() hace rollback de cualquier
+                    # cambio pendiente (docs de psycopg2), así que si un caller
+                    # escribió vía query_df() (que nunca hace commit por sí mismo)
+                    # el orden anterior (reset -> commit) descartaba ese INSERT/UPDATE
+                    # en silencio antes de que el commit tuviera algo que persistir.
+                    conn.commit()
                     conn.reset()
                     with conn.cursor() as _c:
                         _c.execute('RESET search_path')
@@ -52,10 +58,23 @@ class DatabaseManager(IDatabaseManager):
             pool.putconn(conn)
 
     def query_df(self, query: str, params: Optional[dict] = None) -> pd.DataFrame:
-        """Ejecuta query y retorna Pandas DataFrame."""
+        """
+        Ejecuta query y retorna Pandas DataFrame.
+
+        Usa cursor.execute()/fetchall() en vez de pd.read_sql_query(query, conn) —
+        pandas marca ese camino como "no testeado" para conexiones DBAPI2 crudas
+        (no-SQLAlchemy) como psycopg2, y se comprobó no es fiable bajo llamadas
+        concurrentes (vía asyncio.to_thread): en ciertas secuencias devolvía la fila
+        de encabezados de columna como si fuera una fila de datos (ej. 'total' como
+        valor en vez de un conteo). cursor.execute()+fetchall() no tiene ese problema.
+        """
         try:
             with self.get_connection() as conn:
-                return pd.read_sql_query(query, conn, params=params)
+                with conn.cursor() as cursor:
+                    cursor.execute(query, params)
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    rows = cursor.fetchall()
+            return pd.DataFrame(rows, columns=columns)
         except Exception as e:
             logger.error(f"Error ejecutando query DF: {e} | Query: {query[:50]}...")
             return pd.DataFrame()

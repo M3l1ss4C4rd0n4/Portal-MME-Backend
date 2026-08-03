@@ -27,31 +27,17 @@ _DEPT_MAP: dict[str, str] = {
 
 
 def _inv_numeric(col: str = "inversion_estimada") -> str:
-    """Expresión SQL compatible con inversion_estimada TEXT o NUMERIC."""
+    """Expresión SQL compatible con inversion_estimada TEXT o NUMERIC.
+
+    Celdas con errores de fórmula (#REF!, etc.) o basura no numérica se
+    ignoran (NULL) en vez de tumbar la consulta con un error de CAST —
+    el patrón exige que el string quede COMPLETO en formato numérico,
+    no solo que empiece por un dígito.
+    """
     return f"""CASE WHEN {col} IS NULL THEN NULL
-         WHEN {col}::text ~ '^[0-9.-]+'
+         WHEN REPLACE(REPLACE({col}::text, '$', ''), ',', '') ~ '^-?[0-9]+(\\.[0-9]+)?$'
          THEN REPLACE(REPLACE({col}::text, '$', ''), ',', '')::numeric
          ELSE NULL END"""
-
-
-def _inv_numeric_final(col: str = "inversion_final") -> str:
-    """
-    Expresión SQL para inversion_final en formato colombiano:
-    '$ X.XXX.XXX,XX' -> 1234567.89
-    También maneja valores numéricos simples.
-    """
-    return f"""
-        CASE
-            WHEN {col} IS NULL OR TRIM({col}::text) IN ('', '-', 'Sin información') THEN NULL
-            WHEN {col}::text ~ '^[0-9.-]+$'
-            THEN REPLACE(REPLACE({col}::text, '$', ''), ',', '')::numeric
-            ELSE REPLACE(
-                REPLACE(
-                    REPLACE(REPLACE({col}::text, '$', ''), ' ', ''),
-                '.', ''),
-            ',', '.')::numeric
-        END
-    """
 
 
 _COORD_WHERE = """
@@ -86,10 +72,7 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                         SUM(usuarios_equivalentes)                                        AS usuarios_equiv,
                         AVG(usuarios_equivalentes)                                        AS avg_usuarios,
                         SUM(beneficiarios_equivalentes)                                   AS beneficiarios_equiv,
-                        AVG(beneficiarios_equivalentes)                                   AS avg_beneficiarios,
-                        SUM(COALESCE({_inv_numeric_final()}, 0))                          AS inversion_final,
-                        COUNT(*) FILTER (WHERE inversion_final != 'Sin información')      AS con_inversion_final,
-                        COUNT(*) FILTER (WHERE fecha_operacion IS NOT NULL)               AS con_fecha_operacion
+                        AVG(beneficiarios_equivalentes)                                   AS avg_beneficiarios
                     FROM comunidades.base
                     WHERE implementado = 'Si'
                 """)
@@ -133,15 +116,40 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                 fuente_rows = cur.fetchall()
 
                 cur.execute(f"""
-                    SELECT fuente_financiacion,
+                    SELECT COALESCE(NULLIF(TRIM(zona_sin_zni_mixto),''),'Sin clasificar') AS zona,
                         COUNT(*) AS count,
+                        SUM(capacidad_de_generacion_kwp) AS capacidad,
                         SUM(COALESCE({_inv_numeric()}, 0)) AS inversion
                     FROM comunidades.base
-                    WHERE implementado = 'Si' AND fuente_financiacion IS NOT NULL
-                    GROUP BY fuente_financiacion
+                    WHERE implementado = 'Si'
+                    GROUP BY zona
                     ORDER BY count DESC
                 """)
-                financia_rows = cur.fetchall()
+                zona_flat_rows = cur.fetchall()
+
+                cur.execute(f"""
+                    SELECT etnia,
+                        COUNT(*) AS count,
+                        SUM(capacidad_de_generacion_kwp) AS capacidad,
+                        SUM(COALESCE({_inv_numeric()}, 0)) AS inversion
+                    FROM comunidades.base
+                    WHERE implementado = 'Si' AND etnia IS NOT NULL
+                    GROUP BY etnia
+                    ORDER BY count DESC
+                """)
+                etnia_rows = cur.fetchall()
+
+                cur.execute(f"""
+                    SELECT ejecutor,
+                        COUNT(*) AS count,
+                        SUM(capacidad_de_generacion_kwp) AS capacidad,
+                        SUM(COALESCE({_inv_numeric()}, 0)) AS inversion
+                    FROM comunidades.base
+                    WHERE implementado = 'Si' AND ejecutor IS NOT NULL
+                    GROUP BY ejecutor
+                    ORDER BY count DESC
+                """)
+                ejecutor_rows = cur.fetchall()
 
                 cur.execute("""
                     SELECT
@@ -184,9 +192,9 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                         estado_actual,
                         tipo_ce,
                         fuentes_energia,
-                        {_inv_numeric()}                                               AS inversion_estimada_num,
-                        CASE WHEN inversion_final != 'Sin información'
-                             THEN {_inv_numeric_final()} ELSE NULL END                 AS inversion_final_num
+                        etnia,
+                        ejecutor,
+                        {_inv_numeric()}                                               AS inversion_estimada_num
                     FROM comunidades.base
                     WHERE implementado = 'Si'
                       AND {_COORD_WHERE}
@@ -275,8 +283,9 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
                 "estado_actual":     r[7] or "",
                 "tipo_ce":           r[8] or "",
                 "fuentes_energia":   r[9] or "",
-                "inversion_estimada": _f(r[10]),
-                "inversion_final":   _f(r[11]),
+                "etnia":             r[10] or "",
+                "ejecutor":          r[11] or "",
+                "inversion_estimada": _f(r[12]),
             }
             for r in puntos_rows
             if _coord(r[3]) is not None and _coord(r[4]) is not None
@@ -315,24 +324,47 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
             for r in fuente_rows
         ]
 
-        # por_fuente_financiacion
-        por_fuente_financiacion = [
+        # por_zona
+        por_zona = [
             {
-                "fuente":    r[0],
+                "zona":      r[0],
                 "count":     int(r[1]),
-                "inversion": _f(r[2]) or 0.0,
+                "capacidad": _f(r[2]) or 0.0,
+                "inversion": _f(r[3]) or 0.0,
             }
-            for r in financia_rows
+            for r in zona_flat_rows
+        ]
+
+        # por_etnia
+        por_etnia = [
+            {
+                "etnia":     r[0],
+                "count":     int(r[1]),
+                "capacidad": _f(r[2]) or 0.0,
+                "inversion": _f(r[3]) or 0.0,
+            }
+            for r in etnia_rows
+        ]
+
+        # por_ejecutor
+        por_ejecutor = [
+            {
+                "ejecutor":  r[0],
+                "count":     int(r[1]),
+                "capacidad": _f(r[2]) or 0.0,
+                "inversion": _f(r[3]) or 0.0,
+            }
+            for r in ejecutor_rows
         ]
 
         # stats_fechas
         stats_fechas = {
-            "min_registro":      fechas_row[0].strftime("%Y-%m-%d") if fechas_row[0] else None,
-            "max_registro":      fechas_row[1].strftime("%Y-%m-%d") if fechas_row[1] else None,
-            "min_operacion":     fechas_row[2].strftime("%Y-%m-%d") if fechas_row[2] else None,
-            "max_operacion":     fechas_row[3].strftime("%Y-%m-%d") if fechas_row[3] else None,
-            "con_registro":      int(fechas_row[4]),
-            "con_operacion":     int(fechas_row[5]),
+            "min_registro":  fechas_row[0].strftime("%Y-%m-%d") if fechas_row[0] else None,
+            "max_registro":  fechas_row[1].strftime("%Y-%m-%d") if fechas_row[1] else None,
+            "min_operacion": fechas_row[2].strftime("%Y-%m-%d") if fechas_row[2] else None,
+            "max_operacion": fechas_row[3].strftime("%Y-%m-%d") if fechas_row[3] else None,
+            "con_registro":  int(fechas_row[4]),
+            "con_operacion": int(fechas_row[5]),
         }
 
         # por_municipio — dict clave=departamentoGeo
@@ -370,15 +402,14 @@ async def get_comunidades_mapa(request: Request, api_key: str = Depends(get_api_
             "avgUsuarios":           _f(k[6]),
             "avgBeneficiarios":      _f(k[8]),
             "avgInversion":          _f(k[2]),
-            "inversionFinal":        _f(k[9]) or 0.0,
-            "conInversionFinal":     int(k[10]),
-            "conFechaOperacion":     int(k[11]),
             "porDepartamento":       por_departamento,
             "detalleZona":           detalle_zona,
             "porEstado":             por_estado,
             "porTipoCE":             por_tipo_ce,
             "porFuenteEnergia":      por_fuente_energia,
-            "porFuenteFinanciacion": por_fuente_financiacion,
+            "porZona":               por_zona,
+            "porEtnia":              por_etnia,
+            "porEjecutor":           por_ejecutor,
             "statsFechas":           stats_fechas,
             "puntos":                puntos,
             "porMunicipio":          por_municipio,

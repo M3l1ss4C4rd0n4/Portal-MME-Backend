@@ -455,75 +455,8 @@ async def eliminar_push(
 
 
 # ═══════════════════════════════════════════════════════════
-# ENDPOINT TEMPORAL - DESCARGA REPO MAVEN LOCAL
-# Eliminar después de instalar la app
+# ENDPOINT TEMPORAL - MODELO PORCUPINE (wake word)
 # ═══════════════════════════════════════════════════════════
-
-import re as _re
-
-_MAVEN_ZIP = "/home/admonctrlxm/server/data/local-maven-temp.zip"
-_MAVEN_PARTS_DIR = "/home/admonctrlxm/server/data"
-
-@router.get("/dev/maven-local", include_in_schema=False)
-async def download_maven_local(api_key: str = Depends(get_api_key)):
-    """Endpoint temporal para descargar el repo Maven local (uso interno dev)."""
-    if not os.path.exists(_MAVEN_ZIP):
-        raise HTTPException(status_code=404, detail="Archivo no disponible")
-    return FileResponse(
-        path=_MAVEN_ZIP,
-        media_type="application/zip",
-        filename="local-maven.zip",
-    )
-
-@router.get("/dev/maven-part/{part}", include_in_schema=False)
-async def download_maven_part(part: str, api_key: str = Depends(get_api_key)):
-    """Endpoint temporal - descarga una parte del repo Maven (chunks de 25MB)."""
-    if not _re.match(r'^[a-z]{2}$', part):
-        raise HTTPException(status_code=404)
-    path = f"{_MAVEN_PARTS_DIR}/local-maven-part-{part}"
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"Parte '{part}' no disponible")
-    return FileResponse(
-        path=path,
-        media_type="application/octet-stream",
-        filename=f"local-maven-part-{part}",
-    )
-
-@router.get("/dev/gradle-86", include_in_schema=False)
-async def download_gradle_86(api_key: str = Depends(get_api_key)):
-    """Endpoint temporal - Gradle 8.6 bin zip para build EnergIA."""
-    path = "/home/admonctrlxm/server/data/gradle-8.6-bin.zip"
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Archivo aún no disponible, reintenta en un momento")
-    return FileResponse(
-        path=path,
-        media_type="application/zip",
-        filename="gradle-8.6-bin.zip",
-    )
-
-@router.get("/dev/kgp-patch", include_in_schema=False)
-async def download_kgp_patch(api_key: str = Depends(get_api_key)):
-    """Endpoint temporal - parche KGP variant JARs (gradle85 + .module) para fix getIsolatedProjects()."""
-    path = "/home/admonctrlxm/server/data/kgp-patch.zip"
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Archivo no disponible")
-    return FileResponse(
-        path=path,
-        media_type="application/zip",
-        filename="kgp-patch.zip",
-    )
-
-@router.get("/dev/deps-patch", include_in_schema=False)
-async def download_deps_patch(api_key: str = Depends(get_api_key)):
-    """Endpoint temporal - deps Maven (gson, guava, kotlin-stdlib, etc.) para included build."""
-    path = "/home/admonctrlxm/server/data/deps-only.zip"
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Archivo no disponible")
-    return FileResponse(
-        path=path,
-        media_type="application/zip",
-        filename="deps-only.zip",
-    )
 
 @router.get("/dev/ppn-energia", include_in_schema=False)
 async def download_ppn_energia(api_key: str = Depends(get_api_key)):

@@ -277,18 +277,23 @@ def obtener_precios_escasez_vigentes(
     fecha: Optional[date] = None,
 ) -> Dict[str, float]:
     """
-    Devuelve los tres precios de escasez vigentes (PEI/PE/PES) para la fecha dada.
+    Devuelve los precios de escasez vigentes (PEI/PE/PES) para la fecha dada.
 
     Estrategia de consulta (en orden):
-      1. Consulta la tabla `sector_energetico.precios_escasez_mensuales` en
-         PostgreSQL (valores oficiales actualizados mensualmente por CREG/XM).
-      2. Si no hay valor para el mes solicitado, busca el más reciente anterior.
-      3. Consulta `PrecEsca` desde `sector_energetico.metrics` (dato diario real
-         de XM, más actualizado que la tabla mensual).
-      4. Si la BD no está disponible o no hay datos, devuelve los valores de
+      1. Lee `PrecEscaSup` (→ pes) y `PrecEscaInf` (→ pei) directamente de
+         `sector_energetico.metrics` — son series diarias reales de XM, cada
+         una en su propia fecha más reciente (Resolución CREG 101 066/2024,
+         Art. 3 y 4). `pe` se deriva como punto medio de pei/pes por
+         compatibilidad con el código que aún lo consume — ya no corresponde
+         a un umbral regulatorio independiente desde la Res. 101 066/2024
+         (antes de esa resolución solo existía un "precio de escasez" único).
+      2. Si (1) no tiene datos, consulta la tabla
+         `sector_energetico.precios_escasez_mensuales` (mantenimiento manual,
+         puede estar desactualizada).
+      3. Si la BD no está disponible o no hay datos, devuelve los valores de
          referencia ene-2026 (PRECIO_ESCASEZ_*_REF_2026_01).
 
-    Fuente: Resolución CREG 101 066 de 2024.
+    Fuente: Resolución CREG 101 066 de 2024, artículos 3 y 4.
     Publicación: https://www.xm.com.co/transacciones/cargo-por-confiabilidad/precio-de-bolsa-y-escasez
 
     Args:
@@ -299,7 +304,10 @@ def obtener_precios_escasez_vigentes(
     """
     f = fecha or date.today()
 
-    # 1) Intentar consulta a BD
+    # 1) Leer PES (PrecEscaSup) y PEI (PrecEscaInf) directamente, cada una en
+    #    su propia fecha más reciente (mismo patrón que sector_snapshot.py
+    #    usa para PPPrecBolsNaci — nunca combinar el MAX(fecha) de dos
+    #    métricas distintas, o se arriesga a traer NULL para una de ellas).
     try:
         import psycopg2
         from core.config import settings
@@ -314,7 +322,56 @@ def obtener_precios_escasez_vigentes(
         conn = psycopg2.connect(**params)
         try:
             cur = conn.cursor()
-            # Primero buscar valor exacto del mes
+            cur.execute("""
+                SELECT
+                    (SELECT valor_gwh FROM sector_energetico.metrics
+                     WHERE metrica = 'PrecEscaSup' AND entidad = 'Sistema' AND recurso = 'Sistema'
+                     ORDER BY fecha DESC LIMIT 1) AS pes,
+                    (SELECT fecha FROM sector_energetico.metrics
+                     WHERE metrica = 'PrecEscaSup' AND entidad = 'Sistema' AND recurso = 'Sistema'
+                     ORDER BY fecha DESC LIMIT 1) AS fecha_pes,
+                    (SELECT valor_gwh FROM sector_energetico.metrics
+                     WHERE metrica = 'PrecEscaInf' AND entidad = 'Sistema' AND recurso = 'Sistema'
+                     ORDER BY fecha DESC LIMIT 1) AS pei,
+                    (SELECT fecha FROM sector_energetico.metrics
+                     WHERE metrica = 'PrecEscaInf' AND entidad = 'Sistema' AND recurso = 'Sistema'
+                     ORDER BY fecha DESC LIMIT 1) AS fecha_pei
+            """)
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0] is not None and row[2] is not None:
+                pes = float(row[0])
+                pei = float(row[2])
+                return {
+                    'pei': round(pei, 2),
+                    'pe': round((pei + pes) / 2, 2),
+                    'pes': round(pes, 2),
+                    'fuente': f'XM PrecEscaSup ({row[1]}) / PrecEscaInf ({row[3]})',
+                    'anio': f.year,
+                    'mes': f.month,
+                    'origen': 'XM',
+                }
+        finally:
+            conn.close()
+    except Exception:
+        # BD no disponible, seguir con el siguiente nivel de fallback
+        pass
+
+    # 2) Tabla mensual de mantenimiento manual (puede estar desactualizada)
+    try:
+        import psycopg2
+        from core.config import settings
+        params = {
+            'host': settings.POSTGRES_HOST,
+            'port': settings.POSTGRES_PORT,
+            'database': settings.POSTGRES_DB,
+            'user': settings.POSTGRES_USER,
+        }
+        if settings.POSTGRES_PASSWORD:
+            params['password'] = settings.POSTGRES_PASSWORD
+        conn = psycopg2.connect(**params)
+        try:
+            cur = conn.cursor()
             cur.execute("""
                 SELECT pei, pe, pes, fuente, anio, mes
                 FROM sector_energetico.precios_escasez_mensuales
@@ -322,7 +379,6 @@ def obtener_precios_escasez_vigentes(
             """, (f.year, f.month))
             row = cur.fetchone()
             if not row:
-                # Buscar el más reciente <= fecha pedida
                 cur.execute("""
                     SELECT pei, pe, pes, fuente, anio, mes
                     FROM sector_energetico.precios_escasez_mensuales
@@ -340,55 +396,7 @@ def obtener_precios_escasez_vigentes(
                     'fuente': str(row[3]),
                     'anio': int(row[4]),
                     'mes': int(row[5]),
-                    'origen': 'BD',
-                }
-        finally:
-            conn.close()
-    except Exception:
-        # BD no disponible, usar valores de referencia
-        pass
-
-    # 2) Intentar PrecEsca desde sector_energetico.metrics (dato real XM diario)
-    try:
-        import psycopg2
-        from core.config import settings
-        params = {
-            'host': settings.POSTGRES_HOST,
-            'port': settings.POSTGRES_PORT,
-            'database': settings.POSTGRES_DB,
-            'user': settings.POSTGRES_USER,
-        }
-        if settings.POSTGRES_PASSWORD:
-            params['password'] = settings.POSTGRES_PASSWORD
-        conn = psycopg2.connect(**params)
-        try:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT valor_gwh, fecha
-                FROM sector_energetico.metrics
-                WHERE metrica = 'PrecEsca'
-                  AND entidad = 'Sistema'
-                  AND recurso = 'Sistema'
-                ORDER BY fecha DESC
-                LIMIT 1
-            """)
-            row = cur.fetchone()
-            cur.close()
-            if row and row[0] is not None:
-                prec_esca = float(row[0])
-                # Determinar PEI y PES proporcionalmente según la relación
-                # original entre los valores de referencia CREG.
-                # PEI/PE = 327.67/590.56 ≈ 0.555, PES/PE = 830.34/590.56 ≈ 1.406
-                relacion_pei = PRECIO_ESCASEZ_PEI_REF_2026_01 / PRECIO_ESCASEZ_PE_REF_2026_01
-                relacion_pes = PRECIO_ESCASEZ_PES_REF_2026_01 / PRECIO_ESCASEZ_PE_REF_2026_01
-                return {
-                    'pei': round(prec_esca * relacion_pei, 2),
-                    'pe': round(prec_esca, 2),
-                    'pes': round(prec_esca * relacion_pes, 2),
-                    'fuente': f'XM PrecEsca ({row[1]})',
-                    'anio': f.year,
-                    'mes': f.month,
-                    'origen': 'XM',
+                    'origen': 'BD_mensual',
                 }
         finally:
             conn.close()
@@ -508,18 +516,13 @@ def determinar_condicion_sistema(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECCIÓN 5 — CAPACIDAD DEL SISTEMA INTERCONECTADO NACIONAL (SIN)
+# SECCIÓN 5 — OBJETIVO XM ANTE EL NIÑO
 # ═══════════════════════════════════════════════════════════════════════════════
-#
-# Fuente: Reportes oficiales XM y CNO 634.
-# La capacidad útil de reserva del SIN (suma del volumen útil de embalses
-# convertido a energía) es ≈ 17 000 GWh.
-# La capacidad efectiva neta instalada del SIN al 31 dic 2025 es ≈ 21 028.56 MW
-# (Comunicado XM 2025, https://www.xm.com.co/noticias/8712).
+# Nota: la capacidad útil de reserva del SIN (GWh) y la capacidad efectiva neta
+# instalada (MW) ya NO se hardcodean aquí — se calculan en vivo desde
+# `sector_energetico.metrics` (ver `capacidadEmbalseGwh`/`capacidadInstaladaMw`
+# en `api/v1/routes/sector_snapshot.py`), evitando que queden desactualizadas.
 # ──────────────────────────────────────────────────────────────────────────────
-
-CAPACIDAD_UTIL_RESERVA_SIN_GWH: float = 17_000.0
-CAPACIDAD_EFECTIVA_NETA_SIN_MW: float = 21_028.56
 
 # Objetivo XM/CND para enfrentar El Niño (XM Boletín 10-abril-2026):
 # "Maximizar reservas desde agosto al inicio del verano para alcanzar nivel

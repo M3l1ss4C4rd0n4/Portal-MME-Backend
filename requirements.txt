@@ -29,6 +29,9 @@ python-dotenv==1.0.0
 # IA y Agente Inteligente (Chat IA)
 openai==1.61.0  # Actualizado para soporte Groq/OpenRouter
 
+# RAG — embeddings locales para búsqueda semántica (ontologia.contratos_texto_embeddings)
+sentence-transformers==5.6.1
+
 # Machine Learning para Predicciones (FASE 2)
 prophet==1.1.6
 pmdarima==2.0.4
@@ -61,6 +64,9 @@ SQLAlchemy==2.0.25
 weasyprint>=60.0
 pdfplumber>=0.11.0
 Pillow>=12.0.0
+
+# Extracción de texto de informes (RAG SharePoint — Fase 8)
+python-pptx>=1.0.0
 
 # ML — hyperparameter optimization and gradient boosting (FASE 21-22)
 xgboost==3.2.0

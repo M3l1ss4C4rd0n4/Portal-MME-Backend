@@ -1287,15 +1287,14 @@ async def _build_comunidades(captures: dict | None = None, params: dict | None =
     avg_b  = data.get("avgBeneficiarios") or 0
     avg_i  = data.get("avgInversion") or 0
 
-    # ── 6 KPIs ──
+    # ── 5 KPIs ──
+    stats_fechas = data.get("statsFechas") or {}
     kpis = f"""
     {_section("INDICADORES GENERALES")}
     <div class="kpi-grid-3">
       {_kpi("CEs Implementadas", _fmt_num(impl), "", "#F59E0B")}
       {_kpi("Inversión Estimada", _fmt_cop(data.get("inversionEstimada")), "",
             "", f"promedio: {_fmt_cop(avg_i)} / CE")}
-      {_kpi("Inversión Final", _fmt_cop(data.get("inversionFinal")), "",
-            "", f"{_fmt_num(data.get('conInversionFinal'))} CEs con inversión final")}
       {_kpi("Capacidad Instalada", _fmt_num(data.get("capacidadKwp"),1), "kWp",
             "", f"promedio: {avg_c:.0f} kWp")}
       {_kpi("Usuarios Equiv.", f"{_fmt_num(round(data.get('usuariosEquiv') or 0))} mil", "",
@@ -1304,8 +1303,8 @@ async def _build_comunidades(captures: dict | None = None, params: dict | None =
             "", f"promedio: {avg_b:.0f}")}
     </div>
     <p class="meta" style="margin-bottom:8px">
-      {_fmt_num(data.get("conFechaOperacion"))} CEs con fecha de operación ·
-      {_fmt_num(data.get("statsFechas",{}).get("con_registro"))} con fecha de registro
+      {_fmt_num(stats_fechas.get("con_operacion"))} CEs con fecha de operación ·
+      {_fmt_num(stats_fechas.get("con_registro"))} con fecha de registro
     </p>"""
 
     # ── MAPA — screenshot Leaflet del frontend (más fiel) o Plotly Scattergeo ──

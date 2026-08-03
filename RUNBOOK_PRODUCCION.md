@@ -1,7 +1,7 @@
 # Portal Energético MME — RunBook de Producción
 
-> **Versión:** 1.0.0  
-> **Fecha:** 2026-03-03  
+> **Versión:** 1.1.0  
+> **Fecha:** 2026-07-06  
 > **Audiencia:** Equipo de operaciones  
 > **Servidor:** Srvwebprdctrlxm (Azure VM, Ubuntu)
 
@@ -18,7 +18,7 @@
 | Celery Worker | background | celery worker | `celery-worker@1` |
 | Celery Beat | background | celery beat | `celery-beat` (o cron) |
 | Nginx (reverse proxy) | 80/443 | nginx | `nginx` |
-| Telegram Bot | 127.0.0.1:8001 | uvicorn | (proceso propio) |
+| Telegram Bot | systemd | telegram-polling.service | `telegram-polling` |
 | MLflow | 127.0.0.1:5000 | uvicorn | (proceso propio) |
 
 ---
@@ -351,7 +351,7 @@ Nginx :80/:443  (reverse proxy + SSL)
   ├─→ API FastAPI :8000  (gunicorn + uvicorn, async)
   │     └─ 21 endpoints + chatbot orchestrator
   │
-  └─→ Telegram Bot :8001  (uvicorn)
+  └─→ Telegram Bot : systemd (telegram-polling.service)
 
 Celery Worker + Beat ──→ PostgreSQL :5432
                      ──→ Redis :6379 (cache + broker)

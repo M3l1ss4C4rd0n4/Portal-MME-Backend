@@ -2820,6 +2820,36 @@ def _build_hidrologia_detalle_table() -> str:
         return ''
 
 
+def _get_embalse_pct_historico(fecha_ref: str, anios_atras: int) -> Optional[float]:
+    """
+    Nivel real de embalses (% volumen útil agregado del SIN) en la fecha de hace
+    `anios_atras` años (tolerancia ±3 días, toma el dato más cercano). Devuelve
+    None si no hay dato real disponible — nunca se debe aproximar/inventar este
+    valor a partir del nivel de hoy.
+    """
+    if not fecha_ref:
+        return None
+    try:
+        from infrastructure.database.connection import get_connection
+        from datetime import datetime as _dt
+        fecha_dt = _dt.strptime(fecha_ref[:10], '%Y-%m-%d')
+        fecha_hist = fecha_dt.replace(year=fecha_dt.year - anios_atras)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT valor_gwh FROM sector_energetico.metrics
+                    WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema' AND recurso='Sistema'
+                      AND fecha BETWEEN %s::date - INTERVAL '3 days' AND %s::date + INTERVAL '3 days'
+                    ORDER BY ABS(fecha - %s::date) ASC
+                    LIMIT 1
+                """, [fecha_hist, fecha_hist, fecha_hist])
+                row = cur.fetchone()
+                return round(float(row[0]) * 100, 1) if row and row[0] is not None else None
+    except Exception as e:
+        logger.warning(f"[REPORT] Error consultando embalse histórico ({anios_atras} años atrás): {e}")
+        return None
+
+
 def _build_page_hidrologia(
     logo_b64: str,
     fecha_label: str,
@@ -2840,7 +2870,12 @@ def _build_page_hidrologia(
     for f in (fichas or []):
         ind_lower = f.get('indicador', '').lower()
         if 'embalse' in ind_lower:
-            valor = f.get('valor', 0)
+            valor = f.get('valor')
+            if valor is None:
+                # Sin dato reciente (ver estado_actual_handler) — se omite la
+                # ficha en vez de fabricar un valor; el panel derecho más abajo
+                # ya maneja este caso mostrando "N/D".
+                break
             unidad = f.get('unidad', '%')
             ctx = f.get('contexto', {})
             var_pct = ctx.get('variacion_vs_promedio_pct', 0)
@@ -2904,14 +2939,19 @@ def _build_page_hidrologia(
     desviacion = emb.get('desviacion_pct_media_historica')
     energia_gwh = emb.get('energia_embalsada_gwh')
     
-    # Calcular valores 2025 y 2024 para las barras (estimados desde datos históricos)
-    val_2025 = nivel - (desviacion * 0.3) if desviacion is not None else nivel * 0.95  # Aproximación
-    val_2024 = nivel - (desviacion * 0.5) if desviacion is not None else nivel * 0.90  # Aproximación
-    
-    # Asegurar valores razonables (70-95% típicos)
-    val_2025 = max(50, min(95, val_2025))
-    val_2024 = max(45, min(90, val_2024))
-    
+    # Nivel real de embalses hace 1 y 2 años (mismo día del año) — se consulta en
+    # vivo, nunca se aproxima desde el nivel de hoy; si no hay dato real se
+    # muestra "N/D" en el panel en vez de un número inventado.
+    anio_ref = int(fecha_emb[:4]) if fecha_emb[:4].isdigit() else datetime.now().year
+    anio_1, anio_2 = anio_ref - 1, anio_ref - 2
+    val_anio1 = _get_embalse_pct_historico(fecha_emb, 1)
+    val_anio2 = _get_embalse_pct_historico(fecha_emb, 2)
+
+    val_anio1_str = f'{val_anio1:.1f}%' if val_anio1 is not None else 'N/D'
+    val_anio1_width = min(val_anio1, 100) if val_anio1 is not None else 0
+    val_anio2_str = f'{val_anio2:.1f}%' if val_anio2 is not None else 'N/D'
+    val_anio2_width = min(val_anio2, 100) if val_anio2 is not None else 0
+
     # ── Preparar valores para el panel derecho ──
     desviacion_abs = abs(desviacion) if desviacion is not None else 0
     desviacion_signo = '+' if desviacion and desviacion >= 0 else ''
@@ -2944,20 +2984,20 @@ def _build_page_hidrologia(
             <div style="font-size:7pt;font-weight:bold;color:#555;margin-bottom:5px;">DATO HISTÓRICO</div>
             <div style="margin-bottom:4px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;font-size:7pt;margin-bottom:2px;">
-                    <span>2025</span>
-                    <span style="font-weight:bold;color:#2E8B57;">{val_2025:.1f}%</span>
+                    <span>{anio_1}</span>
+                    <span style="font-weight:bold;color:#2E8B57;">{val_anio1_str}</span>
                 </div>
                 <div style="height:8px;background:#e0e0e0;border-radius:4px;overflow:hidden;">
-                    <div style="width:{min(val_2025, 100)}%;height:100%;background:#90EE90;border-radius:4px;"></div>
+                    <div style="width:{val_anio1_width}%;height:100%;background:#90EE90;border-radius:4px;"></div>
                 </div>
             </div>
             <div>
                 <div style="display:flex;justify-content:space-between;align-items:center;font-size:7pt;margin-bottom:2px;">
-                    <span>2024</span>
-                    <span style="font-weight:bold;color:#1E88E5;">{val_2024:.1f}%</span>
+                    <span>{anio_2}</span>
+                    <span style="font-weight:bold;color:#1E88E5;">{val_anio2_str}</span>
                 </div>
                 <div style="height:8px;background:#e0e0e0;border-radius:4px;overflow:hidden;">
-                    <div style="width:{min(val_2024, 100)}%;height:100%;background:#1E88E5;border-radius:4px;"></div>
+                    <div style="width:{val_anio2_width}%;height:100%;background:#1E88E5;border-radius:4px;"></div>
                 </div>
             </div>
         </div>

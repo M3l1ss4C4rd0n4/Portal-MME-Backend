@@ -170,6 +170,112 @@ def importar_xlsx(ruta: str, estacion: str, fecha_publicacion: Optional[date] = 
     return insertados
 
 
+def _estacion_para_fecha(fecha: date) -> str:
+    """INVIERNO (temporada de lluvias, mayo-noviembre) o VERANO (diciembre-abril)."""
+    return 'INVIERNO' if 5 <= fecha.month <= 11 else 'VERANO'
+
+
+def _upsert_curva_senda(curva: dict, fuente_por_fecha_ancla: str, fuente_proyectada: str,
+                         fecha_ancla: date, fecha_publicacion: date) -> int:
+    """Guarda la curva completa {fecha: pct} — misma sentencia upsert que importar_xlsx."""
+    conn = _get_connection()
+    cur = conn.cursor()
+    insertados = 0
+    try:
+        for fecha_val, pct in curva.items():
+            fuente = fuente_por_fecha_ancla if fecha_val == fecha_ancla else fuente_proyectada
+            cur.execute("""
+                INSERT INTO sector_energetico.senda_referencia
+                    (fecha, porcentaje_volumen_util, estacion, fecha_publicacion, fuente)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (fecha) DO UPDATE SET
+                    porcentaje_volumen_util = EXCLUDED.porcentaje_volumen_util,
+                    estacion = EXCLUDED.estacion,
+                    fecha_publicacion = EXCLUDED.fecha_publicacion,
+                    fuente = EXCLUDED.fuente,
+                    actualizado_en = NOW()
+            """, (fecha_val, pct, _estacion_para_fecha(fecha_val), fecha_publicacion, fuente))
+            insertados += 1
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error guardando curva de senda: {e}")
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return insertados
+
+
+def importar_desde_informe_diario(dry_run: bool = False) -> dict:
+    """Descarga el informe diario "Variables Hidrológicas" de XM (ya sincronizado vía
+    OneDrive/SharePoint) y extrae de su gráfica la curva completa de Senda de Referencia,
+    calibrando ejes con el ancla exacta de texto (ver etl/senda_pdf_parser.py).
+
+    100% automatizado: no requiere XLSX manual ni intervención humana.
+    """
+    from api.v1.routes.reports import (
+        _sp_open_folder, _index_informes_diarios_folders, _resolver_informes_diarios,
+        _sp_download_item, INFORMES_DIARIOS_XM_FOLDER,
+    )
+    from etl.senda_pdf_parser import (
+        extraer_grafica_y_texto, extraer_ancla_textual, extraer_curva_senda,
+        ExtraccionSendaError,
+    )
+
+    resultado = {
+        'exito': False, 'insertados': 0, 'ancla_fecha': None, 'ancla_valor': None,
+        'rango_curva': None, 'error': None,
+    }
+    try:
+        headers, drive_id, root_id = _sp_open_folder(INFORMES_DIARIOS_XM_FOLDER)
+        folders = _index_informes_diarios_folders(headers, drive_id, root_id)
+        if not folders:
+            raise RuntimeError("No se encontraron carpetas de informes diarios en SharePoint")
+        resolved, resolved_from = _resolver_informes_diarios(folders)
+        item = resolved.get('VariablesHidrologicas')
+        if item is None:
+            raise RuntimeError("Informe 'VariablesHidrologicas' no disponible")
+        fecha_publicacion = resolved_from['VariablesHidrologicas']
+
+        pdf_bytes = _sp_download_item(headers, drive_id, item, read_timeout=120)
+
+        arr, texto_pagina = extraer_grafica_y_texto(pdf_bytes)
+        ancla = extraer_ancla_textual(texto_pagina, fecha_publicacion)
+        if ancla is None:
+            raise ExtraccionSendaError(
+                "No se pudo extraer el ancla textual (nivel embalse / diferencia) del PDF"
+            )
+
+        curva = extraer_curva_senda(arr, ancla)
+
+        resultado['ancla_fecha'] = str(ancla.fecha)
+        resultado['ancla_valor'] = ancla.valor_senda
+        resultado['rango_curva'] = (str(min(curva)), str(max(curva)))
+
+        if dry_run:
+            resultado['exito'] = True
+            logger.info(
+                f"[DRY-RUN] Ancla {ancla.fecha}: senda={ancla.valor_senda}% "
+                f"(real={ancla.valor_real}%) | curva: {len(curva)} fechas "
+                f"[{min(curva)} .. {max(curva)}]"
+            )
+            return resultado
+
+        fuente_ancla = f"PDF XM VariablesHidrologicas {fecha_publicacion.isoformat()} — ancla texto"
+        fuente_proyectada = f"PDF XM VariablesHidrologicas {fecha_publicacion.isoformat()} — curva proyectada por píxeles"
+        insertados = _upsert_curva_senda(
+            curva, fuente_ancla, fuente_proyectada, ancla.fecha, fecha_publicacion,
+        )
+        resultado['insertados'] = insertados
+        resultado['exito'] = True
+        logger.info(f"✅ Senda: {insertados} fechas actualizadas (ancla {ancla.fecha}={ancla.valor_senda}%)")
+    except Exception as e:
+        resultado['error'] = str(e)
+        logger.error(f"❌ Error importando senda desde informe diario: {e}")
+    return resultado
+
+
 def obtener_senda_para_fecha(fecha: Optional[date] = None) -> Optional[float]:
     """Devuelve el % de senda para una fecha consultando la BD.
 
@@ -253,9 +359,19 @@ def main():
     parser.add_argument('--xlsx', type=str, help='Ruta a archivo XLSX de XM')
     parser.add_argument('--estacion', type=str, choices=['VERANO', 'INVIERNO'], help='Estación del XLSX')
     parser.add_argument('--info', action='store_true', help='Mostrar estado de la senda')
+    parser.add_argument('--pdf-diario', action='store_true',
+                         help='Extraer senda del informe diario XM "Variables Hidrológicas" (automático)')
+    parser.add_argument('--dry-run', action='store_true',
+                         help='Con --pdf-diario: solo mostrar lo que se extraería, sin escribir en BD')
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+
+    if args.pdf_diario:
+        import json
+        resultado = importar_desde_informe_diario(dry_run=args.dry_run)
+        print(json.dumps(resultado, indent=2, ensure_ascii=False))
+        sys.exit(0 if resultado['exito'] else 1)
 
     if args.info:
         import json

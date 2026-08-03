@@ -1,43 +1,43 @@
 {
   "Matriz_General_Reparto": {
-    "lastModifiedDateTime": "2026-07-01T22:12:23Z",
-    "eTag": "\"{8C044B58-604D-45DA-93D9-015FB9BB6047},19213\"",
-    "size": 86285980,
-    "last_etl_run": "2026-07-01T22:15:01Z",
+    "lastModifiedDateTime": "2026-08-02T22:19:23Z",
+    "eTag": "\"{8C044B58-604D-45DA-93D9-015FB9BB6047},20500\"",
+    "size": 85515988,
+    "last_etl_run": "2026-08-02T22:20:01Z",
     "last_etl_ok": true,
-    "content_hash": "047b8fd2d54cf512c1e6f6fdf10506cdc2b7222073e1d00ac3d15f396a19eb68"
+    "content_hash": "05ecadc788bf03c0af999b342d10990f3c80c76b670164367cb94864e30cd1fb"
   },
   "Acuerdos_Gestion_DEE_2026": {
-    "lastModifiedDateTime": "2026-06-25T19:54:43Z",
-    "eTag": "\"{D7F413E7-766B-4BD4-AE85-7977BE8D51FF},159\"",
-    "size": 153664,
-    "last_etl_run": "2026-07-01T09:02:39Z",
+    "lastModifiedDateTime": "2026-07-29T23:21:32Z",
+    "eTag": "\"{D7F413E7-766B-4BD4-AE85-7977BE8D51FF},192\"",
+    "size": 154534,
+    "last_etl_run": "2026-07-30T09:02:45Z",
     "last_etl_ok": true,
-    "content_hash": "2ebbbd74df376d0306c067cbf522112d67bc2110f566708b6c171511f5852cb7"
+    "content_hash": "f81e2981219ce000b92ecf6bc7348021cfad61d909dff5b5a469e89d3baa752a"
   },
   "Base_Subsidios_DDE": {
-    "lastModifiedDateTime": "2026-06-30T14:22:02Z",
-    "eTag": "\"{751521B2-15FE-4300-A140-05067D142FB6},1212\"",
-    "size": 4431974,
-    "last_etl_run": "2026-07-01T09:02:50Z",
+    "lastModifiedDateTime": "2026-07-29T16:00:13Z",
+    "eTag": "\"{751521B2-15FE-4300-A140-05067D142FB6},1238\"",
+    "size": 4651310,
+    "last_etl_run": "2026-07-30T09:02:58Z",
     "last_etl_ok": true,
-    "content_hash": "408a479f64a63350dcbb19367f196246fd6458c03fa86460b786aa835e63697c"
+    "content_hash": "21759e9a9ac9b6aec99b27bd1fd1051803e254ee34853b07cb12fa7c18819e99"
   },
   "Seguimiento_Contratos_CE": {
-    "lastModifiedDateTime": "2026-06-30T18:29:58Z",
-    "eTag": "\"{0A6A50A7-545B-4DDE-8DA1-897BC546D23E},505\"",
-    "size": 165041,
-    "last_etl_run": "2026-07-01T09:02:54Z",
+    "lastModifiedDateTime": "2026-07-30T14:38:09Z",
+    "eTag": "\"{0A6A50A7-545B-4DDE-8DA1-897BC546D23E},599\"",
+    "size": 166222,
+    "last_etl_run": "2026-07-31T09:02:47Z",
     "last_etl_ok": true,
-    "content_hash": "2f45abb5f4629a19383935bbf92b05465281c478ba652abf39d8a6865bfefa65"
+    "content_hash": "45d6b21da7dbd8336eda915bec88575f2813c108b0d8ccececfd1233d849a608"
   },
   "Comunidades_Seguimiento_FENOGE": {
-    "lastModifiedDateTime": "2026-06-30T15:43:09Z",
-    "eTag": "\"{F6819F9F-F81B-413E-B7B8-E97EA59F6560},94\"",
-    "size": 92304,
-    "last_etl_run": "2026-07-01T09:02:57Z",
+    "lastModifiedDateTime": "2026-07-14T14:19:19Z",
+    "eTag": "\"{F6819F9F-F81B-413E-B7B8-E97EA59F6560},104\"",
+    "size": 93933,
+    "last_etl_run": "2026-07-15T09:02:57Z",
     "last_etl_ok": true,
-    "content_hash": "2cdc0854608cffaa4eeaf3666f6dfbb767cae64b6bdcd8e7e00852add0169d23"
+    "content_hash": "2a0cff9ed17dc3465fe5140cc633ea49df99894643756f8b44a7cd12ca162920"
   },
   "Deficit_Historico_Subsidios": {
     "lastModifiedDateTime": "2026-05-07T04:47:12Z",
@@ -56,19 +56,27 @@
     "content_hash": "3be0b079001aee8e66ebbacfd0921044cd75829f6924724052e568aeeac1a854"
   },
   "Colombia_Solar_OR": {
-    "lastModifiedDateTime": "2026-07-02T00:21:07Z",
-    "eTag": "\"{8CDCDDC1-DB3C-4BF9-9505-C63FCBCAFA31},1287\"",
-    "size": 1756653,
-    "last_etl_run": "2026-07-02T00:25:01Z",
+    "lastModifiedDateTime": "2026-08-01T17:57:33Z",
+    "eTag": "\"{8CDCDDC1-DB3C-4BF9-9505-C63FCBCAFA31},1766\"",
+    "size": 2035912,
+    "last_etl_run": "2026-08-02T09:03:01Z",
     "last_etl_ok": true,
-    "content_hash": "5f455cedde43a143f84a2c4c15e42b445105ff4ed75bf07df6adfa243de7caf2"
+    "content_hash": "4f14e5ecad8452cfdf254ce106d8afde0f18b7ecb39bc40bea3c471e1aaeadb0"
   },
   "Resumen_Implementacion_CE": {
-    "lastModifiedDateTime": "2026-06-23T15:19:04Z",
-    "eTag": "\"{08A33DC8-AE04-4E62-8286-C19851B65FFD},6\"",
-    "size": 167683,
-    "last_etl_run": "2026-06-23T17:32:21Z",
+    "lastModifiedDateTime": "2026-08-02T16:22:43Z",
+    "eTag": "\"{6DECB8E3-017F-4F00-B292-FD21290022B0},10\"",
+    "size": 196451,
+    "last_etl_run": "2026-08-02T16:25:01Z",
     "last_etl_ok": true,
-    "content_hash": "718f33b7faf28d04717eaeb846aa56e489a747bdc138e176ab246b79def577a7"
+    "content_hash": "1120561270d412e2a0105d450122af633c243d3304046189cbfa2a9f31996885"
+  },
+  "Direccion_Hidrocarburos": {
+    "lastModifiedDateTime": "2026-07-27T16:17:22Z",
+    "eTag": "\"{C4558874-485D-46D4-8A54-0EB02497649B},49\"",
+    "size": 15025,
+    "last_etl_run": "2026-07-28T09:03:09Z",
+    "last_etl_ok": true,
+    "content_hash": "134582153e4644a43feef7abf0f48a1e64f4f48774d25e9ec89da3d004485591"
   }
 }

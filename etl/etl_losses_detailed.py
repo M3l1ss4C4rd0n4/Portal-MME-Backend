@@ -46,6 +46,38 @@ def _get_max_fecha_db() -> date:
     return date(2020, 2, 6)
 
 
+def _get_max_fecha_fuente_disponible() -> date:
+    """
+    Última fecha con Gene Y DemaReal disponibles en metrics (entidad=Sistema).
+    _get_daily_data() necesita ambas para calcular pérdidas; usar esta fecha
+    como límite evita procesar días donde la fuente aún no publicó (el rezago
+    real de XM varía, no es un offset fijo de _LAG_DIAS).
+    """
+    s = get_settings()
+    conn = psycopg2.connect(
+        host=s.POSTGRES_HOST, port=s.POSTGRES_PORT,
+        database=s.POSTGRES_DB, user=s.POSTGRES_USER, password=s.POSTGRES_PASSWORD,
+    )
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT MIN(max_fecha) FROM (
+            SELECT MAX(fecha::date) AS max_fecha FROM sector_energetico.metrics
+            WHERE entidad = 'Sistema' AND metrica = 'Gene'
+            UNION ALL
+            SELECT MAX(fecha::date) FROM sector_energetico.metrics
+            WHERE entidad = 'Sistema' AND metrica = 'DemaReal'
+        ) t
+        """
+    )
+    row = cur.fetchone()
+    conn.close()
+    if row and row[0]:
+        return row[0]
+    # Fallback si la consulta no devuelve nada: offset fijo conservador
+    return date.today() - timedelta(days=_LAG_DIAS)
+
+
 def main():
     parser = argparse.ArgumentParser(description="ETL incremental losses_detailed")
     parser.add_argument("--desde", type=lambda s: date.fromisoformat(s),
@@ -54,7 +86,7 @@ def main():
                         help="Fecha fin (YYYY-MM-DD). Default: hoy - 2 días")
     args = parser.parse_args()
 
-    fecha_fin = args.hasta if args.hasta else date.today() - timedelta(days=_LAG_DIAS)
+    fecha_fin = args.hasta if args.hasta else _get_max_fecha_fuente_disponible()
 
     if args.desde:
         fecha_inicio = args.desde
