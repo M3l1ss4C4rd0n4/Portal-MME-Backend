@@ -19,8 +19,15 @@ from core.config import settings
 from domain.services.metrics_service import MetricsService
 from domain.services.predictions_service_extended import PredictionsService
 from domain.services.ai_service import AgentIA
+from domain.services.ontologia_service import OntologiaService
+from domain.services.risk_service import RiskService
+from domain.services.graph_service import GraphService
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
+from infrastructure.database.repositories.geografia_repository import GeografiaRepository
+from infrastructure.database.repositories.empresa_repository import EmpresaRepository
+from infrastructure.database.repositories.semantic_search_repository import SemanticSearchRepository
+from infrastructure.database.repositories.proyecto_repository import ProyectoRepository
 
 
 # ═══════════════════════════════════════════════════════════
@@ -147,6 +154,61 @@ def get_predictions_service(
         repo=predictions_repo,
         metrics_repo=metrics_repo
     )
+
+
+@lru_cache()
+def get_geografia_repository() -> GeografiaRepository:
+    """Singleton del repositorio de geografía DANE (esquema ontologia)."""
+    return GeografiaRepository()
+
+
+@lru_cache()
+def get_empresa_repository() -> EmpresaRepository:
+    """Singleton del repositorio de empresas/prestadores (esquema ontologia)."""
+    return EmpresaRepository()
+
+
+@lru_cache()
+def get_semantic_search_repository() -> SemanticSearchRepository:
+    """Singleton del repositorio de búsqueda semántica / RAG (esquema ontologia)."""
+    return SemanticSearchRepository()
+
+
+@lru_cache()
+def get_proyecto_repository() -> ProyectoRepository:
+    """Singleton del repositorio de proyectos (esquema ontologia, Fase 7)."""
+    return ProyectoRepository()
+
+
+def get_ontologia_service(
+    geografia_repo: GeografiaRepository = Depends(get_geografia_repository),
+    empresa_repo: EmpresaRepository = Depends(get_empresa_repository),
+    semantic_search_repo: SemanticSearchRepository = Depends(get_semantic_search_repository),
+    proyecto_repo: ProyectoRepository = Depends(get_proyecto_repository),
+) -> OntologiaService:
+    """
+    Proveedor del servicio de ontología (geografía DANE + empresas/prestadores + RAG + proyectos).
+    Capa 100% de lectura/análisis — sin operaciones de escritura sobre contratos.
+    """
+    return OntologiaService(
+        geografia_repository=geografia_repo,
+        empresa_repository=empresa_repo,
+        semantic_search_repository=semantic_search_repo,
+        proyecto_repository=proyecto_repo,
+    )
+
+
+@lru_cache()
+def get_risk_service() -> RiskService:
+    """Singleton del servicio de riesgo de atraso (Fase 4 — analítica predictiva)."""
+    return RiskService()
+
+
+def get_graph_service(
+    empresa_repo: EmpresaRepository = Depends(get_empresa_repository),
+) -> GraphService:
+    """Proveedor del servicio de grafo de relaciones (Fase 5 — solo lectura/auditoría)."""
+    return GraphService(empresa_repository=empresa_repo)
 
 
 @lru_cache()

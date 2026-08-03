@@ -79,6 +79,10 @@ logging.basicConfig(
         logging.FileHandler(str(LOG_DIR / 'telegram_polling.log'))
     ]
 )
+# Silenciar logs de polling HTTP (cada 10s solo dice "200 OK")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # Constantes compartidas — fuente única en core/constants.py

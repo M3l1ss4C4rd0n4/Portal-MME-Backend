@@ -18,9 +18,12 @@ Fecha: 9 de febrero de 2026
 """
 
 from fastapi import APIRouter, Depends, status, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import logging
+from typing import List, Literal
 
 from api.dependencies import get_api_key, get_orchestrator_service
 from domain.schemas.orchestrator import (
@@ -381,3 +384,51 @@ async def health_check():
         "service": "chatbot-orchestrator",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Fase 9 — Asistente IA de página completa (chat libre real, tool-calling)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class MensajeHistorial(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class AsistenteRequest(BaseModel):
+    mensaje: str = Field(..., min_length=1, max_length=2000)
+    historial: List[MensajeHistorial] = Field(default_factory=list)
+
+
+@router.post(
+    "/asistente",
+    summary="Asistente IA de chat libre — tool-calling sobre el orquestador, streaming SSE",
+    description=(
+        "A diferencia de /orchestrator (requiere un intent preseleccionado por el "
+        "cliente), este endpoint recibe una pregunta 100% libre en lenguaje natural. "
+        "Un LLM con tool-calling decide qué intent(s) del orquestador invocar según "
+        "la pregunta real, y transmite la respuesta final en streaming (SSE). "
+        "Ver domain/services/asistente_ia_service.py."
+    ),
+    tags=["🤖 Chatbot"],
+)
+@limiter.limit("15/minute")
+async def asistente_chat(
+    request_data: AsistenteRequest,
+    request: Request,
+    api_key: str = Depends(get_api_key),
+):
+    from domain.services.asistente_ia_service import responder_stream
+
+    logger.info(
+        f"[ASISTENTE_ENDPOINT] Pregunta='{request_data.mensaje[:80]}' | "
+        f"historial={len(request_data.historial)} turnos | IP: {request.client.host}"
+    )
+
+    historial_dicts = [{"role": m.role, "content": m.content} for m in request_data.historial]
+
+    return StreamingResponse(
+        responder_stream(request_data.mensaje, historial_dicts),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

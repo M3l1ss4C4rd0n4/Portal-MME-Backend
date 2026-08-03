@@ -8,12 +8,12 @@ Configurar en .env:
     GNEWS_API_KEY=tu_api_key_aqui
 """
 
-import logging
 import httpx
 from typing import List, Dict, Optional
 from core.config import get_settings
+from infrastructure.logging.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 GNEWS_SEARCH_URL = "https://gnews.io/api/v4/search"
 

@@ -1305,15 +1305,27 @@ class PredictorMetricaSectorial:
             cur = conn.cursor()
 
             # ── Señal 1: historial de per-model MAPEs de entrenamientos previos ──
+            # UNION con predictions_history: cada retrain borra el batch anterior
+            # de `predictions` (archivado por el trigger trg_predictions_archive_on_delete),
+            # así que sin esta unión esta consulta nunca ve más de 1 fila (el batch vivo).
             cur.execute("""
                 SELECT mape_prophet, mape_sarima, fecha_generacion
-                FROM predictions
-                WHERE fuente = %s
-                  AND mape_prophet IS NOT NULL
-                  AND mape_sarima  IS NOT NULL
+                FROM (
+                    SELECT mape_prophet, mape_sarima, fecha_generacion
+                    FROM predictions
+                    WHERE fuente = %s
+                      AND mape_prophet IS NOT NULL
+                      AND mape_sarima  IS NOT NULL
+                    UNION ALL
+                    SELECT mape_prophet, mape_sarima, fecha_generacion
+                    FROM predictions_history
+                    WHERE fuente = %s
+                      AND mape_prophet IS NOT NULL
+                      AND mape_sarima  IS NOT NULL
+                ) combined
                 ORDER BY fecha_generacion DESC
                 LIMIT 5
-            """, (self.nombre,))
+            """, (self.nombre, self.nombre))
             train_rows = cur.fetchall()
 
             if train_rows:

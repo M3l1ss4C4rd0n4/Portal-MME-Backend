@@ -86,7 +86,7 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
 
                 # Avance Físico desde la hoja Seguimiento_Avance_Fisico
                 cur.execute("""
-                    SELECT ROUND(AVG(avance), 1) AS avance_fisico
+                    SELECT ROUND(AVG(avance) * 100, 1) AS avance_fisico
                     FROM contratos_or.seguimiento_avance_fisico
                     WHERE avance IS NOT NULL
                 """)
@@ -94,7 +94,7 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
 
                 # Per-project avance_fisico
                 cur.execute("""
-                    SELECT nombre_proyecto_id, ROUND(AVG(avance), 1) AS avance_fisico
+                    SELECT nombre_proyecto_id, ROUND(AVG(avance) * 100, 1) AS avance_fisico
                     FROM contratos_or.seguimiento_avance_fisico
                     WHERE avance IS NOT NULL
                       AND nombre_proyecto_id IS NOT NULL
@@ -143,7 +143,7 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
         avance_general    = _f(g[2]) * 100 if g[2] is not None else 0.0  # 0.25->25%
         pagos_real        = int(g[3] or 0)
         pagos_pos         = int(g[4] or 0)
-        avance_fisico     = _f(af) or 0.0  # ya en % desde la DB
+        avance_fisico     = _f(af) or 0.0  # 0.28->28% ya escalado en la query SQL
 
         return JSONResponse({
             "ultima_actualizacion": ts_or.strftime("%d/%m/%Y, %H:%M") if ts_or else None,

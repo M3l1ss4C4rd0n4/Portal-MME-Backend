@@ -37,6 +37,7 @@ from domain.services.orchestrator.handlers.subsidios_handler import SubsidiosHan
 from domain.services.orchestrator.handlers.comunidades_handler import ComunidadesHandlerMixin
 from domain.services.orchestrator.handlers.supervision_handler import SupervisionHandlerMixin
 from domain.services.orchestrator.handlers.presupuesto_handler import PresupuestoHandlerMixin
+from domain.services.orchestrator.handlers.ontologia_handler import OntologiaHandlerMixin
 from domain.services.orchestrator.utils.serializers import sanitize_numpy_types
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class ChatbotOrchestratorService(
     ComunidadesHandlerMixin,
     SupervisionHandlerMixin,
     PresupuestoHandlerMixin,
+    OntologiaHandlerMixin,
 ):
     """
     Orquestador central para el chatbot.
@@ -224,6 +226,17 @@ class ChatbotOrchestratorService(
             "subsidios_pagos_menu": self._handle_subsidios_pagos_menu,
             "subsidios_deficit_historico": self._handle_subsidios_deficit_historico,
             "subsidios_validaciones": self._handle_subsidios_validaciones,
+
+            "resumen_departamento": self._handle_resumen_departamento,
+            "vista_departamento": self._handle_resumen_departamento,
+            "ontologia_departamento": self._handle_resumen_departamento,
+
+            # ── Fase 9: tools del Asistente IA (ontología/RAG/grafo/riesgo) ──
+            "buscar_texto_rag": self._handle_buscar_texto_rag,
+            "buscar_empresa": self._handle_buscar_empresa,
+            "vecindario_empresa": self._handle_vecindario_empresa,
+            "riesgo_atraso_contratos_or": self._handle_riesgo_atraso_or,
+            "listar_proyectos": self._handle_listar_proyectos,
 
             # ── Sub-opciones de "Más información" ───────────────────────
             "informe_ejecutivo": self._handle_informe_ejecutivo,

@@ -188,3 +188,117 @@ class IPredictionsRepository(ABC):
         model_name: Optional[str] = None
     ) -> int:
         """Elimina predicciones (útil para reentrenamiento)"""
+
+
+class IGeografiaRepository(ABC):
+    """
+    Interface para la dimensión de geografía DANE (esquema ontologia).
+    Capa semántica de solo lectura — no escribe en tablas de negocio.
+    """
+
+    @abstractmethod
+    def listar_departamentos(self) -> List[Dict[str, Any]]:
+        """Lista departamentos DANE presentes en ontologia.dim_geografia"""
+
+    @abstractmethod
+    def resumen_departamento(self, codigo_dane_departamento: str) -> Optional[Dict[str, Any]]:
+        """Cruce multi-dominio para un departamento (ontologia.mv_resumen_departamento)"""
+
+    @abstractmethod
+    def resolver_alias(
+        self, esquema: str, tabla: str, columna: str, valor: str
+    ) -> List[Dict[str, Any]]:
+        """Resuelve un valor de texto libre de un esquema de negocio a geografia_id(s)"""
+
+    @abstractmethod
+    def alias_pendientes(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Lista valores de geografia_alias aún sin resolver (backlog de curación)"""
+
+    @abstractmethod
+    def contar_alias_pendientes(self) -> int:
+        """Total de valores de geografia_alias sin resolver (sin límite)"""
+
+    @abstractmethod
+    def historial_lineage(self, limit: int = 30) -> List[Dict[str, Any]]:
+        """Corridas recientes del pipeline de ontología (ontologia.etl_lineage)"""
+
+
+class IProyectoRepository(ABC):
+    """
+    Interface para la dimensión de proyectos (esquema ontologia) — Fase 7.
+    Proyecto como objeto de primera clase, independiente por programa
+    (contratos_or, colombia_solar, fenoge no comparten identidad de proyecto).
+    """
+
+    @abstractmethod
+    def listar_proyectos(self, programa: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Lista proyectos, opcionalmente filtrados por programa"""
+
+    @abstractmethod
+    def obtener_por_id(self, proyecto_id: int) -> Optional[Dict[str, Any]]:
+        """Obtiene un proyecto por su proyecto_id, o None si no existe"""
+
+    @abstractmethod
+    def alias_de_proyecto(self, proyecto_id: int) -> List[Dict[str, Any]]:
+        """Filas de proyecto_alias resueltas para este proyecto (en qué esquema/tabla aparece)"""
+
+
+class IEmpresaRepository(ABC):
+    """
+    Interface para la dimensión de empresas/prestadores/ejecutores (esquema ontologia).
+    """
+
+    @abstractmethod
+    def buscar_empresas(
+        self, nit: Optional[str] = None, nombre: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Busca empresas por NIT exacto o nombre (ILIKE)"""
+
+    @abstractmethod
+    def alias_pendientes(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Lista valores de empresa_alias sin resolver o con match fuzzy sin revisar"""
+
+    @abstractmethod
+    def contar_alias_pendientes(self) -> int:
+        """Total de valores de empresa_alias sin resolver o con match fuzzy sin revisar (sin límite)"""
+
+    @abstractmethod
+    def obtener_por_id(self, empresa_id: int) -> Optional[Dict[str, Any]]:
+        """Obtiene una empresa por su empresa_id, o None si no existe"""
+
+    @abstractmethod
+    def contratos_supervision_por_nit(
+        self, nit_normalizado: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Contratos de supervision.contratos donde esta empresa es ejecutor (match por NIT, alta confianza)"""
+
+    @abstractmethod
+    def contar_contratos_supervision_por_nit(self, nit_normalizado: str) -> int:
+        """Total de contratos de esta empresa (sin límite) — para mostrar 'mostrando N de TOTAL'"""
+
+    @abstractmethod
+    def alias_resueltos_de_empresa(self, empresa_id: int) -> List[Dict[str, Any]]:
+        """Todas las filas de empresa_alias resueltas (no sin_resolver) para esta empresa, con su método/confianza"""
+
+    @abstractmethod
+    def proyectos_de_empresa(self, empresa_id: int) -> List[Dict[str, Any]]:
+        """Proyectos de contratos_or donde esta empresa es ejecutor (2do salto del grafo)"""
+
+    @abstractmethod
+    def empresas_relacionadas_por_geografia(
+        self, codigos_dane_departamento: List[str], excluir_empresa_id: int, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Otras empresas con contratos en los mismos departamentos (patrón de concentración de contratistas)"""
+
+
+class ISemanticSearchRepository(ABC):
+    """
+    Interface para búsqueda semántica (RAG) sobre texto libre de contratos
+    (objeto del contrato, observaciones jurídicas/técnicas) — ontologia.contratos_texto_embeddings.
+    """
+
+    @abstractmethod
+    def buscar_similar(
+        self, embedding: List[float], top_k: int = 5, umbral_similitud: float = 0.3
+    ) -> List[Dict[str, Any]]:
+        """Busca los textos más semánticamente similares a un embedding de consulta"""

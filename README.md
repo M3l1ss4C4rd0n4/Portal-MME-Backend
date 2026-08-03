@@ -33,10 +33,11 @@ API REST + Dashboard Analítico + ETL Pipeline
 
 Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 
-- **API REST** (FastAPI): 52 endpoints para consumo del frontend Next.js
+- **API REST** (FastAPI): 52+ endpoints para consumo del frontend Next.js
 - **Dashboard Analítico** (Dash): 17 tableros interactivos legacy
-- **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive
+- **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive, y (jul-2026) despacho diario XM en PDF e hidrocarburos (Excel + scraping de precios WTI/Brent)
 - **Sistema de Alertas**: Notificaciones Telegram basadas en anomalías
+- **Capa de Ontología** (jul-2026, en evolución): esquema `ontologia` con dimensiones de geografía/empresa/proyecto y embeddings vectoriales para RAG, que le permite al asistente de IA del portal responder consultando datos reales del sistema en lugar de depender solo del conocimiento general del modelo de lenguaje
 
 ### Estadísticas
 
@@ -400,13 +401,22 @@ max_requests = 1000
 
 ### Rotación de Logs
 
-Configuración en `config/logrotate-mme.conf`:
+Configuraciones activas en `/etc/logrotate.d/`:
+
+| Archivo | Contenido | Rotación |
+|---|---|---|
+| `server-mme` | Logs generales + celery | Diaria, 14 días, comprimido (copytruncate) |
+| `telegram-polling` | Logs del bot Telegram | Diaria, 7 días, comprimido (copytruncate) |
 
 ```bash
-# Aplicar configuración
-sudo cp config/logrotate-mme.conf /etc/logrotate.d/mme-server
-sudo logrotate -f /etc/logrotate.d/mme-server
+# Verificar configuración activa
+sudo logrotate -d /etc/logrotate.d/server-mme
+
+# Forzar rotación manual
+sudo logrotate -f /etc/logrotate.d/server-mme
 ```
+
+> ⚠️ La configuración activa está en `/etc/logrotate.d/`. El archivo `config/logrotate-mme.conf` es una referencia local.
 
 ### Métricas Clave
 

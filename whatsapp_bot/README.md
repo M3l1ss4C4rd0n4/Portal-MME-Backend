@@ -210,18 +210,18 @@ Disponible en `http://localhost:8001/metrics`:
 curl http://localhost:8001/stats
 ```
 
+> **Nota:** El bot actual corre como `telegram-polling.service` (systemd).
+> Ya no se usa el puerto 8001 con uvicorn para el bot.
+
 ## 🚀 Deployment en Producción
 
-### Con systemd
+### Con systemd (servicio actual: telegram-polling)
 
 ```bash
-# Copiar servicio
-sudo cp whatsapp-bot.service /etc/systemd/system/
-
-# Habilitar y arrancar
-sudo systemctl enable whatsapp-bot
-sudo systemctl start whatsapp-bot
-sudo systemctl status whatsapp-bot
+# El servicio activo es telegram-polling.service
+sudo systemctl status telegram-polling
+sudo systemctl restart telegram-polling
+sudo journalctl -u telegram-polling -n 50 --no-pager
 ```
 
 ### Con Nginx

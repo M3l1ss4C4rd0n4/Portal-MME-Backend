@@ -418,6 +418,22 @@ async def get_cu_forecast(
         raise HTTPException(status_code=500, detail=f"Error generando forecast CU: {e}")
 
 
+def _clasificar_confianza(confianza_num: Optional[float]) -> str:
+    """
+    Convierte la confianza numérica de predictions (0.0-1.0, calculada como
+    max(0, 1 - mape) en train_predictions_sector_energetico.py) a la misma
+    escala categórica ("alta"/"media"/"baja") que usa el resto de /v1/cu/*
+    (CUService.get_cu_current, forecast naive).
+    """
+    if confianza_num is None:
+        return "media"
+    if confianza_num >= 0.85:
+        return "alta"
+    if confianza_num >= 0.65:
+        return "media"
+    return "baja"
+
+
 def _load_ml_predictions(horizon: int) -> Optional[dict]:
     """
     Carga predicciones ML desde la tabla predictions (fuente='CU_DIARIO').
@@ -457,11 +473,11 @@ def _load_ml_predictions(horizon: int) -> Optional[dict]:
                 valor_predicho=round(float(row[1]), 2),
                 intervalo_inferior=round(float(row[2]), 2) if row[2] else round(float(row[1]) * 0.9, 2),
                 intervalo_superior=round(float(row[3]), 2) if row[3] else round(float(row[1]) * 1.1, 2),
-            ))
+            ).model_dump(mode="json"))
 
         return {
             "modelo": rows[0][4] or "Prophet+SARIMA",
-            "confianza": rows[0][5] or "media",
+            "confianza": _clasificar_confianza(float(rows[0][5]) if rows[0][5] is not None else None),
             "mape": round(float(rows[0][6]) * 100, 2) if rows[0][6] else None,
             "fecha_generacion": str(rows[0][7]) if rows[0][7] else None,
             "puntos": puntos,

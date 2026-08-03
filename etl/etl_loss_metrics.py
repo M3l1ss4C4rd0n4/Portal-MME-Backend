@@ -43,9 +43,12 @@ GENERATION_METRIC = 'Gene'
 ENTITY_FILTER = 'Sistema'
 UNIDAD = 'GWh'
 
-# Rango de validación para pérdidas como % de generación
-PERDIDAS_PCT_MIN = 3.0
-PERDIDAS_PCT_MAX = 20.0
+# Rango de validación para pérdidas como % de generación (Gene incluye
+# exportaciones, denominador mayor que "% de la demanda" que reporta XM
+# oficialmente ~8-9%). Calibrado contra 76 meses de histórico real
+# (2020-02 a 2026-07), que nunca superó 1.9% ni bajó de 1.2%.
+PERDIDAS_PCT_MIN = 0.8
+PERDIDAS_PCT_MAX = 2.5
 
 
 def get_connection():

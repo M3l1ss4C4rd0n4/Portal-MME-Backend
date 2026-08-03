@@ -326,5 +326,5 @@ Para reportar problemas o sugerencias, revisar la documentación del proyecto pr
 ---
 
 **Autor:** Arquitectura Dashboard MME  
-**Fecha:** 3 de febrero de 2026  
-**Versión:** 1.0.0
+**Fecha:** 6 de julio de 2026 *(actualizado)*  
+**Versión:** 1.1.0

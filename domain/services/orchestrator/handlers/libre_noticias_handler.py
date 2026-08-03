@@ -2,34 +2,15 @@
 Mixin: Pregunta libre, noticias del sector y menú principal.
 """
 import asyncio
-import logging
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
+from domain.services.news_keywords import filter_tier1, filter_tier2_fill
+from infrastructure.logging.logger import get_logger
 
-logger = logging.getLogger(__name__)
-
-# Keywords de hidrocarburos para filtrar en el servidor
-_HYDRO_FILTER_KEYWORDS = [
-    "petróleo", "petroleo", "gas", "combustible", "gasolina", "acpm",
-    "gas natural", "glp", "oleoducto", "gasoducto", "exploración",
-    "exploracion", "refinación", "refinacion", "barril", "brent", "wti",
-    "opep", "ecopetrol", "reficar", "yacimiento", "pozo petrolero",
-    "hidrocarburo", "downstream", "upstream", "midstream",
-    "regalías petroleras", "regalias petroleras",
-    "diésel", "diesel", "fuel oil", "gas licuado", "gnl", "lng",
-    "shale", "fracking", "offshore",
-    "precio del crudo", "crudo colombiano", "producción petrolera",
-    "derivado del petróleo", "derivado del petroleo",
-    "petroquímica", "petroquimica", "estación de servicio",
-    "gasolinera", "gasocentro", "grifo",
-    "carbón", "carbon mineral", "minería", "mineria",
-    "niquel", "litio", "cobre",
-    "drummond", "cerrejón", "cerrejon", "prodeco",
-    "exportación de carbón", "puerto de carbón",
-]
+logger = get_logger(__name__)
 
 
 class LibreNoticiasHandlerMixin:
@@ -68,6 +49,70 @@ class LibreNoticiasHandlerMixin:
 
         try:
             datos_consultados: Dict[str, Any] = {}
+
+            # ¿La pregunta menciona un departamento? -> cruce ontológico multi-dominio
+            # (comunidades + contratos OR + FENOGE + Colombia Solar + subsidios + supervisión)
+            try:
+                from core.container import get_ontologia_service
+                from domain.services.orchestrator.handlers.ontologia_handler import (
+                    resolver_departamento_en_texto,
+                )
+                ontologia_service = get_ontologia_service()
+                departamentos = await asyncio.to_thread(ontologia_service.listar_departamentos)
+                depto_detectado = resolver_departamento_en_texto(pregunta, departamentos)
+                if depto_detectado:
+                    resumen_depto = await asyncio.to_thread(
+                        ontologia_service.resumen_departamento,
+                        depto_detectado["codigo_dane_departamento"],
+                    )
+                    if resumen_depto:
+                        datos_consultados["resumen_departamento"] = resumen_depto
+            except Exception as e:
+                logger.warning(f"[PREGUNTA_LIBRE] Cruce ontológico no disponible: {e}")
+
+            # ¿Pregunta sobre contratos/observaciones (texto libre, no estructurado)?
+            # -> RAG: búsqueda semántica sobre objeto de contrato y observaciones
+            # jurídicas/técnicas de supervision.contratos (pgvector + embeddings locales).
+            if any(w in pregunta_lower for w in [
+                'contrato', 'contratista', 'ejecutor', 'dificultad', 'retraso',
+                'incumplimiento', 'observación', 'observacion', 'jurídic', 'juridic',
+                'técnic', 'tecnic', 'expediente', 'liquidación', 'liquidacion',
+                'prone', 'faer', 'fazni', 'pner',
+            ]):
+                try:
+                    from core.container import get_ontologia_service
+                    resultados_rag = await asyncio.to_thread(
+                        get_ontologia_service().buscar_texto,
+                        pregunta, top_k=5, umbral_similitud=0.4,
+                    )
+                    if resultados_rag:
+                        datos_consultados['contratos_relevantes'] = [
+                            {
+                                'contenido': r['contenido'],
+                                'campo': r['campo'],
+                                'similitud': round(float(r['similitud']), 2),
+                            }
+                            for r in resultados_rag
+                        ]
+                except Exception as e:
+                    logger.warning(f"[PREGUNTA_LIBRE] Búsqueda semántica no disponible: {e}")
+
+            # ¿Pregunta sobre riesgo/probabilidad de atraso de contratos OR?
+            # -> Fase 4: ranking por Isolation Forest / ranking determinístico
+            # (domain/services/risk_service.py) sobre el cronograma de obra real.
+            if any(w in pregunta_lower for w in [
+                'riesgo', 'probabilidad de atraso', 'van a atrasar', 'se van a atrasar',
+                'peligro de atraso', 'en riesgo',
+            ]):
+                try:
+                    from core.container import get_risk_service
+                    ranking = await asyncio.to_thread(
+                        get_risk_service().riesgo_atraso_contratos_or
+                    )
+                    if ranking:
+                        datos_consultados['riesgo_atraso_contratos_or'] = ranking[:5]
+                except Exception as e:
+                    logger.warning(f"[PREGUNTA_LIBRE] Riesgo de atraso no disponible: {e}")
 
             # ¿Pregunta sobre generación?
             if any(w in pregunta_lower for w in [
@@ -262,11 +307,13 @@ class LibreNoticiasHandlerMixin:
                             contexto_ia["confianza_modelos"] = confianza_relevante
                         sys_p = (
                             "Eres un asesor energético del Ministerio de Minas de Colombia. "
-                            "Responde la pregunta del usuario usando SOLO los datos suministrados.\n"
+                            "Responde la pregunta del usuario usando SOLO los datos suministrados "
+                            "en el JSON — no menciones campos, claves ni temas que no estén ahí.\n"
                             "Máximo 200 palabras, usa bullets, en español.\n"
-                            "Si 'precio_bolsa' aparece en datos y su nivel es EXPERIMENTAL, "
-                            "indícalo UNA vez al final. NO mentions experimental si el dato "
-                            "no está en la respuesta. NO inventes datos. Redondea a 2 decimales."
+                            "Excepción única: si la clave 'precio_bolsa' SÍ está presente en los "
+                            "datos y su nivel de confianza es EXPERIMENTAL, indícalo una vez al "
+                            "final. Si 'precio_bolsa' no está presente, no la nombres en absoluto.\n"
+                            "NO inventes datos. Redondea números a 2 decimales."
                         )
                         usr_p = (
                             f"Datos:\n```json\n"
@@ -430,7 +477,9 @@ class LibreNoticiasHandlerMixin:
 
             selected = list(hydro_items)
 
-            # 2. Si quedan espacios, complementar con pool general filtrado
+            # 2. Si quedan espacios, complementar con pool general filtrado.
+            # Prioridad: tier 1 (petróleo/gas genuino) primero; tier 2
+            # (minería) solo rellena si tier 1 no alcanza las 3 noticias.
             if len(selected) < 3:
                 try:
                     enriched = await asyncio.wait_for(
@@ -441,18 +490,31 @@ class LibreNoticiasHandlerMixin:
                     otras = enriched.get("otras", [])
                     general_pool = top + otras
 
-                    for n in general_pool:
-                        if len(selected) >= 3:
-                            break
-                        text = (
-                            (n.get("titulo") or "").lower() + " " +
-                            (n.get("resumen_corto") or n.get("resumen") or "").lower()
-                        )
-                        hits = sum(1 for kw in _HYDRO_FILTER_KEYWORDS if kw in text)
-                        if hits >= 1:
-                            # Evitar duplicados por URL
-                            if not any(s.get("url") == n.get("url") for s in selected):
-                                selected.append(n)
+                    # Normalizar el campo de resumen ("resumen_corto" en el
+                    # pool general) para que los filtros compartidos lo lean.
+                    normalized_pool = [
+                        {
+                            "titulo": n.get("titulo"),
+                            "resumen": n.get("resumen_corto") or n.get("resumen"),
+                            "url": n.get("url"),
+                            "_orig": n,
+                        }
+                        for n in general_pool
+                    ]
+
+                    def _append_matches(matches: list) -> None:
+                        for m in matches:
+                            if len(selected) >= 3:
+                                break
+                            if not any(s.get("url") == m["url"] for s in selected):
+                                selected.append(m["_orig"])
+
+                    tier1_matches = filter_tier1(normalized_pool)
+                    _append_matches(tier1_matches)
+
+                    if len(selected) < 3:
+                        tier2_matches = filter_tier2_fill(normalized_pool, already_included=tier1_matches)
+                        _append_matches(tier2_matches)
 
                     logger.info(
                         f"[HIDROCARBUROS] {len(selected)} tras fallback pool general "

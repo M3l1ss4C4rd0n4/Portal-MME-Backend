@@ -205,6 +205,7 @@ async def get_predictions_dashboard(
         )
         embalse_actual = None
         if df_embalses_actual is not None and not df_embalses_actual.empty:
+            df_embalses_actual["fecha"] = pd.to_datetime(df_embalses_actual["fecha"]).dt.date
             df_embalses_actual = df_embalses_actual.sort_values("fecha")
             ultimo = df_embalses_actual.iloc[-1]
             embalse_actual = {
