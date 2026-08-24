@@ -28,6 +28,7 @@ python-dotenv==1.0.0
 
 # IA y Agente Inteligente (Chat IA)
 openai==1.61.0  # Actualizado para soporte Groq/OpenRouter
+google-genai==1.74.0  # Fase 19 — Gemini Live API (voz en tiempo real), protocolo WebSocket nativo, no pasa por el endpoint compatible con OpenAI
 
 # RAG — embeddings locales para búsqueda semántica (ontologia.contratos_texto_embeddings)
 sentence-transformers==5.6.1
@@ -67,6 +68,9 @@ Pillow>=12.0.0
 
 # Extracción de texto de informes (RAG SharePoint — Fase 8)
 python-pptx>=1.0.0
+
+# Extracción de texto completo de artículos de noticias (Fase 32)
+trafilatura==2.2.0
 
 # ML — hyperparameter optimization and gradient boosting (FASE 21-22)
 xgboost==3.2.0

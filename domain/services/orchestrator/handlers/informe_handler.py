@@ -3,7 +3,6 @@ Mixin: Informe ejecutivo IA — recopila contexto de todos los demás handlers,
 llama a Groq/OpenRouter, cachea en Redis y genera un fallback sin IA.
 """
 import asyncio
-import logging
 import re as _re
 from datetime import datetime, date
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,8 +10,19 @@ from typing import Any, Dict, List, Optional, Tuple
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.confianza_politica import get_confianza_politica, obtener_disclaimer
 from domain.services.orchestrator.utils.decorators import handle_service_error
+from infrastructure.logging.logger import get_logger
 
-logger = logging.getLogger(__name__)
+# 2026-08-24: usaba logging.getLogger(__name__) (stdlib plano) — mismo bug
+# ya corregido en la Fase 23 para asistente_ia_service.py/voz_ia_service.py/
+# chatbot.py, nunca aplicado aquí. El logger raíz solo tiene StreamHandler
+# a stdout (api/main.py::configure_root_logger()), así que todo el registro
+# de este archivo (incluida la generación del Informe Ejecutivo con IA)
+# terminaba en /var/log/portal-api.log — un archivo sin rotar que mezcla
+# semanas de historial sin fecha en cada línea (solo hora), en vez de
+# logs/app.log (con fecha, rotado, el que se audita normalmente). Causó
+# confusión real al diagnosticar por qué el informe de un día concreto no
+# usó IA — hubo que reconstruir la fecha exacta a partir del sessionId.
+logger = get_logger(__name__)
 
 
 class InformeHandlerMixin:
@@ -685,8 +695,8 @@ class InformeHandlerMixin:
             import json as _json
 
             agent = AgentIA()
-            if not agent.client:
-                logger.warning("[INFORME_IA] Cliente de IA no configurado")
+            if not agent.disponible:
+                logger.warning("[INFORME_IA] Ningún proveedor de IA configurado")
                 return None
 
             contexto_ia = {
@@ -884,6 +894,29 @@ class InformeHandlerMixin:
             else:
                 _bloque_anomalias = ""
 
+            # Fase 13: RAG (con tema='panorama_climatico'/'despacho') + índices
+            # regulatorios de ontologia.dim_metrica — mismo patrón ya probado en
+            # tasks/homeslider_diagnosticos_tasks.py, aplicado aquí al informe
+            # ejecutivo formal para que también se beneficie de contexto real de
+            # los informes de XM (pronóstico climático, plantas indisponibles) y
+            # de una explicación normativa consistente de los umbrales.
+            from domain.services.contexto_ia_enriquecido import (
+                contexto_rag_texto,
+                contexto_indices_regulatorios_texto,
+            )
+            _rag_clima = contexto_rag_texto("pronóstico El Niño intensidad probabilidad", tema="panorama_climatico", top_k=1)
+            _rag_despacho = contexto_rag_texto("plantas indisponibles mantenimiento despacho", tema="despacho", top_k=1)
+            _bloque_rag_ontologia = "\n\n".join(
+                b for b in (_rag_clima, _rag_despacho, contexto_indices_regulatorios_texto()) if b
+            )
+            if _bloque_rag_ontologia:
+                _bloque_rag_ontologia = (
+                    "\n\n🔎 CONTEXTO ADICIONAL DE INFORMES REALES DE XM Y NORMATIVA "
+                    "(úsalo solo si aporta algo relevante al análisis cualitativo, sin "
+                    "citar la resolución normativa textualmente — intégralo en prosa):\n"
+                    + _bloque_rag_ontologia
+                )
+
             # Bloque condicional de noticias (D5 — nunca forces noticias vacías)
             _noticias_count = len(contexto_ia.get("noticias", {}).get("titulares", []))
             if _noticias_count > 0:
@@ -903,6 +936,7 @@ class InformeHandlerMixin:
                 f"Datos del sistema eléctrico colombiano para hoy:\n\n"
                 f"```json\n{contexto_json}\n```"
                 f"{_bloque_anomalias}"
+                f"{_bloque_rag_ontologia}"
                 f"{_bloque_noticias_user}\n\n"
                 f"Genera el informe ejecutivo con EXACTAMENTE 5 secciones numeradas.\n\n"
                 f"RECORDATORIOS CRÍTICOS:\n"
@@ -913,8 +947,7 @@ class InformeHandlerMixin:
             )
 
             def _call_ai():
-                return agent.client.chat.completions.create(
-                    model=agent.modelo,
+                return agent.completar(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -923,12 +956,16 @@ class InformeHandlerMixin:
                     max_tokens=4000,
                 )
 
-            response = await asyncio.wait_for(
+            # 90s (no 60s): agent.completar() ahora puede intentar 2
+            # proveedores en secuencia (Gemini→Groq) — 60s alcanzaba justo
+            # para UNO, sin margen para el reintento real (ver también el
+            # timeout ampliado de este intent en orchestrator_service.py).
+            texto_ia = await asyncio.wait_for(
                 asyncio.to_thread(_call_ai),
-                timeout=60
+                timeout=90
             )
 
-            texto = response.choices[0].message.content.strip()
+            texto = texto_ia.strip()
             if len(texto) < 100:
                 logger.warning(f"[INFORME_IA] Respuesta muy corta ({len(texto)} chars)")
                 return None

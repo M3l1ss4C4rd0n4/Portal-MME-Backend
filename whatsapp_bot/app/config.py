@@ -78,7 +78,8 @@ class Settings(BaseSettings):
         description="Groq API Base URL"
     )
     AI_MODEL: str = Field(
-        default="llama-3.3-70b-versatile",
+        # "llama-3.3-70b-versatile" descontinuado por Groq el 16-ago-2026
+        default="openai/gpt-oss-120b",
         description="AI Model"
     )
     

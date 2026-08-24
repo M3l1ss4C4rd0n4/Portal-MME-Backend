@@ -110,6 +110,53 @@ DEPARTAMENTOS_COMPUESTOS_CURADOS = {
     "No presta servicio": None,
 }
 
+# Fase 17 (Gap 4) — corredores multi-municipio en un solo campo `municipio`
+# (mismo problema que DEPARTAMENTOS_COMPUESTOS_CURADOS arriba, nunca extendido
+# a municipios). Cada variante de grafía/espaciado real encontrada en el
+# backlog de sin_resolver se mapea a su propia entrada — todas verificadas
+# contra ontologia.dim_geografia antes de curar (nombre_departamento,
+# nombre_municipio) uno por uno. "TUNÍA" (dentro de la entrada de Cauca) se
+# excluyó a propósito: no existe como municipio DANE independiente (es un
+# corregimiento de Piendamó), no se inventa un geografia_id para él.
+MUNICIPIOS_COMPUESTOS_CURADOS: dict[str, list[tuple[str, str]]] = {
+    "Maicao y Albania": [("La Guajira", "Maicao"), ("La Guajira", "Albania")],
+    "MAICAO Y ALBANIA": [("La Guajira", "Maicao"), ("La Guajira", "Albania")],
+    "Maicao  Y Albania": [("La Guajira", "Maicao"), ("La Guajira", "Albania")],
+    "ARGELIA, PATÍA, PIENDAMÓ, TUNÍA, SOTARÁ": [
+        ("Cauca", "Argelia"), ("Cauca", "Patía"), ("Cauca", "Piendamó"), ("Cauca", "Sotará"),
+    ],
+    "Bolivar, Charalá, El Peñón, Florian, La Belleza, Landazuri, Ocamonte, Simac ota, Sucre, zapatoca": [
+        ("Santander", "Bolívar"), ("Santander", "Charalá"), ("Santander", "El Peñón"),
+        ("Santander", "Florián"), ("Santander", "La Belleza"), ("Santander", "Landázuri"),
+        ("Santander", "Ocamonte"), ("Santander", "Simacota"), ("Santander", "Sucre"), ("Santander", "Zapatoca"),
+    ],
+    "Bolivar, Charalá, El Peñón, Florian, La Belleza, Landazuri, Ocamonte, Simacota, Sucre, Zapatoca": [
+        ("Santander", "Bolívar"), ("Santander", "Charalá"), ("Santander", "El Peñón"),
+        ("Santander", "Florián"), ("Santander", "La Belleza"), ("Santander", "Landázuri"),
+        ("Santander", "Ocamonte"), ("Santander", "Simacota"), ("Santander", "Sucre"), ("Santander", "Zapatoca"),
+    ],
+    "San Miguel, Valle del Guamuez,Villa Garzon,Puerto Guzman": [
+        ("Putumayo", "San Miguel"), ("Putumayo", "Valle Del Guamuez"),
+        ("Putumayo", "Villagarzón"), ("Putumayo", "Puerto Guzman"),
+    ],
+    "Teorama, El Carmen, Convención, Hacari, San Calixto, Tibu": [
+        ("Norte de Santander", "Teorama"), ("Norte de Santander", "El Carmen"),
+        ("Norte de Santander", "Convención"), ("Norte de Santander", "Hacarí"),
+        ("Norte de Santander", "San Calixto"), ("Norte de Santander", "Tibú"),
+    ],
+    "TEORAMA / EL CARMEN / CONVENCIÓN / HACARI / SAN CALIXTO / TIBU": [
+        ("Norte de Santander", "Teorama"), ("Norte de Santander", "El Carmen"),
+        ("Norte de Santander", "Convención"), ("Norte de Santander", "Hacarí"),
+        ("Norte de Santander", "San Calixto"), ("Norte de Santander", "Tibú"),
+    ],
+    "TEORAMA\nEL CARMEN\nCONVENCIÓN\nHACARI\nSAN CALIXTO\nTIBU": [
+        ("Norte de Santander", "Teorama"), ("Norte de Santander", "El Carmen"),
+        ("Norte de Santander", "Convención"), ("Norte de Santander", "Hacarí"),
+        ("Norte de Santander", "San Calixto"), ("Norte de Santander", "Tibú"),
+    ],
+    "Bugalagrande y Vijes": [("Valle del Cauca", "Bugalagrande"), ("Valle del Cauca", "Vijes")],
+}
+
 
 def seed_dim_geografia() -> int:
     """Siembra ontologia.dim_geografia desde supervision.contratos (idempotente)."""
@@ -218,6 +265,21 @@ def _upsert_alias(esquema: str, tabla: str, columna: str, valor: str,
         """,
         (esquema, tabla, columna, valor, geografia_id, es_compuesto, metodo),
     )
+    # El índice único de _upsert_sin_resolver incluye geografia_id (siempre NULL
+    # ahí), así que nunca choca con este INSERT (geografia_id no-NULL) — un valor
+    # que pasa de sin_resolver a resuelto en una corrida posterior (ej. tras
+    # ampliar dim_geografia en Fase 7, o con el fallback de municipio único de
+    # la migración 025) deja la fila sin_resolver vieja huérfana, inflando el
+    # backlog reportado. Se limpia aquí, en el único lugar donde se sabe que el
+    # valor ya se resolvió.
+    db_manager.execute_non_query(
+        """
+        DELETE FROM ontologia.geografia_alias
+        WHERE esquema_origen = %s AND tabla_origen = %s AND columna_origen = %s
+          AND valor_original = %s AND metodo = 'sin_resolver'
+        """,
+        (esquema, tabla, columna, valor),
+    )
 
 
 def _upsert_sin_resolver(esquema: str, tabla: str, columna: str, valor: str) -> None:
@@ -248,15 +310,39 @@ def resolver_pares_depto_municipio() -> None:
         """)
         if pares.empty:
             continue
-        resueltos, pendientes = 0, 0
+        resueltos, pendientes, compuestos = 0, 0, 0
         for _, row in pares.iterrows():
             depto, muni = str(row["departamento"]), str(row["municipio"])
+
+            # Corredor multi-municipio en un solo campo (ej. "Maicao y Albania")
+            # — se resuelve a TODOS los municipios reales que representa, cada
+            # uno es_compuesto=TRUE, antes de intentar cualquier match simple.
+            if muni in MUNICIPIOS_COMPUESTOS_CURADOS:
+                for depto_real, muni_real in MUNICIPIOS_COMPUESTOS_CURADOS[muni]:
+                    match_real = db_manager.query_df(
+                        """
+                        SELECT geografia_id FROM ontologia.dim_geografia
+                        WHERE nombre_departamento_normalizado = upper(ontologia.f_unaccent(%s))
+                          AND nombre_municipio_normalizado = upper(ontologia.f_unaccent(%s))
+                        """,
+                        (depto_real, muni_real),
+                    )
+                    if len(match_real) == 1:
+                        gid = int(match_real["geografia_id"].iloc[0])
+                        _upsert_alias(esquema, tabla, "departamento", depto, gid, "curado_manual", es_compuesto=True)
+                        _upsert_alias(esquema, tabla, "municipio", muni, gid, "curado_manual", es_compuesto=True)
+                resueltos += 1
+                compuestos += 1
+                continue
+
             # comunidades.base guarda el departamento con guion bajo en vez de
             # espacio (ej. "La_Guajira") — normalizar solo para el match, nunca
             # para valor_original (debe seguir siendo idéntico al dato de origen
             # para que el JOIN de las vistas materializadas siga funcionando).
-            depto_match = depto.replace("_", " ")
-            muni_match = muni.replace("_", " ")
+            # btrim(): valores con espacio final real (ej. "MONTERIA " en
+            # subsidios.subsidios_mapa) nunca coincidían pese a ortografía idéntica.
+            depto_match = depto.replace("_", " ").strip()
+            muni_match = muni.replace("_", " ").strip()
             match = db_manager.query_df(
                 """
                 SELECT geografia_id FROM ontologia.dim_geografia
@@ -270,11 +356,47 @@ def resolver_pares_depto_municipio() -> None:
                 _upsert_alias(esquema, tabla, "departamento", depto, geografia_id, "exacto_normalizado")
                 _upsert_alias(esquema, tabla, "municipio", muni, geografia_id, "exacto_normalizado")
                 resueltos += 1
+                continue
+            # El par exacto no coincidió (departamento con grafía distinta,
+            # vacío, o compuesto) — mismo fallback que ontologia.f_resolver_geografia()
+            # usa en las vistas _geo (migración 025): si el nombre de municipio
+            # es único en toda Colombia, no hay ambigüedad posible al resolverlo
+            # solo por ese nombre.
+            fallback = db_manager.query_df(
+                "SELECT geografia_id FROM ontologia.v_municipio_nombre_unico "
+                "WHERE municipio_normalizado = upper(ontologia.f_unaccent(%s))",
+                (muni_match,),
+            )
+            if len(fallback) == 1:
+                geografia_id = int(fallback["geografia_id"].iloc[0])
+                _upsert_alias(esquema, tabla, "departamento", depto, geografia_id, "municipio_unico_nacional")
+                _upsert_alias(esquema, tabla, "municipio", muni, geografia_id, "municipio_unico_nacional")
+                resueltos += 1
+                continue
+            # Tier 3: alias curado a mano (migración 027) — mismo criterio que
+            # usa ontologia.f_resolver_geografia() en las vistas _geo.
+            curado = db_manager.query_df(
+                """
+                SELECT geografia_id FROM ontologia.geografia_alias_curado
+                WHERE (patron_departamento IS NULL OR patron_departamento = upper(ontologia.f_unaccent(%s)))
+                  AND patron_municipio = upper(ontologia.f_unaccent(%s))
+                LIMIT 1
+                """,
+                (depto_match, muni_match),
+            )
+            if not curado.empty:
+                geografia_id = int(curado["geografia_id"].iloc[0])
+                _upsert_alias(esquema, tabla, "departamento", depto, geografia_id, "curado_manual")
+                _upsert_alias(esquema, tabla, "municipio", muni, geografia_id, "curado_manual")
+                resueltos += 1
             else:
                 _upsert_sin_resolver(esquema, tabla, "departamento", depto)
                 _upsert_sin_resolver(esquema, tabla, "municipio", muni)
                 pendientes += 1
-        logger.info(f"{esquema}.{tabla}: {resueltos} pares resueltos, {pendientes} pendientes")
+        logger.info(
+            f"{esquema}.{tabla}: {resueltos} pares resueltos ({compuestos} corredores multi-municipio), "
+            f"{pendientes} pendientes"
+        )
 
 
 def resolver_solo_municipio() -> None:
@@ -287,7 +409,7 @@ def resolver_solo_municipio() -> None:
             continue
         resueltos, pendientes = 0, 0
         for _, row in valores.iterrows():
-            muni = str(row["municipio"])
+            muni = str(row["municipio"]).strip()
             match = db_manager.query_df(
                 """
                 SELECT geografia_id FROM ontologia.dim_geografia
@@ -298,6 +420,21 @@ def resolver_solo_municipio() -> None:
             if len(match) == 1:
                 _upsert_alias(esquema, tabla, "municipio", muni,
                               int(match["geografia_id"].iloc[0]), "exacto_normalizado")
+                resueltos += 1
+                continue
+            # Tier 2: alias curado a mano, solo entradas sin restricción de
+            # departamento (esta tabla no tiene columna departamento).
+            curado = db_manager.query_df(
+                """
+                SELECT geografia_id FROM ontologia.geografia_alias_curado
+                WHERE patron_departamento IS NULL
+                  AND patron_municipio = upper(ontologia.f_unaccent(%s))
+                """,
+                (muni,),
+            )
+            if not curado.empty:
+                _upsert_alias(esquema, tabla, "municipio", muni,
+                              int(curado["geografia_id"].iloc[0]), "curado_manual")
                 resueltos += 1
             else:
                 # 0 matches o nombre de municipio ambiguo (existe en >1 departamento)

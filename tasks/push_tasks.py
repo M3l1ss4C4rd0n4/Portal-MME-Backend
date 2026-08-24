@@ -61,13 +61,12 @@ async def _generar_texto_informe() -> str:
         str(data)
     )
 
-    # Narrar con Groq LLM → español oral natural
+    # Narrar con LLM → español oral natural (2026-08-22: failover real
+    # Gemini→Groq, ver infrastructure/ml/llm_failover.py — antes llamaba
+    # solo a Gemini directamente, sin respaldo).
     try:
-        from groq import AsyncGroq
-        from core.config import settings
-        client = AsyncGroq(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com")
-        resp = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        from infrastructure.ml.llm_failover import completar_chat_async
+        texto_narrado, _, _ = await completar_chat_async(
             messages=[
                 {
                     "role": "system",
@@ -82,8 +81,9 @@ async def _generar_texto_informe() -> str:
             ],
             temperature=0.4,
             max_tokens=500,
+            etiqueta_log="PUSH-TASK",
         )
-        return resp.choices[0].message.content.strip()
+        return texto_narrado.strip()
     except Exception as e:
         logger.warning(f"[PUSH-TASK] LLM narración falló, usando texto limpio: {e}")
         return re.sub(r'[*_`~\[\]#]', '', texto_raw).strip()

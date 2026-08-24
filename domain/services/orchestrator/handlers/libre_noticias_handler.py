@@ -13,6 +13,31 @@ from infrastructure.logging.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _formatear_item_noticia(n: Dict) -> Dict:
+    """
+    Formato común de un ítem de noticia para el Asistente/frontend.
+    Robusto a las 2 formas de clave que usan los distintos pipelines de
+    NewsService (get_enriched_news usa "resumen_corto", get_hydrocarbon_news
+    usa "resumen"; ambos usan "fecha_publicacion").
+    """
+    item = {
+        "titulo": n["titulo"],
+        "resumen": n.get("resumen") or n.get("resumen_corto") or "",
+        "url": n["url"],
+        "fuente": n.get("fuente", ""),
+        "source_url": n.get("source_url") or "",
+        "fecha": n.get("fecha_publicacion") or n.get("fecha") or "",
+        "imagen": n.get("imagen") or n.get("image") or "",
+    }
+    # Fase 32: cuerpo real del artículo (scraping), truncado por-ítem
+    # (mismo principio de la Fase 26 para RAG) — nunca se muestra en el
+    # frontend, solo contexto para el Asistente/resumen IA.
+    completo = n.get("contenido_completo")
+    if completo:
+        item["contenido_completo"] = completo[:1500]
+    return item
+
+
 class LibreNoticiasHandlerMixin:
     """
     Mixin que agrupa:
@@ -289,7 +314,7 @@ class LibreNoticiasHandlerMixin:
                     from domain.services.confianza_politica import get_confianza_politica
                     import json as _json2
                     agent = AgentIA()
-                    if agent.client:
+                    if agent.disponible:
                         contexto_ia = {"pregunta": pregunta, "datos": datos_consultados}
                         confianza_relevante = {}
                         mapa_confianza = {
@@ -322,8 +347,7 @@ class LibreNoticiasHandlerMixin:
                         )
 
                         def _call_ia():
-                            return agent.client.chat.completions.create(
-                                model=agent.modelo,
+                            return agent.completar(
                                 messages=[
                                     {"role": "system", "content": sys_p},
                                     {"role": "user", "content": usr_p},
@@ -332,8 +356,11 @@ class LibreNoticiasHandlerMixin:
                                 max_tokens=600,
                             )
 
-                        resp_ia = await asyncio.wait_for(asyncio.to_thread(_call_ia), timeout=20)
-                        data['analisis_ia'] = resp_ia.choices[0].message.content.strip()
+                        # 45s (no 20s): agent.completar() ahora puede intentar
+                        # 2 proveedores en secuencia (Gemini→Groq) — 20s no
+                        # dejaba margen para el reintento real.
+                        analisis_ia = await asyncio.wait_for(asyncio.to_thread(_call_ia), timeout=45)
+                        data['analisis_ia'] = analisis_ia.strip()
                         logger.info(f"[PREGUNTA_LIBRE] IA analysis generated ({len(data['analisis_ia'])} chars)")
                 except Exception as e:
                     logger.warning(f"[PREGUNTA_LIBRE] IA analysis failed: {e}")
@@ -376,18 +403,7 @@ class LibreNoticiasHandlerMixin:
             top = enriched.get("top", [])
             otras = enriched.get("otras", [])
 
-            data["noticias"] = [
-                {
-                    "titulo": n["titulo"],
-                    "resumen": n["resumen_corto"],
-                    "url": n["url"],
-                    "fuente": n["fuente"],
-                    "source_url": n.get("source_url") or "",
-                    "fecha": n["fecha_publicacion"],
-                    "imagen": n.get("imagen") or n.get("image") or "",
-                }
-                for n in top
-            ]
+            data["noticias"] = [_formatear_item_noticia(n) for n in top]
             data["total"] = len(top)
             data["opcion_regresar"] = {
                 "id": "menu",
@@ -525,18 +541,7 @@ class LibreNoticiasHandlerMixin:
 
             # 3. Formatear respuesta (máximo 3)
             top3 = selected[:3]
-            data["noticias"] = [
-                {
-                    "titulo": n["titulo"],
-                    "resumen": n.get("resumen") or n.get("resumen_corto") or "",
-                    "url": n["url"],
-                    "fuente": n.get("fuente", ""),
-                    "source_url": n.get("source_url") or "",
-                    "fecha": n.get("fecha_publicacion") or n.get("fecha") or "",
-                    "imagen": n.get("imagen") or n.get("image") or "",
-                }
-                for n in top3
-            ]
+            data["noticias"] = [_formatear_item_noticia(n) for n in top3]
             data["total"] = len(top3)
 
             logger.info(
@@ -568,19 +573,32 @@ class LibreNoticiasHandlerMixin:
         try:
             from domain.services.ai_service import AgentIA
             agent = AgentIA()
-            if not agent.client:
+            if not agent.disponible:
                 return None
 
-            titulares_ctx = "\n".join(
-                f"- {n.get('titulo', '')} (Fuente: {n.get('fuente', '?')}, "
-                f"Fecha: {n.get('fecha_publicacion', n.get('fecha', '?'))})"
-                for n in noticias[:10]
-            )
+            def _linea(n: Dict) -> str:
+                base = (
+                    f"- {n.get('titulo', '')} (Fuente: {n.get('fuente', '?')}, "
+                    f"Fecha: {n.get('fecha_publicacion', n.get('fecha', '?'))})"
+                )
+                # Fase 32: texto completo (scraping) cuando está disponible —
+                # solo los `top` lo traen; truncado por-ítem (mismo principio
+                # de la Fase 26 para RAG) para no perder metadata de los
+                # últimos titulares por un corte ciego más adelante.
+                completo = n.get("contenido_completo")
+                if completo:
+                    base += f"\n  Cuerpo: {completo[:1500]}"
+                return base
+
+            titulares_ctx = "\n".join(_linea(n) for n in noticias[:10])
 
             system_prompt = (
                 "Eres un analista senior del sector energético colombiano "
                 "que asesora al Viceministro de Minas y Energía.\n\n"
-                "Se te proporcionan los titulares de noticias del día.\n\n"
+                "Se te proporcionan los titulares de noticias del día; "
+                "para algunas también el cuerpo completo del artículo "
+                "('Cuerpo:') — úsalo para profundidad real, no te quedes "
+                "solo en lo que dice el titular.\n\n"
                 "TAREA: Escribe un resumen ejecutivo de exactamente 3-4 frases "
                 "que identifique los 2-3 grandes temas del día.\n\n"
                 "REGLAS:\n"
@@ -600,8 +618,7 @@ class LibreNoticiasHandlerMixin:
             )
 
             def _call_ai():
-                return agent.client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                return agent.completar(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -610,15 +627,18 @@ class LibreNoticiasHandlerMixin:
                     max_tokens=300,
                 )
 
-            response = await asyncio.wait_for(asyncio.to_thread(_call_ai), timeout=15)
-            texto = response.choices[0].message.content.strip()
+            # 45s (no 15s): agent.completar() ahora puede intentar 2
+            # proveedores en secuencia (Gemini→Groq) — 15s no dejaba
+            # margen para el reintento real.
+            texto_ia = await asyncio.wait_for(asyncio.to_thread(_call_ai), timeout=45)
+            texto = texto_ia.strip()
             if len(texto) < 30:
                 logger.warning(f"[NOTICIAS_RESUMEN] Respuesta demasiado corta ({len(texto)} chars)")
                 return None
 
             logger.info(
                 f"[NOTICIAS_RESUMEN] Resumen generado con "
-                f"{agent.provider}/llama-3.1-8b-instant ({len(texto)} chars)"
+                f"{agent.provider}/{agent.modelo} ({len(texto)} chars)"
             )
             return texto
 

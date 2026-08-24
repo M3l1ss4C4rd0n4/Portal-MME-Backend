@@ -17,13 +17,13 @@ Autor: Portal Energético MME
 Fecha: 9 de febrero de 2026
 """
 
-from fastapi import APIRouter, Depends, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-import logging
-from typing import List, Literal
+import base64
+from typing import List, Literal, Optional
 
 from api.dependencies import get_api_key, get_orchestrator_service
 from domain.schemas.orchestrator import (
@@ -32,9 +32,10 @@ from domain.schemas.orchestrator import (
     ErrorDetail
 )
 from domain.services.orchestrator_service import ChatbotOrchestratorService
+from infrastructure.logging.logger import get_logger
 
 # Configuración
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
@@ -392,12 +393,67 @@ async def health_check():
 
 class MensajeHistorial(BaseModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: str = Field(..., max_length=4000)
+
+
+# Fase 20 — adjuntar archivos al Asistente IA. Allowlist cerrada (nunca se
+# confía en el mime_type que reporta el navegador sin más: se valida contra
+# los primeros bytes reales del archivo, ver _detectar_mime_real).
+MIME_TYPES_PERMITIDOS = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
+TAMANO_MAXIMO_ARCHIVO_BYTES = 10 * 1024 * 1024  # 10MB — Gemini soporta inline hasta ~20MB
+
+
+class ArchivoAdjunto(BaseModel):
+    mime_type: str
+    data_base64: str = Field(..., min_length=1)
 
 
 class AsistenteRequest(BaseModel):
     mensaje: str = Field(..., min_length=1, max_length=2000)
-    historial: List[MensajeHistorial] = Field(default_factory=list)
+    historial: List[MensajeHistorial] = Field(default_factory=list, max_length=50)
+    archivos: List[ArchivoAdjunto] = Field(default_factory=list, max_length=3)
+
+
+class AsistenteFeedbackRequest(BaseModel):
+    turno_id: Optional[str] = Field(None, max_length=32)
+    pregunta: str = Field(..., min_length=1, max_length=2000)
+    respuesta: str = Field(..., min_length=1, max_length=8000)
+    util: bool
+    tools_usadas: List[str] = Field(default_factory=list, max_length=20)
+
+
+def _detectar_mime_real(data: bytes) -> Optional[str]:
+    """Sniff de los primeros bytes — nunca se confía solo en el mime_type que
+    manda el cliente (podría estar mal puesto o ser deliberadamente falso)."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    return None
+
+
+def _validar_archivos_adjuntos(archivos: List["ArchivoAdjunto"]) -> None:
+    for archivo in archivos:
+        try:
+            data = base64.b64decode(archivo.data_base64, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Archivo adjunto con base64 inválido")
+        if len(data) > TAMANO_MAXIMO_ARCHIVO_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Archivo adjunto supera el máximo de {TAMANO_MAXIMO_ARCHIVO_BYTES // (1024*1024)}MB",
+            )
+        mime_real = _detectar_mime_real(data)
+        if mime_real is None or mime_real not in MIME_TYPES_PERMITIDOS:
+            raise HTTPException(
+                status_code=400,
+                detail="Tipo de archivo no permitido — solo PNG, JPEG, WEBP o PDF",
+            )
+        archivo.mime_type = mime_real  # nunca confiar en lo que mandó el cliente, usar lo detectado
 
 
 @router.post(
@@ -420,15 +476,59 @@ async def asistente_chat(
 ):
     from domain.services.asistente_ia_service import responder_stream
 
+    _validar_archivos_adjuntos(request_data.archivos)
+
     logger.info(
         f"[ASISTENTE_ENDPOINT] Pregunta='{request_data.mensaje[:80]}' | "
-        f"historial={len(request_data.historial)} turnos | IP: {request.client.host}"
+        f"historial={len(request_data.historial)} turnos | archivos={len(request_data.archivos)} | "
+        f"IP: {request.client.host}"
     )
 
     historial_dicts = [{"role": m.role, "content": m.content} for m in request_data.historial]
+    archivos_dicts = [{"mime_type": a.mime_type, "data_base64": a.data_base64} for a in request_data.archivos]
 
     return StreamingResponse(
-        responder_stream(request_data.mensaje, historial_dicts),
+        responder_stream(request_data.mensaje, historial_dicts, archivos=archivos_dicts),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post(
+    "/asistente/feedback",
+    summary="Feedback de usuario (👍/👎) sobre una respuesta del Asistente IA",
+    description=(
+        "Registra si una respuesta del Asistente fue útil o no, con la pregunta/"
+        "respuesta/tools usadas — única señal cuantitativa de calidad en producción "
+        "real, ver ontologia.asistente_feedback."
+    ),
+    tags=["🤖 Chatbot"],
+)
+@limiter.limit("30/minute")
+async def asistente_feedback(
+    request_data: AsistenteFeedbackRequest,
+    request: Request,
+    api_key: str = Depends(get_api_key),
+):
+    from infrastructure.database.manager import db_manager
+
+    db_manager.execute_non_query(
+        """
+        INSERT INTO ontologia.asistente_feedback
+            (turno_id, pregunta, respuesta, util, tools_usadas, ip)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (
+            request_data.turno_id,
+            request_data.pregunta,
+            request_data.respuesta,
+            request_data.util,
+            request_data.tools_usadas,
+            request.client.host,
+        ),
+    )
+    logger.info(
+        f"[ASISTENTE_FEEDBACK] turno={request_data.turno_id} util={request_data.util} "
+        f"pregunta='{request_data.pregunta[:80]}'"
+    )
+    return {"status": "ok"}

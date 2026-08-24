@@ -214,6 +214,7 @@ class MicrosoftGraphAuth:
             client_id=MS_CLIENT_ID,
             client_credential=MS_CLIENT_SECRET,
             authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
+            timeout=30,  # sin esto, msal cuelga indefinidamente si login.microsoftonline.com no responde
         )
 
         result = app.acquire_token_for_client(
@@ -245,6 +246,7 @@ class MicrosoftGraphAuth:
             client_id=MS_CLIENT_ID,
             authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
             token_cache=cache,
+            timeout=30,
         )
 
         accounts = app.get_accounts()
@@ -289,6 +291,7 @@ class MicrosoftGraphAuth:
             client_id=MS_CLIENT_ID,
             authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
             token_cache=cache,
+            timeout=30,
         )
 
         flow = app.initiate_device_flow(scopes=self.SCOPES_DELEGATED)

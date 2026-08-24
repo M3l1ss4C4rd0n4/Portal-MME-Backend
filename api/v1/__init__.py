@@ -31,6 +31,7 @@ from api.v1.routes import (
     fenoge,
     ontologia,
     riesgo,
+    voz,
 )
 
 # Router principal de v1
@@ -240,6 +241,13 @@ api_router_v1.include_router(
     riesgo.router,
     prefix="/riesgo",
     tags=["⚠️ Portal — Riesgo"]
+)
+
+# 28. Asistente de voz en tiempo real — Gemini Live API (Fase 19 Palantir-IA)
+api_router_v1.include_router(
+    voz.router,
+    prefix="/voz",
+    tags=["🎙️ Asistente de voz"]
 )
 
 __all__ = ["api_router_v1"]

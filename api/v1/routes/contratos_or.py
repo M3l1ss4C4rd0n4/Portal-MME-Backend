@@ -73,7 +73,7 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
                     SELECT
                         MAX(CASE WHEN unnamed_0 = 'Numero de Contratos' THEN unnamed_1 END) AS n_contratos,
                         MAX(CASE WHEN unnamed_0 = 'Avance Financiero' THEN unnamed_1 END)   AS avance_financiero,
-                        MAX(CASE WHEN unnamed_0 = 'Avance General' THEN unnamed_1 END)      AS avance_general,
+                        MAX(CASE WHEN unnamed_0 = 'Avance Documental' THEN unnamed_1 END)   AS avance_general,
                         MAX(CASE WHEN unnamed_0 = 'Pagos Realizados' THEN unnamed_1 END)    AS pagos_realizados,
                         MAX(CASE WHEN unnamed_0 = 'Total Pagos' THEN unnamed_1 END)         AS total_pagos,
                         MAX(CASE WHEN unnamed_0 = '% Pagos' THEN unnamed_1 END)             AS pct_pagos

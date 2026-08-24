@@ -38,11 +38,37 @@ from etl.etl_rules import (
     ConversionType,
 )
 
+import urllib.request
+import urllib.parse
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'), override=False)
+except ImportError:
+    pass
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+
+def _alertar_bloqueo_telegram(metric_id: str, issues: list) -> None:
+    """Notifica por Telegram cuando el gate de validación bloquea una inserción (reusa el patrón de scripts/monitor_predictions_quality.py)."""
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID_ALERTAS', '5084190952')
+    if not bot_token:
+        logging.warning("  TELEGRAM_BOT_TOKEN no configurado — alerta omitida")
+        return
+    texto = f"🛑 ETL bloqueado — {metric_id}\n" + "\n".join(f"• {i}" for i in issues)
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    try:
+        data = urllib.parse.urlencode({'chat_id': chat_id, 'text': texto}).encode('utf-8')
+        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=15) as resp:
+            logging.info(f"  Alerta Telegram enviada (HTTP {resp.status})")
+    except Exception as e:
+        logging.warning(f"  No se pudo enviar alerta Telegram: {e}")
 
 # Clasificación de métricas por sección
 METRICAS_POR_SECCION = {
@@ -368,10 +394,11 @@ def descargar_metrica(obj_api, metric_id, entity, dias_historia=90):
                     logging.error(f"  🛑 {issue}")
                 else:
                     logging.warning(f"  ⚠️ {issue}")
-            # Solo bloquear inserción por errores de UNIDAD (no por rangos/warnings)
-            error_criticos = [i for i in issues if i.startswith("ERROR UNIDAD")]
+            # Bloquear inserción por errores de UNIDAD o de RANGO (valores fuera de lo físicamente posible)
+            error_criticos = [i for i in issues if i.startswith("ERROR UNIDAD") or i.startswith("ERROR RANGO")]
             if error_criticos:
-                logging.error(f"  🛑 Inserción BLOQUEADA para {metric_id}: error de unidad crítico")
+                logging.error(f"  🛑 Inserción BLOQUEADA para {metric_id}: {error_criticos}")
+                _alertar_bloqueo_telegram(metric_id, error_criticos)
                 return 0
         
         # Preparar datos para inserción

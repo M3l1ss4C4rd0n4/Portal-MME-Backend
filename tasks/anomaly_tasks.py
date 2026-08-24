@@ -296,29 +296,33 @@ def _check_stale_data():
     return stale_alerts
 
 
-def _alerta_ya_notificada(titulo: str, horas: int = ALERT_COOLDOWN_HOURS) -> bool:
+def _alerta_ya_notificada(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> bool:
     """
-    Verifica si una alerta con el mismo título ya fue notificada hoy.
+    Verifica si una alerta con esta clave ya fue notificada hoy.
     Usa Redis como fuente de verdad (atómico, compartido por todos los workers).
     El TTL se calcula hasta medianoche para garantizar máximo 1 envío por día.
+
+    `clave` debe ser un identificador ESTABLE del tipo de alerta (ej. 'HSIN_CRITICO'),
+    nunca el título formateado con valores en vivo (ej. porcentajes) — de lo contrario
+    cada ciclo genera una clave distinta y el cooldown nunca hace match.
     """
     try:
         import redis as _redis
         _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
-        _key = 'alert_cooldown:' + titulo.replace(' ', '_')[:120]
+        _key = 'alert_cooldown:' + clave.replace(' ', '_')[:120]
         return bool(_r.get(_key))
     except Exception as e:
         logger.warning(f"Error verificando cooldown de alerta (Redis): {e}")
         return False  # En caso de error, permitir enviar
 
 
-def _activar_cooldown_alerta(titulo: str, horas: int = ALERT_COOLDOWN_HOURS) -> None:
+def _activar_cooldown_alerta(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> None:
     """Registra en Redis que esta alerta ya fue notificada hoy (TTL hasta medianoche)."""
     try:
         import redis as _redis
         from datetime import datetime
         _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
-        _key = 'alert_cooldown:' + titulo.replace(' ', '_')[:120]
+        _key = 'alert_cooldown:' + clave.replace(' ', '_')[:120]
         # TTL = segundos restantes hasta las 00:00 del día siguiente
         _now = datetime.now()
         _midnight = (_now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -419,6 +423,7 @@ def check_anomalies(self):
                 if pnt_val > _perfil_nac.pnt_crit_pct:
                     alertas_criticas.append({
                         'titulo': f'PNT_CRÍTICA: {pnt_val:.1f}%',
+                        'clave': 'PNT_CRITICA',
                         'categoria': 'Pérdidas No Técnicas',
                         'severidad': 'CRÍTICO',
                         'descripcion': (
@@ -455,7 +460,8 @@ def check_anomalies(self):
         alertas_nuevas = []
         for a in alertas_urgentes:
             titulo = a.get('titulo', a.get('descripcion', ''))
-            if not _alerta_ya_notificada(titulo):
+            clave = a.get('clave') or titulo
+            if not _alerta_ya_notificada(clave):
                 alertas_nuevas.append(a)
             else:
                 logger.info(
@@ -507,7 +513,8 @@ def check_anomalies(self):
 
             # Activar cooldown Redis para cada alerta enviada (atómico, cross-worker)
             for _a in alertas_nuevas:
-                _activar_cooldown_alerta(_a.get('titulo', _a.get('descripcion', '')))
+                _clave_envio = _a.get('clave') or _a.get('titulo', _a.get('descripcion', ''))
+                _activar_cooldown_alerta(_clave_envio)
 
             logger.info(f"📤 [ANOMALÍAS] Broadcast completado: {enviados} usuarios notificados")
         elif alertas_criticas:

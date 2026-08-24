@@ -18,22 +18,42 @@ FUENTES REGULATORIAS:
 2. Resolución CREG 071 de 2006 — Cargo por Confiabilidad y precio de escasez.
 3. Resolución CREG 140 de 2017 — Metodología de cálculo del precio marginal
    de escasez.
-4. Resolución CREG 121 de 2020 — Reglas de inicio y finalización del período
-   de riesgo de desabastecimiento.
+4. Resolución CREG 125 de 2020 — Deroga las normas del Capítulo II (Inicio y
+   Finalización del Período de Riesgo de Desabastecimiento) de la Resolución
+   CREG 026 de 2014 — reemplazadas por la Res. CREG 209 de 2020 (ver #5).
+   CORREGIDO (2026-08-20): esta fuente estaba citada como "Resolución CREG
+   121 de 2020" — verificado contra el listado cronológico real de la CREG
+   (gestornormativo.creg.gov.co) que NO existe ninguna Resolución 121 de
+   2020 con este tema (ni con ningún otro) — la 125/2020 es la que
+   efectivamente deroga el capítulo que la 209/2020 reemplaza, mismo tema
+   descrito aquí desde el inicio. Probable error de transcripción histórico
+   en este archivo, nunca antes verificado contra la fuente oficial.
 5. Resolución CREG 209 de 2020 — Senda de Referencia del embalse agregado del
    SIN e Índice NE.
 6. Resolución CREG 101 055 de 2024 — Complemento al Estatuto de Desabasteci-
    miento.
 7. Resolución CREG 101 066 de 2024 — Tres niveles de precio de escasez
    (PEI, PE, PES).
-8. Publicaciones mensuales XM/CND:
+8. Resolución CREG 101 112 de 2026 (12 de junio de 2026, publicada en el
+   Diario Oficial el 17 de junio de 2026) — MODIFICA el numeral 1 del
+   literal B del artículo 2 de la Resolución CREG 026 de 2014: elimina la
+   regla alternativa "embalse ≥ 70% del volumen útil agregado del SIN →
+   Índice NE en nivel superior" (introducida por la Res. CREG 210 de 2021).
+   Desde su vigencia, el Índice NE se determina EXCLUSIVAMENTE comparando
+   el embalse útil real contra la senda de referencia — sin atajo del 70%.
+   Verificado en vivo (2026-08-19) contra el texto de la resolución en
+   gestornormativo.creg.gov.co — no en las publicaciones de XM, que no
+   habían reflejado este cambio en su documentación general.
+9. Publicaciones mensuales XM/CND:
    - https://www.xm.com.co/resoluciones/operacion-y-mercado/resolucion-creg-209-de-2020-condicion-del-sistema
    - https://www.xm.com.co/hidrologia/aportes
    - https://www.xm.com.co/hidrologia/reservas
    - https://www.xm.com.co/transacciones/cargo-por-confiabilidad/precio-de-bolsa-y-escasez
 
 ═══════════════════════════════════════════════════════════════════════════════
-Última revisión normativa: 25 de mayo de 2026.
+Última revisión normativa: 19 de agosto de 2026 (Res. CREG 101 112/2026 —
+regla del 70% absoluto para el Índice NE, derogada desde el 17-jun-2026,
+detectada activa en este código y corregida el mismo día de esta revisión).
 Próxima revisión sugerida: trimestral, o ante nueva Resolución CREG.
 ═══════════════════════════════════════════════════════════════════════════════
 """
@@ -55,21 +75,24 @@ from typing import Dict, Optional, Tuple
 # asegurar el suministro de energía durante cada estación.
 #
 # El Índice NE (Nivel de Embalse) compara el nivel real con la senda:
-#   • SUPERIOR: embalse real ≥ senda  O  embalse real > 70% del volumen útil
+#   • SUPERIOR: embalse real ≥ senda
 #   • ALERTA:   senda − X ≤ embalse < senda
 #                (persistente por 2 verificaciones semanales → pasa a inferior)
 #   • INFERIOR: embalse real < senda − X
 #
 # Donde X = puntos porcentuales de tolerancia. En la práctica reciente X = 0.
 #
+# NOTA (2026-08-19): hasta esta revisión, SUPERIOR también se activaba de
+# forma alternativa cuando embalse > 70% del volumen útil, sin importar la
+# senda — esa regla (introducida por la Res. CREG 210/2021) fue DEROGADA
+# por la Res. CREG 101 112/2026 (vigente desde el 17-jun-2026). Se detectó
+# que este código seguía aplicándola activamente 2 meses después de
+# derogada — corregido eliminando por completo la comparación alternativa.
+#
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Tolerancia de la senda (puntos porcentuales). 0 = comparación estricta.
 SENDA_TOLERANCIA_PP: float = 0.0
-
-# Umbral universal de "agua abundante" del Estatuto (Res. CREG 209/2020, art. 2.8.2.1.3):
-# si embalse > 70% volumen útil → índice NE en nivel superior independiente de la senda.
-NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT: float = 70.0
 
 # Senda de Referencia oficial publicada por XM/CND.
 # Estos valores se actualizan al inicio de cada estación (mayo y diciembre).
@@ -149,7 +172,11 @@ def clasificar_indice_ne(
     fecha: Optional[date] = None,
 ) -> Tuple[str, str, float]:
     """
-    Clasifica el embalse según el Índice NE del Estatuto CREG 209/2020.
+    Clasifica el embalse según el Índice NE del Estatuto CREG 026/2014 art. 2
+    literal B, tal como fue modificado por la Resolución CREG 101 112/2026
+    (vigente desde el 17-jun-2026): comparación exclusiva contra la senda de
+    referencia — la regla alternativa "≥ 70% del volumen útil" (Res. CREG
+    210/2021) fue derogada y ya NO se evalúa.
 
     Args:
         nivel_embalse_pct: nivel actual del embalse agregado del SIN (%).
@@ -160,11 +187,6 @@ def clasificar_indice_ne(
         nivel: 'SUPERIOR' | 'ALERTA' | 'INFERIOR'
     """
     senda = obtener_senda_referencia(fecha)
-
-    if nivel_embalse_pct >= NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT:
-        return ('SUPERIOR',
-                f'Embalse {nivel_embalse_pct:.1f}% > 70% (regla absoluta CREG 209/2020).',
-                senda)
 
     if nivel_embalse_pct >= senda:
         return ('SUPERIOR',
@@ -687,10 +709,11 @@ NOTAS_GOBERNANZA: dict = {
         'Resolución CREG 026 de 2014',
         'Resolución CREG 071 de 2006',
         'Resolución CREG 140 de 2017',
-        'Resolución CREG 121 de 2020',
+        'Resolución CREG 125 de 2020',  # corregida de "121" — ver docstring del módulo
         'Resolución CREG 209 de 2020',
         'Resolución CREG 101 055 de 2024',
         'Resolución CREG 101 066 de 2024',
+        'Resolución CREG 101 112 de 2026',
     ],
     'publicacion_oficial_xm': (
         'https://www.xm.com.co/resoluciones/operacion-y-mercado/'

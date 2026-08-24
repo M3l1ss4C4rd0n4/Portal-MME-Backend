@@ -3,14 +3,14 @@ Mixin: Ejecución presupuestal DEE — totales + top proyectos.
 Replica métricas de presupuesto.resumen.
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
 from typing import Any, Dict, List, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 from infrastructure.database.connection import connection_manager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _fmt_cop(val) -> str:

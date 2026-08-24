@@ -78,6 +78,14 @@ class GraphService:
             codigos_dpto, empresa_id, limit=limit_relacionadas
         ) if codigos_dpto else []
 
+        # Arista contractual directa (Fase 23 Bloque 2) — a diferencia de
+        # 'coincide_en_zona_con' (co-ubicación inferida, débil), esta viene de
+        # un campo real del contrato (interventoria) resuelto contra dim_empresa.
+        interventorias = (
+            self.empresa_repo.interventorias_de_empresa(empresa["nit_normalizado"])
+            if empresa.get("nit_normalizado") else []
+        )
+
         geografias: Dict[Any, Dict[str, Any]] = {}
         for c in contratos_verificados:
             key = c.get("codigo_dane_departamento")
@@ -104,6 +112,10 @@ class GraphService:
         nodos += [
             {"tipo": "empresa_relacionada", "id": f"empresa-{e['empresa_id']}", "datos": e}
             for e in empresas_relacionadas
+        ]
+        nodos += [
+            {"tipo": "interventoria", "id": f"empresa-{i['empresa_id']}", "datos": i}
+            for i in interventorias
         ]
 
         aristas = []
@@ -132,6 +144,12 @@ class GraphService:
                 "origen": f"empresa-{empresa_id}", "destino": f"empresa-{e['empresa_id']}",
                 "tipo": "coincide_en_zona_con", "confianza": "alta",
             })
+        for i in interventorias:
+            aristas.append({
+                "origen": f"empresa-{i['empresa_id']}", "destino": f"empresa-{empresa_id}",
+                "tipo": "interventor_de",
+                "confianza": "alta" if i.get("resuelto_por_nit") else "revisar",
+            })
 
         return {
             "empresa": empresa,
@@ -141,6 +159,7 @@ class GraphService:
             "total_contratos_verificados": total_contratos,
             "proyectos_relacionados": proyectos,
             "empresas_en_misma_zona": empresas_relacionadas,
+            "interventorias": interventorias,
             "menciones_no_verificadas": [
                 {
                     "esquema": a["esquema_origen"], "tabla": a["tabla_origen"],
@@ -153,6 +172,10 @@ class GraphService:
                 "coincidencia de nombre por similitud de texto — requieren revisión "
                 "humana antes de asumirse como el mismo ejecutor. Empresas en la "
                 "misma zona: otras compañías con contratos verificados (NIT) en los "
-                "mismos departamentos donde opera esta empresa."
+                "mismos departamentos donde opera esta empresa. Interventorías: "
+                "firmas que fiscalizan los contratos de esta empresa como ejecutora "
+                "(campo real del contrato, no inferido — 'confianza: revisar' cuando "
+                "el nombre de la interventoría se resolvió por similitud de texto, "
+                "no por NIT)."
             ),
         }

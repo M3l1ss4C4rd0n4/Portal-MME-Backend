@@ -8,14 +8,13 @@ CREG 209 de 2020), que compara el embalse real contra la Senda de Referencia
 mensual publicada por XM/CND.
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
 from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 from core.umbrales_oficiales import (
-    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
     OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT,
     obtener_senda_referencia,
     clasificar_indice_ne,
@@ -23,7 +22,7 @@ from core.umbrales_oficiales import (
     HSIN_UMBRAL_NORMAL,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EstadoActualHandlerMixin:
@@ -304,7 +303,9 @@ class EstadoActualHandlerMixin:
                 prom_referencia,
             )
 
-        # Niveles de Índice NE oficial (Estatuto CREG 026/2014 + Res. 209/2020)
+        # Niveles de Índice NE oficial (Estatuto CREG 026/2014, modificado por
+        # Res. CREG 101 112/2026 — comparación exclusiva contra la senda,
+        # sin la regla alternativa del 70% derogada desde el 17-jun-2026)
         if nivel_ne == 'SUPERIOR':
             # Sub-clasificación visual del nivel superior
             if nivel_pct >= OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT:  # ≥ 80%
@@ -314,17 +315,10 @@ class EstadoActualHandlerMixin:
                     f"Senda CREG: {senda_pct:.1f}%.",
                     prom_referencia,
                 )
-            elif nivel_pct >= NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT:  # ≥ 70%
-                return (
-                    "🟢 NE Superior — regla absoluta CREG",
-                    f"≥ {NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT:.0f}% (regla absoluta CREG 209/2020). "
-                    f"Senda CREG: {senda_pct:.1f}%.",
-                    prom_referencia,
-                )
             else:
                 return (
                     "🟢 NE Superior — sobre senda CREG",
-                    f"≥ senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014 + Res. 209/2020).",
+                    f"≥ senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014, Res. CREG 101 112/2026).",
                     prom_referencia,
                 )
         elif nivel_ne == 'ALERTA':

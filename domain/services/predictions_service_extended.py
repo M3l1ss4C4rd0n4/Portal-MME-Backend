@@ -70,10 +70,24 @@ class PredictionsService:
         self,
         metric_id: str,
         start_date: str,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        model_name: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Obtiene predicciones almacenadas para una métrica"""
-        return self.repo.get_predictions(metric_id, start_date=start_date, end_date=end_date)  # type: ignore[arg-type]
+        """Obtiene predicciones almacenadas para una métrica.
+
+        model_name: si se omite, devuelve TODAS las predicciones almacenadas
+        para la métrica sin importar el modelo — peligroso quando coexisten
+        varios modelos para la misma métrica con valores muy distintos (ver
+        EMBALSES_PCT: ENSEMBLE_SECTOR_v1.0 da valores reales ~70-78%,
+        PROPHET_LARGO_PLAZO_v1.0 genera valores degenerados ~0.8% para el
+        mismo rango de fechas — mezclarlos sin filtro produce un promedio
+        sin sentido, como ya se documentó y corrigió en
+        api/v1/routes/predictions.py para el tablero). Pasar model_name
+        explícito replica ese mismo criterio en cualquier consumidor.
+        """
+        return self.repo.get_predictions(  # type: ignore[arg-type]
+            metric_id, model_name=model_name, start_date=start_date, end_date=end_date
+        )
     
     # ═══════════════════════════════════════════════════════════
     # NUEVOS MÉTODOS DE PREDICCIÓN ML
@@ -813,6 +827,17 @@ class PredictionsService:
                 df['fecha'] = pd.to_datetime(df['fecha'])
                 df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
                 df = df.dropna().sort_values('fecha').reset_index(drop=True)
+                if fuente == 'EMBALSES_PCT':
+                    # PorcVoluUtilDiar (la métrica XM detrás de EMBALSES_PCT) se
+                    # almacena como fracción 0-1, no como porcentaje 0-100 — mismo
+                    # factor de escala que ya aplica train_predictions_sector_energetico.py
+                    # (comentario propio ahí: "PorcVoluUtilDiar 0-1 → 0-100%") para
+                    # generar ENSEMBLE_SECTOR_v1.0. Sin esto, Prophet entrena y
+                    # predice en escala 0-1 (ej. "0.80" en vez de "80.0"), lo que
+                    # parece un valor casi nulo sin este contexto — bug real
+                    # encontrado en vivo (Fase 34): 89 predicciones de
+                    # PROPHET_LARGO_PLAZO_v1.0 quedaron en ~0.8-0.9 en vez de ~80-90%.
+                    df['valor'] = df['valor'] * 100
                 if len(df) >= 30:
                     logger.info("[LongTerm] %s: %d días reales obtenidos (%s → %s)",
                                 fuente, len(df),

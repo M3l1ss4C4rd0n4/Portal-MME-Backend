@@ -1993,7 +1993,7 @@ async def _narrate_for_audio(text: str, api_key: str) -> str:
     try:
         client = _AsyncGroq(api_key=api_key, base_url="https://api.groq.com")
         resp = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",  # "llama-3.1-8b-instant" descontinuado por Groq (16-ago-2026)
             messages=[
                 {
                     "role": "system",

@@ -23,6 +23,9 @@ from domain.interfaces.repositories import (
     IEmpresaRepository,
     ISemanticSearchRepository,
     IProyectoRepository,
+    IMetricaRepository,
+    IRecursoRepository,
+    IContratoRepository,
 )
 from domain.interfaces.data_sources import IXMDataSource
 from domain.interfaces.database import IDatabaseManager
@@ -37,6 +40,9 @@ from infrastructure.database.repositories.geografia_repository import GeografiaR
 from infrastructure.database.repositories.empresa_repository import EmpresaRepository
 from infrastructure.database.repositories.semantic_search_repository import SemanticSearchRepository
 from infrastructure.database.repositories.proyecto_repository import ProyectoRepository
+from infrastructure.database.repositories.metrica_repository import MetricaRepository
+from infrastructure.database.repositories.recurso_repository import RecursoRepository
+from infrastructure.database.repositories.contrato_repository import ContratoRepository
 from infrastructure.database.manager import db_manager
 from infrastructure.external.xm_adapter import XMDataSourceAdapter
 
@@ -84,6 +90,9 @@ class DependencyContainer:
         self._empresa_repository: Optional[IEmpresaRepository] = None
         self._semantic_search_repository: Optional[ISemanticSearchRepository] = None
         self._proyecto_repository: Optional[IProyectoRepository] = None
+        self._metrica_repository: Optional[IMetricaRepository] = None
+        self._recurso_repository: Optional[IRecursoRepository] = None
+        self._contrato_repository: Optional[IContratoRepository] = None
         self._ontologia_service = None
 
         logger.debug("DependencyContainer inicializado")
@@ -147,6 +156,27 @@ class DependencyContainer:
             self._proyecto_repository = ProyectoRepository()
             logger.debug("ProyectoRepository creado")
         return self._proyecto_repository
+
+    def get_metrica_repository(self) -> IMetricaRepository:
+        """Obtiene repositorio de métricas/variables / ontologia (singleton)."""
+        if self._metrica_repository is None:
+            self._metrica_repository = MetricaRepository()
+            logger.debug("MetricaRepository creado")
+        return self._metrica_repository
+
+    def get_recurso_repository(self) -> IRecursoRepository:
+        """Obtiene repositorio de plantas/recursos / ontologia (singleton)."""
+        if self._recurso_repository is None:
+            self._recurso_repository = RecursoRepository()
+            logger.debug("RecursoRepository creado")
+        return self._recurso_repository
+
+    def get_contrato_repository(self) -> IContratoRepository:
+        """Obtiene repositorio de detalle de contratos individuales (singleton)."""
+        if self._contrato_repository is None:
+            self._contrato_repository = ContratoRepository()
+            logger.debug("ContratoRepository creado")
+        return self._contrato_repository
 
     def get_semantic_search_repository(self) -> ISemanticSearchRepository:
         """Obtiene repositorio de búsqueda semántica / RAG (singleton)."""
@@ -269,6 +299,9 @@ class DependencyContainer:
                 empresa_repository=self.get_empresa_repository(),
                 semantic_search_repository=self.get_semantic_search_repository(),
                 proyecto_repository=self.get_proyecto_repository(),
+                metrica_repository=self.get_metrica_repository(),
+                recurso_repository=self.get_recurso_repository(),
+                contrato_repository=self.get_contrato_repository(),
             )
             logger.debug("OntologiaService creado (singleton)")
         return self._ontologia_service
@@ -429,6 +462,9 @@ class DependencyContainer:
         self._empresa_repository = None
         self._semantic_search_repository = None
         self._proyecto_repository = None
+        self._metrica_repository = None
+        self._recurso_repository = None
+        self._contrato_repository = None
         self._ontologia_service = None
         self._risk_service = None
         self._graph_service = None

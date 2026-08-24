@@ -30,7 +30,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.umbrales_oficiales import (
-    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
     clasificar_hsin,
     clasificar_indice_ne,
     clasificar_visual_embalse,
@@ -115,7 +114,7 @@ def _get_impacto_operativo(metrica: str, desviacion_pct: Optional[float], valor_
         else:
             return "Fluctuación de precios dentro de rangos esperados."
     
-    # Embalses — Índice NE oficial (Res. CREG 209/2020 + Res. CREG 026/2014)
+    # Embalses — Índice NE oficial (Res. CREG 026/2014, modificado por Res. CREG 101 112/2026)
     if 'embalse' in metrica_lower or 'porcentaje' in metrica_lower:
         if valor_actual is not None:
             nivel_ne, descripcion_ne, senda = clasificar_indice_ne(float(valor_actual))
@@ -138,11 +137,6 @@ def _get_impacto_operativo(metrica: str, desviacion_pct: Optional[float], valor_
             if valor_actual > 90:
                 return (
                     "Nivel alto — vigilancia por posibles vertimientos preventivos (criterio operativo CND)."
-                )
-            if valor_actual >= NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT:
-                return (
-                    f"Índice NE SUPERIOR: embalse {valor_actual:.1f}% ≥ 70% "
-                    f"(regla absoluta CREG 209/2020). Operación estable."
                 )
             if desviacion_pct and abs(desviacion_pct) > 20:
                 return "Variación importante en reservas. Monitorear comportamiento de aportes hídricos (HSIN)."

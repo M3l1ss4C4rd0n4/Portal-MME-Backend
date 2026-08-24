@@ -11,6 +11,7 @@ Responsabilidades:
 - Generar resumen general IA con los titulares del día.
 """
 
+import asyncio
 import html
 import re
 import time
@@ -21,6 +22,7 @@ from infrastructure.news.news_client import NewsClient
 from infrastructure.news.mediastack_client import MediastackClient
 from infrastructure.news.google_news_rss import fetch_google_news_rss
 from infrastructure.news.larepublica_rss import fetch_larepublica_rss
+from infrastructure.news.article_extractor import extraer_texto_completo
 from infrastructure.cache.redis_client import redis_get_json, redis_set_json
 from domain.services.news_keywords import filter_tier1, filter_tier2_fill
 from infrastructure.logging.logger import get_logger
@@ -580,6 +582,13 @@ class NewsService:
             if art.get("origen_api") == "larepublica_rss":
                 score += 2
 
+            # +2 por RCN/Caracol (Fase 32 — fuentes que reportan constantemente
+            # sobre el sector; llegan vía Google News RSS con origen_api="google_rss",
+            # por eso el bono se detecta por texto de `fuente`, no por origen_api).
+            fuente_lower = (art.get("fuente") or "").lower()
+            if "rcn" in fuente_lower or "caracol" in fuente_lower:
+                score += 2
+
             # ── BONUS POR FRESCURA (criterio dominante) ──
             # La frescura es el factor más importante tras pasar la puerta.
             fecha_str = art.get("fecha", "")
@@ -727,6 +736,19 @@ class NewsService:
         top = [_fmt(a) for a in ranked[:max_top]]
         otras = [_fmt(a) for a in ranked[max_top:max_top + max_extra]]
 
+        # Fase 32: texto completo (scraping) solo para `top` — son los
+        # únicos realmente mostrados/usados; `otras` queda en titular+resumen
+        # para acotar costo/latencia. Se cachea junto con el resto (8h), así
+        # que el scraping real ocurre como máximo una vez cada 8 horas, nunca
+        # por request de usuario.
+        if top:
+            textos = await asyncio.gather(
+                *[extraer_texto_completo(n["url"]) for n in top],
+                return_exceptions=False,
+            )
+            for n, texto in zip(top, textos):
+                n["contenido_completo"] = texto
+
         result = {
             "top": top,
             "otras": otras,
@@ -853,6 +875,17 @@ class NewsService:
             }
 
         noticias = [_fmt(a) for a in ranked[:max_items]]
+
+        # Fase 32: texto completo (scraping), mismo criterio que
+        # get_enriched_news() — solo los items realmente devueltos,
+        # cacheados junto con el resto (scraping real como máximo cada 8h).
+        if noticias:
+            textos = await asyncio.gather(
+                *[extraer_texto_completo(n["url"]) for n in noticias],
+                return_exceptions=False,
+            )
+            for n, texto in zip(noticias, textos):
+                n["contenido_completo"] = texto
 
         result = {
             "noticias": noticias,

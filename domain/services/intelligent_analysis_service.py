@@ -24,8 +24,7 @@ from domain.services.commercial_service import CommercialService
 from domain.services.losses_service import LossesService
 from domain.services.restrictions_service import RestrictionsService
 from core.umbrales_oficiales import (
-    # Resolución CREG 209/2020 — Índice NE
-    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
+    # Resolución CREG 026/2014, mod. Res. CREG 101 112/2026 — Índice NE
     obtener_senda_referencia,
     clasificar_indice_ne,
     # Resolución CREG 026/2014 art. 2 — Índice HSIN

@@ -1,6 +1,7 @@
 """
 AI Integration - Integración con el AI Agent del portal
 """
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -49,11 +50,18 @@ class AIIntegration:
             return self._mock_ai_response(question)
         
         try:
-            # AgentIA usa chat_interactivo (no analizar_pregunta_usuario)
-            response = self.agent.chat_interactivo(
-                pregunta=question
+            # AgentIA usa chat_interactivo (no analizar_pregunta_usuario).
+            # AgentIA.completar() usa el SDK openai síncrono internamente
+            # (con failover real Gemini→Groq desde 2026-08-22, ver
+            # infrastructure/ml/llm_failover.py) — se despacha en un
+            # hilo aparte (asyncio.to_thread) para no bloquear el event loop
+            # de este worker mientras la IA responde (mismo bug ya corregido
+            # en el Asistente IA del portal principal, ver asistente_ia_service.py).
+            response = await asyncio.to_thread(
+                self.agent.chat_interactivo,
+                pregunta=question,
             )
-            
+
             return response
         
         except Exception as e:
@@ -73,7 +81,7 @@ class AIIntegration:
             return self._mock_demand_analysis()
         
         try:
-            return self.agent.analizar_demanda(periodo=period)
+            return await asyncio.to_thread(self.agent.analizar_demanda, periodo=period)
         except Exception as e:
             logger.error(f"Error analizando demanda: {str(e)}")
             return "❌ Error analizando demanda."
@@ -86,7 +94,7 @@ class AIIntegration:
             return self._mock_generation_analysis()
         
         try:
-            return self.agent.analizar_generacion()
+            return await asyncio.to_thread(self.agent.analizar_generacion)
         except Exception as e:
             logger.error(f"Error analizando generación: {str(e)}")
             return "❌ Error analizando generación."
@@ -99,7 +107,11 @@ class AIIntegration:
             return {"has_anomalies": False, "description": "Mock mode"}
         
         try:
-            return self.agent.detectar_anomalias()
+            # AgentIA expone detectar_alertas() (no detectar_anomalias, que
+            # nunca existió en esa clase — AttributeError silencioso en cada
+            # llamada, absorbido por este except; corregido de paso, aunque
+            # hoy nada en el bot invoca detect_anomalies()).
+            return await asyncio.to_thread(self.agent.detectar_alertas)
         except Exception as e:
             logger.error(f"Error detectando anomalías: {str(e)}")
             return {

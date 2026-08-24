@@ -155,3 +155,33 @@ class EmpresaRepository(BaseRepository, IEmpresaRepository):
             "excluir": excluir_empresa_id,
             "limit": limit,
         })
+
+    def interventorias_de_empresa(self, nit_normalizado: str) -> List[Dict[str, Any]]:
+        """
+        Fase 23 Bloque 2 — arista contractual directa que faltaba en el grafo
+        (antes solo existía 'coincide_en_zona_con', co-ubicación débil):
+        firmas de interventoría reales (supervision.contratos.interventoria,
+        resuelto vía empresa_alias como cualquier otro texto libre fuzzy)
+        que fiscalizan contratos donde esta empresa es la ejecutora (NIT,
+        alta confianza).
+        """
+        query = """
+            SELECT de.empresa_id, de.nombre_oficial, de.sigla, de.nit,
+                   -- Varios valores de texto distintos (mismo interventor, distinta
+                   -- grafía entre contratos) pueden resolver al mismo empresa_id —
+                   -- se agrega por empresa, no por variante de texto, para no
+                   -- mostrar la misma firma repetida varias veces en el grafo.
+                   bool_or(ea.metodo = 'match_nit') AS resuelto_por_nit,
+                   max(ea.confianza) AS confianza_maxima,
+                   count(DISTINCT c.id) AS n_contratos_interventorados
+            FROM supervision.contratos c
+            JOIN ontologia.empresa_alias ea
+                ON ea.esquema_origen = 'supervision' AND ea.tabla_origen = 'contratos'
+               AND ea.columna_origen = 'interventoria' AND ea.valor_original = c.interventoria
+            JOIN ontologia.dim_empresa de ON de.empresa_id = ea.empresa_id
+            WHERE regexp_replace(split_part(ROUND(c.nit_ejecutor)::text, '.', 1), '[^0-9]', '', 'g') = %(nit)s
+              AND ea.metodo != 'sin_resolver'
+            GROUP BY de.empresa_id, de.nombre_oficial, de.sigla, de.nit
+            ORDER BY n_contratos_interventorados DESC
+        """
+        return self.execute_query(query, {"nit": nit_normalizado})

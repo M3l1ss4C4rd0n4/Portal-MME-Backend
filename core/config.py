@@ -297,10 +297,26 @@ class Settings(BaseSettings):
     )
     
     AI_MODEL: str = Field(
-        default="llama-3.3-70b-versatile",
+        # "llama-3.3-70b-versatile" descontinuado por Groq el 16-ago-2026
+        # (aviso oficial por correo) — reemplazo verificado en vivo
+        # (tool-calling confirmado funcionando) el 22-ago-2026.
+        default="openai/gpt-oss-120b",
         description="Modelo de IA a usar"
     )
-    
+
+    GROQ_MODEL_BACKUP: str = Field(
+        # Segundo modelo de Groq, intentado solo si AI_MODEL falla con un
+        # error específico de ESE modelo (404 = descontinuado, 413 = prompt
+        # excede el TPM de la cuenta) — nunca resuelve el 413 por sí solo
+        # (el tope de 8.000 TPM es de la cuenta/tier gratuito, no del modelo:
+        # verificado en vivo el 22-ago-2026 que gpt-oss-120b y qwen3.6-27b
+        # dan el mismo "Limit 8000" con el mismo prompt), pero sí protege
+        # contra que Groq descontinúe/tenga caída puntual de un modelo
+        # específico sin dejar el respaldo completo inutilizable.
+        default="qwen/qwen3.6-27b",
+        description="Modelo de respaldo de Groq, intentado tras AI_MODEL"
+    )
+
     # OpenRouter API (backup)
     OPENROUTER_API_KEY: str = Field(
         default="",
@@ -312,8 +328,43 @@ class Settings(BaseSettings):
         description="URL base de OpenRouter API"
     )
     
+    # Gemini API (Fase 10 — LLM del Asistente IA, vía endpoint compatible con OpenAI)
+    GEMINI_API_KEY: str = Field(
+        default="",
+        description="API Key de Google AI Studio para el Asistente IA (domain/services/asistente_ia_service.py)"
+    )
+
+    GEMINI_BASE_URL: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai/",
+        description="Endpoint de Gemini compatible con el SDK openai"
+    )
+
+    GEMINI_MODEL: str = Field(
+        default="gemini-flash-lite-latest",
+        description=(
+            "Modelo de Gemini para el Asistente IA. Se usa el alias 'latest' "
+            "(no una versión fija como 'gemini-2.5-flash-lite') porque Google "
+            "deprecó ese modelo para cuentas nuevas — verificado en vivo el "
+            "2026-08-02 contra GET /v1beta/models con esta API key."
+        )
+    )
+
     OPENROUTER_BACKUP_MODEL: str = Field(
-        default="tngtech/deepseek-r1t2-chimera:free",
+        # "tngtech/deepseek-r1t2-chimera:free" descontinuado por OpenRouter
+        # (404 "No endpoints found", verificado en vivo el 22-ago-2026) — no
+        # hay ningún modelo DeepSeek gratuito vigente en OpenRouter ni en
+        # Groq ahora mismo (los 15 modelos DeepSeek listados en OpenRouter
+        # tienen todos precio > 0). Reemplazo verificado en vivo el mismo
+        # día: tool-calling funcionando correctamente con nuestro catálogo
+        # real de 44 tools + system prompt (~6.100 tokens de línea base,
+        # eligió la tool y el 'tema' correctos para una pregunta real en
+        # español). Nota: el tier gratuito de OpenRouter sin créditos
+        # comprados tiene un tope de 50 requests/día (no por tokens, por
+        # cantidad de llamadas) compartido entre TODOS los modelos ':free'
+        # — un solo turno del Asistente con varias iteraciones de
+        # tool-calling puede consumir varias de esas 50 antes de agotarse
+        # el día.
+        default="nvidia/nemotron-3-super-120b-a12b:free",
         description="Modelo de backup en OpenRouter"
     )
     
