@@ -62,16 +62,37 @@ ETL_TIMEOUT = 600
 
 # ── Lock singleton ────────────────────────────────────────────────────────────
 
+# El watcher corre cada 5 min y un ciclo normal toma segundos a pocos minutos.
+# Si un lock lleva más que esto, el proceso dueño no está muerto (os.kill(pid, 0)
+# lo vería vivo) pero está colgado (p.ej. una llamada de red sin timeout) — no
+# hay forma de distinguirlo de un ciclo lento salvo por antigüedad del lock.
+STALE_LOCK_SECONDS = 20 * 60  # 4x el intervalo del cron: margen generoso, cero falsos positivos esperados
+
+
 def _acquire_lock() -> bool:
     """Intenta adquirir el lock file. Retorna True si se adquirió."""
     global _lock_fd
     if LOCK_FILE.exists():
         try:
             pid_str = LOCK_FILE.read_text(encoding="utf-8").strip()
+            lock_age = time.time() - LOCK_FILE.stat().st_mtime
             if pid_str.isdigit():
                 stale_pid = int(pid_str)
                 try:
                     os.kill(stale_pid, 0)
+                    # El proceso existe. ¿Vivo y trabajando, o vivo y colgado?
+                    if lock_age > STALE_LOCK_SECONDS:
+                        logger.error(
+                            "⚠️  Lock de PID %d activo pero colgado hace %.0fs (>%ds) — "
+                            "matando proceso y reclamando lock",
+                            stale_pid, lock_age, STALE_LOCK_SECONDS,
+                        )
+                        try:
+                            os.kill(stale_pid, 9)  # SIGKILL — no confiar en que responda a SIGTERM
+                            time.sleep(1)
+                        except (OSError, ProcessLookupError):
+                            pass
+                        LOCK_FILE.unlink(missing_ok=True)
                 except (OSError, ProcessLookupError):
                     logger.warning("⚠️  Lock huérfano (PID %d no activo) — eliminando", stale_pid)
                     LOCK_FILE.unlink(missing_ok=True)

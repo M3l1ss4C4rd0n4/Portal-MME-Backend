@@ -39,6 +39,12 @@ RSS_QUERIES = [
     "transición energética Colombia hidrógeno verde",
     "minería ilegal Colombia litio cobre",
     "fenómeno del niño Colombia energía eléctrica",
+    # Fase 32 — fuentes que reportan constantemente sobre el sector,
+    # sin RSS propio descubrible; se garantiza su cobertura vía Google
+    # News RSS con site: (probado en vivo: trae artículos reales y
+    # recientes de RCN Radio / Caracol Radio sobre el sector).
+    "site:rcnradio.com energía OR minas OR petróleo OR gas Colombia",
+    "site:caracol.com.co energía OR minas OR petróleo OR gas Colombia",
 ]
 
 _BASE_URL = (

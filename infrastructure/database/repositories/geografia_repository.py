@@ -34,6 +34,32 @@ class GeografiaRepository(BaseRepository, IGeografiaRepository):
         """
         return self.execute_query_one(query, (codigo_dane_departamento,))
 
+    def listar_municipios(self, codigo_dane_departamento: Optional[str] = None) -> List[Dict[str, Any]]:
+        if codigo_dane_departamento:
+            query = """
+                SELECT codigo_dane_departamento, codigo_dane_municipio,
+                       nombre_departamento, nombre_municipio
+                FROM ontologia.dim_geografia
+                WHERE activo AND codigo_dane_departamento = %s
+                ORDER BY nombre_municipio
+            """
+            return self.execute_query(query, (codigo_dane_departamento,))
+        query = """
+            SELECT codigo_dane_departamento, codigo_dane_municipio,
+                   nombre_departamento, nombre_municipio
+            FROM ontologia.dim_geografia
+            WHERE activo
+            ORDER BY nombre_departamento, nombre_municipio
+        """
+        return self.execute_query(query)
+
+    def resumen_municipio(self, codigo_dane_municipio: str) -> Optional[Dict[str, Any]]:
+        query = """
+            SELECT * FROM ontologia.mv_resumen_municipio
+            WHERE codigo_dane_municipio = %s
+        """
+        return self.execute_query_one(query, (codigo_dane_municipio,))
+
     def resolver_alias(
         self, esquema: str, tabla: str, columna: str, valor: str
     ) -> List[Dict[str, Any]]:

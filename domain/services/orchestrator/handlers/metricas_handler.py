@@ -2,14 +2,14 @@
 Mixin: Métricas handlers (Generación, Hidrología, Demanda, Precio, General).
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
 from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MetricasHandlerMixin:

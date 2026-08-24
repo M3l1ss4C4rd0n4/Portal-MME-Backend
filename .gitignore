@@ -179,6 +179,10 @@ experiments/*.csv
 
 # Archivos .bak
 *.bak
+*.bak.*
+
+# Trabajo de tesis personal (no relacionado con Portal MME) — ver repo aparte
+docs/trabajo de grado/
 
 # WhatsApp Web Service runtime
 whatsapp_bot/whatsapp-web-service/node_modules/

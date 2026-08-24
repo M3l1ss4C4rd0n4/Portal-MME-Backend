@@ -205,6 +205,14 @@ class IGeografiaRepository(ABC):
         """Cruce multi-dominio para un departamento (ontologia.mv_resumen_departamento)"""
 
     @abstractmethod
+    def listar_municipios(self, codigo_dane_departamento: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Lista municipios DANE, opcionalmente filtrados por departamento (Fase 13)"""
+
+    @abstractmethod
+    def resumen_municipio(self, codigo_dane_municipio: str) -> Optional[Dict[str, Any]]:
+        """Cruce multi-dominio para un municipio (ontologia.mv_resumen_municipio) — Fase 13"""
+
+    @abstractmethod
     def resolver_alias(
         self, esquema: str, tabla: str, columna: str, valor: str
     ) -> List[Dict[str, Any]]:
@@ -231,8 +239,10 @@ class IProyectoRepository(ABC):
     """
 
     @abstractmethod
-    def listar_proyectos(self, programa: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Lista proyectos, opcionalmente filtrados por programa"""
+    def listar_proyectos(
+        self, programa: Optional[str] = None, departamento: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Lista proyectos, opcionalmente filtrados por programa y/o departamento"""
 
     @abstractmethod
     def obtener_por_id(self, proyecto_id: int) -> Optional[Dict[str, Any]]:
@@ -241,6 +251,76 @@ class IProyectoRepository(ABC):
     @abstractmethod
     def alias_de_proyecto(self, proyecto_id: int) -> List[Dict[str, Any]]:
         """Filas de proyecto_alias resueltas para este proyecto (en qué esquema/tabla aparece)"""
+
+    @abstractmethod
+    def geografias_de_proyecto(self, proyecto_id: int) -> List[Dict[str, Any]]:
+        """Geografías (departamento/municipio) vinculadas a este proyecto (Fase 23 Bloque 2)"""
+
+
+class IMetricaRepository(ABC):
+    """
+    Interface para el catálogo de métricas/variables (esquema ontologia) — Fase 12.
+    Métrica como objeto de primera clase: qué es cada variable del portal, de
+    dónde sale, y cómo se relaciona/deriva de otras (grafo de dependencias).
+    """
+
+    @abstractmethod
+    def listar_metricas(
+        self, dominio: Optional[str] = None, estado: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Lista métricas del catálogo, opcionalmente filtradas por dominio y/o estado"""
+
+    @abstractmethod
+    def obtener_por_id(self, metrica_id: int) -> Optional[Dict[str, Any]]:
+        """Obtiene una métrica por su metrica_id, o None si no existe"""
+
+    @abstractmethod
+    def obtener_por_codigo(self, dominio: str, codigo_tecnico: str) -> Optional[Dict[str, Any]]:
+        """Obtiene una métrica por (dominio, codigo_tecnico), o None si no existe"""
+
+    @abstractmethod
+    def buscar_por_nombre(self, texto: str) -> List[Dict[str, Any]]:
+        """Busca métricas por coincidencia parcial en nombre_display o codigo_tecnico"""
+
+    @abstractmethod
+    def relaciones_de_metrica(self, metrica_id: int) -> List[Dict[str, Any]]:
+        """Relaciones donde la métrica participa como origen o destino, con el nombre de la otra métrica"""
+
+
+class IRecursoRepository(ABC):
+    """
+    Interface para el catálogo de plantas/recursos de generación (esquema
+    ontologia) — Fase 13 Bloque B. Recurso como objeto de primera clase,
+    sembrado 1:1 desde sector_energetico.catalogos (ListadoRecursos).
+    """
+
+    @abstractmethod
+    def listar_recursos(
+        self, tipo: Optional[str] = None, nombre: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Lista recursos, opcionalmente filtrados por tipo (TERMICA/HIDRAULICA/...) y/o nombre (ILIKE)"""
+
+    @abstractmethod
+    def obtener_por_codigo(self, codigo_xm: str) -> Optional[Dict[str, Any]]:
+        """Obtiene un recurso por su codigo_xm, o None si no existe"""
+
+    @abstractmethod
+    def menciones_recientes(self, recurso_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        """Informes del RAG donde se mencionó este recurso por nombre (Fase 13)"""
+
+
+class IContratoRepository(ABC):
+    """
+    Interface para el detalle de un contrato individual de supervisión
+    (esquema supervision) — Fase 28. Consulta en vivo contra
+    supervision.contratos, sin tabla propia en ontologia — evita duplicar/
+    desincronizar datos que ya están en la fuente (a diferencia de
+    dim_recurso, que sí necesita su propia tabla porque cruza con RAG).
+    """
+
+    @abstractmethod
+    def obtener_por_id(self, contrato_id: int) -> Optional[Dict[str, Any]]:
+        """Detalle completo de un contrato por su id, o None si no existe."""
 
 
 class IEmpresaRepository(ABC):
@@ -290,6 +370,10 @@ class IEmpresaRepository(ABC):
     ) -> List[Dict[str, Any]]:
         """Otras empresas con contratos en los mismos departamentos (patrón de concentración de contratistas)"""
 
+    @abstractmethod
+    def interventorias_de_empresa(self, nit_normalizado: str) -> List[Dict[str, Any]]:
+        """Firmas de interventoría que fiscalizan contratos de esta empresa como ejecutor (Fase 23 Bloque 2)"""
+
 
 class ISemanticSearchRepository(ABC):
     """
@@ -299,6 +383,59 @@ class ISemanticSearchRepository(ABC):
 
     @abstractmethod
     def buscar_similar(
-        self, embedding: List[float], top_k: int = 5, umbral_similitud: float = 0.3
+        self,
+        embedding: List[float],
+        top_k: int = 5,
+        umbral_similitud: float = 0.3,
+        tema: Optional[str] = None,
+        campo_contrato: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Busca los textos más semánticamente similares a un embedding de consulta"""
+        """
+        Busca los textos más semánticamente similares a un embedding de consulta.
+        `tema`: filtro determinístico opcional sobre informes_documentos.tema
+        (Fase 11 Ronda 5) para garantizar un tipo de documento conocido.
+        `campo_contrato`: filtro determinístico equivalente para el corpus de
+        contratos (Fase 13) — ver campo de contratos_texto_embeddings.
+        """
+
+    @abstractmethod
+    def buscar_texto_completo(
+        self,
+        consulta: str,
+        top_k: int = 15,
+        tema: Optional[str] = None,
+        campo_contrato: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Búsqueda dispersa (full-text, Postgres tsvector/ts_rank_cd) sobre los
+        mismos 2 corpus que buscar_similar() — Fase 25, complemento de la
+        búsqueda densa: encuentra coincidencias léxicas exactas (nombres de
+        planta, códigos, términos poco frecuentes) que la similitud de
+        embeddings puede pasar por alto. Mismos filtros `tema`/`campo_contrato`
+        que buscar_similar(), pensado para fusionarse con sus resultados
+        (Reciprocal Rank Fusion) en la capa de servicio.
+        """
+
+    @abstractmethod
+    def buscar_recientes(
+        self,
+        embedding: List[float],
+        tema: str,
+        top_k: int = 10,
+        umbral_similitud: float = 0.15,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fase 35 — tercera vía de recuperación, solo corpus 'informe': los N
+        chunks MÁS RECIENTES (por informes_documentos.modificado_en_sharepoint)
+        de un `tema` dado, con umbral de similitud bajo (no cero — sigue
+        exigiendo relación temática mínima). Corrige que, en corpus con
+        cientos de documentos casi idénticos entre sí (ej. informes semanales
+        de Planeación XM), el chunk correcto de la semana actual pueda quedar
+        fuera del pool de candidatos de buscar_similar()/buscar_texto_completo()
+        (ordenados por similitud pura) simplemente por volumen de competencia
+        semántica — reproducido en vivo: similitud 0.345 (por encima del
+        umbral estándar) pero fuera del top-200 de ese tema. Se fusiona con
+        los otros 2 métodos en la capa de servicio (RRF) — el filtro de
+        relevancia real sigue siendo el re-ranking posterior, esto solo
+        garantiza que lo reciente tenga la oportunidad de competir.
+        """

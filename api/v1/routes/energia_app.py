@@ -223,12 +223,14 @@ async def _boletin_del_dia(data: dict) -> str:
 
 
 async def _narrar_para_audio(texto: str) -> str:
-    """Convierte texto libre en locución oral natural (usado para /audio/consulta)."""
+    """Convierte texto libre en locución oral natural (usado para /audio/consulta).
+
+    2026-08-22: failover real Gemini→Groq (ver infrastructure/ml/llm_failover.py)
+    — antes llamaba solo a Gemini directamente, sin respaldo, degradando de
+    inmediato al texto limpio (sin narrar) ante cualquier falla del proveedor."""
     try:
-        from groq import AsyncGroq
-        client = AsyncGroq(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com")
-        resp = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        from infrastructure.ml.llm_failover import completar_chat_async
+        texto_narrado, _, _ = await completar_chat_async(
             messages=[
                 {
                     "role": "system",
@@ -243,8 +245,9 @@ async def _narrar_para_audio(texto: str) -> str:
             ],
             temperature=0.4,
             max_tokens=300,
+            etiqueta_log="ENERGIA-APP-NARRACION",
         )
-        return resp.choices[0].message.content.strip()
+        return texto_narrado.strip()
     except Exception as e:
         logger.warning(f"[ENERGIA-APP-NARRACION] Falló LLM, usando texto limpio: {e}")
         import re
@@ -331,32 +334,30 @@ async def get_informe_diario_audio(
 async def post_consulta_audio(
     request: ConsultaRequest,
     _api_key: str = Depends(get_api_key),
-    service: ChatbotOrchestratorService = Depends(get_orchestrator_service),
 ):
     """
-    Recibe texto transcrito desde la app (Whisper en cliente o servidor)
-    y devuelve la respuesta del orquestador como MP3.
+    Recibe texto transcrito desde la app (Whisper en cliente o servidor) y
+    devuelve la respuesta como MP3.
+
+    Fase 19: migrado del intent "pregunta_libre" (cascada de palabras clave
+    vieja, domain/services/orchestrator/handlers/libre_noticias_handler.py)
+    al Asistente IA (Gemini + tool-calling sobre las ~20 herramientas del
+    orquestador + RAG + ontología, domain/services/asistente_ia_service.py)
+    — mismo motor que ya usa /v1/chatbot/asistente. El contrato de esta
+    respuesta (bytes audio/mpeg) no cambia, solo mejora la calidad/fundamento
+    de lo que se narra.
     """
     try:
         logger.info(f"[ENERGIA-APP] Consulta audio: '{request.texto[:80]}'")
 
-        # 1. Llamar al orquestador con pregunta libre
-        req = OrchestratorRequest(sessionId=request.session_id, intent="pregunta_libre", parameters={"pregunta": request.texto})
-        result = await service.orchestrate(req)
-
-        # 2. Extraer texto de respuesta
-        data = result.data or {}
-        texto_respuesta = (
-            data.get("respuesta") or
-            data.get("texto") or
-            data.get("answer") or
-            "No pude obtener una respuesta en este momento."
-        )
-
-        if result.status == "ERROR":
+        # 1. Preguntarle al Asistente IA (sin historial — cada consulta de
+        # audio es una pregunta suelta, mismo patrón que ya usaba pregunta_libre).
+        from domain.services.asistente_ia_service import responder_completo
+        texto_respuesta = await responder_completo(request.texto, historial=[])
+        if not texto_respuesta:
             texto_respuesta = "Lo siento, hubo un problema al procesar tu consulta. Por favor intenta de nuevo."
 
-        # 3. Narrar y sintetizar
+        # 2. Narrar y sintetizar
         texto_narrado = await _narrar_para_audio(texto_respuesta)
         audio_bytes = await _sintetizar_audio(texto_narrado)
 

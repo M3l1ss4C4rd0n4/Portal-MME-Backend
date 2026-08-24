@@ -9,33 +9,71 @@ import json
 from typing import Dict, List, Optional
 from core.config import settings
 from infrastructure.database.manager import db_manager
+from infrastructure.ml.llm_failover import completar_chat as _completar_chat
 
 class AgentIA:
     """Agente de IA para análisis energético en tiempo real"""
-    
+
     def __init__(self):
-        """Inicializa el agente usando configuración centralizada"""
-        self.client = None
+        """Inicializa el agente usando configuración centralizada.
+
+        2026-08-22: ya NO fija un único cliente/proveedor al construirse —
+        cada llamada real pasa por _completar_chat() (infrastructure/ml/
+        llm_failover.py), que reintenta con Groq si Gemini falla en tiempo
+        de ejecución (antes era un "fallback" falso: se elegía un
+        proveedor una sola vez y nunca se reintentaba con otro).
+        self.provider/self.modelo quedan como el ÚLTIMO proveedor/modelo
+        que sirvió una respuesta real — solo informativo (logs, mensajes
+        de error), no determinan qué proveedor se usa en la próxima llamada."""
         self.provider = None
         self.modelo = None
-        
-        if settings.GROQ_API_KEY:
-            self.client = OpenAI(
-                base_url=settings.GROQ_BASE_URL,
-                api_key=settings.GROQ_API_KEY,
-            )
-            self.modelo = settings.AI_MODEL
-            self.provider = "Groq"
-        elif settings.OPENROUTER_API_KEY:
-            self.client = OpenAI(
+        if settings.OPENROUTER_API_KEY:
+            # OpenRouter no forma parte del failover Gemini→Groq (backup
+            # de último recurso, sin cambios de esta ronda) — solo se
+            # usa si NINGUNA de las 2 keys principales está configurada.
+            self._openrouter_client = OpenAI(
                 base_url=settings.OPENROUTER_BASE_URL,
                 api_key=settings.OPENROUTER_API_KEY,
             )
-            self.modelo = settings.OPENROUTER_BACKUP_MODEL
-            self.provider = "OpenRouter"
+            self._openrouter_modelo = settings.OPENROUTER_BACKUP_MODEL
         else:
+            self._openrouter_client = None
+            self._openrouter_modelo = None
+        if not settings.GEMINI_API_KEY and not settings.GROQ_API_KEY and not settings.OPENROUTER_API_KEY:
             # No levantar error aquí para permitir funcionamiento sin IA si fallan keys
-            print("⚠️ Advertencia: No se encontraron keys de IA (GROQ/OPENROUTER)")
+            print("⚠️ Advertencia: No se encontraron keys de IA (GEMINI/GROQ/OPENROUTER)")
+
+    @property
+    def disponible(self) -> bool:
+        """True si hay al menos un proveedor de IA configurado (Gemini,
+        Groq u OpenRouter) — reemplaza el chequeo antiguo `if agent.client`,
+        que dejó de existir porque ya no hay un único cliente comprometido
+        al construirse (ver __init__)."""
+        return bool(settings.GEMINI_API_KEY or settings.GROQ_API_KEY or settings.OPENROUTER_API_KEY)
+
+    def completar(self, messages: list, temperature: float = 0.7, max_tokens: int = 1000) -> str:
+        """Punto único de acceso al LLM — failover real Gemini→Groq vía
+        infrastructure/ml/llm_failover.py, con OpenRouter como último
+        recurso si ambas keys principales fallan o no están configuradas.
+        Público: lo usan tanto los 5 métodos de análisis de esta clase
+        como informe_handler.py/libre_noticias_handler.py, que antes
+        accedían directamente a `agent.client`/`agent.modelo` (un cliente
+        ya comprometido a un solo proveedor, sin reintento real)."""
+        try:
+            texto, proveedor, modelo = _completar_chat(messages, temperature=temperature, max_tokens=max_tokens)
+            self.provider, self.modelo = proveedor, modelo
+            return texto
+        except Exception:
+            if self._openrouter_client:
+                resp = self._openrouter_client.chat.completions.create(
+                    model=self._openrouter_modelo,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                self.provider, self.modelo = "OpenRouter", self._openrouter_modelo
+                return resp.choices[0].message.content
+            raise
 
     def get_db_connection(self):
         """Deprecado: Usar infrastructure.database.manager"""
@@ -191,16 +229,24 @@ class AgentIA:
         """Analiza patrones de demanda eléctrica"""
         # Obtener datos de demanda de la tabla metrics
         datos = self.obtener_metricas('DemaReal', 500)
-        
+
         if not datos:
             return "⚠️ No hay datos disponibles para analizar demanda"
-        
+
+        # Fase 13: contexto adicional de RAG (informes reales, sin tema fijo —
+        # la demanda no tiene un tema de informe específico) y de los índices
+        # regulatorios de ontologia.dim_metrica (Fase 12).
+        from domain.services.contexto_ia_enriquecido import contexto_rag_texto
+        contexto_rag = contexto_rag_texto("demanda del sistema consumo eléctrico", top_k=2)
+
         # Preparar contexto para el modelo
         contexto = f"""
 Eres un experto analista del sector eléctrico colombiano trabajando para el Ministerio de Minas y Energía.
 
 DATOS DE DEMANDA ({periodo}):
 {json.dumps(datos[:20], indent=2, default=str)}
+
+{contexto_rag}
 
 TAREA:
 1. Identifica patrones y tendencias en la demanda eléctrica
@@ -213,8 +259,7 @@ Responde en español de forma concisa y técnica.
 """
         
         try:
-            respuesta = self.client.chat.completions.create(
-                model=self.modelo,
+            return self.completar(
                 messages=[
                     {"role": "system", "content": "Eres un analista experto del sector eléctrico colombiano."},
                     {"role": "user", "content": contexto}
@@ -222,9 +267,7 @@ Responde en español de forma concisa y técnica.
                 temperature=0.7,
                 max_tokens=1000
             )
-            
-            return respuesta.choices[0].message.content
-        
+
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "rate limit" in error_msg.lower():
@@ -240,12 +283,27 @@ Responde en español de forma concisa y técnica.
             return "⚠️ No hay datos disponibles para analizar generación"
         
         filtro = f" tipo '{tipo_fuente}'" if tipo_fuente else ""
-        
+
+        # Fase 13: RAG con tema='despacho' (disponibilidad de plantas, precio de
+        # predespacho) + índices regulatorios de dim_metrica.
+        from domain.services.contexto_ia_enriquecido import contexto_rag_texto, contexto_indices_regulatorios_texto
+        contexto_rag = contexto_rag_texto(
+            "generación térmica hidráulica composición de la matriz energética", tema=None, top_k=2
+        )
+        contexto_despacho = contexto_rag_texto("plantas indisponibles mantenimiento despacho", tema="despacho", top_k=2)
+        contexto_indices = contexto_indices_regulatorios_texto()
+
         contexto = f"""
 Eres un experto en energías renovables y generación eléctrica en Colombia.
 
 DATOS DE GENERACIÓN{filtro}:
 {json.dumps(datos[:20], indent=2, default=str)}
+
+{contexto_rag}
+
+{contexto_despacho}
+
+{contexto_indices}
 
 TAREA:
 1. Analiza la composición de la matriz energética
@@ -258,8 +316,7 @@ Responde en español con enfoque técnico y datos específicos.
 """
         
         try:
-            respuesta = self.client.chat.completions.create(
-                model=self.modelo,
+            return self.completar(
                 messages=[
                     {"role": "system", "content": "Eres un experto en generación eléctrica y energías renovables."},
                     {"role": "user", "content": contexto}
@@ -267,9 +324,7 @@ Responde en español con enfoque técnico y datos específicos.
                 temperature=0.7,
                 max_tokens=1000
             )
-            
-            return respuesta.choices[0].message.content
-        
+
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "rate limit" in error_msg.lower():
@@ -287,13 +342,21 @@ Responde en español con enfoque técnico y datos específicos.
         # Obtener datos recientes de múltiples fuentes
         demanda = self.obtener_metricas('DemaReal', 50)
         generacion = self.obtener_metricas('Gene', 50)
-        
+
+        # Fase 13: los índices regulatorios reales (NE/HSIN/PBP/Condición del
+        # Sistema, ontologia.dim_metrica) le dan al modelo los umbrales oficiales
+        # en vez de que los infiera de memoria al clasificar severidad.
+        from domain.services.contexto_ia_enriquecido import contexto_indices_regulatorios_texto
+        contexto_indices = contexto_indices_regulatorios_texto()
+
         contexto = f"""
 Eres un sistema de monitoreo automático del sector eléctrico colombiano.
 
 DATOS RECIENTES:
 Demanda: {json.dumps(demanda[:5], indent=2, default=str)}
 Generación: {json.dumps(generacion[:5], indent=2, default=str)}
+
+{contexto_indices}
 
 TAREA:
 Analiza los datos y clasifica las alertas en:
@@ -311,8 +374,7 @@ Responde SOLO con JSON válido en este formato:
 """
         
         try:
-            respuesta = self.client.chat.completions.create(
-                model=self.modelo,
+            contenido = self.completar(
                 messages=[
                     {"role": "system", "content": "Eres un sistema de detección de alertas. Responde SOLO con JSON válido."},
                     {"role": "user", "content": contexto}
@@ -320,9 +382,8 @@ Responde SOLO con JSON válido en este formato:
                 temperature=0.3,
                 max_tokens=500
             )
-            
+
             # Intentar parsear JSON de la respuesta
-            contenido = respuesta.choices[0].message.content
             # Limpiar markdown si existe
             if "```json" in contenido:
                 contenido = contenido.split("```json")[1].split("```")[0]
@@ -347,7 +408,14 @@ Responde SOLO con JSON válido en este formato:
             info_contexto += f"\n\nCONTEXTO DEL SISTEMA EN TIEMPO REAL:\n{contexto_sistema}"
         if contexto_dashboard:
             info_contexto += f"\n\nCONTEXTO ACTUAL DEL DASHBOARD:\n{json.dumps(contexto_dashboard, indent=2, default=str)}"
-        
+
+        # Fase 13: RAG general (sin tema fijo — la pregunta del usuario es libre)
+        # sobre la pregunta misma, mismo patrón que usa el Asistente IA.
+        from domain.services.contexto_ia_enriquecido import contexto_rag_texto
+        contexto_rag = contexto_rag_texto(pregunta, top_k=3)
+        if contexto_rag:
+            info_contexto += f"\n\n{contexto_rag}"
+
         prompt = f"""
 Eres un analista energético del sector eléctrico colombiano. Habla de forma natural, clara y amigable.
 
@@ -397,8 +465,7 @@ En resumen, no se observan alertas y el sistema se mantiene estable con holgura 
 """
         
         try:
-            respuesta = self.client.chat.completions.create(
-                model=self.modelo,
+            return self.completar(
                 messages=[
                     {"role": "system", "content": "Eres un experto asistente del sector energético colombiano."},
                     {"role": "user", "content": prompt}
@@ -406,9 +473,7 @@ En resumen, no se observan alertas y el sistema se mantiene estable con holgura 
                 temperature=0.7,
                 max_tokens=1500
             )
-            
-            return respuesta.choices[0].message.content
-        
+
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "rate limit" in error_msg.lower():
@@ -421,7 +486,12 @@ En resumen, no se observan alertas y el sistema se mantiene estable con holgura 
         # Obtener datos de todas las fuentes
         demanda = self.obtener_metricas('DemaReal', 100)
         generacion = self.obtener_metricas('Gene', 100)
-        
+
+        # Fase 13: RAG general (panorama del sector) para que el resumen pueda
+        # citar contexto real (clima, despacho) además de los números crudos.
+        from domain.services.contexto_ia_enriquecido import contexto_rag_texto
+        contexto_rag = contexto_rag_texto("panorama energético estado del sistema eléctrico", top_k=2)
+
         contexto = f"""
 Genera un resumen ejecutivo del sistema eléctrico colombiano con estilo natural y conversacional.
 
@@ -434,6 +504,8 @@ Generación: {len(generacion)} registros recientes
 
 Últimos datos de generación:
 {json.dumps(generacion[:5], indent=2, default=str)}
+
+{contexto_rag}
 
 🎯 **ESTILO OBLIGATORIO - LEE ESTO PRIMERO:**
 
@@ -474,8 +546,7 @@ En síntesis, el Sistema Interconectado Nacional presenta condiciones normales d
 """
         
         try:
-            respuesta = self.client.chat.completions.create(
-                model=self.modelo,
+            return self.completar(
                 messages=[
                     {"role": "system", "content": "Eres un analista senior del sector eléctrico colombiano."},
                     {"role": "user", "content": contexto}
@@ -483,9 +554,7 @@ En síntesis, el Sistema Interconectado Nacional presenta condiciones normales d
                 temperature=0.7,
                 max_tokens=2000
             )
-            
-            return respuesta.choices[0].message.content
-        
+
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "rate limit" in error_msg.lower():

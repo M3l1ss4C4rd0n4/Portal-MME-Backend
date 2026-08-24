@@ -3,13 +3,14 @@ Mixin: CU/PNT/SIM handlers (Costo Unitario, Pérdidas No Técnicas, Simulación)
 Fase 7 del Portal Energético MME.
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
+from datetime import date, timedelta
 from typing import Any, Dict, List, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CuPntHandlerMixin:
@@ -76,6 +77,85 @@ class CuPntHandlerMixin:
             errors.append(ErrorDetail(
                 code="CU_ERROR", message="Error al consultar CU"
             ))
+
+        return data, errors
+
+    async def _handle_cu_evolucion(
+        self,
+        parameters: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """
+        Handler: evolución histórica + pronóstico del Costo Unitario (CU).
+        Envuelve CUService.get_cu_historico()/get_cu_forecast() (ambos ya
+        existentes, usados hoy solo por el tablero, nunca por el orquestador) —
+        ambos retornan un DataFrame diario crudo, así que este handler lo
+        resume (promedio/min/max/tendencia) en vez de volcarlo entero al LLM,
+        mismo principio que _build_prediction_ficha en predicciones_handler.py.
+
+        parameters:
+            dias_historico: días hacia atrás a resumir (default 30)
+            dias_pronostico: días hacia adelante a proyectar (default 30, la
+                herramienta interna lo acota a 1-90)
+        """
+        data: Dict[str, Any] = {}
+        errors: List[ErrorDetail] = []
+
+        dias_historico = int(parameters.get("dias_historico") or 30)
+        dias_pronostico = int(parameters.get("dias_pronostico") or 30)
+
+        from core.container import get_cu_service
+        cu_service = get_cu_service()
+        hoy = date.today()
+
+        try:
+            df_hist = await asyncio.to_thread(
+                cu_service.get_cu_historico, hoy - timedelta(days=dias_historico), hoy
+            )
+            if df_hist is not None and not df_hist.empty:
+                serie = df_hist["cu_total"].dropna()
+                if not serie.empty:
+                    mitad = max(1, len(serie) // 2)
+                    promedio_primera_mitad = float(serie.iloc[:mitad].mean())
+                    promedio_segunda_mitad = float(serie.iloc[mitad:].mean())
+                    data["historico"] = {
+                        "dias_analizados": dias_historico,
+                        "promedio_cu": round(float(serie.mean()), 2),
+                        "minimo_cu": round(float(serie.min()), 2),
+                        "maximo_cu": round(float(serie.max()), 2),
+                        "ultimo_valor_cu": round(float(serie.iloc[-1]), 2),
+                        "ultima_fecha": str(df_hist["fecha"].iloc[-1]),
+                        "tendencia": (
+                            "creciente" if promedio_segunda_mitad > promedio_primera_mitad * 1.01
+                            else "decreciente" if promedio_segunda_mitad < promedio_primera_mitad * 0.99
+                            else "estable"
+                        ),
+                    }
+        except Exception as e:
+            logger.error(f"[CU_EVOLUCION] Error en histórico: {e}", exc_info=True)
+            errors.append(ErrorDetail(code="CU_ERROR", message="Error al consultar histórico de CU"))
+
+        try:
+            df_fc = await asyncio.to_thread(cu_service.get_cu_forecast, dias_pronostico)
+            if df_fc is not None and not df_fc.empty:
+                serie_fc = df_fc["cu_predicho"].dropna()
+                if not serie_fc.empty:
+                    data["pronostico"] = {
+                        "dias_proyectados": len(df_fc),
+                        "promedio_cu_predicho": round(float(serie_fc.mean()), 2),
+                        "minimo_cu_predicho": round(float(serie_fc.min()), 2),
+                        "maximo_cu_predicho": round(float(serie_fc.max()), 2),
+                        "confianza": (
+                            round(float(df_fc["confianza"].dropna().mean()), 2)
+                            if df_fc["confianza"].notna().any() else None
+                        ),
+                        "modelo": df_fc["modelo"].dropna().iloc[0] if df_fc["modelo"].notna().any() else None,
+                    }
+        except Exception as e:
+            logger.error(f"[CU_EVOLUCION] Error en pronóstico: {e}", exc_info=True)
+            errors.append(ErrorDetail(code="CU_ERROR", message="Error al consultar pronóstico de CU"))
+
+        if not data:
+            errors.append(ErrorDetail(code="NO_DATA", message="Sin datos de evolución de CU disponibles"))
 
         return data, errors
 

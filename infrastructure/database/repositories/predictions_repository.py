@@ -47,15 +47,38 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
             # Modelo explícito: filtra solo ese modelo (sin mezclar)
             conditions.append("modelo = %s")
             params.append(model_name)
-        # Sin model_name: devuelve todas las predicciones (comportamiento original)
+            where = " AND ".join(conditions)
+            query = f"""
+                SELECT fecha_prediccion, valor_gwh_predicho, intervalo_inferior,
+                       intervalo_superior, confianza
+                FROM predictions
+                WHERE {where}
+                ORDER BY fecha_prediccion ASC
+            """
+            return self.execute_dataframe(query, tuple(params))
 
+        # Sin model_name: varias fuentes tienen más de un modelo guardado para
+        # la misma fecha (ej. el modelo especializado de corto/mediano plazo
+        # + PROPHET_LARGO_PLAZO_v1.0, que solo aporta cobertura más allá de su
+        # horizonte de 90 días). Devolver todo mezclado sin criterio (el
+        # "comportamiento original") deja el resultado a merced del orden de
+        # inserción — confirmado en vivo que producía promedios sin sentido
+        # (Fase 34, EMBALSES_PCT). Por defecto: para cada fecha, preferir
+        # cualquier modelo que NO sea PROPHET_LARGO_PLAZO_v1.0 (el modelo
+        # especializado de esa fuente); solo cae a PROPHET_LARGO_PLAZO_v1.0
+        # en las fechas donde ningún otro modelo tiene predicción — así se
+        # conserva su único valor real (extender cobertura a largo plazo)
+        # sin que sus filas desplacen al modelo primario donde ambos coexisten.
         where = " AND ".join(conditions)
         query = f"""
-            SELECT fecha_prediccion, valor_gwh_predicho, intervalo_inferior,
+            SELECT DISTINCT ON (fecha_prediccion)
+                   fecha_prediccion, valor_gwh_predicho, intervalo_inferior,
                    intervalo_superior, confianza
             FROM predictions
             WHERE {where}
-            ORDER BY fecha_prediccion ASC
+            ORDER BY fecha_prediccion ASC,
+                     (modelo = 'PROPHET_LARGO_PLAZO_v1.0') ASC,
+                     id DESC
         """
         return self.execute_dataframe(query, tuple(params))
     

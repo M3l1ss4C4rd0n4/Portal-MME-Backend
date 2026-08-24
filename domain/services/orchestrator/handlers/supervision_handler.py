@@ -3,7 +3,7 @@ Mixin: Supervisión — KPIs del dashboard de contratos MinMinas.
 Replica métricas de supervision.contratos (sin filtros).
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
 from typing import Any, Dict, List, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
@@ -11,7 +11,7 @@ from domain.services.orchestrator.utils.decorators import handle_service_error
 from domain.services.supervision_parsing import sql_parse_cop, sql_parse_int
 from infrastructure.database.connection import connection_manager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _ANO_MIN = 2003
 _ANO_MAX = 2026

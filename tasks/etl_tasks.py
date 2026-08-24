@@ -309,90 +309,108 @@ def regenerar_predicciones(self):
 
     Programado domingos 02:00 AM — el ETL incremental corre */6h y garantiza
     que la BD de métricas está actualizada.
+
+    Usa el mismo lockfile que scripts/actualizar_predicciones.sh (/tmp/predictions_update.lock)
+    para evitar entrenamiento concurrente sobre la tabla `predictions` cuando ambos calendarios coinciden.
     """
     import subprocess
-    inicio = datetime.now()
-    logger.info("🔮 [regenerar_predicciones] Iniciando regeneración semanal")
+    import fcntl
 
-    resumen = {
-        'script_sector': None,
-        'script_postgres': None,
-        'largo_plazo': None,
-        'monitor_quality': None,
-        'duracion_seg': 0,
-    }
-
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    python_bin = os.path.join(base_dir, 'venv', 'bin', 'python')
-    if not os.path.exists(python_bin):
-        python_bin = 'python3'
-
-    # 1. Re-entrena predicciones sectoriales (DEMANDA, PRECIOS, EMBALSES, etc.)
-    script_sector = os.path.join(base_dir, 'scripts', 'train_predictions_sector_energetico.py')
+    lockfile_path = "/tmp/predictions_update.lock"
+    lock_fd = open(lockfile_path, "w")
     try:
-        proc = subprocess.run(
-            [python_bin, script_sector],
-            capture_output=True, text=True, timeout=1800, cwd=base_dir
-        )
-        resumen['script_sector'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
-        if proc.returncode != 0:
-            logger.error(f"[regenerar_predicciones] sector stderr: {proc.stderr[-1000:]}")
-        else:
-            logger.info("[regenerar_predicciones] sector: OK")
-    except subprocess.TimeoutExpired:
-        resumen['script_sector'] = 'timeout'
-        logger.error("[regenerar_predicciones] script_sector excedió 30 min")
-    except Exception as e:
-        resumen['script_sector'] = f'exception: {e}'
-        logger.error(f"[regenerar_predicciones] script_sector: {e}")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.warning("🔮 [regenerar_predicciones] Lock activo (actualizar_predicciones.sh en curso) — omitiendo esta corrida para evitar entrenamiento concurrente")
+        lock_fd.close()
+        return {'omitido': 'lock activo'}
 
-    # 2. Re-entrena predicciones de generación por tecnología (Hidráulica, Solar, etc.)
-    script_postgres = os.path.join(base_dir, 'scripts', 'train_predictions_postgres.py')
     try:
-        proc = subprocess.run(
-            [python_bin, script_postgres],
-            capture_output=True, text=True, timeout=1800, cwd=base_dir
-        )
-        resumen['script_postgres'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
-        if proc.returncode != 0:
-            logger.error(f"[regenerar_predicciones] postgres stderr: {proc.stderr[-1000:]}")
-        else:
-            logger.info("[regenerar_predicciones] postgres: OK")
-    except subprocess.TimeoutExpired:
-        resumen['script_postgres'] = 'timeout'
-        logger.error("[regenerar_predicciones] script_postgres excedió 30 min")
-    except Exception as e:
-        resumen['script_postgres'] = f'exception: {e}'
-        logger.error(f"[regenerar_predicciones] script_postgres: {e}")
+        inicio = datetime.now()
+        logger.info("🔮 [regenerar_predicciones] Iniciando regeneración semanal")
 
-    # 3. Re-genera predicciones de largo plazo (Prophet 365d) con PredictionsService
-    try:
-        from domain.services.predictions_service_extended import PredictionsService
-        svc = PredictionsService()
-        largo_resumen = svc.save_long_term_predictions()
-        ok_count = sum(1 for v in largo_resumen.values() if v > 0)
-        resumen['largo_plazo'] = f'ok {ok_count}/{len(largo_resumen)} fuentes'
-        logger.info(f"[regenerar_predicciones] largo_plazo: {resumen['largo_plazo']}")
-    except Exception as e:
-        resumen['largo_plazo'] = f'exception: {e}'
-        logger.error(f"[regenerar_predicciones] largo_plazo: {e}")
+        resumen = {
+            'script_sector': None,
+            'script_postgres': None,
+            'largo_plazo': None,
+            'monitor_quality': None,
+            'duracion_seg': 0,
+        }
 
-    # 4. Actualiza métricas de calidad ex-post
-    script_quality = os.path.join(base_dir, 'scripts', 'monitor_predictions_quality.py')
-    try:
-        proc = subprocess.run(
-            [python_bin, script_quality],
-            capture_output=True, text=True, timeout=300, cwd=base_dir
-        )
-        resumen['monitor_quality'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
-        logger.info(f"[regenerar_predicciones] monitor_quality: {resumen['monitor_quality']}")
-    except Exception as e:
-        resumen['monitor_quality'] = f'exception: {e}'
-        logger.error(f"[regenerar_predicciones] monitor_quality: {e}")
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        python_bin = os.path.join(base_dir, 'venv', 'bin', 'python')
+        if not os.path.exists(python_bin):
+            python_bin = 'python3'
 
-    resumen['duracion_seg'] = round((datetime.now() - inicio).total_seconds())
-    logger.info(f"🔮 [regenerar_predicciones] Completado en {resumen['duracion_seg']}s: {resumen}")
-    return resumen
+        # 1. Re-entrena predicciones sectoriales (DEMANDA, PRECIOS, EMBALSES, etc.)
+        script_sector = os.path.join(base_dir, 'scripts', 'train_predictions_sector_energetico.py')
+        try:
+            proc = subprocess.run(
+                [python_bin, script_sector],
+                capture_output=True, text=True, timeout=1800, cwd=base_dir
+            )
+            resumen['script_sector'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
+            if proc.returncode != 0:
+                logger.error(f"[regenerar_predicciones] sector stderr: {proc.stderr[-1000:]}")
+            else:
+                logger.info("[regenerar_predicciones] sector: OK")
+        except subprocess.TimeoutExpired:
+            resumen['script_sector'] = 'timeout'
+            logger.error("[regenerar_predicciones] script_sector excedió 30 min")
+        except Exception as e:
+            resumen['script_sector'] = f'exception: {e}'
+            logger.error(f"[regenerar_predicciones] script_sector: {e}")
+
+        # 2. Re-entrena predicciones de generación por tecnología (Hidráulica, Solar, etc.)
+        script_postgres = os.path.join(base_dir, 'scripts', 'train_predictions_postgres.py')
+        try:
+            proc = subprocess.run(
+                [python_bin, script_postgres],
+                capture_output=True, text=True, timeout=1800, cwd=base_dir
+            )
+            resumen['script_postgres'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
+            if proc.returncode != 0:
+                logger.error(f"[regenerar_predicciones] postgres stderr: {proc.stderr[-1000:]}")
+            else:
+                logger.info("[regenerar_predicciones] postgres: OK")
+        except subprocess.TimeoutExpired:
+            resumen['script_postgres'] = 'timeout'
+            logger.error("[regenerar_predicciones] script_postgres excedió 30 min")
+        except Exception as e:
+            resumen['script_postgres'] = f'exception: {e}'
+            logger.error(f"[regenerar_predicciones] script_postgres: {e}")
+
+        # 3. Re-genera predicciones de largo plazo (Prophet 365d) con PredictionsService
+        try:
+            from domain.services.predictions_service_extended import PredictionsService
+            svc = PredictionsService()
+            largo_resumen = svc.save_long_term_predictions()
+            ok_count = sum(1 for v in largo_resumen.values() if v > 0)
+            resumen['largo_plazo'] = f'ok {ok_count}/{len(largo_resumen)} fuentes'
+            logger.info(f"[regenerar_predicciones] largo_plazo: {resumen['largo_plazo']}")
+        except Exception as e:
+            resumen['largo_plazo'] = f'exception: {e}'
+            logger.error(f"[regenerar_predicciones] largo_plazo: {e}")
+
+        # 4. Actualiza métricas de calidad ex-post
+        script_quality = os.path.join(base_dir, 'scripts', 'monitor_predictions_quality.py')
+        try:
+            proc = subprocess.run(
+                [python_bin, script_quality],
+                capture_output=True, text=True, timeout=300, cwd=base_dir
+            )
+            resumen['monitor_quality'] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
+            logger.info(f"[regenerar_predicciones] monitor_quality: {resumen['monitor_quality']}")
+        except Exception as e:
+            resumen['monitor_quality'] = f'exception: {e}'
+            logger.error(f"[regenerar_predicciones] monitor_quality: {e}")
+
+        resumen['duracion_seg'] = round((datetime.now() - inicio).total_seconds())
+        logger.info(f"🔮 [regenerar_predicciones] Completado en {resumen['duracion_seg']}s: {resumen}")
+        return resumen
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)

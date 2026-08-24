@@ -5,11 +5,14 @@ Refresco diario de la capa de ontología — corre después del ETL SharePoint (
 1. Re-resuelve alias de geografía/empresa (nuevos valores de departamento/municipio/
    ejecutor que hayan llegado con la carga del día).
 2. Actualiza embeddings de texto libre (contratos nuevos/modificados).
-3. REFRESH MATERIALIZED VIEW CONCURRENTLY de las 8 vistas de ontologia — sin esto,
+3. Re-siembra dim_metrica/dim_recurso (Fase 13), clasifica tema de informes nuevos
+   y resuelve menciones de recurso en el texto (Fase 13/14).
+4. REFRESH MATERIALIZED VIEW CONCURRENTLY de las 9 vistas de ontologia — sin esto,
    la ontología queda congelada en el estado del día que se sembró (Fase 1).
 
-CONCURRENTLY no bloquea lecturas (requiere los índices únicos ya creados en la
-migración 008), apropiado para correr en horario en que el portal puede tener uso.
+CONCURRENTLY no bloquea lecturas (requiere los índices únicos ya creados, ver
+sql/ontologia_vistas_canonicas.sql), apropiado para correr en horario en que
+el portal puede tener uso.
 
 Uso:
     venv/bin/python3 scripts/ontologia/refresh_ontologia.py
@@ -37,7 +40,11 @@ VISTAS_MATERIALIZADAS = [
     "ontologia.mv_subsidios_mapa_geo",
     "ontologia.mv_supervision_geo",
     "ontologia.mv_resumen_departamento",
+    "ontologia.mv_resumen_municipio",
 ]
+
+
+VISTAS_CANONICAS_SQL = Path(__file__).resolve().parents[2] / "sql" / "ontologia_vistas_canonicas.sql"
 
 
 def _recrear_vistas_faltantes() -> None:
@@ -45,11 +52,16 @@ def _recrear_vistas_faltantes() -> None:
     Auto-reparación: algunos ETLs pre-existentes (ej. etl_sharepoint_sync.py sobre
     comunidades.base y supervision.*) recargan sus tablas con
     `DROP TABLE ... CASCADE` en vez de TRUNCATE — eso borra en cascada cualquier
-    vista materializada construida sobre esa tabla (confirmado en vivo: 3 de las
-    8 vistas + mv_resumen_departamento desaparecieron así el 2026-08-02, sin
-    ningún error visible hasta que el linaje lo expuso). Como la migración 008 usa
-    CREATE MATERIALIZED VIEW IF NOT EXISTS en todas partes, re-aplicarla es
-    siempre seguro/idempotente y recrea solo lo que falte.
+    vista materializada construida sobre esa tabla (confirmado en vivo, repetidas
+    veces). Fase 18: en vez de reaplicar la cadena histórica creciente de
+    migraciones (008→...→029, cada corrida tardaba minutos — insostenible para
+    un sanador que corre cada 5 min, y se encontró en vivo que una corrida
+    interrumpida a medias podía dejar vistas sin su índice único), se aplica un
+    único archivo canónico (`sql/ontologia_vistas_canonicas.sql`) con la
+    definición *actual* de las 9 vistas, envuelto en una transacción — segundos,
+    no minutos, y sin estado a medias posible (todo o nada). Ver el encabezado
+    de ese archivo: toda migración futura que cambie una de estas 9 vistas debe
+    actualizarlo también.
     """
     existentes = db_manager.query_df(
         "SELECT matviewname FROM pg_matviews WHERE schemaname = 'ontologia'"
@@ -63,32 +75,18 @@ def _recrear_vistas_faltantes() -> None:
 
     logger.warning(
         f"[REFRESH] Vistas materializadas faltantes (probable DROP CASCADE de un "
-        f"ETL externo): {sorted(faltantes)} — recreando desde las migraciones"
+        f"ETL externo): {sorted(faltantes)} — recreando desde {VISTAS_CANONICAS_SQL.name}"
     )
-    # Reaplicar 008 (definición original) seguida de cada migración que desde
-    # entonces redefinió alguna de estas vistas (014, 015, ...) — nunca solo
-    # 008: si solo se reaplicara esa, un DROP CASCADE revertiría en silencio
-    # los fixes posteriores (ej. 014 corrigió un nombre duplicado, 015 corrigió
-    # un guion bajo en comunidades.departamento) la próxima vez que un ETL
-    # externo tumbe estas vistas. Todas usan DROP/CREATE IF (NOT) EXISTS, así
-    # que reaplicar la secuencia completa siempre converge al estado correcto.
-    migraciones_dir = Path(__file__).resolve().parents[2] / "sql" / "migrations"
-    migraciones = [
-        migraciones_dir / "008_ontologia_vistas_materializadas.sql",
-        migraciones_dir / "014_ontologia_fix_nombre_departamento_duplicado.sql",
-        migraciones_dir / "015_ontologia_fix_guion_bajo_departamento.sql",
-    ]
     with registrar_paso("refresh_vistas", "recrear_vistas_faltantes") as paso:
-        for migracion in migraciones:
-            resultado = subprocess.run(
-                ["psql", "-h", "localhost", "-U", "postgres", "-d", "portal_energetico",
-                 "-v", "ON_ERROR_STOP=1", "-f", str(migracion)],
-                capture_output=True, text=True,
+        resultado = subprocess.run(
+            ["psql", "-h", "localhost", "-U", "postgres", "-d", "portal_energetico",
+             "-v", "ON_ERROR_STOP=1", "-f", str(VISTAS_CANONICAS_SQL)],
+            capture_output=True, text=True,
+        )
+        if resultado.returncode != 0:
+            raise RuntimeError(
+                f"Recreación de vistas falló: {resultado.stderr[-500:]}"
             )
-            if resultado.returncode != 0:
-                raise RuntimeError(
-                    f"Recreación de vistas falló en {migracion.name}: {resultado.stderr[-500:]}"
-                )
         paso.filas(len(faltantes))
     logger.info(f"[REFRESH] Vistas recreadas: {sorted(faltantes)}")
 
@@ -136,9 +134,28 @@ def main() -> None:
     with registrar_paso("empresa_alias", "resolver_fuzzy"):
         resolver_fuzzy()
 
+    # Fase 17: dim_proyecto nunca estaba conectado al refresh diario (gap
+    # operacional encontrado, no solo de cobertura) — 100% local a Postgres,
+    # igual que geografia_alias/empresa_alias, no requiere aislarse en try/except.
+    from scripts.ontologia.build_proyecto_alias import main as resolver_proyectos
+    with registrar_paso("proyecto_alias", "build_proyecto_alias"):
+        resolver_proyectos()
+
     from scripts.ontologia.build_texto_embeddings import main as indexar_embeddings
     with registrar_paso("texto_embeddings", "indexar_embeddings"):
         indexar_embeddings()
+
+    # Catálogos de métricas/recursos (Fase 13/14) — 100% locales, idempotentes
+    # (ON CONFLICT DO UPDATE), no dependen de red. Se re-siembran cada día para
+    # que un cambio de código (ej. una métrica nueva agregada al script) se
+    # aplique solo, sin depender de que alguien lo corra a mano.
+    from scripts.ontologia.seed_dim_metrica import main as seed_metricas
+    with registrar_paso("dim_metrica", "seed_dim_metrica"):
+        seed_metricas()
+
+    from scripts.ontologia.seed_dim_recurso import main as seed_recursos
+    with registrar_paso("dim_recurso", "seed_dim_recurso"):
+        seed_recursos()
 
     # Aislado en su propio try/except (a diferencia de los pasos anteriores):
     # depende de una llamada de red externa (Microsoft Graph/SharePoint), con más
@@ -151,6 +168,36 @@ def main() -> None:
             indexar_informes()
     except Exception as e:
         logger.error(f"[ONTOLOGIA] Indexación de informes SharePoint falló: {e}")
+
+    # Clasificación por tema + resolución de menciones de recursos (Fase 13
+    # Ronda 5 / profundización) — dependen de que indexar_informes ya haya
+    # corrido (documentos/chunks nuevos del día), por eso van después. Aislados
+    # igual que el paso anterior: si fallan, no deben bloquear refrescar_vistas().
+    try:
+        from scripts.ontologia.clasificar_tema_informes import main as clasificar_temas
+        with registrar_paso("informes_tema", "clasificar_tema_informes"):
+            clasificar_temas()
+    except Exception as e:
+        logger.error(f"[ONTOLOGIA] Clasificación de tema de informes falló: {e}")
+
+    try:
+        from scripts.ontologia.resolver_recurso_mencion import main as resolver_menciones
+        with registrar_paso("recurso_mencion", "resolver_recurso_mencion"):
+            resolver_menciones()
+    except Exception as e:
+        logger.error(f"[ONTOLOGIA] Resolución de menciones de recursos falló: {e}")
+
+    # Fase 37 Parte B — vigilancia de las 8 resoluciones CREG núcleo que
+    # sustentan core/umbrales_oficiales.py: depende de que indexar_informes
+    # ya haya corrido (resoluciones/circulares recientes indexadas ese día),
+    # por eso va después. Aislado igual que los pasos anteriores — un fallo
+    # aquí no debe bloquear refrescar_vistas().
+    try:
+        from scripts.ontologia.vigilancia_normativa_creg import main as vigilar_normativa_creg
+        with registrar_paso("vigilancia_normativa_creg", "vigilancia_normativa_creg"):
+            vigilar_normativa_creg()
+    except Exception as e:
+        logger.error(f"[ONTOLOGIA] Vigilancia normativa CREG falló: {e}")
 
     refrescar_vistas()
     logger.info("[ONTOLOGIA] Refresco diario completo")

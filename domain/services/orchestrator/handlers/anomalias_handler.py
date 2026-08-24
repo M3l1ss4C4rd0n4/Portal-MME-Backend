@@ -2,7 +2,7 @@
 Mixin: Anomalías handlers (detección comparativa real vs histórico y predicciones).
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
 import pandas as pd
 from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AnomaliaHandlerMixin:

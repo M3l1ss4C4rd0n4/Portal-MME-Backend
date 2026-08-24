@@ -229,6 +229,7 @@ def _get_access_token() -> str:
         client_id=MS_CLIENT_ID,
         client_credential=MS_CLIENT_SECRET,
         authority=f"https://login.microsoftonline.com/{MS_TENANT_ID}",
+        timeout=30,  # sin esto, msal cuelga indefinidamente si login.microsoftonline.com no responde
     )
     result = app.acquire_token_for_client(
         scopes=["https://graph.microsoft.com/.default"]

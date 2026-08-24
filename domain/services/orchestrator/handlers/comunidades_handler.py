@@ -3,14 +3,14 @@ Mixin: Comunidades energéticas — 4 subsecciones del portal.
 Implementadas, Contratos OR, Fenoge 1.0/1.1 y Colombia Solar.
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
 from typing import Any, Dict, List, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 from infrastructure.database.connection import connection_manager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _REGRESAR_COMUNIDADES = {
     "id": "comunidades_menu",

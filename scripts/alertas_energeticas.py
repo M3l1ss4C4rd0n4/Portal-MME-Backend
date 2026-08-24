@@ -46,8 +46,7 @@ import pandas as pd
 from datetime import datetime, date, timedelta
 from infrastructure.database.connection import PostgreSQLConnectionManager
 from core.umbrales_oficiales import (
-    # Umbrales oficiales (CREG 209/2020) — Índice NE / Senda de Referencia
-    NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,
+    # Umbrales oficiales (CREG 026/2014, mod. Res. CREG 101 112/2026) — Índice NE / Senda de Referencia
     obtener_senda_referencia,
     clasificar_indice_ne,
     # Umbrales oficiales (CREG 026/2014) — Índice HSIN
@@ -114,19 +113,23 @@ UMBRALES = {
         'DIAS_ALERTA_PCT': 0.50,    # fracción del horizonte para disparar ALERTA
         'fuente': 'Criterio operativo CND derivado de percentiles XM histórico',
     },
-    # ─── EMBALSES — ÍNDICE NE OFICIAL (Res. CREG 209 de 2020) ───────────────
+    # ─── EMBALSES — ÍNDICE NE OFICIAL (Res. CREG 026/2014, mod. Res. CREG ──
+    # ─── 101 112/2026, vigente desde 17-jun-2026) ───────────────────────────
     # El nivel se compara contra la Senda de Referencia mensual publicada por
     # XM/CND. NO existe un umbral fijo único; el umbral varía por mes según
     # la senda CREG. Ver core/umbrales_oficiales.SENDA_REFERENCIA_2024_2025.
     #
     # Niveles oficiales del Índice NE:
-    #   SUPERIOR: embalse ≥ senda  O  embalse ≥ 70% (regla absoluta CREG)
+    #   SUPERIOR: embalse ≥ senda
     #   ALERTA:   senda − X ≤ embalse < senda
     #   INFERIOR: embalse < senda − X  (X = 0 en práctica reciente)
+    #
+    # La regla alternativa "SUPERIOR si embalse ≥ 70%" (Res. CREG 210/2021)
+    # fue derogada por la Res. CREG 101 112/2026 — ya no se evalúa (ver
+    # core/umbrales_oficiales.py::clasificar_indice_ne).
     'EMBALSES_PCT': {
-        'UMBRAL_ABSOLUTO_SUPERIOR': NE_UMBRAL_SUPERIOR_ABSOLUTO_PCT,  # 70% Res. 209/2020
         'OBJETIVO_XM_ANTE_NINO': OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT,    # 80% Boletín XM 04-2026
-        'fuente': 'Resolución CREG 209 de 2020 — Índice NE y Senda de Referencia',
+        'fuente': 'Resolución CREG 026 de 2014 (mod. Res. CREG 101 112/2026) — Índice NE y Senda de Referencia',
     },
     # ─── APORTES HÍDRICOS — ÍNDICE HSIN OFICIAL (Res. CREG 026/2014 art. 2) ──
     # HSIN = aportes acumulados últimas 4 semanas / promedio histórico × 100
@@ -333,6 +336,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'DEMANDA',
                 'severidad': 'CRÍTICO',
+                'clave': 'DEMANDA_CRITICA',
                 'titulo': f'Demanda excesiva sostenida: {dias_criticos}/{total} días > {umbral_crit} GWh',
                 'descripcion': (
                     f'Pico máximo: {maximo:.1f} GWh/día. Promedio: {promedio:.1f} GWh/día. '
@@ -408,6 +412,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'HIDROLOGIA',
                 'severidad': 'CRÍTICO',
+                'clave': 'HSIN_CRITICO',
                 'titulo': f'Índice HSIN CRÍTICO: aportes al {hsin_pct:.1f}% de media histórica',
                 'descripcion': (
                     f'HSIN = {hsin_pct:.1f}% — nivel histórico de crisis (referencia abril 2020). '
@@ -485,6 +490,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'EMBALSES',
                 'severidad': 'CRÍTICO',
+                'clave': 'EMBALSES_NE_INFERIOR',
                 'titulo': f'Índice NE INFERIOR: embalses {pct_min:.1f}% < senda CREG {senda:.1f}%',
                 'descripcion': (
                     f'Nivel mínimo reciente: {pct_min:.1f}%. Actual: {pct_actual:.1f}%. '
@@ -600,6 +606,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'PRECIO_MERCADO',
                 'severidad': 'CRÍTICO',
+                'clave': 'PBP_CRITICO',
                 'titulo': (f'PBP CRÍTICO: {dias_pes}/{n_ventana} días sobre PES '
                            f'{pes_vigente:.0f} COP/kWh'),
                 'descripcion': (
@@ -716,6 +723,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'ESTRES_TERMICO',
                 'severidad': 'CRÍTICO',
+                'clave': 'ESTRES_TERMICO_CRITICO',
                 'titulo': f'Estrés térmico crítico: {participacion_prom:.1f}% participación sostenida',
                 'descripcion': (
                     f'{dias_criticos}/{total} días con participación térmica > {umb["CRITICO"]}%. '

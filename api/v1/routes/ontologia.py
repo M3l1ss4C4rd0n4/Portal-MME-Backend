@@ -55,6 +55,41 @@ async def resumen_departamento(
     return resumen
 
 
+@router.get(
+    "/municipios",
+    summary="Municipios DANE disponibles en la ontología, opcional filtrar por departamento (Fase 13)",
+)
+@limiter.limit("60/minute")
+async def listar_municipios(
+    request: Request,
+    codigo_dane_departamento: str = Query(None, description="Código DANE de 2 dígitos del departamento"),
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    return {"municipios": service.listar_municipios(codigo_dane_departamento)}
+
+
+@router.get(
+    "/municipios/{codigo_dane_municipio}/resumen",
+    summary="Vista 360 de un municipio: comunidades + contratos OR + FENOGE + Colombia Solar + "
+            "subsidios + supervisión (Fase 13, mismo cruce que /geografia/{codigo}/resumen a nivel municipio)",
+)
+@limiter.limit("60/minute")
+async def resumen_municipio(
+    request: Request,
+    codigo_dane_municipio: str,
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    resumen = service.resumen_municipio(codigo_dane_municipio)
+    if resumen is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Municipio con código DANE '{codigo_dane_municipio}' no encontrado en ontologia.dim_geografia",
+        )
+    return resumen
+
+
 @router.get("/empresas", summary="Busca una empresa/prestador por NIT o nombre")
 @limiter.limit("60/minute")
 async def buscar_empresas(
@@ -134,6 +169,101 @@ async def obtener_proyecto(
     if proyecto is None:
         raise HTTPException(status_code=404, detail=f"Proyecto {proyecto_id} no encontrado")
     return proyecto
+
+
+@router.get(
+    "/metricas",
+    summary="Catálogo de métricas/variables del portal (Fase 12), opcional filtrar por dominio/estado",
+)
+@limiter.limit("60/minute")
+async def listar_metricas(
+    request: Request,
+    dominio: str = Query(None, description="ej. 'sector_energetico'"),
+    estado: str = Query(None, description="'catalogado' | 'pendiente_curacion'"),
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    return {"metricas": service.listar_metricas(dominio=dominio, estado=estado)}
+
+
+@router.get(
+    "/metricas/buscar",
+    summary="Busca métricas por nombre o código técnico, con sus relaciones de derivación",
+)
+@limiter.limit("60/minute")
+async def buscar_metricas(
+    request: Request,
+    q: str = Query(..., min_length=2, description="Nombre o código técnico, ej. 'embalse' o 'NE'"),
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    return {"metricas": service.buscar_metrica(q)}
+
+
+@router.get(
+    "/metricas/{metrica_id}",
+    summary="Detalle de una métrica: definición, fuente normativa y relaciones de derivación",
+)
+@limiter.limit("60/minute")
+async def obtener_metrica(
+    request: Request,
+    metrica_id: int,
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    metrica = service.obtener_metrica(metrica_id)
+    if metrica is None:
+        raise HTTPException(status_code=404, detail=f"Métrica {metrica_id} no encontrada")
+    return metrica
+
+
+@router.get(
+    "/recursos",
+    summary="Catálogo de plantas/recursos de generación (Fase 13), opcional filtrar por tipo/nombre",
+)
+@limiter.limit("60/minute")
+async def listar_recursos(
+    request: Request,
+    tipo: str = Query(None, description="'HIDRAULICA' | 'TERMICA' | 'SOLAR' | 'EOLICA' | 'COGENERADOR'"),
+    nombre: str = Query(None, description="Búsqueda parcial por nombre, ej. 'CARTAGENA'"),
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    return {"recursos": service.listar_recursos(tipo=tipo, nombre=nombre)}
+
+
+@router.get(
+    "/recursos/{codigo_xm}",
+    summary="Detalle de un recurso/planta por su código XM",
+)
+@limiter.limit("60/minute")
+async def obtener_recurso(
+    request: Request,
+    codigo_xm: str,
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    recurso = service.obtener_recurso(codigo_xm)
+    if recurso is None:
+        raise HTTPException(status_code=404, detail=f"Recurso '{codigo_xm}' no encontrado")
+    return recurso
+
+
+@router.get(
+    "/contratos/{contrato_id}",
+    summary="Detalle de un contrato de supervisión por su id",
+)
+@limiter.limit("60/minute")
+async def obtener_contrato(
+    request: Request,
+    contrato_id: int,
+    api_key: str = Depends(get_api_key),
+    service: OntologiaService = Depends(get_ontologia_service),
+):
+    contrato = service.obtener_contrato(contrato_id)
+    if contrato is None:
+        raise HTTPException(status_code=404, detail=f"Contrato {contrato_id} no encontrado")
+    return contrato
 
 
 @router.get(

@@ -428,3 +428,36 @@ async def get_sector_snapshot(request: Request, api_key: str = Depends(get_api_k
     except Exception as e:
         logger.error("[sector/snapshot] %s", e)
         raise HTTPException(status_code=500, detail="Error al obtener snapshot del sector")
+
+
+@router.get(
+    "/diagnosticos-ia",
+    summary="Diagnósticos de HomeSlider generados por IA (Fase 11) — cacheados 1 vez al día",
+)
+@limiter.limit("120/minute")
+async def get_diagnosticos_ia(request: Request, api_key: str = Depends(get_api_key)):
+    """
+    Devuelve el texto de hoy para cada slide (reservas/precio_generacion/termica)
+    si la tarea diaria ya corrió; diccionario vacío si aún no hay texto generado
+    para la fecha de hoy. El frontend debe caer al texto determinístico existente
+    cuando un slide no aparece aquí — nunca debe fallar por esto.
+    """
+    try:
+        with _cm.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT slide_id, texto, generado_en
+                    FROM sector_energetico.diagnosticos_ia
+                    WHERE fecha = CURRENT_DATE
+                """)
+                rows = cur.fetchall()
+        return JSONResponse({
+            "fecha": date.today().isoformat(),
+            "diagnosticos": {
+                slide_id: {"texto": texto, "generadoEn": generado_en.isoformat()}
+                for slide_id, texto, generado_en in rows
+            },
+        })
+    except Exception as e:
+        logger.error("[sector/diagnosticos-ia] %s", e)
+        raise HTTPException(status_code=500, detail="Error al obtener diagnósticos IA")

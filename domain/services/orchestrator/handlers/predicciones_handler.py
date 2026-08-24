@@ -2,7 +2,7 @@
 Mixin: Predicciones handlers (fichas de predicción, horizonte temporal, comparación vs histórico).
 """
 import asyncio
-import logging
+from infrastructure.logging.logger import get_logger
 import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PrediccionesHandlerMixin:
@@ -284,17 +284,25 @@ class PrediccionesHandlerMixin:
             predicciones.append({"indicador": "Precio de Bolsa Nacional", "emoji": "💰", "confiable": False, "error": "Error consultando predicciones de precio"})
 
         # ── PREDICCIÓN 3: EMBALSES ──
+        # ENSEMBLE_SECTOR_v1.0 explícito: PROPHET_LARGO_PLAZO_v1.0 coexiste en
+        # la tabla `predictions` para esta métrica pero genera valores
+        # degenerados (~0.8%) — mismo criterio ya aplicado en el endpoint del
+        # tablero (api/v1/routes/predictions.py), replicado aquí para que el
+        # Asistente IA muestre exactamente los mismos números que el tablero.
+        MODELO_EMBALSES = "ENSEMBLE_SECTOR_v1.0"
         try:
             df_pred_embalses = self.predictions_service.get_predictions(
                 metric_id='EMBALSES_PCT',
                 start_date=hoy.isoformat(),
-                end_date=fecha_fin.isoformat()
+                end_date=fecha_fin.isoformat(),
+                model_name=MODELO_EMBALSES,
             )
             if df_pred_embalses.empty:
                 df_pred_embalses = self.predictions_service.get_predictions(
                     metric_id='EMBALSES',
                     start_date=hoy.isoformat(),
-                    end_date=fecha_fin.isoformat()
+                    end_date=fecha_fin.isoformat(),
+                    model_name=MODELO_EMBALSES,
                 )
                 hist_emb_avg_use = None
                 hist_emb_dias_use = 0
@@ -335,6 +343,86 @@ class PrediccionesHandlerMixin:
             f"[PREDICCIONES_SECTOR] Horizonte={horizonte} ({dias_horizonte} días) | "
             f"Disponibles: {len(predicciones) - len(pred_con_error)}/{len(predicciones)}"
         )
+        return data, errors
+
+    async def _handle_panorama_climatico(
+        self,
+        parameters: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        """
+        Índices climáticos (ONI/PDO/SOI/GMST) — actual y pronóstico mensual de
+        ONI. Mismas consultas que GET /v1/predictions/dashboard
+        (api/v1/routes/predictions.py), acotadas solo a los índices
+        climáticos — sin el payload de gráfico de embalses, que no aporta a
+        una respuesta conversacional del Asistente IA.
+        """
+        from infrastructure.database.repositories.metrics_repository import MetricsRepository
+
+        data: Dict[str, Any] = {}
+        errors: List[ErrorDetail] = []
+
+        try:
+            metrics_repo = MetricsRepository()
+            hoy = date.today()
+
+            df_oni = await asyncio.to_thread(
+                metrics_repo.get_metric_data_by_entity,
+                "ONI_Index", "NOAA", "2026-01-01", "2027-12-31", "Sistema",
+            )
+            oni_actual = None
+            oni_forecast: List[Dict[str, Any]] = []
+            if df_oni is not None and not df_oni.empty:
+                df_oni = df_oni.sort_values("fecha")
+                df_oni["oni_real"] = df_oni["valor_gwh"] - 5.0
+                df_oni["fecha"] = pd.to_datetime(df_oni["fecha"]).dt.date
+                df_oni_hist = df_oni[df_oni["fecha"] <= hoy]
+                df_oni_future = df_oni[df_oni["fecha"] > hoy]
+
+                if not df_oni_hist.empty:
+                    ultimo_oni = df_oni_hist.iloc[-1]
+                    oni_val = round(float(ultimo_oni["oni_real"]), 2)
+                    oni_actual = {
+                        "valor": oni_val,
+                        "fecha": str(ultimo_oni["fecha"]),
+                        "estado": (
+                            "EL NIÑO" if oni_val >= 0.5
+                            else "LA NIÑA" if oni_val <= -0.5
+                            else "NEUTRO"
+                        ),
+                    }
+                if not df_oni_future.empty:
+                    df_oni_future = df_oni_future[df_oni_future["fecha"].apply(lambda d: d.day) == 15]
+                    oni_forecast = [
+                        {"fecha": str(row["fecha"]), "valor": round(float(row["oni_real"]), 2)}
+                        for _, row in df_oni_future.iterrows()
+                    ]
+
+            def _ultimo_valor(metric_id: str, entity: str) -> Optional[Dict[str, Any]]:
+                df = metrics_repo.get_metric_data_by_entity(
+                    metric_id, entity, "2020-01-01", hoy.isoformat(), "Sistema",
+                )
+                if df is None or df.empty:
+                    return None
+                df = df.sort_values("fecha")
+                ultimo = df.iloc[-1]
+                return {"valor": round(float(ultimo["valor_gwh"]), 2), "fecha": str(ultimo["fecha"])}
+
+            pdo_actual = await asyncio.to_thread(_ultimo_valor, "PDO_Index", "NOAA_ESRL")
+            soi_actual = await asyncio.to_thread(_ultimo_valor, "SOI_Index", "NOAA_CPC")
+            gmst_actual = await asyncio.to_thread(_ultimo_valor, "GMST_Anomalia", "NASA_GISS")
+
+            data["oni_actual"] = oni_actual
+            data["oni_forecast_mensual"] = oni_forecast
+            data["pdo_actual"] = pdo_actual
+            data["soi_actual"] = soi_actual
+            data["gmst_actual"] = gmst_actual
+
+            if oni_actual is None:
+                errors.append(ErrorDetail(code="NO_DATA", message="Sin datos de ONI disponibles"))
+        except Exception as e:
+            logger.error(f"[PANORAMA_CLIMATICO] Error: {e}")
+            errors.append(ErrorDetail(code="SERVICE_ERROR", message="Error consultando panorama climático"))
+
         return data, errors
 
     @handle_service_error
@@ -401,10 +489,16 @@ class PrediccionesHandlerMixin:
 
             fecha_fin = fecha_inicio + timedelta(days=horizonte_dias)
 
+            # Ver nota en _handle_predicciones_sector: EMBALSES/EMBALSES_PCT
+            # tienen 2 modelos coexistiendo en `predictions`, uno de ellos
+            # (PROPHET_LARGO_PLAZO_v1.0) degenerado — forzar el modelo bueno.
+            modelo_forzado = "ENSEMBLE_SECTOR_v1.0" if fuente_normalizada in ("EMBALSES", "EMBALSES_PCT") else None
+
             df_predicciones = self.predictions_service.get_predictions(
                 metric_id=fuente_normalizada,
                 start_date=fecha_inicio.isoformat(),
-                end_date=fecha_fin.isoformat()
+                end_date=fecha_fin.isoformat(),
+                model_name=modelo_forzado,
             )
 
             if df_predicciones.empty:

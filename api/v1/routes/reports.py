@@ -11,6 +11,7 @@ Endpoints:
     GET /v1/reports/informes-diarios-xm/paquete         → ZIP 3 informes XM con fallback
     GET /v1/reports/informe-diario-xm/latest            → alias boletines (compatibilidad)
     GET /v1/reports/resumen-ejecutivo/latest            → PDF informe diario (correo/Telegram)
+    GET /v1/reports/informe-empalme/latest               → informe de empalme más reciente (SharePoint)
 """
 
 BOLETINES_ENERGETICOS_FOLDER = (
@@ -21,6 +22,11 @@ BOLETINES_ENERGETICOS_FOLDER = (
 INFORMES_DIARIOS_XM_FOLDER = (
     "https://minenergiacol-my.sharepoint.com/:f:/g/personal/"
     "dmgutierrez_minenergia_gov_co/IgDtJ4pD_cSfTaOYhzHY833bAVLgyP7fJhhCDJmIfgQo-tw"
+)
+
+INFORME_EMPALME_FOLDER = (
+    "https://minenergiacol-my.sharepoint.com/:f:/g/personal/"
+    "dmgutierrez_minenergia_gov_co/IgDTXr0lxDk0T5CU01aasU22Afimb2-f0HlyS-GwUhqWaFI"
 )
 
 # Tipos de informe diario XM (orden de inclusión en el ZIP)
@@ -48,11 +54,17 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 _CATALOG_CACHE: dict = {"ts": 0.0, "payload": None}
-_CATALOG_TTL_SEC = 30
+# 30 min — los informes diarios solo cambian ~1 vez al día; un TTL corto (antes
+# 30s) hacía que casi cada visita disparara el escaneo completo de SharePoint
+# (listar carpetas + descargar y parsear los 3 PDFs), lento y propenso a 502
+# si SharePoint respondía lento. invalidate_informes_diarios_cache() sigue
+# permitiendo refrescar al instante cuando el watcher detecta un cambio real.
+_CATALOG_TTL_SEC = 1800
 _CATALOG_BUST_FILE = (
     Path(__file__).resolve().parents[3] / "logs" / ".informes_diarios_cache_bust"
 )
 _BOLETIN_CACHE_DIR = Path(__file__).resolve().parents[3] / "cache" / "boletines"
+_INFORME_EMPALME_CACHE_DIR = Path(__file__).resolve().parents[3] / "cache" / "informe_empalme"
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import Response
@@ -203,7 +215,7 @@ def _graph_list_all_children(
         f"?$select=id,name,lastModifiedDateTime,file,folder"
     )
     while url:
-        resp = requests.get(url, headers=headers, timeout=(15, 30))
+        resp = requests.get(url, headers=headers, timeout=(20, 45))
         resp.raise_for_status()
         body = resp.json()
         items.extend(body.get("value", []))
@@ -226,7 +238,7 @@ def _graph_list_children_recent(
         f"?$select=id,name,lastModifiedDateTime,file,folder"
         f"&$orderby=lastModifiedDateTime desc&$top={top}"
     )
-    resp = requests.get(url, headers=headers, timeout=(15, 45))
+    resp = requests.get(url, headers=headers, timeout=(20, 60))
     resp.raise_for_status()
     return resp.json().get("value", [])
 
@@ -249,7 +261,7 @@ def _sp_open_folder(share_url: str) -> tuple[dict, str, str]:
     meta_resp = requests.get(
         f"https://graph.microsoft.com/v1.0/shares/{sharing_token}/driveItem",
         headers=headers,
-        timeout=(15, 30),
+        timeout=(20, 45),
     )
     if meta_resp.status_code != 200:
         raise RuntimeError(
@@ -271,7 +283,7 @@ def _sp_download_item(
     file_meta = requests.get(
         f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item['id']}",
         headers=headers,
-        timeout=(15, 30),
+        timeout=(20, 45),
     )
     file_meta.raise_for_status()
     download_url = file_meta.json().get("@microsoft.graph.downloadUrl")
@@ -281,7 +293,7 @@ def _sp_download_item(
     pdf_resp = requests.get(
         download_url,
         headers={"Cache-Control": "no-cache"},
-        timeout=(15, read_timeout),
+        timeout=(20, read_timeout),
         stream=True,
     )
     pdf_resp.raise_for_status()
@@ -493,7 +505,19 @@ def _build_catalog_entry(
     today: date,
 ) -> dict:
     try:
-        content = _sp_download_item(headers, drive_id, item, read_timeout=300)
+        # read_timeout bajo a propósito (a diferencia de descargas de archivo
+        # completo por acción explícita del usuario, que sí usan 300s más
+        # abajo en este archivo): esto es solo una vista previa (título/
+        # descripción) del catálogo, refrescado automáticamente cada 2 min
+        # por polling del frontend — con red degradada hacia Microsoft
+        # Graph, un timeout de 300s aquí mantenía un hilo bloqueado el
+        # tiempo suficiente para impedir el apagado ordenado del servicio
+        # (systemd terminó forzando SIGKILL de portal-api.service completo
+        # el 2026-08-11 ~10:00am, afectando a todos los usuarios del portal,
+        # no solo a esta tarjeta). Ya existe un fallback (_preview_fallback)
+        # para cuando la descarga falla, así que fallar rápido aquí es
+        # estrictamente mejor que esperar hasta 300s.
+        content = _sp_download_item(headers, drive_id, item, read_timeout=25)
         titulo, descripcion = _extraer_preview_pdf(content)
         if not descripcion:
             _, descripcion = _preview_fallback(label, folder_date)
@@ -526,44 +550,59 @@ def _catalogo_informes_diarios_sync() -> dict:
     ):
         return cached
 
-    headers, drive_id, root_id = _sp_open_folder(INFORMES_DIARIOS_XM_FOLDER)
-    today = datetime.now(ZoneInfo("America/Bogota")).date()
-    folders = _index_informes_diarios_folders(headers, drive_id, root_id)
-    if not folders:
-        raise RuntimeError("No se encontraron carpetas de informes diarios")
+    try:
+        headers, drive_id, root_id = _sp_open_folder(INFORMES_DIARIOS_XM_FOLDER)
+        today = datetime.now(ZoneInfo("America/Bogota")).date()
+        folders = _index_informes_diarios_folders(headers, drive_id, root_id)
+        if not folders:
+            raise RuntimeError("No se encontraron carpetas de informes diarios")
 
-    resolved, resolved_from = _resolver_informes_diarios(folders, today)
-    resumen = _build_catalog_resumen(folders, resolved_from, today)
+        resolved, resolved_from = _resolver_informes_diarios(folders, today)
+        resumen = _build_catalog_resumen(folders, resolved_from, today)
 
-    tasks = [
-        (pattern, label, resolved_from[pattern], resolved[pattern])
-        for pattern, label in INFORME_DIARIO_TIPOS
-    ]
-
-    catalogo: list[dict] = []
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = [
-            pool.submit(
-                _build_catalog_entry,
-                pattern, label, folder_date, item, headers, drive_id, today,
-            )
-            for pattern, label, folder_date, item in tasks
+        tasks = [
+            (pattern, label, resolved_from[pattern], resolved[pattern])
+            for pattern, label in INFORME_DIARIO_TIPOS
         ]
-        catalogo = [f.result() for f in futures]
 
-    payload = {"informes": catalogo, "resumen": resumen}
-    _CATALOG_CACHE["ts"] = now
-    _CATALOG_CACHE["payload"] = payload
+        catalogo: list[dict] = []
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [
+                pool.submit(
+                    _build_catalog_entry,
+                    pattern, label, folder_date, item, headers, drive_id, today,
+                )
+                for pattern, label, folder_date, item in tasks
+            ]
+            catalogo = [f.result() for f in futures]
 
-    logger.info(
-        "[REPORTS] Catálogo informes diarios generado | hidro=%s | oper=%s | desp=%s | %d/%d del día",
-        resolved_from.get("VariablesHidrologicas"),
-        resolved_from.get("VariablesOperativas"),
-        resolved_from.get("SeguimientoDespacho"),
-        resumen["completosDelDia"],
-        resumen["totalTipos"],
-    )
-    return payload
+        payload = {"informes": catalogo, "resumen": resumen}
+        _CATALOG_CACHE["ts"] = now
+        _CATALOG_CACHE["payload"] = payload
+
+        logger.info(
+            "[REPORTS] Catálogo informes diarios generado | hidro=%s | oper=%s | desp=%s | %d/%d del día",
+            resolved_from.get("VariablesHidrologicas"),
+            resolved_from.get("VariablesOperativas"),
+            resolved_from.get("SeguimientoDespacho"),
+            resumen["completosDelDia"],
+            resumen["totalTipos"],
+        )
+        return payload
+    except Exception as exc:
+        # Degradación agraciada: si SharePoint/Graph está lento o falla (red
+        # degradada, throttling, etc.) y ya tenemos una versión previa en
+        # caché — aunque esté vencida — se sirve esa en vez de un error duro.
+        # Los informes diarios cambian ~1 vez al día, así que una versión con
+        # unos minutos u horas de más sigue siendo correcta para el usuario.
+        if cached is not None:
+            logger.warning(
+                "[REPORTS] Falló actualización del catálogo de informes (%s) — "
+                "sirviendo versión en caché de hace %.0fs",
+                exc, now - _CATALOG_CACHE["ts"],
+            )
+            return cached
+        raise
 
 
 def _descargar_informe_diario_por_tipo_sync(tipo: str) -> tuple[bytes, str]:
@@ -693,6 +732,120 @@ def _descargar_ultimo_boletin_sync() -> tuple[bytes, str]:
     raise RuntimeError(f"No se pudo descargar el boletín: {last_error}")
 
 
+_INFORME_EMPALME_CACHE_TTL_HOURS = 6
+_INFORME_EMPALME_FALLBACK_NAME = "Informe_de_Empalme_MME.pdf"
+
+
+def _descargar_ultimo_informe_empalme_sync() -> tuple[bytes, str]:
+    """
+    Descarga el PDF más reciente de la carpeta Informe de Empalme (SharePoint).
+    Sirve desde caché local si tiene menos de _INFORME_EMPALME_CACHE_TTL_HOURS
+    horas para evitar golpear SharePoint en cada clic del botón "Empalme".
+    """
+    _INFORME_EMPALME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_pdf = _INFORME_EMPALME_CACHE_DIR / "latest.pdf"
+    cache_meta = _INFORME_EMPALME_CACHE_DIR / "latest.meta.json"
+
+    def _read_cache() -> tuple[bytes, str, dict] | None:
+        if not cache_pdf.is_file() or not cache_meta.is_file():
+            return None
+        try:
+            meta = json.loads(cache_meta.read_text(encoding="utf-8"))
+            return cache_pdf.read_bytes(), meta["filename"], meta
+        except (json.JSONDecodeError, OSError, KeyError):
+            return None
+
+    def _cache_age_hours(meta: dict) -> float:
+        try:
+            cached_at = datetime.fromisoformat(meta["cached_at"])
+            now = datetime.now(ZoneInfo("America/Bogota"))
+            if cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=ZoneInfo("America/Bogota"))
+            return (now - cached_at).total_seconds() / 3600
+        except (KeyError, ValueError):
+            return float("inf")
+
+    # Servir desde caché si es reciente
+    cached = _read_cache()
+    if cached:
+        content, filename, meta = cached
+        age_h = _cache_age_hours(meta)
+        if age_h < _INFORME_EMPALME_CACHE_TTL_HOURS:
+            logger.info(
+                "[REPORTS] Informe de empalme servido desde caché (%.1fh < %dh TTL): %s, %.1f KB",
+                age_h, _INFORME_EMPALME_CACHE_TTL_HOURS, filename, len(content) / 1024,
+            )
+            return content, filename
+
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            headers, drive_id, root_id = _sp_open_folder(INFORME_EMPALME_FOLDER)
+            files = [
+                f for f in _graph_list_children_recent(headers, drive_id, root_id, top=25)
+                if "file" in f and f.get("name", "").lower().endswith(".pdf")
+            ]
+            if not files:
+                raise RuntimeError("No se encontró el informe de empalme en SharePoint")
+
+            latest = max(
+                files,
+                key=lambda x: (x.get("lastModifiedDateTime", ""), x.get("name", "")),
+            )
+
+            # Si el archivo en SharePoint no cambió respecto al caché, devolver caché
+            if cached:
+                content_c, filename_c, meta_c = cached
+                if latest.get("lastModifiedDateTime") == meta_c.get("modificado"):
+                    # Actualizar solo el timestamp de caché para reiniciar TTL
+                    meta_c["cached_at"] = datetime.now(ZoneInfo("America/Bogota")).isoformat()
+                    cache_meta.write_text(json.dumps(meta_c, ensure_ascii=False), encoding="utf-8")
+                    logger.info(
+                        "[REPORTS] Informe de empalme sin cambios en SharePoint — TTL renovado: %s",
+                        filename_c,
+                    )
+                    return content_c, filename_c
+
+            content = _sp_download_item(headers, drive_id, latest, read_timeout=300)
+            cache_pdf.write_bytes(content)
+            cache_meta.write_text(
+                json.dumps(
+                    {
+                        "filename": latest["name"],
+                        "modificado": latest.get("lastModifiedDateTime"),
+                        "cached_at": datetime.now(ZoneInfo("America/Bogota")).isoformat(),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            logger.info(
+                "[REPORTS] Informe de empalme actualizado desde SharePoint: %s | mod=%s | %.1f KB",
+                latest["name"],
+                latest.get("lastModifiedDateTime"),
+                len(content) / 1024,
+            )
+            return content, latest["name"]
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "[REPORTS] Informe de empalme SharePoint intento %d/2 falló: %s",
+                attempt + 1,
+                exc,
+            )
+
+    if cached:
+        content, filename, _ = cached
+        logger.warning(
+            "[REPORTS] Informe de empalme servido desde caché vencida (%s, %.1f KB) — SharePoint no respondió",
+            filename,
+            len(content) / 1024,
+        )
+        return content, filename
+
+    raise RuntimeError(f"No se pudo descargar el informe de empalme: {last_error}")
+
+
 def _descargar_paquete_informes_diarios_sync() -> tuple[bytes, str]:
     """
     Resuelve los 3 informes diarios XM con fallback por tipo y empaqueta en ZIP.
@@ -741,7 +894,7 @@ def _graph_list_all_children_full(
         f"?$select=id,name,lastModifiedDateTime,file,folder,size"
     )
     while url:
-        resp = requests.get(url, headers=headers, timeout=(15, 60))
+        resp = requests.get(url, headers=headers, timeout=(20, 75))
         resp.raise_for_status()
         body = resp.json()
         items.extend(body.get("value", []))
@@ -862,7 +1015,7 @@ def _descargar_archivo_por_id_sync(drive_id: str, item_id: str) -> tuple[bytes, 
         f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}"
         "?$select=name",
         headers=headers,
-        timeout=(10, 20),
+        timeout=(20, 30),
     )
     filename = meta.json().get("name", f"informe_{item_id}.pdf") if meta.ok else f"informe_{item_id}.pdf"
     return content, filename
@@ -1002,6 +1155,38 @@ async def get_latest_boletin_energetico(
         raise HTTPException(
             status_code=502,
             detail=f"No se pudo descargar el boletín: {e}",
+        )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            **NO_CACHE_HEADERS,
+        },
+    )
+
+
+@router.get(
+    "/informe-empalme/latest",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}},
+    summary="Informe de empalme más reciente (SharePoint)",
+    description="Descarga el PDF más reciente de la carpeta Informe de Empalme.",
+)
+async def get_latest_informe_empalme(
+    api_key: str = Depends(get_api_key),
+):
+    try:
+        loop = asyncio.get_event_loop()
+        pdf_bytes, filename = await loop.run_in_executor(
+            None, _descargar_ultimo_informe_empalme_sync
+        )
+    except Exception as e:
+        logger.error("[REPORTS] Error descargando informe de empalme: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo descargar el informe de empalme: {e}",
         )
 
     return Response(

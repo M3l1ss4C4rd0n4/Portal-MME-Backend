@@ -26,7 +26,7 @@ app = Celery(
     'portal_mme',
     broker='redis://localhost:6379/0',
     backend='redis://localhost:6379/1',
-    include=['tasks.etl_tasks', 'tasks.anomaly_tasks', 'tasks.push_tasks']
+    include=['tasks.etl_tasks', 'tasks.anomaly_tasks', 'tasks.push_tasks', 'tasks.homeslider_diagnosticos_tasks', 'tasks.ontologia_tasks']
 )
 
 # Configuración adicional
@@ -119,6 +119,26 @@ app.conf.beat_schedule = {
     'refresh-precios-escasez-mensual': {
         'task': 'tasks.etl_tasks.refresh_precios_escasez',
         'schedule': crontab(hour=3, minute=0, day_of_month='1'),  # Día 1 de cada mes 03:00 AM
+    },
+    # Diagnósticos de HomeSlider generados por IA (Fase 11) — 8:45 AM, 10 min
+    # después del informe ejecutivo (8:35 AM) para asegurar datos frescos del día.
+    'generar-diagnosticos-homeslider-diario': {
+        'task': 'tasks.homeslider_diagnosticos_tasks.generar_diagnosticos_homeslider',
+        'schedule': crontab(hour=8, minute=45),
+    },
+    # Sanador liviano de vistas materializadas de ontología (Fase 13/14/18) —
+    # cada 5 min (antes: 1h; originalmente hasta 24h), igualando la cadencia
+    # del propio culpable (etl_sharepoint_watcher.py, cron */5) para que el
+    # sanador nunca quede más de un ciclo de watcher detrás. Solo es seguro
+    # correrlo tan seguido desde la Fase 18: el sanador pasó de reaplicar la
+    # cadena histórica de migraciones (minutos por corrida) a un único script
+    # canónico (sql/ontologia_vistas_canonicas.sql, segundos por corrida) —
+    # ver scripts/ontologia/refresh_ontologia.py::_recrear_vistas_faltantes().
+    # Complementa, no reemplaza, el refresh completo diario (cron de sistema
+    # 4:30 AM) — ver tasks/ontologia_tasks.py.
+    'verificar-vistas-ontologia-cada-5-min': {
+        'task': 'tasks.ontologia_tasks.verificar_vistas_ontologia',
+        'schedule': crontab(minute='*/5'),
     },
 }
 

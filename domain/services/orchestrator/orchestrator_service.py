@@ -38,6 +38,7 @@ from domain.services.orchestrator.handlers.comunidades_handler import Comunidade
 from domain.services.orchestrator.handlers.supervision_handler import SupervisionHandlerMixin
 from domain.services.orchestrator.handlers.presupuesto_handler import PresupuestoHandlerMixin
 from domain.services.orchestrator.handlers.ontologia_handler import OntologiaHandlerMixin
+from domain.services.orchestrator.handlers.hidrocarburos_handler import HidrocarburosHandlerMixin
 from domain.services.orchestrator.utils.serializers import sanitize_numpy_types
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class ChatbotOrchestratorService(
     SupervisionHandlerMixin,
     PresupuestoHandlerMixin,
     OntologiaHandlerMixin,
+    HidrocarburosHandlerMixin,
 ):
     """
     Orquestador central para el chatbot.
@@ -69,6 +71,26 @@ class ChatbotOrchestratorService(
 
     SERVICE_TIMEOUT = 10
     TOTAL_TIMEOUT = 60
+
+    # Excepciones puntuales al TOTAL_TIMEOUT general — hallazgo real
+    # (2026-08-22): 'informe_ejecutivo' encadena hasta 3 llamadas
+    # secuenciales con timeout propio (noticias ~15s + resumen ~20s +
+    # generación IA ~60s = ~95s en el peor caso) — con TOTAL_TIMEOUT=60 el
+    # límite general competía en carrera contra el timeout interno de la
+    # IA, matando la tarea COMPLETA (sin dar oportunidad al respaldo sin IA
+    # `_generar_informe_fallback`, que sí existe y funciona) en vez de
+    # dejar que la degradación con gracia ya implementada se completara.
+    # Reproducido en vivo durante un bloqueo de red hacia Gemini —
+    # confirmado que el propio orquestador, no solo el proveedor de IA,
+    # era el punto de falla real.
+    _TIMEOUTS_EXTENDIDOS = {
+        # 150s (no 120s): el timeout interno de la llamada a IA subió de
+        # 60s a 90s el mismo día (2026-08-22) al agregarle failover real
+        # Gemini→Groq (agent.completar() ahora puede intentar 2
+        # proveedores en secuencia) — 120s ya no dejaba margen suficiente
+        # sumado a los ~35s de pasos previos (noticias).
+        "informe_ejecutivo": 150,
+    }
 
     def __init__(self) -> None:
         self.generation_service = GenerationService()
@@ -127,7 +149,7 @@ class ChatbotOrchestratorService(
 
             data, errors = await asyncio.wait_for(
                 handler(request.parameters),
-                timeout=self.TOTAL_TIMEOUT,
+                timeout=self._TIMEOUTS_EXTENDIDOS.get(request.intent, self.TOTAL_TIMEOUT),
             )
 
             if errors:
@@ -195,6 +217,7 @@ class ChatbotOrchestratorService(
 
             "predicciones_sector": self._handle_predicciones_sector,
             "predicciones_indicadores": self._handle_predicciones_sector,
+            "panorama_climatico": self._handle_panorama_climatico,
 
             "anomalias_sector": self._handle_anomalias_detectadas,
             "anomalias_detectadas": self._handle_anomalias_detectadas,
@@ -227,9 +250,14 @@ class ChatbotOrchestratorService(
             "subsidios_deficit_historico": self._handle_subsidios_deficit_historico,
             "subsidios_validaciones": self._handle_subsidios_validaciones,
 
+            "hidrocarburos_presupuesto": self._handle_hidrocarburos_presupuesto,
+            "hidrocarburos_produccion": self._handle_hidrocarburos_produccion,
+
             "resumen_departamento": self._handle_resumen_departamento,
             "vista_departamento": self._handle_resumen_departamento,
             "ontologia_departamento": self._handle_resumen_departamento,
+            "resumen_municipio": self._handle_resumen_municipio,
+            "vista_municipio": self._handle_resumen_municipio,
 
             # ── Fase 9: tools del Asistente IA (ontología/RAG/grafo/riesgo) ──
             "buscar_texto_rag": self._handle_buscar_texto_rag,
@@ -237,6 +265,13 @@ class ChatbotOrchestratorService(
             "vecindario_empresa": self._handle_vecindario_empresa,
             "riesgo_atraso_contratos_or": self._handle_riesgo_atraso_or,
             "listar_proyectos": self._handle_listar_proyectos,
+
+            # ── Fase 12: ontología de métricas y variables ──────────────
+            "buscar_metrica": self._handle_buscar_metrica,
+            "calidad_datos_ontologia": self._handle_calidad_datos_ontologia,
+            "detalle_recurso": self._handle_detalle_recurso,
+            "detalle_contrato": self._handle_detalle_contrato,
+            "resumen_portal": self._handle_resumen_portal,
 
             # ── Sub-opciones de "Más información" ───────────────────────
             "informe_ejecutivo": self._handle_informe_ejecutivo,
@@ -292,6 +327,7 @@ class ChatbotOrchestratorService(
 
             # ── Costo unitario, pérdidas NT, simulación (Fase 7) ────────
             "cu_actual": self._handle_cu_actual,
+            "cu_evolucion": self._handle_cu_evolucion,
             "costo_unitario": self._handle_cu_actual,
             "tarifa_energia": self._handle_cu_actual,
             "cop_kwh": self._handle_cu_actual,

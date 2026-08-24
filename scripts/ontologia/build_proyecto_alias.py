@@ -14,7 +14,12 @@ Fuentes:
   - contratos_or.seguimiento_avance_fisico.nombre_proyecto_id (18 valores, 1 basura
     "Promedio Avance" excluida — fila de totales del Excel origen).
   - colombia_solar.base.proyecto (32 valores, texto libre; algunos multi-municipio
-    en un solo string — no se descomponen aquí, solo se canonicalizan).
+    en un solo string — no se descomponen aquí, solo se canonicalizan y se marcan
+    es_compuesto=TRUE para que quede auditable, ver _es_valor_compuesto()).
+  - fenoge.comunidades.numero_contrato (Fase 17 — 28 valores distintos, confirmado
+    limpio: son números de contrato reales, sin filas de totales/basura, y es el
+    grano correcto de "proyecto" en FENOGE — varias filas de `comunidad`
+    /beneficiario comparten un mismo numero_contrato).
 
 Uso:
     venv/bin/python3 scripts/ontologia/build_proyecto_alias.py
@@ -36,7 +41,15 @@ VALORES_NO_PROYECTO = {"promedio avance", ""}
 FUENTES = [
     ("contratos_or", "seguimiento_avance_fisico", "nombre_proyecto_id", "contratos_or"),
     ("colombia_solar", "base", "proyecto", "colombia_solar"),
+    ("fenoge", "comunidades", "numero_contrato", "fenoge"),
 ]
+
+
+def _es_valor_compuesto(valor: str) -> bool:
+    """Detecta strings multi-municipio en un solo campo (ej. colombia_solar.base.proyecto:
+    "San Miguel, Valle del Guamuez,Villa Garzon,Puerto Guzman") — no se descompone, solo
+    se marca como auditable (es_compuesto=TRUE), mismo criterio que geografia_alias."""
+    return "," in valor
 
 
 def _upsert_dim_proyecto(nombre: str, programa: str) -> int:
@@ -55,16 +68,16 @@ def _upsert_dim_proyecto(nombre: str, programa: str) -> int:
     return int(row["proyecto_id"].iloc[0])
 
 
-def _upsert_alias(esquema: str, tabla: str, columna: str, valor: str, proyecto_id: int) -> None:
+def _upsert_alias(esquema: str, tabla: str, columna: str, valor: str, proyecto_id: int, es_compuesto: bool) -> None:
     db_manager.execute_non_query(
         """
         INSERT INTO ontologia.proyecto_alias
-            (esquema_origen, tabla_origen, columna_origen, valor_original, proyecto_id, metodo)
-        VALUES (%s, %s, %s, %s, %s, 'exacto_normalizado')
+            (esquema_origen, tabla_origen, columna_origen, valor_original, proyecto_id, es_compuesto, metodo)
+        VALUES (%s, %s, %s, %s, %s, %s, 'exacto_normalizado')
         ON CONFLICT (esquema_origen, tabla_origen, columna_origen, valor_original, proyecto_id)
-        DO NOTHING
+        DO UPDATE SET es_compuesto = EXCLUDED.es_compuesto
         """,
-        (esquema, tabla, columna, valor, proyecto_id),
+        (esquema, tabla, columna, valor, proyecto_id, es_compuesto),
     )
 
 
@@ -77,25 +90,59 @@ def resolver_fuente(esquema: str, tabla: str, columna: str, programa: str) -> No
         logger.info(f"{esquema}.{tabla}.{columna}: sin proyectos")
         return
 
-    resueltos, excluidos = 0, 0
+    resueltos, excluidos, compuestos = 0, 0, 0
     for _, row in valores.iterrows():
         valor = str(row["valor"]).strip()
         if valor.lower() in VALORES_NO_PROYECTO:
             excluidos += 1
             continue
+        es_compuesto = _es_valor_compuesto(valor)
         proyecto_id = _upsert_dim_proyecto(valor, programa)
-        _upsert_alias(esquema, tabla, columna, valor, proyecto_id)
+        _upsert_alias(esquema, tabla, columna, valor, proyecto_id, es_compuesto)
         resueltos += 1
+        compuestos += int(es_compuesto)
 
     logger.info(
         f"{esquema}.{tabla}.{columna}: {resueltos} proyectos sembrados/resueltos "
-        f"({excluidos} valores no-proyecto excluidos)"
+        f"({excluidos} valores no-proyecto excluidos, {compuestos} multi-municipio marcados es_compuesto)"
     )
+
+
+def resolver_geografia_fuente(esquema: str, tabla: str, columna: str) -> int:
+    """Fase 23 Bloque 2: vincula cada proyecto con su(s) geografía(s) real(es),
+    resolviendo departamento/municipio de la fila fuente vía la MISMA función
+    ya usada por el resto de la ontología (f_resolver_geografia) — nunca
+    intenta resolver valores es_compuesto (multi-municipio en un solo string),
+    mismo principio que geografia_alias/empresa_alias."""
+    filas = db_manager.query_df(f"""
+        SELECT DISTINCT pa.proyecto_id, g.geografia_id
+        FROM ontologia.proyecto_alias pa
+        JOIN {esquema}.{tabla} t ON t.{columna} = pa.valor_original
+        CROSS JOIN LATERAL ontologia.f_resolver_geografia(t.departamento, t.municipio) g
+        WHERE pa.esquema_origen = %(esquema)s AND pa.tabla_origen = %(tabla)s
+          AND pa.columna_origen = %(columna)s AND pa.es_compuesto = FALSE
+    """, {"esquema": esquema, "tabla": tabla, "columna": columna})
+
+    for _, row in filas.iterrows():
+        db_manager.execute_non_query(
+            """
+            INSERT INTO ontologia.proyecto_geografia (proyecto_id, geografia_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (int(row["proyecto_id"]), int(row["geografia_id"])),
+        )
+    return len(filas)
 
 
 def main() -> None:
     for esquema, tabla, columna, programa in FUENTES:
         resolver_fuente(esquema, tabla, columna, programa)
+
+    total_vinculos = 0
+    for esquema, tabla, columna, _programa in FUENTES:
+        total_vinculos += resolver_geografia_fuente(esquema, tabla, columna)
+    logger.info(f"ontologia.proyecto_geografia: {total_vinculos} vínculos proyecto↔geografía resueltos")
 
     total = db_manager.query_df("SELECT count(*) AS n FROM ontologia.dim_proyecto")
     logger.info(f"Total ontologia.dim_proyecto: {int(total['n'].iloc[0])}")
