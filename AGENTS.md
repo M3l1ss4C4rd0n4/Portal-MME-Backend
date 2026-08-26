@@ -155,7 +155,10 @@ Ver SKILL_PACK_V4.1.md Principio Fundamental para tabla completa.
 
 ## Deuda Técnica Activa (NO asumir que está corregida)
 
-- **7 tests fallando**: `test_container.py` (5) + `test_transmission_service.py` (2) — baseline conocido, no regresión
+- ~~7 tests fallando~~ — corregido 2026-08-26: eran 3 tests desactualizados en `test_ai_service.py`
+  que asumían el viejo diseño de `AgentIA` (un solo `client`/`provider` fijado en `__init__`); se
+  actualizaron para reflejar el refactor del 2026-08-22 (`disponible` en vez de `client`). Suite
+  completa en verde: `pytest tests/ -q --tb=no` → 373 passed, 0 failed.
 - Servicios marcados "deprecated" que tienen imports activos: verificar con grep antes de eliminar
 - 65 archivos con `print()` en lugar de logger
 
