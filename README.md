@@ -440,7 +440,7 @@ sudo logrotate -f /etc/logrotate.d/server-mme
  tail -f logs/celery/worker-2.log
 
 # ETL
- tail -f logs/actualizacion_onedrive_arcgis.log
+ tail -f logs/etl_postgresql_cron.log
 ```
 
 ---
