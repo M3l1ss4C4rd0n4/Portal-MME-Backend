@@ -67,33 +67,53 @@ class TestAgentIAWhitelist:
 class TestAgentIAInitialization:
     """Tests para inicialización del agente"""
 
-    def test_init_without_keys_client_is_none(self):
-        """Agente sin keys → client es None"""
-        from core.config import settings
-        with patch.object(settings, "GROQ_API_KEY", ""):
-            with patch.object(settings, "OPENROUTER_API_KEY", ""):
-                agent = AgentIA()
-                assert agent.client is None
-                assert agent.provider is None
+    def test_init_without_keys_not_disponible(self):
+        """Agente sin ninguna key (Gemini/Groq/OpenRouter) → disponible=False.
 
-    def test_init_with_groq_key_sets_provider(self):
-        """Agente con Groq key → proveedor Groq"""
+        Actualizado 2026-08-26: desde el refactor del 2026-08-22, AgentIA ya no fija
+        un único client/provider al construirse (ver docstring de __init__) — el
+        chequeo correcto hoy es la property `disponible`, no un atributo `client`
+        que ya no existe."""
         from core.config import settings
-        with patch.object(settings, "GROQ_API_KEY", "test-groq-key"):
-            with patch.object(settings, "OPENROUTER_API_KEY", ""):
-                with patch("domain.services.ai_service.OpenAI") as MockOpenAI:
+        with patch.object(settings, "GEMINI_API_KEY", ""):
+            with patch.object(settings, "GROQ_API_KEY", ""):
+                with patch.object(settings, "OPENROUTER_API_KEY", ""):
                     agent = AgentIA()
-                    assert agent.provider == "Groq"
-                    MockOpenAI.assert_called_once()
+                    assert agent.disponible is False
+                    assert agent.provider is None
+                    assert agent._openrouter_client is None
 
-    def test_init_with_openrouter_key_sets_provider(self):
-        """Agente con OpenRouter key como fallback"""
+    def test_init_with_groq_key_is_disponible(self):
+        """Agente con Groq key → disponible=True.
+
+        provider sigue siendo None justo después de construirse: ya no se fija un
+        proveedor único al inicializar, solo se determina el que efectivamente
+        respondió tras una llamada real (ver _completar_chat en llm_failover.py)."""
         from core.config import settings
-        with patch.object(settings, "GROQ_API_KEY", ""):
-            with patch.object(settings, "OPENROUTER_API_KEY", "test-openrouter-key"):
-                with patch("domain.services.ai_service.OpenAI") as MockOpenAI:
+        with patch.object(settings, "GEMINI_API_KEY", ""):
+            with patch.object(settings, "GROQ_API_KEY", "test-groq-key"):
+                with patch.object(settings, "OPENROUTER_API_KEY", ""):
                     agent = AgentIA()
-                    assert agent.provider == "OpenRouter"
+                    assert agent.disponible is True
+                    assert agent.provider is None
+                    assert agent._openrouter_client is None
+
+    def test_init_with_openrouter_key_sets_backup_client(self):
+        """Agente con OpenRouter key → arma el cliente de respaldo (_openrouter_client).
+
+        OpenRouter no participa del failover Gemini→Groq en tiempo real; solo se usa
+        como último recurso si ninguna de esas dos keys está configurada, por eso el
+        cliente sí se arma en __init__ (a diferencia de Groq/Gemini, que se resuelven
+        por llamada)."""
+        from core.config import settings
+        with patch.object(settings, "GEMINI_API_KEY", ""):
+            with patch.object(settings, "GROQ_API_KEY", ""):
+                with patch.object(settings, "OPENROUTER_API_KEY", "test-openrouter-key"):
+                    with patch("domain.services.ai_service.OpenAI") as MockOpenAI:
+                        agent = AgentIA()
+                        assert agent.disponible is True
+                        assert agent._openrouter_client is not None
+                        MockOpenAI.assert_called_once()
 
     def test_get_db_connection_returns_none(self):
         """get_db_connection es stub deprecado → retorna None"""
