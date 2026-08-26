@@ -239,7 +239,5 @@ data/kgp-*
 data/local-maven-*
 data/local-maven-temp.zip
 
-# Graphify cache
-graphify-out/cache/
-graphify-out/*.json
-graphify-out/GRAPH_REPORT.md
+# Graphify — grafo de conocimiento, regenerable con `graphify update .`, no necesita versionarse
+graphify-out/

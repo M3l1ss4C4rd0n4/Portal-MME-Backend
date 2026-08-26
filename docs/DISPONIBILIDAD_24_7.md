@@ -13,11 +13,9 @@
 - **Auto-recuperación**: Si la API no responde, se reinicia automáticamente
 - **Logs**: Registra todas las verificaciones en `logs/api-monitor.log`
 
-### 3. Tareas Programadas (9 cron jobs activos)
+### 3. Tareas Programadas (documentadas aquí; ver nota abajo)
 - **ETL Transmisión**: Diario 6:30 AM
 - **ETL PostgreSQL**: Cada 6 horas (0:00, 6:00, 12:00, 18:00) — `--dias 7`
-- **ArcGIS Enterprise XM**: Cada hora (dual: Vice_Energia + Adminportal)
-- **ArcGIS Enterprise OneDrive**: Cada 30 minutos (dual)
 - **Predicciones ML**: Domingos 2:00 AM
 - **Backup BD**: Domingos 3:00 AM (retención 28 días)
 - **Backfill mensual**: 1ro de cada mes 4:00 AM
@@ -113,14 +111,13 @@ Esto significa:
 | Diaria | 6:30 AM | ETL Transmisión (`etl_transmision.py --days 7`) |
 | @reboot | 30s post-boot | Auto-start API (`start_api_daemon.sh`) |
 | Cada 5 min | `*/5` | Monitoreo API (`monitor_api.sh`) |
-| Cada hora | `:00` | ArcGIS XM dual (`ejecutar_dual.sh xm`) |
 | Cada 6h | 0/6/12/18 | ETL PostgreSQL (`etl_todas_metricas_xm.py --dias 7`) |
 | Semanal | Dom 2:00 AM | Predicciones ML (`actualizar_predicciones.sh`) |
 | Semanal | Dom 3:00 AM | Backup BD (`pg_dump`, retención 28 días) |
 | Mensual | 1ro 4:00 AM | Backfill métricas (`backfill_sistema_metricas.py --dias 90`) |
-| Cada 30 min | `:30` | ArcGIS OneDrive dual (`ejecutar_dual.sh onedrive`) |
 
-> Detalle completo: `docs/CRON_JOB_ETL_POSTGRESQL.md`
+> Detalle completo: `docs/CRON_JOB_ETL_POSTGRESQL.md` (la integración ArcGIS Enterprise mencionada en
+> versiones anteriores de este documento se retiró el 2026-08-25 — llevaba meses fallando sin uso real)
 
 ## �📊 Nivel de Disponibilidad Actual
 

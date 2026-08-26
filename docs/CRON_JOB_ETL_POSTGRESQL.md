@@ -1,8 +1,11 @@
 # ⏰ Cron Jobs — Portal Energético MME
 
 **Fecha de configuración**: 9 de febrero de 2026  
-**Última actualización**: 20 de febrero de 2026  
-**Estado**: ✅ **ACTIVO** — 9 entradas crontab operacionales
+**Última actualización**: 25 de agosto de 2026 (se retiró la integración ArcGIS Enterprise — llevaba tiempo
+fallando con `ModuleNotFoundError: pandas` y ya no se usa)  
+**Estado**: ✅ **ACTIVO** — 7 entradas crontab operacionales (documentadas aquí; el crontab real ha crecido
+desde entonces con más tareas de ETL/alertas no reflejadas en este documento — usar `crontab -l` como fuente
+de verdad para el listado completo)
 
 ---
 
@@ -11,7 +14,7 @@
 ```bash
 # ============================================
 # CRONTAB - Portal Energético MME
-# Actualizado: 2026-02-19 (dual ArcGIS)
+# Actualizado: 2026-08-25 (integración ArcGIS retirada — llevaba tiempo rota y sin uso)
 # ============================================
 
 # 1. ETL Transmisión (diario a las 6:30 AM)
@@ -23,23 +26,17 @@
 # 3. Monitoreo y auto-recuperación de la API (cada 5 min)
 */5 * * * * /home/admonctrlxm/server/scripts/monitor_api.sh
 
-# 4. Actualización HORARIA de datos XM en ArcGIS Enterprise (DUAL: Vice_Energia + Adminportal)
-0 * * * * /home/admonctrlxm/server/tests/ARGIS/ejecutar_dual.sh xm >> logs/arcgis_dual.log 2>&1
-
-# 5. ETL PostgreSQL — Todas las métricas XM (cada 6 horas: 0:00, 6:00, 12:00, 18:00)
+# 4. ETL PostgreSQL — Todas las métricas XM (cada 6 horas: 0:00, 6:00, 12:00, 18:00)
 0 */6 * * * cd /home/admonctrlxm/server && /usr/bin/python3 etl/etl_todas_metricas_xm.py --dias 7 >> logs/etl_postgresql_cron.log 2>&1
 
-# 6. Actualización semanal de predicciones energéticas (Domingos 2:00 AM)
+# 5. Actualización semanal de predicciones energéticas (Domingos 2:00 AM)
 0 2 * * 0 /home/admonctrlxm/server/scripts/actualizar_predicciones.sh
 
-# 7. Backup semanal de tabla metrics (Domingos 3:00 AM) — retiene últimos 28 días
+# 6. Backup semanal de tabla metrics (Domingos 3:00 AM) — retiene últimos 28 días
 0 3 * * 0 pg_dump -U postgres -h localhost -d portal_energetico -t metrics --no-owner -Fc -f backups/database/metrics_$(date +%Y%m%d).dump && find backups/database/ -name "metrics_*.dump" -mtime +28 -delete
 
-# 8. Backfill mensual de métricas Sistema (1ro de cada mes 4:00 AM)
+# 7. Backfill mensual de métricas Sistema (1ro de cada mes 4:00 AM)
 0 4 1 * * cd /home/admonctrlxm/server && /usr/bin/python3 scripts/backfill_sistema_metricas.py --dias 90 >> logs/backfill_mensual.log 2>&1
-
-# 9. Actualización cada 30 min de archivos OneDrive/SharePoint en ArcGIS Enterprise (DUAL)
-30 * * * * /home/admonctrlxm/server/tests/ARGIS/ejecutar_dual.sh onedrive >> logs/arcgis_dual.log 2>&1
 ```
 
 ---
@@ -51,12 +48,10 @@
 | 1 | Diaria | 6:30 AM | `etl/etl_transmision.py` | Líneas de transmisión SIMEN (7 días, limpia duplicados) | `logs/etl/transmision.log` |
 | 2 | @reboot | 30s post-boot | `api/start_api_daemon.sh` | Inicia API FastAPI automáticamente | `logs/api-startup.log` |
 | 3 | Cada 5 min | `*/5 * * * *` | `scripts/monitor_api.sh` | Monitoreo + auto-recuperación API | `logs/api-monitor.log` |
-| 4 | Cada hora | `:00` | `ejecutar_dual.sh xm` | ArcGIS Enterprise — datos XM (dual) | `logs/arcgis_dual.log` |
-| 5 | **Cada 6h** | 0/6/12/18 | **`etl_todas_metricas_xm.py`** | **ETL PostgreSQL — todas las métricas** ⭐ | `logs/etl_postgresql_cron.log` |
-| 6 | Semanal | Dom 2:00 AM | `actualizar_predicciones.sh` | Reentrenamiento predicciones ML | — |
-| 7 | Semanal | Dom 3:00 AM | `pg_dump` + `find` | Backup tabla `metrics` (retención 28 días) | `logs/backup_metrics.log` |
-| 8 | Mensual | 1ro 4:00 AM | `backfill_sistema_metricas.py` | Relleno de huecos métricas Sistema (90 días) | `logs/backfill_mensual.log` |
-| 9 | Cada 30 min | `:30` | `ejecutar_dual.sh onedrive` | ArcGIS Enterprise — OneDrive/SharePoint (dual) | `logs/arcgis_dual.log` |
+| 4 | **Cada 6h** | 0/6/12/18 | **`etl_todas_metricas_xm.py`** | **ETL PostgreSQL — todas las métricas** ⭐ | `logs/etl_postgresql_cron.log` |
+| 5 | Semanal | Dom 2:00 AM | `actualizar_predicciones.sh` | Reentrenamiento predicciones ML | — |
+| 6 | Semanal | Dom 3:00 AM | `pg_dump` + `find` | Backup tabla `metrics` (retención 28 días) | `logs/backup_metrics.log` |
+| 7 | Mensual | 1ro 4:00 AM | `backfill_sistema_metricas.py` | Relleno de huecos métricas Sistema (90 días) | `logs/backfill_mensual.log` |
 
 ---
 
@@ -174,7 +169,6 @@ python3 scripts/diagnostico_metricas_etl.py --dias 7
 | `scripts/monitor_api.sh` | Monitor y auto-recuperación API |
 | `scripts/actualizar_predicciones.sh` | Reentrenamiento predicciones ML |
 | `scripts/backfill_sistema_metricas.py` | Backfill mensual |
-| `tests/ARGIS/ejecutar_dual.sh` | ArcGIS Enterprise dual (xm/onedrive) |
 | `api/start_api_daemon.sh` | Inicio automático API |
 
 ---
@@ -187,6 +181,7 @@ python3 scripts/diagnostico_metricas_etl.py --dias 7
 | 2026-02-12 | ETL cambiado a cada 6h (`0 */6`), `--dias 7`. Diagnóstico post-ETL añadido |
 | 2026-02-19 | Dual ArcGIS (xm + onedrive), backup semanal, backfill mensual, predicciones semanales |
 | 2026-02-20 | Documentación reescrita v2.0 — crontab completo (9 entradas) |
+| 2026-08-25 | Integración ArcGIS Enterprise (dual xm/onedrive) retirada — llevaba meses fallando con `ModuleNotFoundError: pandas` sin que nadie lo notara ni corrigiera; se eliminaron las entradas de crontab, `scripts/arcgis/` y los logs asociados |
 
 ---
 
@@ -196,7 +191,6 @@ python3 scripts/diagnostico_metricas_etl.py --dias 7
 - [x] ETL PostgreSQL cada 6 horas
 - [x] ETL Transmisión diario 6:30 AM
 - [x] Monitoreo API cada 5 min
-- [x] ArcGIS XM horario + OneDrive cada 30 min
 - [x] Predicciones semanales (Dom 2:00 AM)
 - [x] Backup semanal (Dom 3:00 AM, retención 28 días)
 - [x] Backfill mensual (1ro cada mes 4:00 AM)
