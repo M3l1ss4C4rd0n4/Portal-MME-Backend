@@ -17,6 +17,23 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Fase 41 (2026-08-26): este script se invoca desde 3 rutas distintas —
+# cron diario (0 22 * * *), un subproceso lanzado por la tarea Celery
+# regenerar_predicciones, y scripts/actualizar_predicciones.sh — y solo la
+# ruta de Celery hereda TELEGRAM_BOT_TOKEN (vía EnvironmentFile de
+# celery-worker.service). Confirmado en logs/etl/quality_monitor.log que la
+# ejecución diaria por cron corría con el entorno vacío y descartaba
+# silenciosamente alertas de drift ya calculadas correctamente. Se
+# autocarga .env aquí, mismo patrón defensivo (override=True) ya usado en
+# tasks/__init__.py, para que funcione sin importar quién lo invoque.
+try:
+    from dotenv import load_dotenv
+    _env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+    if os.path.isfile(_env_file):
+        load_dotenv(_env_file, override=True)
+except ImportError:
+    pass
+
 import psycopg2
 import pandas as pd
 import numpy as np

@@ -177,10 +177,44 @@ async def get_predictions_dashboard(
             )
 
         # Metadata del modelo (MAPE, confianza, modelo, fecha generación)
+        # Fase 41: mismo criterio que df_embalses arriba — filtrar explícitamente
+        # por ENSEMBLE_SECTOR_v1.0. Sin esto, con PROPHET_LARGO_PLAZO_v1.0
+        # coexistiendo en la misma tabla/fuente, la fila devuelta dependía del
+        # orden físico del heap de Postgres (funcionaba "por casualidad").
         meta_embalses = pred_repo.execute_query_one(
-            "SELECT mape, confianza, modelo, fecha_generacion "
-            "FROM predictions WHERE fuente = %s LIMIT 1",
-            ("EMBALSES_PCT",)
+            "SELECT mape, confianza, cobertura_ci, modelo, fecha_generacion "
+            "FROM predictions WHERE fuente = %s AND modelo = %s "
+            "ORDER BY fecha_generacion DESC LIMIT 1",
+            ("EMBALSES_PCT", "ENSEMBLE_SECTOR_v1.0")
+        )
+
+        # Fase 41 (2026-08-26), continuación: MAPE riguroso (out-of-sample
+        # real, main_backtest()) — reemplaza el MAPE optimista de arriba
+        # (holdout de 180 días) como la cifra que se comunica públicamente.
+        # Ver predictions_backtest_history / scripts/train_predictions_sector_energetico.py.
+        backtest_embalses = pred_repo.execute_query_one(
+            "SELECT mape_expost, cobertura_ci_95, n_dias_test, anio_corte, "
+            "fecha_test_inicio, fecha_test_fin, ejecutado_en "
+            "FROM predictions_backtest_history WHERE fuente = %s AND modelo = %s "
+            "ORDER BY anio_corte DESC LIMIT 1",
+            ("EMBALSES_PCT", "ENSEMBLE_SECTOR_v1.0")
+        )
+
+        # Fase 41 (2026-08-30), continuación: el usuario pidió correr el
+        # backtest para varios años de corte distintos (no solo el más
+        # reciente) para verificar si el 9.3% es representativo o varía.
+        # Resultado real: 2022→22.56% (sobreajuste), 2024→9.26% — el error
+        # real varía bastante según el año. Se expone el RANGO observado
+        # (min/max de mape_expost entre todos los años ya corridos) además
+        # del número único "mape" de arriba, para no mostrar una cifra
+        # congelada como si fuera una garantía general. 2023 quedó pendiente
+        # (falló 3 veces por falta de memoria del servidor durante SARIMAX,
+        # documentado en el plan — no se fuerza un 4to intento).
+        backtest_embalses_todos = pred_repo.execute_query(
+            "SELECT anio_corte, mape_expost FROM predictions_backtest_history "
+            "WHERE fuente = %s AND modelo = %s AND mape_expost IS NOT NULL "
+            "ORDER BY anio_corte",
+            ("EMBALSES_PCT", "ENSEMBLE_SECTOR_v1.0")
         )
 
         # Normalizar columnas
@@ -331,9 +365,27 @@ async def get_predictions_dashboard(
             df_pred["fecha"] = pd.to_datetime(df_pred["fecha"]).dt.date
             df_pred = df_pred.sort_values("fecha").reset_index(drop=True)
 
-            # Metadata
+            # Metadata — Fase 41: mismo bug de la Fase 34/EMBALSES_PCT
+            # (fuente potencialmente con >1 modelo, ej. PROPHET_LARGO_PLAZO_v1.0
+            # coexistiendo con el modelo especializado) puede afectar cualquier
+            # metric_id de este bucle, no solo embalses. Se usa el mismo
+            # criterio de preferencia determinística que ya aplica
+            # PredictionsRepository.get_predictions() sin model_name (nunca
+            # dejar la fila devuelta al orden físico del heap de Postgres).
             meta = pred_repo.execute_query_one(
-                "SELECT mape, modelo FROM predictions WHERE fuente = %s LIMIT 1",
+                "SELECT mape, modelo FROM predictions WHERE fuente = %s "
+                "ORDER BY (modelo = 'PROPHET_LARGO_PLAZO_v1.0') ASC, id DESC LIMIT 1",
+                (metric_id,)
+            )
+
+            # Fase 41 (2026-08-26), extendida a las 4 métricas del bucle:
+            # MAPE riguroso (out-of-sample real de main_backtest()/
+            # main_backtest_directo()) cuando existe, igual que EMBALSES_PCT.
+            backtest_meta = pred_repo.execute_query_one(
+                "SELECT mape_expost, cobertura_ci_95, anio_corte, n_dias_test, "
+                "fecha_test_inicio, fecha_test_fin "
+                "FROM predictions_backtest_history WHERE fuente = %s "
+                "ORDER BY anio_corte DESC LIMIT 1",
                 (metric_id,)
             )
 
@@ -351,13 +403,34 @@ async def get_predictions_dashboard(
             if pct_diff > 0.02:
                 tendencia = "alta" if diff > 0 else "baja"
 
+            mape_holdout_val = round(float(meta.get("mape", 0) or 0), 4) if meta else 0.0
             metricas_resumen.append({
                 "id": metric_id,
                 "nombre": nombre,
                 "unidad": unidad,
                 "actual": actual_val,
                 "prediccion_7d": round(float(pred_7d["valor"]), 2),
-                "mape": round(float(meta.get("mape", 0) or 0), 4) if meta else 0.0,
+                "mape": (
+                    round(float(backtest_meta["mape_expost"]), 4)
+                    if backtest_meta and backtest_meta.get("mape_expost") is not None
+                    else mape_holdout_val
+                ),
+                "mape_es_riguroso": bool(backtest_meta and backtest_meta.get("mape_expost") is not None),
+                "mape_holdout": mape_holdout_val,
+                "cobertura_ci": (
+                    round(float(backtest_meta["cobertura_ci_95"]), 4)
+                    if backtest_meta and backtest_meta.get("cobertura_ci_95") is not None
+                    else None
+                ),
+                "backtest": (
+                    {
+                        "anio_corte": backtest_meta["anio_corte"],
+                        "n_dias_test": backtest_meta["n_dias_test"],
+                        "fecha_test_inicio": str(backtest_meta["fecha_test_inicio"]),
+                        "fecha_test_fin": str(backtest_meta["fecha_test_fin"]),
+                    }
+                    if backtest_meta else None
+                ),
                 "modelo": str(meta.get("modelo", "")) if meta else "",
                 "tendencia": tendencia,
             })
@@ -384,8 +457,56 @@ async def get_predictions_dashboard(
                     "valor": round(float(pico["valor"]), 2),
                     "dias_desde_hoy": max(0, (pico["fecha"] - hoy).days),
                 },
-                "mape": round(float(meta_embalses.get("mape", 0) or 0), 4) if meta_embalses else 0.0,
+                # Fase 41 (2026-08-26), continuación: "mape" ahora es el MAPE
+                # RIGUROSO (out-of-sample real de main_backtest(), 602 días)
+                # cuando existe — el usuario pidió mostrar solo esa cifra en
+                # todo el portal, no la optimista de un holdout de 180 días.
+                # "mape_holdout" queda disponible aparte para quien lo necesite,
+                # nunca como el número principal mostrado al público.
+                "mape": (
+                    round(float(backtest_embalses["mape_expost"]), 4)
+                    if backtest_embalses and backtest_embalses.get("mape_expost") is not None
+                    else (round(float(meta_embalses.get("mape", 0) or 0), 4) if meta_embalses else 0.0)
+                ),
+                "mape_es_riguroso": bool(backtest_embalses and backtest_embalses.get("mape_expost") is not None),
+                "mape_holdout": round(float(meta_embalses.get("mape", 0) or 0), 4) if meta_embalses else 0.0,
+                # Fase 41 (2026-08-30): rango real observado entre los distintos
+                # años de corte ya evaluados — el error out-of-sample varía
+                # bastante según el año (verificado: 2022→22.6%, 2024→9.3%),
+                # así que un solo número puede transmitir más certeza de la
+                # que hay evidencia real para respaldar.
+                "mape_rango_min": (
+                    round(min(r["mape_expost"] for r in backtest_embalses_todos), 4)
+                    if backtest_embalses_todos else None
+                ),
+                "mape_rango_max": (
+                    round(max(r["mape_expost"] for r in backtest_embalses_todos), 4)
+                    if backtest_embalses_todos else None
+                ),
+                "mape_anios_evaluados": [r["anio_corte"] for r in backtest_embalses_todos],
+                "backtest": (
+                    {
+                        "anio_corte": backtest_embalses["anio_corte"],
+                        "n_dias_test": backtest_embalses["n_dias_test"],
+                        "fecha_test_inicio": str(backtest_embalses["fecha_test_inicio"]),
+                        "fecha_test_fin": str(backtest_embalses["fecha_test_fin"]),
+                        "ejecutado_en": backtest_embalses["ejecutado_en"].isoformat() if backtest_embalses.get("ejecutado_en") else None,
+                    }
+                    if backtest_embalses else None
+                ),
+                # "confianza" = 1 - MAPE del holdout de 180 días — NO es una
+                # cobertura estadística real, ver Fase 41. Se conserva para no
+                # romper consumidores existentes, pero "cobertura_ci" (abajo)
+                # es la métrica correcta: % de puntos del holdout que cayeron
+                # dentro del intervalo de confianza mostrado.
                 "confianza": round(float(meta_embalses.get("confianza", 0.92) or 0.92), 2) if meta_embalses else 0.92,
+                "cobertura_ci": (
+                    round(float(backtest_embalses["cobertura_ci_95"]), 4)
+                    if backtest_embalses and backtest_embalses.get("cobertura_ci_95") is not None
+                    else round(float(meta_embalses["cobertura_ci"]), 4)
+                    if meta_embalses and meta_embalses.get("cobertura_ci") is not None
+                    else None
+                ),
                 "modelo": str(meta_embalses.get("modelo", "ensemble_prophet_sarima")) if meta_embalses else "ensemble_prophet_sarima",
                 "generado_en": (
                     meta_embalses["fecha_generacion"].isoformat()

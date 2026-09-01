@@ -413,6 +413,102 @@ def regenerar_predicciones(self):
         lock_fd.close()
 
 
+@app.task(bind=True, max_retries=1, default_retry_delay=1800, name='tasks.etl_tasks.ejecutar_backtests_predicciones')
+def ejecutar_backtests_predicciones(self):
+    """
+    Fase 41 (2026-08-26): re-corre el backtest out-of-sample riguroso de las
+    5 fuentes con validación real (EMBALSES_PCT, DEMANDA, GENE_TOTAL —
+    ensemble Prophet+SARIMAX; PRECIO_BOLSA, APORTES_HIDRICOS — RandomForest/
+    LightGBM) y persiste el resultado en predictions_backtest_history, que
+    es lo que el portal muestra como "MAPE (validación rigurosa)" en vez del
+    MAPE optimista de un holdout de 180 días.
+
+    Por qué existe esta tarea: sin ella, el resultado del backtest quedaría
+    congelado en la fecha en que se corrió manualmente por última vez — el
+    modelo de producción se reentrena cada 3 días, pero la cifra de
+    referencia de precisión no se actualizaba sola. Se usa `backtest_year =
+    año actual - 1` para EMBALSES_PCT/DEMANDA/GENE_TOTAL (entrena hasta el
+    31-dic del año anterior, valida contra todo lo transcurrido desde
+    entonces — la ventana de validación real crece sola con cada corrida,
+    hasta que el año cambie). Para PRECIO_BOLSA/APORTES_HIDRICOS, el propio
+    script cae automáticamente a un split proporcional 70/30 si ese año
+    queda fuera de la ventana corta de esos 2 modelos (ver
+    main_backtest_directo() en train_predictions_sector_energetico.py).
+
+    Corre MENSUAL (1er domingo del mes, 03:30 AM — después del reentrenamiento
+    semanal de las 02:00 AM) y de forma SECUENCIAL (nunca en paralelo entre
+    fuentes): un backtest de Prophet+SARIMAX sobre ~9.000 días puede usar
+    varios GB de RAM (auto_arima con n_jobs=-1) — correr varios a la vez
+    agotó la memoria del servidor durante el desarrollo de esta tarea
+    (confirmado en vivo: un proceso murió sin traceback, swap casi lleno).
+    Esta es la misma máquina que sirve el portal en producción — nunca se
+    debe arriesgar esa estabilidad por una tarea de diagnóstico.
+
+    Usa el mismo lockfile que regenerar_predicciones (aunque en un momento
+    distinto del calendario) para nunca competir por la tabla `predictions`
+    con un reentrenamiento en curso — main_backtest()/main_backtest_directo()
+    no escriben en `predictions` en absoluto, pero sí compiten por CPU/RAM
+    con cualquier entrenamiento real que esté corriendo.
+    """
+    import subprocess
+    import fcntl
+
+    lockfile_path = "/tmp/predictions_update.lock"
+    lock_fd = open(lockfile_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.warning("🔬 [ejecutar_backtests_predicciones] Lock activo (reentrenamiento en curso) — omitiendo esta corrida")
+        lock_fd.close()
+        return {'omitido': 'lock activo'}
+
+    try:
+        inicio = datetime.now()
+        anio_corte = inicio.year - 1
+        logger.info(f"🔬 [ejecutar_backtests_predicciones] Iniciando (backtest_year={anio_corte})")
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        python_bin = os.path.join(base_dir, 'venv', 'bin', 'python')
+        if not os.path.exists(python_bin):
+            python_bin = 'python3'
+        script = os.path.join(base_dir, 'scripts', 'train_predictions_sector_energetico.py')
+
+        corridas = [
+            ['--backtest', str(anio_corte), '--backtest-fuente', 'EMBALSES_PCT'],
+            ['--backtest', str(anio_corte), '--backtest-fuente', 'DEMANDA'],
+            ['--backtest', str(anio_corte), '--backtest-fuente', 'GENE_TOTAL'],
+            ['--backtest', str(anio_corte), '--backtest-directo', 'PRECIO_BOLSA'],
+            ['--backtest', str(anio_corte), '--backtest-directo', 'APORTES_HIDRICOS'],
+        ]
+
+        resumen = {}
+        for args_cli in corridas:
+            fuente = args_cli[-1]
+            try:
+                proc = subprocess.run(
+                    [python_bin, script] + args_cli,
+                    capture_output=True, text=True, timeout=1800, cwd=base_dir
+                )
+                resumen[fuente] = 'ok' if proc.returncode == 0 else f'error rc={proc.returncode}'
+                if proc.returncode != 0:
+                    logger.error(f"[ejecutar_backtests_predicciones] {fuente} stderr: {proc.stderr[-1000:]}")
+                else:
+                    logger.info(f"[ejecutar_backtests_predicciones] {fuente}: OK")
+            except subprocess.TimeoutExpired:
+                resumen[fuente] = 'timeout'
+                logger.error(f"[ejecutar_backtests_predicciones] {fuente} excedió 30 min")
+            except Exception as e:
+                resumen[fuente] = f'exception: {e}'
+                logger.error(f"[ejecutar_backtests_predicciones] {fuente}: {e}")
+
+        duracion = round((datetime.now() - inicio).total_seconds())
+        logger.info(f"🔬 [ejecutar_backtests_predicciones] Completado en {duracion}s: {resumen}")
+        return {'resumen': resumen, 'duracion_seg': duracion}
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def sync_sharepoint_xlsx(self, nombres: list = None, forzar: bool = False):
     """
