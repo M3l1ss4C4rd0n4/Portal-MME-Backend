@@ -62,6 +62,7 @@ from scripts.ontologia.build_informes_embeddings import (  # noqa: E402
     NUCLEO_RESOLUCIONES_CREG,
     _normalizar_segmentos_numero_creg,
 )
+from domain.services.notification_service import broadcast_alert  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -169,6 +170,29 @@ def main() -> None:
                 f"{h['articulo_modificador']} de la Resolución CREG "
                 f"{h['resolucion_modificadora']}"
             )
+
+        # De silencioso a notificado (Fase 39, ítem C.1): un hallazgo de
+        # NIVEL 1 (alta confianza) es exactamente el tipo de cambio que
+        # tardó 2 meses en detectarse la vez pasada porque nadie leía el
+        # log proactivamente. Se envía por el mismo canal ya usado para
+        # alertas críticas (Telegram/email) — nunca los de NIVEL 2 (mejor
+        # esfuerzo, más ruidoso, no se notifica activamente).
+        try:
+            texto = (
+                f"🏛️ *Vigilancia normativa CREG* — posible cambio en una "
+                f"resolución núcleo del portal:\n\n"
+                + "\n".join(
+                    f"• *{h['resolucion_nucleo']}*: {h['elemento']} "
+                    f"{h['accion']} por el artículo {h['articulo_modificador']} "
+                    f"de la Resolución CREG {h['resolucion_modificadora']}"
+                    for h in hallazgos_nivel1
+                )
+                + "\n\nRevisar si `core/umbrales_oficiales.py` (Índice NE/HSIN/PBP) "
+                "sigue reflejando la regla vigente."
+            )
+            broadcast_alert(texto, severity="WARNING")
+        except Exception as e:
+            logger.error(f"[VIGILANCIA_NORMATIVA_CREG] Error notificando hallazgo NIVEL 1: {e}")
     else:
         logger.info(
             f"[VIGILANCIA_NORMATIVA_CREG] NIVEL 1 — sin modificaciones nuevas "

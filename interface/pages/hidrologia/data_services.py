@@ -10,6 +10,7 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 
 from infrastructure.external.xm_service import obtener_datos_inteligente
+from core.umbrales_ideam_ungrd import clasificar_riesgo_embalse_ideam_ungrd
 
 from .utils import (
     logger, normalizar_codigo, normalizar_region, 
@@ -173,36 +174,20 @@ def get_rio_options(region=None):
 
 def calcular_semaforo_embalse_local(participacion, volumen_pct):
     """
-    Calcula el nivel de riesgo según la lógica del semáforo hidrológico de XM:
-    
-    Factor 1: Importancia Estratégica (participación > 10%)
-    Factor 2: Disponibilidad Hídrica (% volumen útil)
-    
-    RIESGO ALTO (🔴): Embalses estratégicos (>10%) con volumen crítico (<30%)
-    RIESGO MEDIO (🟡): Embalses estratégicos con volumen bajo (30-70%) o embalses pequeños con volumen crítico
-    RIESGO BAJO (🟢): Embalses con volumen adecuado (≥70%) independientemente de su tamaño
-    
-    Args:
-        participacion: % de participación en el sistema (0-100)
-        volumen_pct: % de volumen útil disponible (0-100)
-    
+    Calcula el nivel de riesgo de un embalse individual según IDEAM/UNGRD.
+
+    Unificado 2026-08-26 (a pedido del usuario) — ver core/umbrales_
+    ideam_ungrd.py. El parámetro ``participacion`` se conserva por
+    compatibilidad de firma con los 3 sitios que llaman esta función
+    (callbacks.py, maps.py, este mismo archivo), pero ya no se usa: la
+    versión anterior ("importancia estratégica > 10%") no tenía ninguna
+    fuente real que la respaldara.
+
     Returns:
-        tuple: (nivel_riesgo, color, mensaje)
+        tuple: (nivel_riesgo, color, emoji)
     """
-    es_estrategico = participacion >= 10
-    
-    if volumen_pct >= 70:
-        return 'BAJO', '#28a745', '✓'
-    elif volumen_pct >= 30:
-        if es_estrategico:
-            return 'MEDIO', '#ffc107', '!'
-        else:
-            return 'BAJO', '#28a745', '✓'
-    else:  # volumen_pct < 30
-        if es_estrategico:
-            return 'ALTO', '#dc3545', '⚠'
-        else:
-            return 'MEDIO', '#ffc107', '!'
+    nivel, color, emoji, _mensaje = clasificar_riesgo_embalse_ideam_ungrd(volumen_pct or 0)
+    return nivel, color, emoji
 
 
 
@@ -567,105 +552,12 @@ def get_embalses_completa_para_tabla(region=None, start_date=None, end_date=None
         traceback.print_exc()
         return []
 
-# --- Función para clasificar riesgo según participación y volumen útil ---
-
-
-def clasificar_riesgo_embalse_local(participacion, volumen_util):
-    """
-    Clasifica el riesgo de un embalse basado en participación y volumen útil
-    
-    Args:
-        participacion (float): Participación porcentual en el sistema (0-100)
-        volumen_util (float): Volumen útil disponible (0-100)
-    
-    Returns:
-        str: '🟢' (bajo riesgo), '🟡' (riesgo medio), '🔴' (alto riesgo)
-    """
-    # MATRIZ DE RIESGO CORREGIDA: Combinar participación Y volumen
-    
-    # Caso 1: Embalses muy importantes (participación >= 15%)
-    if participacion >= 15:
-        if volumen_util < 30:
-            return '🔴'  # Embalse importante con poco volumen = ALTO RIESGO
-        elif volumen_util < 70:
-            return '🟡'  # Embalse importante con volumen moderado = RIESGO MEDIO
-        else:
-            return '🟢'  # Embalse importante con buen volumen = BAJO RIESGO
-    
-    # Caso 2: Embalses importantes (participación >= 10%)
-    elif participacion >= 10:
-        if volumen_util < 20:
-            return '🔴'  # Embalse importante con muy poco volumen = ALTO RIESGO
-        elif volumen_util < 60:
-            return '🟡'  # Embalse importante con volumen bajo-moderado = RIESGO MEDIO
-        else:
-            return '🟢'  # Embalse importante con buen volumen = BAJO RIESGO
-    
-    # Caso 3: Embalses moderadamente importantes (participación >= 5%)
-    elif participacion >= 5:
-        if volumen_util < 15:
-            return '🔴'  # Embalse moderado con muy poco volumen = ALTO RIESGO
-        elif volumen_util < 50:
-            return '🟡'  # Embalse moderado con volumen bajo = RIESGO MEDIO
-        else:
-            return '🟢'  # Embalse moderado con volumen adecuado = BAJO RIESGO
-    
-    # Caso 4: Embalses menos importantes (participación < 5%)
-    else:
-        if volumen_util < 25:
-            return '🟡'  # Embalse pequeño con poco volumen = RIESGO MEDIO
-        else:
-            return '🟢'  # Embalse pequeño con volumen adecuado = BAJO RIESGO
-
-
-
-def obtener_estilo_riesgo_local(nivel_riesgo):
-    """
-    Obtiene el estilo CSS para el nivel de riesgo
-    
-    Args:
-        nivel_riesgo (str): 'high', 'medium', 'low'
-    
-    Returns:
-        dict: Estilo CSS para DataTable
-    """
-    estilos = {
-        'high': {
-            'backgroundColor': '#fee2e2',  # Rojo claro
-            'color': '#991b1b',           # Rojo oscuro
-            'fontWeight': 'bold'
-        },
-        'medium': {
-            'backgroundColor': '#fef3c7',  # Amarillo claro
-            'color': '#92400e',           # Amarillo oscuro
-            'fontWeight': 'bold'
-        },
-        'low': {
-            'backgroundColor': '#d1fae5',  # Verde claro
-            'color': '#065f46'            # Verde oscuro
-        }
-    }
-    return estilos.get(nivel_riesgo, estilos['low'])
-
-
-
-def obtener_pictograma_riesgo_local(nivel_riesgo):
-    """
-    Obtiene el pictograma para el nivel de riesgo
-    
-    Args:
-        nivel_riesgo (str): 'high', 'medium', 'low'
-    
-    Returns:
-        str: Emoji o símbolo para el nivel de riesgo
-    """
-    pictogramas = {
-        'high': '🔴',     # Círculo rojo
-        'medium': '🟡',   # Círculo amarillo  
-        'low': '🟢'       # Círculo verde
-    }
-    return pictogramas.get(nivel_riesgo, '🟢')
-
+# --- Clasificación de riesgo por embalse: ver core/umbrales_ideam_ungrd.py ---
+# (2026-08-26: eliminadas 3 funciones muertas — clasificar_riesgo_embalse_local,
+# obtener_estilo_riesgo_local, obtener_pictograma_riesgo_local — confirmado por
+# grep que no tenían ningún call site; agregar_columna_riesgo_a_tabla() de abajo
+# siempre usó clasificar_riesgo_embalse()/obtener_pictograma_riesgo() de .utils,
+# ya unificadas con IDEAM/UNGRD.)
 
 
 def agregar_columna_riesgo_a_tabla(df_embalses):

@@ -559,20 +559,26 @@ OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT: float = 80.0
 #
 # Los umbrales visuales del portal NO son regulatoriamente vinculantes. Su
 # propósito es comunicación gerencial al Viceministro y su equipo. Se calibran
-# tomando como referencia la senda CREG y la regla absoluta del 70%:
+# tomando como referencia la senda CREG:
 #
-#   • Verde:   embalse ≥ 80% (zona objetivo XM ante El Niño)
-#   • Cian:    embalse 70 – 80% (umbral absoluto Estatuto CREG)
-#   • Ámbar:   embalse ≥ senda y < 70%
+#   • Verde:   embalse ≥ 80% (zona objetivo XM ante El Niño — no regulatorio)
+#   • Ámbar:   embalse ≥ senda
 #   • Naranja: embalse < senda (correspondería a NE Alerta/Inferior)
 #   • Rojo:    embalse < senda − 5pp (NE Inferior persistente)
 #
 # Estos colores son una representación VISUAL más fina que los 3 niveles del
 # Estatuto, manteniendo siempre concordancia regulatoria.
+#
+# 2026-08-24: eliminada la banda "ESTABLE ≥70% (regla absoluta CREG 209/2020)"
+# — la Resolución CREG 101 112/2026 derogó esa regla alternativa el
+# 17-jun-2026 (ver clasificar_indice_ne() más arriba, ya corregida entonces).
+# Esta función "visual" quedó con el mismo bug sin corregir hasta ahora — se
+# encontró al auditar por qué el frontend (su espejo TypeScript,
+# portal-direccion-mme/src/lib/umbralesOficiales.ts) mostraba una etiqueta
+# distinta a la del backend para el mismo valor de embalse.
 # ──────────────────────────────────────────────────────────────────────────────
 
-UMBRAL_VISUAL_VERDE_EMBALSE: float = 80.0      # Objetivo XM ante El Niño
-UMBRAL_VISUAL_CIAN_EMBALSE: float = 70.0       # Regla absoluta CREG 209/2020
+UMBRAL_VISUAL_VERDE_EMBALSE: float = 80.0      # Objetivo XM ante El Niño (no regulatorio)
 UMBRAL_VISUAL_AMBAR_EMBALSE_RESPECTO_SENDA: float = 0.0  # ≥ senda
 
 
@@ -581,7 +587,7 @@ def clasificar_visual_embalse(
     fecha: Optional[date] = None,
 ) -> Tuple[str, str, str]:
     """
-    Clasifica visualmente el embalse en 5 niveles consistentes con la
+    Clasifica visualmente el embalse en 4 niveles consistentes con la
     Senda de Referencia CREG e Índice NE.
 
     Returns:
@@ -592,9 +598,6 @@ def clasificar_visual_embalse(
     if nivel_embalse_pct >= UMBRAL_VISUAL_VERDE_EMBALSE:
         return ('NORMAL', '#22C55E',
                 f'≥ {UMBRAL_VISUAL_VERDE_EMBALSE:.0f}% (objetivo XM ante El Niño).')
-    if nivel_embalse_pct >= UMBRAL_VISUAL_CIAN_EMBALSE:
-        return ('ESTABLE', '#06B6D4',
-                f'≥ {UMBRAL_VISUAL_CIAN_EMBALSE:.0f}% (regla absoluta CREG 209/2020).')
     if nivel_embalse_pct >= senda:
         return ('SOBRE SENDA', '#F59E0B',
                 f'≥ senda CREG {senda:.1f}% — NE Superior (Estatuto CREG 026/2014).')

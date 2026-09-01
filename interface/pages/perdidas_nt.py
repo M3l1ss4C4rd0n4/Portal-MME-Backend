@@ -19,7 +19,7 @@ from interface.components.chart_card import (
     crear_page_header,
     crear_filter_bar,
 )
-from domain.services.losses_nt_service import LossesNTService
+from domain.services.losses_nt_service import LossesNTService, OPERATOR_PROFILES
 
 def get_plotly_modules():
     """Importación diferida de Plotly"""
@@ -53,12 +53,21 @@ PNT_COLORS = {
 
 
 def _semaforo_pnt(val):
-    """Semáforo: <5% verde, 5-10% amarillo, >10% rojo."""
+    """
+    Semáforo de PNT agregado nacional — unificado 2026-08-26 con el perfil
+    'DEFAULT' de OPERATOR_PROFILES (domain/services/losses_nt_service.py),
+    la misma fuente que ya usa la alerta de Telegram/correo
+    (tasks/anomaly_tasks.py): SSPD Informes de Pérdidas por OR 2023-2024 y
+    Plan de Pérdidas CREG 015 de 2018. Antes usaba un umbral fijo (5%/10%)
+    inventado sin cita, muy por debajo del real (15%/20%) — mostraba "Alto"
+    para valores que el resto del portal consideraba normales.
+    """
     if val is None:
         return ("⚪", "secondary", "Sin datos")
-    if val < 5:
+    perfil = OPERATOR_PROFILES["DEFAULT"]
+    if val < perfil.pnt_warn_pct:
         return ("🟢", "success", "Normal")
-    if val < 10:
+    if val < perfil.pnt_crit_pct:
         return ("🟡", "warning", "Moderado")
     return ("🔴", "danger", "Alto")
 

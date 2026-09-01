@@ -22,6 +22,7 @@ from infrastructure.external.xm_service import (
     obtener_datos_inteligente,
 )
 from domain.services.hydrology_service import HydrologyService
+from core.umbrales_ideam_ungrd import clasificar_riesgo_embalse_ideam_ungrd
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -57,7 +58,6 @@ __all__ = [
     # Data aggregation
     "agregar_datos_hidrologia_inteligente",
     # Risk / semaphore helpers (kept from previous version)
-    "calcular_semaforo_embalse",
     "clasificar_riesgo_embalse",
     "obtener_estilo_riesgo",
     "obtener_pictograma_riesgo",
@@ -443,78 +443,54 @@ def agregar_datos_hidrologia_inteligente(df_hidrologia, dias_periodo):
 # Semáforo / riesgo de embalses (helpers conservados de la versión anterior)
 # ---------------------------------------------------------------------------
 
-def calcular_semaforo_embalse(participacion, volumen_pct):
-    """
-    Calcula el estado del embalse basado en participación y volumen.
-
-    Returns:
-        tuple: (estado, color, icono)
-        Estados: ``'critico'``, ``'alerta'``, ``'normal'``, ``'optimo'``
-    """
-    try:
-        part = float(participacion) if participacion else 0
-        vol = float(volumen_pct) if volumen_pct else 0
-
-        if vol < 30 or part < 30:
-            return 'critico', '#dc3545', '🔴'
-        elif vol < 50 or part < 50:
-            return 'alerta', '#ffc107', '🟡'
-        elif vol < 80 or part < 80:
-            return 'normal', '#17a2b8', '🟢'
-        else:
-            return 'optimo', '#28a745', '🟢'
-    except Exception as e:
-        logger.error(f"Error calculando semáforo: {e}")
-        return 'desconocido', '#6c757d', '⚪'
-
-
 def clasificar_riesgo_embalse(participacion, volumen_util):
     """
-    Clasifica el nivel de riesgo de un embalse.
+    Clasifica el nivel de riesgo de un embalse individual según IDEAM/UNGRD.
+
+    Unificado 2026-08-26 (a pedido del usuario) — ver core/umbrales_
+    ideam_ungrd.py, la única fuente ahora para esta clasificación en todo
+    el proyecto. El parámetro ``participacion`` se conserva por
+    compatibilidad de firma con los ~8 sitios que llaman esta función, pero
+    ya NO se usa: ninguna de las versiones anteriores que sí lo usaban
+    tenía una fuente real que respaldara ese factor.
 
     Returns:
-        str: ``'Crítico'``, ``'Alto'``, ``'Medio'``, ``'Bajo'`` o ``'Muy Bajo'``
+        str: 'CRÍTICO — RACIONAMIENTO' | 'ALERTA — NIVEL BAJO' | 'NORMAL' |
+             'ALERTA — NIVEL ELEVADO' | 'ALERTA — NIVEL MUY ALTO' |
+             'CRÍTICO — DESBORDAMIENTO' | 'Desconocido'
     """
     try:
-        part = float(participacion) if participacion else 0
         vol = float(volumen_util) if volumen_util else 0
-
-        if vol < 20 or part < 20:
-            return 'Crítico'
-        elif vol < 40 or part < 40:
-            return 'Alto'
-        elif vol < 60 or part < 60:
-            return 'Medio'
-        elif vol < 80 or part < 80:
-            return 'Bajo'
-        else:
-            return 'Muy Bajo'
+        nivel, _color, _emoji, _mensaje = clasificar_riesgo_embalse_ideam_ungrd(vol)
+        return nivel
     except Exception as e:
         logger.error(f"Error clasificando riesgo: {e}")
         return 'Desconocido'
 
 
 def obtener_estilo_riesgo(nivel_riesgo):
-    """Retorna el estilo CSS para un nivel de riesgo."""
+    """Retorna el estilo CSS para un nivel de riesgo (IDEAM/UNGRD)."""
     estilos = {
-        'Crítico': {'backgroundColor': '#dc3545', 'color': 'white', 'fontWeight': 'bold'},
-        'Alto': {'backgroundColor': '#fd7e14', 'color': 'white', 'fontWeight': 'bold'},
-        'Medio': {'backgroundColor': '#ffc107', 'color': 'black'},
-        'Bajo': {'backgroundColor': '#20c997', 'color': 'white'},
-        'Muy Bajo': {'backgroundColor': '#28a745', 'color': 'white'},
+        'CRÍTICO — RACIONAMIENTO': {'backgroundColor': '#EF4444', 'color': 'white', 'fontWeight': 'bold'},
+        'ALERTA — NIVEL BAJO': {'backgroundColor': '#F97316', 'color': 'white', 'fontWeight': 'bold'},
+        'NORMAL': {'backgroundColor': '#22C55E', 'color': 'white'},
+        'ALERTA — NIVEL ELEVADO': {'backgroundColor': '#F59E0B', 'color': 'black'},
+        'ALERTA — NIVEL MUY ALTO': {'backgroundColor': '#F97316', 'color': 'white', 'fontWeight': 'bold'},
+        'CRÍTICO — DESBORDAMIENTO': {'backgroundColor': '#EF4444', 'color': 'white', 'fontWeight': 'bold'},
         'Desconocido': {'backgroundColor': '#6c757d', 'color': 'white'},
     }
     return estilos.get(nivel_riesgo, estilos['Desconocido'])
 
 
 def obtener_pictograma_riesgo(nivel_riesgo):
-    """Retorna el emoji para un nivel de riesgo."""
+    """Retorna el emoji para un nivel de riesgo (IDEAM/UNGRD)."""
     pictogramas = {
-        'Crítico': '🔴',
-        'Alto': '🟠',
-        'Medio': '🟡',
-        'Bajo': '🟢',
-        'Muy Bajo': '🟢',
+        'CRÍTICO — RACIONAMIENTO': '🔴',
+        'ALERTA — NIVEL BAJO': '🟡',
+        'NORMAL': '🟢',
+        'ALERTA — NIVEL ELEVADO': '🟡',
+        'ALERTA — NIVEL MUY ALTO': '🟠',
+        'CRÍTICO — DESBORDAMIENTO': '🔴',
         'Desconocido': '⚪',
     }
     return pictogramas.get(nivel_riesgo, '⚪')

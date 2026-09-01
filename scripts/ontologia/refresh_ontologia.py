@@ -199,6 +199,26 @@ def main() -> None:
     except Exception as e:
         logger.error(f"[ONTOLOGIA] Vigilancia normativa CREG falló: {e}")
 
+    # Fase 39, ítem C.2 (automatizado a pedido del usuario 2026-08-25): chequeo
+    # de sincronía Python↔TypeScript de los umbrales oficiales — antes era
+    # manual, exactamente el motivo por el que la regla derogada del 70% (y
+    # luego el bug del "ALERTA colapsado") persistieron sin que nadie lo
+    # notara. Aislado en su propio try/except: invoca `npx ts-node` como
+    # subproceso (portal-direccion-mme), con más superficie de falla que los
+    # pasos 100% locales a Postgres de arriba — un fallo aquí no debe
+    # bloquear el refresh de las vistas materializadas.
+    try:
+        from scripts.verificar_sincronia_umbrales import main as verificar_sincronia
+        with registrar_paso("sincronia_umbrales", "verificar_sincronia_umbrales"):
+            rc = verificar_sincronia()
+            if rc != 0:
+                logger.error(
+                    f"[ONTOLOGIA] Sincronía Python↔TypeScript con discrepancias "
+                    f"(rc={rc}) — ver detalle en logs con prefijo [SINCRONIA_UMBRALES]."
+                )
+    except Exception as e:
+        logger.error(f"[ONTOLOGIA] Chequeo de sincronía Python↔TypeScript falló: {e}")
+
     refrescar_vistas()
     logger.info("[ONTOLOGIA] Refresco diario completo")
 

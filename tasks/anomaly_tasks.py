@@ -172,9 +172,27 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
                 # (pandas devuelve numpy.float64/int64 que psycopg2 no adapta y rompe el INSERT)
                 _valor_raw = alerta.get('valor', 0)
                 _valor_py = float(_valor_raw) if _valor_raw is not None else 0.0
+                # Bug real encontrado (2026-08-25): solo se guardaba `titulo`
+                # (un renglón corto tipo "Índice PBP ALTO: 7/7 días sobre PE
+                # 667 COP/kWh") y la `descripcion` más explicativa que sí
+                # arma cada evaluador de alertas_energeticas.py (ej. "Sistema
+                # en modo de compensación hidráulica") se descartaba por
+                # completo — nunca llegaba al correo/informe/Telegram, que
+                # leen esta columna. Causa real reportada por el usuario de
+                # que las alertas "no son legibles". `alertas_historial` no
+                # tiene una columna separada para el título corto, así que
+                # se concatenan ambos en la misma columna `descripcion` (el
+                # HTML del correo ya muestra `metrica` en negrita arriba,
+                # esto solo enriquece el texto de abajo).
+                _titulo = str(alerta.get('titulo', '')).strip()
+                _desc = str(alerta.get('descripcion', '')).strip()
+                if _titulo and _desc:
+                    _descripcion_completa = f"{_titulo}. {_desc}"
+                else:
+                    _descripcion_completa = _titulo or _desc
                 cur.execute("""
-                    INSERT INTO alertas_historial 
-                    (fecha_evaluacion, metrica, severidad, descripcion, 
+                    INSERT INTO alertas_historial
+                    (fecha_evaluacion, metrica, severidad, descripcion,
                      valor_promedio, json_completo,
                      notificacion_whatsapp_enviada)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -192,7 +210,7 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
                     date.today(),
                     str(alerta.get('categoria', alerta.get('metrica', 'SISTEMA'))),
                     str(alerta.get('severidad', 'ALERTA')),
-                    str(alerta.get('titulo', alerta.get('descripcion', ''))),
+                    _descripcion_completa,
                     _valor_py,
                     json.dumps(alerta, ensure_ascii=False, default=str),
                     enviados > 0
@@ -387,12 +405,13 @@ def check_anomalies(self):
                     # Severidad máxima = ALERTA para evitar confusión con riesgo de
                     # desabastecimiento. NUNCA genera CRÍTICO operativo.
                     alertas_criticas.append({
-                        'titulo': f'💲 CU elevado: {cu_val:.0f} COP/kWh [indicador económico]',
+                        'titulo': f'💲 CU elevado: {cu_val:.0f} COP/kWh [indicador económico, umbral criterio propio, no CREG]',
                         'categoria': 'Costo Unitario',
                         'severidad': 'ALERTA',  # Máx ALERTA — no riesgo operativo SIN
                         'descripcion': (
                             f'El Costo Unitario alcanzó {cu_val:.2f} COP/kWh '
-                            f'(umbral de seguimiento: >600). '
+                            f'(umbral de seguimiento: >600 — umbral de criterio propio del portal, '
+                            f'sin cita normativa CREG que lo respalde). '
                             f'INDICADOR ECONÓMICO — No implica riesgo de desabastecimiento. '
                             f'Refleja presión tarifaria, combustibles o decisiones regulatorias.'
                         ),
@@ -400,12 +419,13 @@ def check_anomalies(self):
                     logger.warning(f"💲 [ANOMALÍAS] CU elevado (económico): {cu_val:.2f} COP/kWh")
                 elif cu_val > 400:
                     alertas_criticas.append({
-                        'titulo': f'CU_ELEVADO: {cu_val:.0f} COP/kWh',
+                        'titulo': f'CU_ELEVADO: {cu_val:.0f} COP/kWh [criterio propio, no CREG]',
                         'categoria': 'Costo Unitario',
                         'severidad': 'ALERTA',
                         'descripcion': (
                             f'El Costo Unitario alcanzó {cu_val:.2f} COP/kWh '
-                            f'(umbral alerta: >400).'
+                            f'(umbral alerta: >400 — umbral de criterio propio del portal, '
+                            f'sin cita normativa CREG que lo respalde).'
                         ),
                     })
                     logger.info(f"⚠️ [ANOMALÍAS] CU elevado: {cu_val:.2f} COP/kWh")
@@ -429,7 +449,9 @@ def check_anomalies(self):
                         'descripcion': (
                             f'P_NT promedio 30d: {pnt_val:.2f}% supera umbral crítico '
                             f'nacional ({_perfil_nac.pnt_crit_pct}%). '
-                            f'Posible incremento sistémico de hurto/subfacturación.'
+                            f'Posible incremento sistémico de hurto/subfacturación. '
+                            f'Fuente del umbral: SSPD Informes de Pérdidas por OR 2023-2024 '
+                            f'y Plan de Pérdidas CREG 015 de 2018.'
                         ),
                     })
                     logger.info(f"🔴 [ANOMALÍAS] PNT CRÍTICA: {pnt_val:.2f}%")
@@ -440,7 +462,9 @@ def check_anomalies(self):
                         'severidad': 'ALERTA',
                         'descripcion': (
                             f'P_NT promedio 30d: {pnt_val:.2f}% supera umbral de alerta '
-                            f'({_perfil_nac.pnt_warn_pct}%). Revisar medición y facturación.'
+                            f'({_perfil_nac.pnt_warn_pct}%). Revisar medición y facturación. '
+                            f'Fuente del umbral: SSPD Informes de Pérdidas por OR 2023-2024 '
+                            f'y Plan de Pérdidas CREG 015 de 2018.'
                         ),
                     })
                     logger.info(f"⚠️ [ANOMALÍAS] PNT elevada: {pnt_val:.2f}%")
@@ -1326,30 +1350,34 @@ def _build_kpi_fallback() -> str:
     except Exception:
         pass
 
-    mix_text = ""
+    mix_frase = "no se pudo obtener el detalle de la matriz de generación por fuente"
     try:
         df_fuentes = gen_service.get_generation_by_sources(start, end)  # type: ignore[attr-defined]
         if not df_fuentes.empty:
             total = df_fuentes['valor_gwh'].sum()
             if total > 0:
-                mix = df_fuentes.groupby('recurso')['valor_gwh'].sum()
-                icons = {
-                    'Hidráulica': '💧', 'Térmica': '🔥', 'Solar': '☀️',
-                    'Eólica': '🌬️', 'Biomasa': '🌿',
-                }
-                for recurso, valor in mix.sort_values(ascending=False).items():
-                    pct = round((valor / total) * 100, 1)
-                    icon = icons.get(recurso, '⚡')
-                    mix_text += f"  {icon} {recurso}: {pct}%\n"
+                mix = df_fuentes.groupby('recurso')['valor_gwh'].sum().sort_values(ascending=False)
+                partes = [f"{recurso.lower()} con {round((valor / total) * 100, 1)}%" for recurso, valor in mix.items()]
+                if len(partes) == 1:
+                    mix_frase = f"la matriz de generación estuvo liderada por {partes[0]}"
+                else:
+                    mix_frase = (
+                        "la matriz de generación estuvo liderada por "
+                        + partes[0] + ", seguida de " + ", ".join(partes[1:-1] + [f"y {partes[-1]}"] if len(partes) > 2 else [partes[-1]])
+                    )
     except Exception:
         pass
 
-    if not mix_text:
-        mix_text = "  Datos de mix no disponibles\n"
-
+    # Fase 39 (2026-08-25): reescrito como prosa en vez de una lista de KPIs
+    # cruda estilo "⚡ Generación: X" — hallazgo real del usuario ("parecen
+    # simples consultas a la base de datos sin una forma real"), causado
+    # porque este texto de respaldo (usado cuando la IA no responde) nunca
+    # tuvo redacción narrativa, a diferencia del informe generado con IA que
+    # sí reemplaza. Los datos/cálculos no cambian, solo cómo se presentan.
     return (
-        f"⚡ *Generación Total:* {gen_total}\n"
-        f"💰 *Precio de Bolsa:* {precio}\n"
-        f"💧 *Embalses:* {embalses}\n\n"
-        f"*Mix Energético:*\n{mix_text}"
+        "⚠️ Resumen automático (sin análisis de IA disponible en este momento):\n\n"
+        f"En las últimas 24 horas el sistema generó un total de {gen_total}, "
+        f"con un precio promedio de bolsa de {precio}. "
+        f"Los embalses se encuentran al {embalses} de su capacidad. "
+        f"En cuanto a la generación por fuente, {mix_frase}."
     )
