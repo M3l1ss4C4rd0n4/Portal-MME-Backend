@@ -1,7 +1,7 @@
 # Portal Energético MME — RunBook de Producción
 
-> **Versión:** 1.1.0  
-> **Fecha:** 2026-07-06  
+> **Versión:** 1.2.0  
+> **Fecha:** 2026-07-06 (creación) — **corregido 2026-09-01**: Celery Beat, logs reales, `/health` real, umbrales P_NT/Embalses  
 > **Audiencia:** Equipo de operaciones  
 > **Servidor:** Srvwebprdctrlxm (Azure VM, Ubuntu)
 
