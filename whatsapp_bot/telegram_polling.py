@@ -2018,6 +2018,11 @@ async def _narrate_for_audio(text: str, api_key: str) -> str:
             max_tokens=500,
         )
         narration = resp.choices[0].message.content.strip()
+        # Defensa en profundidad: algunos modelos (Groq/Llama) generan
+        # marcadores de cita estilo OpenAI-file-search (【0†L35-L45】) por
+        # costumbre de otras plataformas — aquí no se procesan y, narrados
+        # en voz, quedan como ruido/símbolos leídos literalmente.
+        narration = re.sub(r"【[^】]*】", "", narration)
         logger.info(f"[VOZ-NARRACION] Texto narrado ({len(narration)} chars): '{narration[:80]}...'")
         return narration
     except Exception as e:

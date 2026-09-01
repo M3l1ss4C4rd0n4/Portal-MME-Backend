@@ -81,6 +81,70 @@ PRESUPUESTO_CHARS_TECHO = 5500  # = comportamiento actual (sin este mecanismo)
 # concurrentes del mismo proceso.
 _estado_turno: Dict[str, Dict[str, Any]] = {}
 
+# Defensa en profundidad contra marcadores de cita estilo OpenAI-file-search
+# (【0†L35-L45】) que algunos modelos (Groq/Llama) generan por costumbre de
+# otras plataformas — aquí no se procesan y quedan como texto roto para el
+# usuario. El SYSTEM_PROMPT ya instruye no generarlos, pero se observó en
+# producción (2026-08-25) que esa instrucción sola NO es suficiente bajo el
+# proveedor de respaldo (Groq) — el marcador siguió apareciendo incluso
+# después de reforzar la instrucción, así que se limpia también aquí,
+# incondicionalmente, sin depender de que el modelo obedezca.
+_RE_MARCADOR_CITA = re.compile(r"【[^】]*】")
+
+
+def _limpiar_marcadores_cita(texto: str) -> str:
+    """Elimina marcadores de cita 【...】 de un texto ya completo (no
+    streaming) — ver _FiltroMarcadoresCitaStreaming para el caso streaming,
+    donde el marcador puede llegar repartido en varios `delta`."""
+    return _RE_MARCADOR_CITA.sub("", texto)
+
+
+class _FiltroMarcadoresCitaStreaming:
+    """Filtro con estado para limpiar marcadores de cita 【...】 en un stream
+    de texto token-por-token, sin esperar a tener el texto completo — un
+    marcador puede llegar repartido en varios `delta` distintos del SSE.
+
+    Mantiene en estado interno cualquier sufijo desde un '【' sin cerrar
+    todavía (nunca se emite hasta saber si es un marcador real o no) —
+    acotado a MAX_BUFFER caracteres: un marcador real es corto (ej.
+    '【0†L35-L45】', ~15 caracteres); si el fragmento pendiente crece más
+    allá de eso sin cerrar, se asume que NO era un marcador y se emite tal
+    cual, para nunca perder contenido real por error."""
+
+    MAX_BUFFER = 200
+
+    def __init__(self) -> None:
+        self._pendiente = ""
+
+    def procesar(self, delta: str) -> str:
+        buffer = self._pendiente + delta
+        salida = []
+        while True:
+            inicio = buffer.find("【")
+            if inicio == -1:
+                salida.append(buffer)
+                self._pendiente = ""
+                return "".join(salida)
+            salida.append(buffer[:inicio])
+            resto = buffer[inicio:]
+            fin = resto.find("】")
+            if fin == -1:
+                if len(resto) > self.MAX_BUFFER:
+                    salida.append(resto)  # demasiado largo para ser un marcador real
+                    self._pendiente = ""
+                else:
+                    self._pendiente = resto
+                return "".join(salida)
+            buffer = resto[fin + 1:]  # marcador completo — se descarta, se sigue escaneando
+
+    def finalizar(self) -> str:
+        """Al terminar el stream, cualquier resto pendiente (un '【' que
+        nunca llegó a cerrarse) se emite tal cual — mejor mostrar texto real
+        de más que perderlo silenciosamente."""
+        pendiente, self._pendiente = self._pendiente, ""
+        return pendiente
+
+
 SYSTEM_PROMPT = (
     "Eres el Asistente IA del Portal del Ministerio de Minas y Energía de Colombia. "
     "Respondes preguntas en lenguaje natural usando EXCLUSIVAMENTE los datos que "
@@ -93,6 +157,15 @@ SYSTEM_PROMPT = (
     "de un archivo que el usuario mismo adjuntó.\n"
     "Si una pregunta requiere datos que ninguna herramienta puede darte, dilo "
     "explícitamente en vez de adivinar.\n"
+    "Nunca cites un umbral, regla o número de resolución CREG/regulatorio "
+    "específico de memoria (ej. '% crítico', 'senda de referencia', "
+    "'Resolución CREG XXX') — esas reglas cambian con el tiempo y una regla "
+    "vieja de tu entrenamiento puede ya estar derogada. Solo cita un umbral "
+    "o resolución si viene textualmente del resultado de una herramienta "
+    "(ej. anomalias_detectadas, buscar_metrica, buscar_texto_rag). Si no "
+    "pudiste obtener esa clasificación específica con las herramientas "
+    "disponibles, dilo honestamente en vez de completar el hueco con una "
+    "regla genérica que recuerdes.\n"
     "Responde en español, de forma clara y concisa, citando la fuente cuando "
     "corresponda (ej. 'según el informe de seguimiento de PMO...', "
     "'según el contrato con NIT...') — SIEMPRE en prosa normal, nunca con "
@@ -703,7 +776,19 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "anomalias_detectadas",
-            "description": "Anomalías/alertas detectadas actualmente en el sector eléctrico.",
+            "description": (
+                "Anomalías/alertas detectadas actualmente en el sector eléctrico. "
+                "Para Embalses incluye DOS señales oficiales y DISTINTAS, cada una "
+                "con su propia base normativa — nunca las mezcles: "
+                "'condicion_regulatoria_creg' (Índice NE del Estatuto CREG "
+                "026/2014, riesgo de desabastecimiento eléctrico — la fuente "
+                "correcta para responder '¿hay riesgo según la CREG/normativa?') "
+                "y 'severidad'/'razon_severidad' (umbrales IDEAM/UNGRD de "
+                "seguridad de presas, riesgo de desborde — un marco distinto, "
+                "no confundir con el regulatorio). Úsala SIEMPRE que te "
+                "pregunten si hay riesgo regulatorio/normativo en embalses, en "
+                "vez de citar umbrales de memoria."
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -1204,6 +1289,7 @@ async def responder_stream(
         mensajes.extend(historial[-MAX_TURNOS_HISTORIAL:])
         mensajes.append({"role": "user", "content": _construir_contenido_usuario(mensaje, archivos)})
         ya_emitio_delta = False
+        filtro_citas = _FiltroMarcadoresCitaStreaming()
 
         try:
             async for nombre_tool, resultado_tool in _resolver_tool_calls(client, mensajes, turno_id, modelo, nombre_proveedor):
@@ -1228,8 +1314,15 @@ async def responder_stream(
                     delta = chunk.choices[0].delta.content
                     if delta:
                         ya_emitio_delta = True
-                        texto_acumulado.append(delta)
-                        yield _sse({"delta": delta})
+                        delta_limpio = filtro_citas.procesar(delta)
+                        if delta_limpio:
+                            texto_acumulado.append(delta_limpio)
+                            yield _sse({"delta": delta_limpio})
+
+            resto_pendiente = filtro_citas.finalizar()
+            if resto_pendiente:
+                texto_acumulado.append(resto_pendiente)
+                yield _sse({"delta": resto_pendiente})
 
             if ultimo_usage:
                 logger.info(
@@ -1316,7 +1409,7 @@ async def responder_completo(
                     f"[ASISTENTE] tokens (respuesta completa): prompt={resp.usage.prompt_tokens} "
                     f"completion={resp.usage.completion_tokens} total={resp.usage.total_tokens}"
                 )
-            texto_final = resp.choices[0].message.content or ""
+            texto_final = _limpiar_marcadores_cita(resp.choices[0].message.content or "")
             _verificar_grounding_numerico(texto_final, mensajes, turno_id)
             duracion_turno_ms = round((time.perf_counter() - t0_turno) * 1000)
             if nombre_proveedor != "gemini":
