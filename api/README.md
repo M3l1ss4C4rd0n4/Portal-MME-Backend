@@ -1,32 +1,36 @@
 # API RESTful - Portal Energético MME
 
-API RESTful construida con FastAPI para proporcionar acceso programático a los datos del sector energético colombiano.
+API RESTful construida con FastAPI para proporcionar acceso programático a los datos del sector energético colombiano, comunidades energéticas, FENOGE, Colombia Solar, contratos OR, supervisión, subsidios, presupuesto, hidrocarburos, ontología (geografía/empresa/proyecto/métrica/recurso), RAG documental y el Asistente IA.
+
+> Corregido 2026-09-01: este README documentaba solo 2 de los ~30 archivos de rutas reales (`metrics.py`/`predictions.py`). Ver la lista completa abajo, generada a partir del código real en `api/v1/routes/`.
 
 ## 📋 Características
 
-- ✅ **Métricas energéticas**: Generación, demanda, disponibilidad, precios
-- ✅ **Predicciones ML**: Prophet, ARIMA, Ensemble
-- ✅ **Seguridad**: API Key authentication
-- ✅ **Rate limiting**: Control de tasa de requests
-- ✅ **CORS**: Configuración flexible de orígenes
+- ✅ **110 endpoints reales** distribuidos en ~30 archivos de rutas (`api/v1/routes/`)
+- ✅ **Métricas energéticas**: Generación, demanda, disponibilidad, precios, pérdidas técnicas y no técnicas
+- ✅ **Predicciones ML**: Prophet + SARIMAX (ensemble), con validación rigurosa (ver `docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md`)
+- ✅ **Ontología de datos**: geografía (DANE), empresa, proyecto, métrica, recurso — cruces entre 9+ esquemas antes aislados
+- ✅ **RAG documental**: búsqueda semántica sobre informes de XM, CREG, UPME, MME, SharePoint del ministerio
+- ✅ **Asistente IA**: chat con tool-calling (`/v1/chatbot/asistente`), streaming, voz en tiempo real (`/v1/voz`)
+- ✅ **Seguridad**: API Key authentication (`X-API-Key`)
+- ✅ **Rate limiting**: `slowapi`, límites por endpoint
+- ✅ **CORS**: configuración por variable de entorno
 - ✅ **Documentación**: Swagger UI y ReDoc automáticos
-- ✅ **Validación**: Esquemas Pydantic robustos
-- ✅ **Formato estándar**: Sigue convenciones en `docs/api_data_conventions.md`
+- ✅ **Validación**: esquemas Pydantic
 
 ## 🚀 Inicio Rápido
 
 ### 1. Instalar dependencias
 
 ```bash
-pip install fastapi uvicorn slowapi pydantic-settings
+pip install -r requirements.txt
 ```
 
 ### 2. Configurar variables de entorno
 
-Editar `.env`:
+Editar `.env` (ver `server/.env.example` si existe, o las claves reales usadas en producción):
 
 ```env
-# API REST
 API_ENABLED=true
 API_PORT=8000
 API_KEY_ENABLED=true
@@ -38,96 +42,63 @@ API_RATE_LIMIT=100/minute
 ### 3. Ejecutar servidor de desarrollo
 
 ```bash
-# Opción 1: Directamente con Python
-python api/main.py
-
-# Opción 2: Con Uvicorn
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Opción 3: Con Gunicorn (producción)
-gunicorn api.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 ```
+
+**En producción** (este servidor) NO se usa Gunicorn ni Docker — corre `uvicorn` plano detrás de `systemd` (`portal-api.service`), con `nginx` como proxy inverso hacia el frontend Next.js. Ver `RUNBOOK_PRODUCCION.md` para el detalle operativo real.
 
 ### 4. Acceder a la documentación
 
-- **Swagger UI**: http://localhost:8000/api/docs
-- **ReDoc**: http://localhost:8000/api/redoc
-- **OpenAPI JSON**: http://localhost:8000/api/openapi.json
+- **Swagger UI**: `/api/docs` (deshabilitado automáticamente si `DASH_ENV=production`)
+- **ReDoc**: `/api/redoc`
+- **OpenAPI JSON**: `/api/openapi.json`
 
-## 📡 Endpoints Disponibles
+## 📡 Dominios de endpoints reales (`api/v1/routes/`)
 
-### Root
+La API cubre bastante más que métricas/predicciones. Conteo real de endpoints por archivo (verificado por grep sobre el código, no estimado):
 
-```http
-GET /
-GET /health
-```
+| Archivo | Endpoints | Dominio |
+|---|---|---|
+| `ontologia.py` | 17 | Geografía DANE, empresa, proyecto, métrica, recurso, grafo, salud de datos |
+| `reports.py` | 12 | Informes ejecutivos, informes diarios XM, boletines, descargas |
+| `observability.py` | 9 | Health checks, métricas de sistema, logs |
+| `predictions.py` | 7 | Predicciones Prophet+SARIMAX (embalses, generación, precio, demanda) |
+| `simulation.py` | 5 | Simulación de escenarios CREG |
+| `energia_app.py` | 5 | App móvil EnergIA (incluye `/audio/consulta`, voz) |
+| `cu.py` | 5 | Costo Unitario (mayorista LAC + minorista Res. CREG 119/2007) |
+| `generation.py` | 4 | Generación eléctrica por fuente |
+| `chatbot.py` | 4 | Asistente IA (`/v1/chatbot/asistente`), orquestador, feedback |
+| `transmission.py` | 3 | Transmisión |
+| `subsidios.py` | 3 | Déficit y pagos de subsidios |
+| `losses.py` | 3 | Pérdidas técnicas y no técnicas (PNT) |
+| `hydrology.py` | 3 | Hidrología, embalses |
+| `contratos_or.py` | 3 | Contratos de Obligación de Resultado (electrificación rural) |
+| `whatsapp_alerts.py`, `system.py`, `supervision_portal.py`, `sector_snapshot.py`, `metrics.py`, `internal.py`, `informes_tableros.py`, `fenoge.py`, `distribution.py`, `commercial.py` | 2 c/u | Alertas WhatsApp, sistema, supervisión de contratos, snapshot del sector, métricas genéricas, uso interno, tableros de informes, FENOGE, distribución, comercial |
+| `voz.py`, `sector_despacho.py`, `riesgo.py`, `restrictions.py`, `presupuesto.py`, `energia_dashboard.py`, `comunidades.py` | 1 c/u | Voz en tiempo real (Gemini Live), despacho, riesgo de atraso de contratos, restricciones, presupuesto, dashboard, comunidades energéticas |
 
-### Métricas (v1)
-
-```http
-GET /api/v1/metrics/{metric_id}?entity=Sistema&start_date=2026-01-01&end_date=2026-02-03
-GET /api/v1/metrics/
-```
-
-**Ejemplo:**
+**Ejemplo — métrica cruda:**
 ```bash
 curl -H "X-API-Key: tu-api-key" \
   "http://localhost:8000/api/v1/metrics/Gene?entity=Sistema&start_date=2026-01-01"
 ```
 
-**Respuesta:**
-```json
-{
-  "metric_id": "Gene",
-  "entity": "Sistema",
-  "unit": "GWh",
-  "count": 34,
-  "data": [
-    {
-      "date": "2026-01-01",
-      "value": 234.56,
-      "metadata": {
-        "source": "hybrid",
-        "quality": "validated"
-      }
-    }
-  ]
-}
-```
-
-### Predicciones (v1)
-
-```http
-GET /api/v1/predictions/{metric_id}?entity=Sistema&horizon_days=30&model_type=prophet
-POST /api/v1/predictions/{metric_id}/train?model_type=prophet&save_model=true
-```
-
-**Ejemplo:**
+**Ejemplo — predicción:**
 ```bash
 curl -H "X-API-Key: tu-api-key" \
-  "http://localhost:8000/api/v1/predictions/Gene?horizon_days=30&model_type=prophet"
+  "http://localhost:8000/api/v1/predictions/dashboard"
 ```
 
-**Respuesta:**
-```json
-{
-  "metric_id": "Gene",
-  "entity": "Sistema",
-  "unit": "GWh",
-  "model": "prophet",
-  "horizon_days": 30,
-  "generated_at": "2026-02-03T14:30:00Z",
-  "data": [
-    {
-      "date": "2026-03-01",
-      "value": 245.78,
-      "lower": 230.12,
-      "upper": 261.44,
-      "confidence": 0.95
-    }
-  ]
-}
+**Ejemplo — Asistente IA (streaming SSE):**
+```bash
+curl -N -H "X-API-Key: tu-api-key" -H "Content-Type: application/json" \
+  -d '{"mensaje": "¿Cómo está la generación eléctrica hoy?", "historial": []}' \
+  http://localhost:8000/v1/chatbot/asistente
+```
+
+**Ejemplo — búsqueda RAG (ontología):**
+```bash
+curl -H "X-API-Key: tu-api-key" \
+  "http://localhost:8000/v1/ontologia/geografia/27/resumen"
 ```
 
 ## 🔐 Autenticación
@@ -138,7 +109,7 @@ Todas las peticiones requieren el header `X-API-Key`:
 curl -H "X-API-Key: tu-api-key-secreta" http://localhost:8000/api/v1/metrics/Gene
 ```
 
-Para deshabilitar autenticación en desarrollo, configurar en `.env`:
+Deshabilitar solo en desarrollo local:
 
 ```env
 API_KEY_ENABLED=false
@@ -146,185 +117,83 @@ API_KEY_ENABLED=false
 
 ## ⚡ Rate Limiting
 
-Por defecto, la API aplica los siguientes límites:
+Límites reales, definidos por endpoint vía `slowapi` (varían según el costo real de cada uno — ej. el Asistente IA, que puede hacer varias llamadas a Gemini/Groq por turno, tiene un límite más bajo que un endpoint de lectura simple). No existe un límite único global — revisar el decorador `@limiter.limit(...)` de cada ruta en `api/v1/routes/` para el valor exacto vigente.
 
-- **Endpoints generales**: 100 requests/minuto
-- **Listados**: 60 requests/minuto
-- **Predicciones**: 20 requests/minuto
-- **Entrenamiento de modelos**: 5 requests/hora
-
-Configurar en `.env`:
+Configurar el límite por defecto en `.env`:
 
 ```env
 API_RATE_LIMIT=100/minute
 ```
 
 Headers de respuesta:
-- `X-RateLimit-Limit`: Límite total
-- `X-RateLimit-Remaining`: Requests restantes
-- `X-RateLimit-Reset`: Timestamp de reset
+- `X-RateLimit-Limit`
+- `X-RateLimit-Remaining`
+- `X-RateLimit-Reset`
 
-## 📐 Arquitectura
+## 📐 Arquitectura real
 
 ```
 api/
-├── __init__.py              # Módulo API
-├── main.py                  # Aplicación FastAPI principal
-├── dependencies.py          # Dependencias compartidas
+├── main.py                  # Aplicación FastAPI principal, montaje de routers
+├── dependencies.py          # Dependencias compartidas (get_api_key, etc.)
 └── v1/
-    ├── __init__.py          # Router v1
-    ├── routes/
-    │   ├── metrics.py       # Endpoints de métricas
-    │   └── predictions.py   # Endpoints de predicciones
-    └── schemas/
-        ├── common.py        # Esquemas comunes
-        ├── metrics.py       # Esquemas de métricas
-        └── predictions.py   # Esquemas de predicciones
+    ├── routes/               # ~30 archivos de rutas — ver tabla de dominios arriba
+    └── schemas/              # Esquemas Pydantic (request/response)
 ```
 
-### Flujo de Datos
+La lógica de negocio real NO vive en `api/` — vive en `domain/services/*.py` (~42 servicios) y se accede vía inyección de dependencias desde `core/container.py`. Las rutas son delgadas: reciben la petición, llaman al servicio correspondiente, serializan la respuesta.
 
-1. **Request** → FastAPI recibe petición
-2. **Authentication** → Valida API Key (si está habilitado)
-3. **Rate Limiting** → Verifica límites de tasa
-4. **Validation** → Pydantic valida parámetros
-5. **Service Layer** → Llama a servicios de dominio
-6. **Repository** → Accede a base de datos
-7. **Response** → Serializa respuesta según esquemas
+### Flujo de datos
+
+1. **Request** → FastAPI recibe la petición
+2. **Authentication** → `Depends(get_api_key)` valida `X-API-Key`
+3. **Rate Limiting** → `slowapi` verifica el límite del endpoint
+4. **Validation** → Pydantic valida los parámetros
+5. **Service Layer** → `core/container.py` resuelve el servicio de dominio (lazy singleton)
+6. **Repository** → acceso a Postgres vía `psycopg2.ThreadedConnectionPool` (`infrastructure/database/connection.py::_get_pool()`) — **no** `asyncpg`
+7. **Response** → serialización según el esquema Pydantic de respuesta
 
 ## 🧪 Testing
 
-### Probar health check
-
 ```bash
+# Health check real
 curl http://localhost:8000/health
-```
 
-### Probar autenticación
-
-```bash
-# Sin API Key (debe fallar)
+# Sin API Key (debe fallar si API_KEY_ENABLED=true)
 curl http://localhost:8000/api/v1/metrics/Gene
 
 # Con API Key válida
 curl -H "X-API-Key: tu-api-key" http://localhost:8000/api/v1/metrics/Gene
 ```
 
-### Probar rate limiting
-
-```bash
-# Ejecutar múltiples veces rápidamente
-for i in {1..150}; do
-  curl -H "X-API-Key: tu-api-key" http://localhost:8000/api/v1/metrics/Gene
-done
-```
-
-## 🐳 Docker (Opcional)
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-```bash
-docker build -t portal-energetico-api .
-docker run -p 8000:8000 --env-file .env portal-energetico-api
-```
-
-## 📊 Métricas Disponibles
-
-| Código | Descripción | Unidad |
-|--------|-------------|--------|
-| `Gene` | Generación de energía | GWh |
-| `DemaReal` | Demanda real de energía | GWh |
-| `Dispo` | Disponibilidad efectiva neta | MW |
-| `PrecBols` | Precio de bolsa | $/kWh |
-| `Aportes` | Aportes hídricos | m³/s |
-
-## 🤖 Modelos ML
-
-| Modelo | Descripción | Uso recomendado |
-|--------|-------------|-----------------|
-| `prophet` | Facebook Prophet | Series con estacionalidad fuerte |
-| `arima` | ARIMA auto-tuning | Series estacionarias |
-| `ensemble` | Combinación de modelos | Mayor precisión |
-
-## 🔧 Configuración Avanzada
-
-### CORS personalizado
-
-```env
-API_CORS_ORIGINS=https://dashboard.mme.gov.co,https://admin.mme.gov.co
-```
-
-### Múltiples API Keys
-
-```env
-API_KEY=key-principal
-API_KEYS_WHITELIST=key-secundaria,key-desarrollo,key-testing
-```
-
-### Deshabilitar documentación en producción
-
-```env
-DASH_ENV=production  # Deshabilita /api/docs automáticamente
-```
+Suite de tests del backend: 373 tests pasando (verificado 2026-09), corre con `pytest` desde `server/`.
 
 ## 📝 Convenciones de Datos
 
-La API sigue las convenciones definidas en [docs/api_data_conventions.md](../docs/api_data_conventions.md):
+La API sigue las convenciones definidas en `docs/api_data_conventions.md`:
 
 - ✅ Formato ISO 8601 para fechas (`YYYY-MM-DD`)
-- ✅ Timestamps en UTC con zona horaria (`2026-02-03T14:30:00Z`)
+- ✅ Timestamps en UTC con zona horaria
 - ✅ Valores numéricos como `float`
 - ✅ Metadatos opcionales en campo `metadata`
-- ✅ Intervalos de confianza para predicciones
+- ✅ Intervalos de confianza para predicciones (con calibración por horizonte, ver `PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md`)
 
 ## 🚨 Manejo de Errores
 
-La API retorna códigos HTTP estándar:
+- `200 OK`
+- `400 Bad Request` — parámetros inválidos
+- `401 Unauthorized` — API Key faltante
+- `403 Forbidden` — API Key inválida
+- `404 Not Found`
+- `429 Too Many Requests` — rate limit excedido
+- `500 Internal Server Error`
 
-- `200 OK`: Petición exitosa
-- `400 Bad Request`: Parámetros inválidos
-- `401 Unauthorized`: API Key faltante
-- `403 Forbidden`: API Key inválida
-- `404 Not Found`: Recurso no encontrado
-- `429 Too Many Requests`: Rate limit excedido
-- `500 Internal Server Error`: Error del servidor
+## 📞 Referencias
 
-Formato de respuestas de error:
-
-```json
-{
-  "error": "Not Found",
-  "message": "No se encontraron datos para la métrica 'Gene'",
-  "details": null
-}
-```
-
-## 🎯 Roadmap
-
-- [ ] Endpoints de análisis con IA
-- [ ] Endpoints de hidrología
-- [ ] WebSockets para datos en tiempo real
-- [ ] GraphQL API
-- [ ] Autenticación OAuth2
-- [ ] Versionado semántico de API
-
-## 📞 Soporte
-
-Para reportar problemas o sugerencias, revisar la documentación del proyecto principal.
+- Manual técnico completo, glosario, guía de código: `docs/` (ver `README.md` del servidor para el índice completo)
+- Auditoría de documentación y deuda documental: `docs/AUDITORIA_DOCUMENTACION_2026-09.md`
+- Operación en producción (systemd, Celery Beat, logs reales): `RUNBOOK_PRODUCCION.md`
 
 ---
 
-**Autor:** Arquitectura Dashboard MME  
-**Fecha:** 6 de julio de 2026 *(actualizado)*  
-**Versión:** 1.1.0
+**Última revisión de este documento:** 2026-09-01 — reescrito contra el código real (antes documentaba solo 2 de ~30 archivos de rutas).

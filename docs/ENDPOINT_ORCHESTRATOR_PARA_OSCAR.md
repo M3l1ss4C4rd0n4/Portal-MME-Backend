@@ -13,8 +13,9 @@
 
 ### URL Base
 ```
-https://portalenergetico.minenergia.gov.co/api/v1/chatbot/orchestrator
+https://portaldireccionee.minenergia.gov.co/api/v1/chatbot/orchestrator
 ```
+> Corregido 2026-09-01: el dominio real de producción es `portaldireccionee.minenergia.gov.co` (alias `portalviceministerioenergia.minenergia.gov.co`) — `portalenergetico.minenergia.gov.co` es un dominio legado, verificar con Oscar cuál está usando su integración real antes de asumir que sigue vigente.
 
 **Método:** `POST`  
 **Disponibilidad:** 24/7 (Servicio systemd con auto-restart)  
@@ -48,6 +49,8 @@ X-API-Key: MME2026_SECURE_KEY
 ```
 
 #### Intents Disponibles
+
+> Corregido 2026-09-01: la tabla original documentaba 13 intents. El orquestador real (`domain/services/orchestrator/orchestrator_service.py::_get_intent_handler()`) hoy registra **108 claves de intent** (alias incluidos, ~49+ handlers únicos) — geografía/empresa/proyecto/métrica/recurso/contrato de la ontología, RAG documental, grafo de relaciones, riesgo de atraso de contratos OR, comunidades/contratos OR/FENOGE/Colombia Solar/supervisión/presupuesto/subsidios, panorama climático, salud de datos, resumen del portal, etc. La tabla de abajo (los 13 intents originales) sigue siendo válida — esos siguen existiendo — pero está lejos de ser la lista completa. Para el listado exacto y actualizado, leer directamente `_get_intent_handler()` en el archivo citado (fuente de verdad), o pedir a Claude que lo liste en una sesión futura si Oscar necesita integrar un intent nuevo.
 
 | Intent | Descripción | Parámetros Opcionales |
 |--------|-------------|-----------------------|

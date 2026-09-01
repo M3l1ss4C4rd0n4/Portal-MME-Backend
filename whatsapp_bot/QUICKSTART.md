@@ -1,6 +1,8 @@
 # 🎯 GUÍA DE INICIO RÁPIDO
 
-Esta guía te llevará de **0 a Bot funcionando en 10 minutos**.
+> Corregido 2026-09-01: esta guía es específica del canal **WhatsApp** (Twilio, puerto 8001, `whatsapp-bot.service`) — que existe y corre en producción, pero con tráfico real muy bajo. El canal con tráfico real de producción es **Telegram** (`telegram-polling.service`, long-polling, sin webhook) — ver `whatsapp_bot/GUIA_TELEGRAM_BOT_PASO_A_PASO.md` para esa guía. Los 2 canales tienen código e instancias de IA separadas, no comparten configuración.
+
+Esta guía te llevará de **0 a Bot de WhatsApp funcionando en 10 minutos**.
 
 ## ⚡ Opción 1: Inicio Ultra-Rápido (Recomendado)
 
@@ -142,15 +144,14 @@ DATABASE_URL=postgresql://admin:pass@127.0.0.1:5432/portal_energetico
 
 ## 📚 Comandos del Bot
 
-Una vez funcionando, puedes probar:
+> Corregido 2026-09-01: los comandos reales (compartidos vía el mismo orquestador que usa Telegram) son `/start /menu /estado /predicciones /anomalias /noticias /informe /ayuda /help` + comandos de subsidios (`/subsidios /deuda /deuda_empresa /trimestre_pagado /resoluciones /estado_resoluciones /porcentaje_pagado /deuda_fondo /pagado_anio /buscar_empresa`), no `precio`/`generacion`/`analiza demanda` como decía esta lista original.
 
 ```
-hola
+/start
 /menu
-precio
-generacion
-analiza demanda
-/stats
+/estado
+/predicciones
+/ayuda
 ```
 
 ## 🚀 Siguiente Paso: Producción

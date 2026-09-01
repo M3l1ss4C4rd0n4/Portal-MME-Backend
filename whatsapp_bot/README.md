@@ -1,6 +1,12 @@
 # 🤖 WhatsApp Bot - Portal Energético MME
 
-Bot inteligente de WhatsApp para consultas del Sistema Interconectado Nacional de Colombia.
+> **Corregido 2026-09-01 — leer antes de lo demás:** este directorio contiene código para **2 canales reales y separados**, no uno solo:
+> - **Telegram** (`telegram_polling.py`, servicio systemd `telegram-polling.service`) — **el canal con tráfico real de producción**. Usa long-polling (nunca webhook — configurar un webhook aquí rompería el bot con un 409 Conflict de la API de Telegram, ver advertencia más abajo). Comandos reales: `/start /menu /estado /predicciones /anomalias /noticias /informe /ayuda /help` + 10 comandos de subsidios (`/subsidios /deuda /deuda_empresa /trimestre_pagado /resoluciones /estado_resoluciones /porcentaje_pagado /deuda_fondo /pagado_anio /buscar_empresa`). Llama al orquestador HTTP del backend principal.
+> - **WhatsApp** (Twilio webhook, `whatsapp-bot.service`, puerto 8001) — servicio real y activo, pero con **tráfico real muy bajo/nulo** en producción. Usa su propia instancia local de `BotOrchestrator`/`AgentIA` — **no comparte código con Telegram** pese a lo que sugiere el resto de este documento.
+>
+> El texto original de abajo (Twilio como si fuera "el" bot, comandos `precio`/`generacion`/`demanda` que no existen en ninguno de los 2 canales reales) describe un diseño temprano que no refleja el estado real de producción — se deja como referencia histórica de la configuración de Twilio (sigue siendo útil si se reactiva ese canal), pero no como la arquitectura vigente. Ver `whatsapp_bot/GUIA_TELEGRAM_BOT_PASO_A_PASO.md` para la guía correcta del canal con tráfico real.
+
+Bot de mensajería (Telegram + WhatsApp) para consultas del Sistema Interconectado Nacional de Colombia.
 
 ## 📋 Características
 
@@ -11,7 +17,7 @@ Bot inteligente de WhatsApp para consultas del Sistema Interconectado Nacional d
 - Mix energético nacional
 
 ✅ **Análisis con IA**
-- Motor Llama 3.3 70B (Groq)
+- Gemini como proveedor primario, con failover automático a Groq (`openai/gpt-oss-120b` — el modelo Llama 3.3 70B original fue descontinuado por Groq el 16-ago-2026) y OpenRouter como tercer escalón (`infrastructure/ml/llm_failover.py`)
 - Análisis de tendencias
 - Detección de anomalías
 - Respuestas en lenguaje natural
@@ -168,23 +174,11 @@ docker-compose logs -f whatsapp-bot
 
 ## 📊 Comandos del Bot
 
-Una vez configurado, los usuarios pueden interactuar:
+> Corregido 2026-09-01: la lista original (`hola`, `precio`, `generacion`, `demanda`, `analiza ...`) no coincide con los comandos reales registrados. Comandos reales, verificados contra el código (`telegram_polling.py`, canal con tráfico real):
 
-### Comandos Básicos
-- `hola` - Saludo inicial
-- `/help` - Ayuda completa
-- `/menu` - Menú principal
-- `/stats` - Estadísticas del bot
-
-### Consultas
-- `precio` - Precio de bolsa actual
-- `generacion` - Generación eléctrica
-- `demanda` - Demanda del sistema
-
-### Análisis IA
-- `analiza generacion` - Análisis de generación
-- `analiza demanda` - Análisis de demanda
-- *Cualquier pregunta en lenguaje natural*
+- `/start`, `/menu`, `/estado`, `/predicciones`, `/anomalias`, `/noticias`, `/informe`, `/ayuda`, `/help`
+- Subsidios: `/subsidios`, `/deuda`, `/deuda_empresa`, `/trimestre_pagado`, `/resoluciones`, `/estado_resoluciones`, `/porcentaje_pagado`, `/deuda_fondo`, `/pagado_anio`, `/buscar_empresa`
+- Cualquier pregunta en lenguaje natural también funciona — se enruta al mismo orquestador del backend principal que usa el Asistente IA del portal.
 
 ## 🔐 Seguridad
 

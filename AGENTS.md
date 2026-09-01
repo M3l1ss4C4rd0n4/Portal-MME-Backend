@@ -3,7 +3,7 @@
 > **Última actualización:** 2026-05-02  
 > **Framework:** SKILL_PACK_V4.1.md (Field Medic Framework — Jerarquía de Verdad + CDA + Ciclos + Hardware Physics)
 > **Ubicación:** `/home/admonctrlxm/server/SKILL_PACK_V4.1.md`  
-> **También:** `/home/admonctrlxm/portal-direccion-mme/SKILL_PACK_V4.1.md` (misma versión)  
+> Corregido 2026-09-01: la referencia anterior a una copia en `/home/admonctrlxm/portal-direccion-mme/SKILL_PACK_V4.1.md` era incorrecta — ese archivo no existe en el repo del frontend. Solo hay una copia, en este repo.
 
 ## 🚨 PASO 0: LEER EL SKILL PACK COMPLETO
 
@@ -26,7 +26,9 @@ El framework NO es sugerencia. Es el **contrato** operacional.
 ## Stack
 
 - Python 3.11 + FastAPI + Dash (legacy dashboard)
-- PostgreSQL vía asyncpg — usar `get_pool()` de `core/database/pool.py`
+- PostgreSQL vía `psycopg2.pool.ThreadedConnectionPool` — usar `_get_pool()` de `infrastructure/database/connection.py`
+  (corregido 2026-09-01: la referencia anterior a `asyncpg`/`get_pool()` de `core/database/pool.py` era incorrecta —
+  ese módulo no existe en el repo; el acceso real a datos es síncrono vía psycopg2, no asyncpg)
 - Redis (caché)
 - Celery + Celery Beat (tareas async + scheduling — RIESGO ALTO)
 - Systemd (4 servicios: `portal-api`, `dashboard-mme`, `whatsapp-bot`, `telegram-polling`)
@@ -67,15 +69,24 @@ Si un agente sugiere cualquiera de las acciones de arriba, mostrarle esta secci�
 
 ## God Files y God Services — Señal de ALTO Automática
 
-| Archivo | Líneas / Nodos | Restricción |
+> Líneas verificadas 2026-09-01 (`grep -c "^"` directo sobre el archivo real, no de memoria). El conteo de "nodos" de `core/container.py` es una métrica de graphify (grafo de dependencias), no se remidió en esta pasada — su línea física real hoy es 614.
+
+| Archivo | Líneas | Restricción |
 |---|---|---|
-| `core/container.py` | 575 nodos, cohesión 0.01 | PROHIBIDO modificar directamente. Crear factory en archivo separado. |
-| `domain/services/report_service.py` | 1.850 líneas | `pdftotext` diff obligatorio. No refactorizar lógica sin tests de integración. |
+| `core/container.py` | 614 líneas (575 nodos en el último graphify conocido, cohesión 0.01) | PROHIBIDO modificar directamente. Crear factory en archivo separado. |
+| `domain/services/report_service.py` | **3.584 líneas** (antes documentado 1.850 — casi duplicó su tamaño) | `pdftotext` diff obligatorio. No refactorizar lógica sin tests de integración. |
+| `domain/services/portal_report_service.py` | 2.819 líneas (no estaba en esta tabla antes) | `pdftotext` diff obligatorio — genera el informe ejecutivo público del portal. |
 | `domain/services/executive_report_service.py` | 1.618 líneas | `pdftotext` diff obligatorio. |
-| `domain/services/cu_service.py` | 1.010 líneas | Mock de XM obligatorio. |
-| `domain/services/losses_nt_service.py` | 1.199 líneas | Validación contra cálculo manual. |
+| `domain/services/asistente_ia_service.py` | 1.443 líneas (no estaba en esta tabla antes) | Tool-calling del Asistente IA — cambios de prompt/catálogo de tools requieren correr `scripts/asistente/run_golden_dataset.py` antes de dar por cerrado un cambio. |
+| `domain/services/notification_service.py` | 1.347 líneas | Canal de alertas críticas (Telegram/email) — no tocar sin probar en un canal de prueba primero. |
+| `domain/services/losses_nt_service.py` | 1.208 líneas | Validación contra cálculo manual. |
+| `domain/services/cu_service.py` | 1.122 líneas | Mock de XM obligatorio. |
+| `domain/services/news_service.py` | 901 líneas (no estaba en esta tabla antes) | Cache de 8h compartido — invalidar en Redis tras cambiar la forma de los datos que devuelve. |
+| `domain/services/intelligent_analysis_service.py` | 892 líneas | — |
+| `domain/services/predictions_service_extended.py` | 887 líneas | Fixture de modelo. |
 | `domain/services/simulation_service.py` | 748 líneas | Seed fijo en tests. |
-| `domain/services/predictions_service_extended.py` | 698 líneas | Fixture de modelo. |
+| `domain/services/cu_minorista_service.py` | 676 líneas (no estaba en esta tabla antes) | Fórmula Art. 4 Res. CREG 119/2007 — no modificar sin citar la resolución exacta. |
+| `domain/services/ai_service.py` | 574 líneas | `AgentIA` — failover multi-proveedor (Gemini→Groq→OpenRouter), ver `infrastructure/ml/llm_failover.py`. |
 
 ---
 

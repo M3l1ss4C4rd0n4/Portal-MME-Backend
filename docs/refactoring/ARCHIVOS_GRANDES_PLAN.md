@@ -1,8 +1,10 @@
 # Plan de División de Archivos Grandes
 
-## Archivos Identificados (>1000 líneas)
+> Corregido 2026-09-01: los conteos de líneas de abajo son de cuando se escribió este plan (nunca ejecutado). Verificado hoy (`grep -c "^"` real): `report_service.py` casi duplicó su tamaño (**3.584 líneas**, no 1.850), `executive_report_service.py` sigue en 1.618, `losses_nt_service.py` en 1.208, `cu_service.py` en 1.122. Además hay 2 archivos grandes nuevos que no existían cuando se escribió este plan: `portal_report_service.py` (2.819 líneas) y `asistente_ia_service.py` (1.443 líneas). Ninguna de las divisiones propuestas abajo se ha ejecutado — este documento sigue siendo solo un plan, no un estado alcanzado.
 
-### 1. report_service.py (1,850 líneas) → 4 archivos
+## Archivos Identificados (>1000 líneas, snapshot original — ver corrección arriba)
+
+### 1. report_service.py (1,850 líneas → real hoy: 3.584) → 4 archivos
 
 **Estructura propuesta:**
 ```
