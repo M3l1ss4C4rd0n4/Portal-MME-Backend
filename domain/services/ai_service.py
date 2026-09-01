@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from core.config import settings
 from infrastructure.database.manager import db_manager
 from infrastructure.ml.llm_failover import completar_chat as _completar_chat
+from infrastructure.ml.llm_failover import _RE_MARCADOR_CITA
 
 class AgentIA:
     """Agente de IA para análisis energético en tiempo real"""
@@ -72,7 +73,7 @@ class AgentIA:
                     max_tokens=max_tokens,
                 )
                 self.provider, self.modelo = "OpenRouter", self._openrouter_modelo
-                return resp.choices[0].message.content
+                return _RE_MARCADOR_CITA.sub("", resp.choices[0].message.content or "")
             raise
 
     def get_db_connection(self):

@@ -11,6 +11,15 @@ from domain.schemas.orchestrator import ErrorDetail
 from domain.services.confianza_politica import get_confianza_politica, obtener_disclaimer
 from domain.services.orchestrator.utils.decorators import handle_service_error
 from infrastructure.logging.logger import get_logger
+from core.umbrales_oficiales import (
+    clasificar_indice_ne,
+    clasificar_visual_embalse,
+    clasificar_hsin,
+    clasificar_indice_pbp,
+    clasificar_visual_precio_bolsa,
+    obtener_precios_escasez_vigentes,
+    determinar_condicion_sistema,
+)
 
 # 2026-08-24: usaba logging.getLogger(__name__) (stdlib plano) — mismo bug
 # ya corregido en la Fase 23 para asistente_ia_service.py/voz_ia_service.py/
@@ -1253,12 +1262,28 @@ class InformeHandlerMixin:
     def _build_indices_compuestos(self, fichas, predicciones_mes, anomalias):
         """
         Calcula índices compuestos de estrés y sostenibilidad del sistema.
-        
+
         Índices:
         - Índice de Estrés del Sistema (IES): Combina anomalías, embalses y predicciones
-        - Índice de Sostenibilidad Hídrica (ISH): Basado en niveles de embalses
-        - Índice de Presión de Mercado (IPM): Basado en precios y generación
-        - Calificación Integral del Sistema (CIS): Síntesis de todos los indicadores
+        - Índice de Sostenibilidad Hídrica (ISH): posición del embalse frente a la
+          Senda de Referencia CREG (Índice NE oficial), NO el % crudo de embalse.
+        - Índice de Presión de Mercado (IPM): posición del precio de bolsa frente
+          a los 3 niveles oficiales de precio de escasez (PEI/PE/PES, CREG 101 066/2024).
+        - Calificación Integral del Sistema (CIS): su nivel/emoji quedan ANCLADOS
+          a la condición oficial del Estatuto CREG 026/2014 art. 3
+          (determinar_condicion_sistema, NE+HSIN+PBP) cuando hay datos suficientes
+          para calcularla — el valor numérico 0-100 sigue siendo un puntaje propio
+          para dar granularidad, pero nunca puede mostrar un nivel más optimista
+          que la condición regulatoria real.
+
+        2026-08-25 (a pedido del usuario, Fase 39 continuación): ISH/IPM antes
+        eran puntajes puramente ad-hoc (% crudo de embalse, precio vs. promedio
+        7 días propio) sin ninguna relación con la normativa CREG ya unificada
+        en el resto del portal — un embalse al 79% podía leerse como "ÓPTIMO"
+        aquí mientras el resto del sistema (Asistente IA, alertas) ya reportaba
+        correctamente "BAJO SENDA — RIESGO" para el mismo dato. Se re-ancla todo
+        a las mismas funciones de core/umbrales_oficiales.py ya usadas en el
+        resto del portal, en vez de mantener una tercera copia de umbrales.
         """
         indices = {
             'ies': {'valor': 0, 'max': 100, 'nivel': 'NORMAL', 'emoji': '✅'},
@@ -1267,23 +1292,43 @@ class InformeHandlerMixin:
             'cis': {'valor': 0, 'max': 100, 'nivel': 'ESTABLE', 'emoji': '✅'},
             'componentes': {},
         }
-        
-        # ── 1. Índice de Sostenibilidad Hídrica (ISH) ──
-        ish_score = 50  # Base neutral
+
+        fecha_hoy = date.today()
+
+        # ── 1. Índice de Sostenibilidad Hídrica (ISH) — anclado al Índice NE ──
+        ish_score = 50  # Base neutral si no hay dato de embalse
         ish_fuente = 'fallback_50'
         ish_embalse_pct = None
         fecha_dato_embalse = None
+        ne_nivel = None
         embalse_ficha = self._ficha_por_keyword(fichas, 'embalse')
         if embalse_ficha:
             fecha_dato_embalse = embalse_ficha.get('fecha')
             try:
+                fecha_ne = date.fromisoformat(str(fecha_dato_embalse)[:10]) if fecha_dato_embalse else fecha_hoy
+            except ValueError:
+                fecha_ne = fecha_hoy
+            try:
                 valor_emb = embalse_ficha.get('valor', 0)
                 if isinstance(valor_emb, str):
                     valor_emb = float(valor_emb.replace('%', '').replace(',', '.'))
-                # Score: 0-30 = crítico, 31-50 = alerta, 51-70 = vigilancia, 71-100 = normal
-                ish_score = min(100, max(0, valor_emb))
-                ish_embalse_pct = round(float(valor_emb), 2)
-                ish_fuente = 'ficha_embalse'
+                valor_emb = float(valor_emb)
+                ish_embalse_pct = round(valor_emb, 2)
+                ish_fuente = 'indice_ne_oficial'
+
+                ne_nivel, _, senda = clasificar_indice_ne(valor_emb, fecha_ne)
+                etiqueta_visual, _, _ = clasificar_visual_embalse(valor_emb, fecha_ne)
+                # Score 0-100 posicionado dentro de la banda oficial que le
+                # corresponde según clasificar_visual_embalse() — mismas 4
+                # bandas ya usadas en el resto del portal, no bandas nuevas.
+                if etiqueta_visual == 'NORMAL':  # ≥ objetivo XM (80%)
+                    ish_score = 90 + min(10, valor_emb - 80)
+                elif etiqueta_visual == 'SOBRE SENDA':  # senda ≤ pct < 80%
+                    ish_score = 75 + min(15, valor_emb - senda)
+                elif etiqueta_visual == 'BAJO SENDA — ALERTA':  # senda-5 ≤ pct < senda
+                    ish_score = 50 + max(0, (valor_emb - (senda - 5)) / 5) * 25
+                else:  # 'BAJO SENDA — RIESGO'
+                    ish_score = max(0, 50 - ((senda - 5) - valor_emb))
             except (ValueError, TypeError):
                 logger.warning(
                     '[INFORME] ISH: ficha embalse encontrada pero valor no numérico: %s',
@@ -1294,51 +1339,127 @@ class InformeHandlerMixin:
                 '[INFORME] ISH: no se encontró ficha de embalses — usando fallback 50'
             )
 
-        # Ajustar por anomalías de embalses
-        for anom in anomalias or []:
-            ind_lower = (anom.get('indicador') or anom.get('metrica') or '').lower()
-            if 'embalse' in ind_lower:
-                sev = self._normalizar_severidad(anom.get('severidad', ''))
-                if sev == 'critico':
-                    ish_score -= 25
-                elif sev == 'alerta':
-                    ish_score -= 15
-                break
-        
-        indices['ish']['valor'] = max(0, min(100, ish_score))
-        indices['ish']['nivel'], indices['ish']['emoji'] = self._clasificar_indice(ish_score)
-        
-        # ── 2. Índice de Presión de Mercado (IPM) ──
-        # IPM mide PRESIÓN ALCISTA de precios: solo incrementos cuentan como estrés.
-        # Un precio que cae no es estrés operativo para el SIN (bug anterior: abs() hacía
-        # que precio bajando también elevara el índice).
-        # Baseline = 0 (sin presión). Score sube solo si precio > histórico.
-        ipm_score = 0  # Sin presión alcista por defecto
+        indices['ish']['valor'] = round(max(0, min(100, ish_score)), 1)
+        # El NIVEL mostrado en pantalla es la etiqueta OFICIAL de la CREG
+        # (clasificar_visual_embalse — Res. CREG 209/2020 + 101 112/2026), no
+        # una reclasificación propia del número 0-100 de arriba. El número
+        # 0-100 solo se usa internamente como insumo del IES (compuesto no
+        # oficial, ver más abajo) — nunca se presenta como si fuera un dato
+        # publicado por la CREG. A pedido explícito del usuario (2026-08-25):
+        # "no quiero inventar datos que no vengan directamente de la
+        # normativa oficial".
+        if ne_nivel is not None:
+            indices['ish']['nivel'] = etiqueta_visual
+            indices['ish']['emoji'] = {
+                'NORMAL': '✅', 'SOBRE SENDA': '🟢',
+                'BAJO SENDA — ALERTA': '🟠', 'BAJO SENDA — RIESGO': '🔴',
+            }.get(etiqueta_visual, '⚪')
+        else:
+            indices['ish']['nivel'] = 'SIN DATO OFICIAL'
+            indices['ish']['emoji'] = '⚪'
+
+        # ── 2. Índice de Presión de Mercado (IPM) — anclado a PEI/PE/PES ──
+        # IPM mide PRESIÓN vs. los 3 niveles oficiales de precio de escasez
+        # (Res. CREG 101 066/2024), no un promedio propio de 7 días.
+        ipm_score = 0
+        pbp_nivel_estatuto = None
+        etiqueta_precio = None
         precio_ficha = self._ficha_por_keyword(fichas, 'precio')
+        precios_escasez = None
         if precio_ficha:
             try:
                 valor_precio = float(precio_ficha.get('valor', 0))
-                historico_precio = self._baseline_precio_ficha(precio_ficha)
-                if historico_precio > 0 and valor_precio > historico_precio:
-                    incremento_pct = (valor_precio - historico_precio) / historico_precio * 100
-                    ipm_score = min(100, max(0, incremento_pct))
-            except (ValueError, TypeError, ZeroDivisionError):
-                pass
+                precios_escasez = obtener_precios_escasez_vigentes(fecha_hoy)
+                pei, pe, pes = precios_escasez['pei'], precios_escasez['pe'], precios_escasez['pes']
+                etiqueta_precio, _, _ = clasificar_visual_precio_bolsa(valor_precio, pei, pe, pes, fecha_hoy)
+                if etiqueta_precio == 'CÓMODO':
+                    ipm_score = max(0, min(25, (valor_precio / pei) * 25)) if pei > 0 else 0
+                elif etiqueta_precio == 'ESTRÉS MODERADO':
+                    ipm_score = 25 + max(0, min(25, (valor_precio - pei) / (pe - pei) * 25)) if pe > pei else 25
+                elif etiqueta_precio == 'ALTA PRESIÓN':
+                    ipm_score = 50 + max(0, min(25, (valor_precio - pe) / (pes - pe) * 25)) if pes > pe else 50
+                else:  # 'TECHO REGULATORIO'
+                    ipm_score = 75 + max(0, min(25, (valor_precio - pes) / pes * 25)) if pes > 0 else 75
 
-        # Ajustar por anomalías de precios
-        for anom in anomalias or []:
-            ind_lower = (anom.get('indicador') or anom.get('metrica') or '').lower()
-            if 'precio' in ind_lower or 'bolsa' in ind_lower:
-                sev = self._normalizar_severidad(anom.get('severidad', ''))
-                if sev == 'critico':
-                    ipm_score += 30
-                elif sev == 'alerta':
-                    ipm_score += 15
-                break
-        
-        indices['ipm']['valor'] = max(0, min(100, ipm_score))
-        indices['ipm']['nivel'], indices['ipm']['emoji'] = self._clasificar_indice(ipm_score, invertido=True)
-        
+                # Índice PBP del Estatuto (4-de-7-días vs. PE) — necesario para
+                # el anclaje de CIS a determinar_condicion_sistema() más abajo.
+                try:
+                    from infrastructure.database.repositories.metrics_repository import MetricsRepository
+                    _repo = MetricsRepository()
+                    # Ventana ampliada a 14 días calendario (no solo 7): XM
+                    # suele publicar con 2-3 días de rezago, así que una
+                    # ventana calendario exacta de 7 días a menudo solo trae
+                    # 4-5 filas reales. Se toman las últimas 7 filas REALES
+                    # disponibles dentro de la ventana — mismo patrón ya
+                    # usado en scripts/alertas_energeticas.py::evaluar_precio_bolsa().
+                    _df_pbp = _repo.get_metric_data('PrecBolsNaci', (fecha_hoy - self._timedelta_dias(14)).isoformat(), fecha_hoy.isoformat())
+                    if _df_pbp is not None and len(_df_pbp) > 0:
+                        _pbp_recientes = _df_pbp.sort_values('fecha', ascending=False).head(7)
+                        pbp_nivel_estatuto, _ = clasificar_indice_pbp(_pbp_recientes['valor_gwh'].tolist(), pe)
+                except Exception as e:
+                    logger.warning('[INFORME] IPM: no se pudo calcular Índice PBP del Estatuto: %s', e)
+            except (ValueError, TypeError, ZeroDivisionError, KeyError) as e:
+                logger.warning('[INFORME] IPM: error clasificando precio contra PEI/PE/PES: %s', e)
+
+        indices['ipm']['valor'] = round(max(0, min(100, ipm_score)), 1)
+        # Igual que ISH: el NIVEL mostrado es la etiqueta OFICIAL de la CREG
+        # (clasificar_visual_precio_bolsa — Res. CREG 101 066/2024), no una
+        # reclasificación propia del número interno.
+        if etiqueta_precio is not None:
+            indices['ipm']['nivel'] = etiqueta_precio
+            indices['ipm']['emoji'] = {
+                'CÓMODO': '✅', 'ESTRÉS MODERADO': '🟠',
+                'ALTA PRESIÓN': '🔴', 'TECHO REGULATORIO': '🔴',
+            }.get(etiqueta_precio, '⚪')
+        else:
+            indices['ipm']['nivel'] = 'SIN DATO OFICIAL'
+            indices['ipm']['emoji'] = '⚪'
+
+        # ── HSIN (aportes hídricos) — solo para el anclaje de CIS, no tiene
+        # tarjeta propia en este informe. Réplica EXACTA de la consulta que ya
+        # usa scripts/alertas_energeticas.py::evaluar_aportes_hidricos() —
+        # ventana de HSIN_VENTANA_SEMANAS (4 semanas, Estatuto CREG 026/2014
+        # art. 2), excluyendo los últimos 3 días por rezago de publicación de
+        # XM, filtrando por recurso='Sistema' (columna real de
+        # sector_energetico.metrics, distinta de 'entidad'). Corregido
+        # 2026-08-25: la primera versión usaba HydrologyService.
+        # get_aportes_hidricos(), que calcula "mes calendario a la fecha" —
+        # una ventana DISTINTA a la que exige el Estatuto, señalado
+        # correctamente por el usuario como una inconsistencia real frente al
+        # resto del portal (que sí usa las 4 semanas correctas).
+        hsin_nivel = None
+        try:
+            from infrastructure.database.manager import db_manager
+            from core.umbrales_oficiales import HSIN_VENTANA_SEMANAS
+            _dias_hsin = HSIN_VENTANA_SEMANAS * 7
+            _fecha_fin_hsin = fecha_hoy - self._timedelta_dias(3)
+            _fecha_inicio_hsin = _fecha_fin_hsin - self._timedelta_dias(_dias_hsin)
+            _df_aportes = db_manager.query_df(
+                """
+                SELECT fecha::date AS fecha, valor_gwh
+                FROM sector_energetico.metrics
+                WHERE metrica = %(metrica)s AND recurso = 'Sistema'
+                  AND fecha::date BETWEEN %(desde)s AND %(hasta)s
+                """,
+                {"metrica": "AporEner", "desde": _fecha_inicio_hsin, "hasta": _fecha_fin_hsin},
+            )
+            _df_media_hist = db_manager.query_df(
+                """
+                SELECT fecha::date AS fecha, valor_gwh
+                FROM sector_energetico.metrics
+                WHERE metrica = %(metrica)s AND recurso = 'Sistema'
+                  AND fecha::date BETWEEN %(desde)s AND %(hasta)s
+                """,
+                {"metrica": "AporEnerMediHist", "desde": _fecha_inicio_hsin, "hasta": _fecha_fin_hsin},
+            )
+            if len(_df_aportes) > 0 and len(_df_media_hist) > 0:
+                _media_hist = float(_df_media_hist['valor_gwh'].mean())
+                if _media_hist > 0:
+                    _aportes_pct = float(_df_aportes['valor_gwh'].mean()) / _media_hist * 100.0
+                    hsin_nivel, _ = clasificar_hsin(_aportes_pct)
+        except Exception as e:
+            logger.warning('[INFORME] CIS: no se pudo calcular Índice HSIN (ventana 4 semanas) para el anclaje: %s', e)
+
         # ── 3. Índice de Estrés del Sistema (IES) ──
         # Combinación ponderada: 40% ISH + 35% IPM + 25% Anomalías
         n_criticas = sum(
@@ -1350,44 +1471,64 @@ class InformeHandlerMixin:
             if self._normalizar_severidad(a.get('severidad', '')) == 'alerta'
         )
         factor_anomalias = min(100, (n_criticas * 40) + (n_alertas * 20))
-        
+
         ies_score = (0.40 * (100 - indices['ish']['valor'])) + \
                     (0.35 * indices['ipm']['valor']) + \
                     (0.25 * factor_anomalias)
-        
+
         indices['ies']['valor'] = round(max(0, min(100, ies_score)), 1)
         indices['ies']['nivel'], indices['ies']['emoji'] = self._clasificar_indice(ies_score, invertido=True)
-        
+
         # ── 4. Calificación Integral del Sistema (CIS) ──
         cis_score = (indices['ish']['valor'] * 0.5) + ((100 - indices['ipm']['valor']) * 0.3) + ((100 - indices['ies']['valor']) * 0.2)
-        indices['cis']['valor'] = round(cis_score, 1)
-        
-        if cis_score >= 75:
-            indices['cis']['nivel'] = 'ESTABLE'
-            indices['cis']['emoji'] = '✅'
-        elif cis_score >= 50:
-            indices['cis']['nivel'] = 'VIGILANCIA'
-            indices['cis']['emoji'] = '⚠️'
-        elif cis_score >= 25:
-            indices['cis']['nivel'] = 'PREOCUPANTE'
-            indices['cis']['emoji'] = '🔶'
+
+        # El NIVEL de CIS es la palabra EXACTA que usa el Estatuto CREG
+        # 026/2014 art. 3 (NORMAL / VIGILANCIA / RIESGO — determinar_
+        # condicion_sistema) — ya no se inventa una subdivisión propia de 4
+        # niveles (ESTABLE/VIGILANCIA/PREOCUPANTE/CRÍTICO) que la CREG no
+        # define. Si falta algún insumo (NE, HSIN o PBP con historia
+        # suficiente), se muestra explícitamente que no hay dato oficial en
+        # vez de fabricar uno a partir del puntaje ponderado interno.
+        condicion_oficial = None
+        descripcion_oficial = None
+        if ne_nivel and hsin_nivel and pbp_nivel_estatuto and pbp_nivel_estatuto != 'INDETERMINADO':
+            condicion_oficial, descripcion_oficial = determinar_condicion_sistema(ne_nivel, hsin_nivel, pbp_nivel_estatuto)
+            indices['cis']['nivel'] = condicion_oficial
+            indices['cis']['emoji'] = {'NORMAL': '✅', 'VIGILANCIA': '⚠️', 'RIESGO': '🔴'}.get(condicion_oficial, '⚪')
         else:
-            indices['cis']['nivel'] = 'CRÍTICO'
-            indices['cis']['emoji'] = '🔴'
-        
+            indices['cis']['nivel'] = 'SIN DATO OFICIAL'
+            indices['cis']['emoji'] = '⚪'
+
+        indices['cis']['valor'] = round(max(0, min(100, cis_score)), 1)
+
         # Componentes para análisis detallado
         indices['componentes'] = {
             'anomalias_criticas': n_criticas,
             'anomalias_alertas': n_alertas,
             'factor_anomalias': round(factor_anomalias, 1),
             'pesos_aplicados': {'ish': 0.40, 'ipm': 0.35, 'anomalias': 0.25},
-            'caracter': 'DESCRIPTIVO — no usado para disparar alertas operativas',
+            'caracter': (
+                'ISH/IPM anclados al Índice NE y a PEI/PE/PES oficiales (CREG); '
+                'CIS anclado a determinar_condicion_sistema() (Estatuto CREG 026/2014 '
+                'art. 3) cuando hay NE+HSIN+PBP disponibles — nunca dispara alertas '
+                'operativas por sí mismo, esa función la cumple el sistema de alertas.'
+            ),
             'ish_embalse_pct': ish_embalse_pct,
             'ish_fuente': ish_fuente,
             'fecha_dato_embalse': fecha_dato_embalse,
+            'condicion_regulatoria_creg': condicion_oficial,
+            'condicion_regulatoria_creg_descripcion': descripcion_oficial,
+            'ne_nivel': ne_nivel,
+            'hsin_nivel': hsin_nivel,
+            'pbp_nivel_estatuto': pbp_nivel_estatuto,
         }
-        
+
         return indices
+
+    @staticmethod
+    def _timedelta_dias(dias: int):
+        from datetime import timedelta
+        return timedelta(days=dias)
     
     def _clasificar_indice(self, valor, invertido=False):
         """Clasifica un valor de índice en nivel y emoji."""

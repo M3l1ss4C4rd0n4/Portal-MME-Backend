@@ -23,6 +23,7 @@ propaga la última excepción real — el llamador decide cómo degradar
 igual que ya hacían los try/except existentes en cada consumidor.
 """
 
+import re
 from typing import List, Optional, Tuple
 
 import asyncio
@@ -33,6 +34,16 @@ from core.config import settings
 from infrastructure.logging.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Defensa en profundidad contra marcadores de cita estilo OpenAI-file-search
+# (【0†L35-L45】) que algunos modelos (Groq/Llama) generan por costumbre de
+# otras plataformas — quedan como texto roto en el chatbot/informe
+# ejecutivo/notificaciones que consumen este módulo (AgentIA, WhatsApp bot,
+# push_tasks, energia_app). Duplicado a propósito del regex equivalente en
+# asistente_ia_service.py (ver docstring del módulo — no se comparte código
+# entre ambos), pero mismo criterio: nunca depender solo de que el modelo
+# obedezca la instrucción del prompt.
+_RE_MARCADOR_CITA = re.compile(r"【[^】]*】")
 
 
 def proveedores_disponibles() -> List[Tuple[str, str, str, str]]:
@@ -111,7 +122,8 @@ def completar_chat(
             )
             if i > 0:
                 logger.warning(f"{prefijo}Servido por fallback '{nombre}' (proveedor(es) anterior(es) no disponible(s))")
-            return resp.choices[0].message.content, nombre, modelo
+            texto = _RE_MARCADOR_CITA.sub("", resp.choices[0].message.content or "")
+            return texto, nombre, modelo
         except Exception as e:
             if not _es_error_de_disponibilidad(e):
                 raise

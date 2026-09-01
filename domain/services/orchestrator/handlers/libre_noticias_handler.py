@@ -627,10 +627,14 @@ class LibreNoticiasHandlerMixin:
                     max_tokens=300,
                 )
 
-            # 45s (no 15s): agent.completar() ahora puede intentar 2
-            # proveedores en secuencia (Gemini→Groq) — 15s no dejaba
-            # margen para el reintento real.
-            texto_ia = await asyncio.wait_for(asyncio.to_thread(_call_ai), timeout=45)
+            # 8s: el resumen es un "nice to have" que no debe retener la
+            # respuesta completa de noticias — todos los consumidores
+            # (portal 15s, informe 20s, chat_widget 20s, Telegram 30s)
+            # tienen su propio timeout más corto que los 45s que usaba
+            # antes, así que cualquier valor mayor nunca llegaba a tiempo
+            # y la respuesta se descartaba siempre. Si Gemini/Groq no
+            # responden en 8s, se degrada a resumen_general=None.
+            texto_ia = await asyncio.wait_for(asyncio.to_thread(_call_ai), timeout=8)
             texto = texto_ia.strip()
             if len(texto) < 30:
                 logger.warning(f"[NOTICIAS_RESUMEN] Respuesta demasiado corta ({len(texto)} chars)")

@@ -18,6 +18,10 @@ class TestAgentIA:
         mock_settings.GROQ_API_KEY = 'test_key'
         mock_settings.GROQ_BASE_URL = 'https://test.com'
         mock_settings.AI_MODEL = 'test-model'
+        # Sin esto, el MagicMock por defecto de OPENROUTER_API_KEY es
+        # "truthy" y AgentIA.__init__ intenta construir un cliente OpenAI
+        # real con OPENROUTER_BASE_URL (también un MagicMock, no un str).
+        mock_settings.OPENROUTER_API_KEY = ''
         
         agent = AgentIA()
         assert agent is not None

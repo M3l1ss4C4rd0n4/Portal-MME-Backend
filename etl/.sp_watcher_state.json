@@ -1,43 +1,43 @@
 {
   "Matriz_General_Reparto": {
-    "lastModifiedDateTime": "2026-08-24T20:37:26Z",
-    "eTag": "\"{8C044B58-604D-45DA-93D9-015FB9BB6047},21764\"",
-    "size": 86151108,
-    "last_etl_run": "2026-08-24T20:40:01Z",
+    "lastModifiedDateTime": "2026-08-31T20:30:47Z",
+    "eTag": "\"{8C044B58-604D-45DA-93D9-015FB9BB6047},22727\"",
+    "size": 86749440,
+    "last_etl_run": "2026-08-31T20:35:01Z",
     "last_etl_ok": true,
-    "content_hash": "26337c506023ed2dc81e4361c76f5ae1fecd046db8c054fee83363a59a61133a"
+    "content_hash": "a77061a6d68d38f9776777ac81e32b8594ef6b566d24fc6a844ab62d158d8883"
   },
   "Acuerdos_Gestion_DEE_2026": {
     "lastModifiedDateTime": "2026-08-18T21:15:37Z",
-    "eTag": "\"{D7F413E7-766B-4BD4-AE85-7977BE8D51FF},218\"",
-    "size": 154444,
-    "last_etl_run": "2026-08-19T09:02:47Z",
+    "eTag": "\"{D7F413E7-766B-4BD4-AE85-7977BE8D51FF},219\"",
+    "size": 155151,
+    "last_etl_run": "2026-08-27T09:03:03Z",
     "last_etl_ok": true,
-    "content_hash": "190667fa04b690907814f9072ece9caf39ab93343978a9eec771335444dbcc9b"
+    "content_hash": "66478175bd7488e302fe1081fda76a2250c14e3123ac952c785c46e4b9e4a321"
   },
   "Base_Subsidios_DDE": {
-    "lastModifiedDateTime": "2026-08-24T16:44:17Z",
-    "eTag": "\"{751521B2-15FE-4300-A140-05067D142FB6},1271\"",
-    "size": 4976149,
-    "last_etl_run": "2026-08-24T16:45:01Z",
+    "lastModifiedDateTime": "2026-08-28T17:31:25Z",
+    "eTag": "\"{751521B2-15FE-4300-A140-05067D142FB6},1273\"",
+    "size": 4937504,
+    "last_etl_run": "2026-08-29T09:02:53Z",
     "last_etl_ok": true,
-    "content_hash": "bb6bbb86eaa5bbf816e9df21f0ad90329820e8a68b6df25f0b927a119d6b6ffc"
+    "content_hash": "f852d86bd12443994e31da552ae9df0f7e375974dfad4b36a8ee1d1be63f1abd"
   },
   "Seguimiento_Contratos_CE": {
-    "lastModifiedDateTime": "2026-08-04T18:50:42Z",
-    "eTag": "\"{0A6A50A7-545B-4DDE-8DA1-897BC546D23E},631\"",
-    "size": 180682,
-    "last_etl_run": "2026-08-05T09:02:56Z",
+    "lastModifiedDateTime": "2026-08-28T16:57:17Z",
+    "eTag": "\"{0A6A50A7-545B-4DDE-8DA1-897BC546D23E},640\"",
+    "size": 180374,
+    "last_etl_run": "2026-08-29T09:02:57Z",
     "last_etl_ok": true,
-    "content_hash": "2c2708fa66f8b18f337565139d506ee762f7e8a5954bccf4b2a21aba8a022fc5"
+    "content_hash": "3f9245d6aba4c3e2f67152b50c03da64625feadc4fa6183caba3648352e3fa93"
   },
   "Comunidades_Seguimiento_FENOGE": {
     "lastModifiedDateTime": "2026-08-24T14:56:39Z",
-    "eTag": "\"{F6819F9F-F81B-413E-B7B8-E97EA59F6560},109\"",
+    "eTag": "\"{F6819F9F-F81B-413E-B7B8-E97EA59F6560},110\"",
     "size": 97341,
-    "last_etl_run": "2026-08-24T15:00:02Z",
+    "last_etl_run": "2026-08-27T09:03:33Z",
     "last_etl_ok": true,
-    "content_hash": "2a0cff9ed17dc3465fe5140cc633ea49df99894643756f8b44a7cd12ca162920"
+    "content_hash": "0d7ef911f2a46a85432746104cc8ca9b7b1d745daa5e94bfbe84a874154eb588"
   },
   "Deficit_Historico_Subsidios": {
     "lastModifiedDateTime": "2026-05-07T04:47:12Z",
@@ -49,19 +49,19 @@
   },
   "Comunidades_Energeticas_FENOGE": {
     "lastModifiedDateTime": "2026-06-16T14:36:11Z",
-    "eTag": "\"{A4E9BDF1-AC07-4F2F-85B0-9A714C7F18B9},13\"",
+    "eTag": "\"{A4E9BDF1-AC07-4F2F-85B0-9A714C7F18B9},14\"",
     "size": 38609,
-    "last_etl_run": "2026-07-01T09:03:03Z",
+    "last_etl_run": "2026-08-27T09:03:39Z",
     "last_etl_ok": true,
-    "content_hash": "3be0b079001aee8e66ebbacfd0921044cd75829f6924724052e568aeeac1a854"
+    "content_hash": "bd8ce12bc354d7829ccaa1995d960aeb516328ee0e6024027ac75acb18b23583"
   },
   "Colombia_Solar_OR": {
-    "lastModifiedDateTime": "2026-08-21T19:16:44Z",
-    "eTag": "\"{8CDCDDC1-DB3C-4BF9-9505-C63FCBCAFA31},1912\"",
-    "size": 2034443,
-    "last_etl_run": "2026-08-22T09:03:13Z",
+    "lastModifiedDateTime": "2026-08-28T13:21:36Z",
+    "eTag": "\"{8CDCDDC1-DB3C-4BF9-9505-C63FCBCAFA31},1970\"",
+    "size": 2042971,
+    "last_etl_run": "2026-08-29T09:03:11Z",
     "last_etl_ok": true,
-    "content_hash": "e6eee103d4bcd20de07d34fcaeb819b890c0b2cf5f04e7023e29d3f085f509ec"
+    "content_hash": "5440af6ce30d1302b0a4d0019865f5a4cd808052c5b3af0cdf610aec63d3c56d"
   },
   "Resumen_Implementacion_CE": {
     "lastModifiedDateTime": "2026-08-18T16:49:34Z",
@@ -75,8 +75,8 @@
     "lastModifiedDateTime": "2026-08-24T15:04:15Z",
     "eTag": "\"{C4558874-485D-46D4-8A54-0EB02497649B},65\"",
     "size": 16141,
-    "last_etl_run": "2026-08-24T15:05:01Z",
+    "last_etl_run": "2026-08-25T09:03:18Z",
     "last_etl_ok": true,
-    "content_hash": "9ab3688acfde4368f6a4fca1301f3a23fa2ea3573f7bddb1b1fee783c23de587"
+    "content_hash": "7192d837cd2cd9b3002667e8fd6c249a5e0bc4e1a6bf8026ca129f90fc9a8e2f"
   }
 }
