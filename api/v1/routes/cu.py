@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from api.dependencies import get_api_key, get_cu_service
+from api.dependencies import get_api_key, get_cu_service, get_cu_minorista_service
 from api.v1.schemas.cu import (
     CUCurrentResponse,
     CUHistoricoResponse,
@@ -162,6 +162,52 @@ async def get_cu_current(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo CU actual: {e}")
+
+
+@router.get(
+    "/minorista/promedio-nacional",
+    summary="CU minorista promedio nacional (tarifa usuario final)",
+    description="""
+    Promedio nacional REAL del Costo Unitario que paga el usuario final
+    (tarifa minorista, NO el CU mayorista de `/current`) — promedio
+    PONDERADO por la demanda real de cada operador (`metodo:
+    "ponderado_demanda_real"`, ver campo `pct_demanda_cubierta_ponderacion`
+    para qué fracción de la demanda nacional respalda el número; cae a
+    `"promedio_simple"` solo si el script de ponderación aún no corrió).
+    Pesos derivados de la Tabla 26 oficial (operador↔mercado) del Boletín
+    Tarifario SSPD 4T-2025 + demanda real de XM (DemaCome) por mercado —
+    ver `scripts/cu/build_mercado_or_alias.py`. Estrato E4 (sin subsidio ni
+    contribución), sin IVA por defecto.
+
+    Fórmula (Art. 4 Res. CREG 119/2007, mod. Res. CREG 101-28/2023):
+    CU_minorista = (G + T_STN + T_STR + D + C + R + Cargos_Sociales) / (1 - Pérdidas%)
+
+    G viene de cu_daily (mercado mayorista, en vivo). T_STN se toma en vivo
+    de CargoUsoSTN de XM cuando hay dato del mes actual (Fase 40), si no
+    cae al valor SSPD estático. T_STR/D/C/pérdidas son específicos por OR
+    (cu_tarifas_or) — su fecha de vigencia real se refleja en el campo
+    `fuente` de cada operador consultado vía /cu/minorista/todos-or.
+    """,
+)
+@limiter.limit("60/minute")
+async def get_cu_minorista_promedio_nacional(
+    request: Request,
+    api_key: str = Depends(get_api_key),
+    service=Depends(get_cu_minorista_service),
+):
+    """Promedio nacional del CU minorista (tarifa usuario final), ponderado por demanda real."""
+    try:
+        resultado = service.get_promedio_nacional_minorista()
+        if resultado is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No hay datos suficientes para calcular el CU minorista nacional.",
+            )
+        return {"status": "ok", **resultado}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculando CU minorista nacional: {e}")
 
 
 @router.get(

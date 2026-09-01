@@ -149,6 +149,22 @@ class CUMinoristaService:
         try:
             with self._conn_mgr.get_connection() as conn:
                 df = pd.read_sql_query(sql, conn)
+                # Fase 40: T_STN minorista en vivo (CargoUsoSTN/DemaCome de XM,
+                # scripts/cu/etl_cargo_stn.py) reemplaza el valor estático SSPD
+                # (Ene-2026, ~50.87) cuando hay dato del mes actual — misma
+                # magnitud/concepto, solo más reciente. Si no hay dato en
+                # vivo para el mes, se mantiene t_stn_cop_kwh tal cual vino
+                # de cu_tarifas_or (nunca se rompe el camino existente).
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT cargo_stn_cop_kwh FROM cargo_stn_mensual "
+                    "WHERE mes = date_trunc('month', CURRENT_DATE)::date"
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row[0] is not None and not df.empty:
+                    df['t_stn_cop_kwh'] = float(row[0])
+                    logger.info(f"{_LOG} T_STN minorista sustituido por valor en vivo: {float(row[0]):.2f} COP/kWh")
             return df
         except Exception as e:
             logger.error(f"{_LOG} Error cargando tarifas OR: {e}")
@@ -568,10 +584,53 @@ class CUMinoristaService:
 
         return pd.DataFrame(resultados)
 
+    def get_pesos_demanda_or(self) -> Optional[dict]:
+        """
+        Fase 40 Ronda 3 — pesos de demanda real por operador (mes más
+        reciente disponible en cu_pesos_demanda_or, producidos por
+        scripts/cu/build_mercado_or_alias.py desde la Tabla 26 oficial del
+        Boletín Tarifario SSPD + DemaCome real de XM por mercado).
+
+        Retorna {'pesos': {or_codigo: peso_normalizado}, 'pct_cubierta': X,
+        'mes': fecha} o None si la tabla está vacía (aún no se corrió el
+        script) — nunca lanza excepción.
+        """
+        sql = """
+            SELECT or_codigo, peso_normalizado, pct_demanda_cubierta, mes
+            FROM cu_pesos_demanda_or
+            WHERE mes = (SELECT max(mes) FROM cu_pesos_demanda_or)
+        """
+        try:
+            with self._conn_mgr.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(sql)
+                rows = cur.fetchall()
+                cur.close()
+        except Exception as e:
+            logger.error(f"{_LOG} Error leyendo pesos de demanda por OR: {e}")
+            return None
+
+        if not rows:
+            return None
+        return {
+            'pesos': {r[0]: float(r[1]) for r in rows},
+            'pct_cubierta': float(rows[0][2]),
+            'mes': rows[0][3],
+        }
+
     def get_promedio_nacional_minorista(self, fecha: Optional[date] = None) -> Optional[dict]:
         """
-        Calcula el CU minorista promedio nacional (promedio ponderado por
-        número de ORs por región, igual peso para simplificar).
+        Calcula el CU minorista promedio nacional.
+
+        Fase 40 Ronda 3 (2026-08-26): pasó de promedio SIMPLE (igual peso
+        entre los 26 operadores) a promedio PONDERADO por la demanda real
+        de cada operador (cu_pesos_demanda_or, derivado de la Tabla 26
+        oficial del Boletín Tarifario SSPD 4T-2025 + DemaCome real de XM,
+        84% de la demanda nacional cubierta) — más preciso, reemplaza el
+        valor anterior en TODOS los lugares donde se muestra este KPI
+        (home.py, costo_usuario_final.py, portal Next.js). Si los pesos no
+        están disponibles (script nunca corrido), cae a promedio simple
+        como respaldo — nunca deja el KPI sin valor.
 
         Útil para mostrar en el KPI de home.py.
         """
@@ -579,7 +638,23 @@ class CUMinoristaService:
         if df.empty:
             return None
 
-        cu_prom = df['cu_minorista_total'].mean()
+        info_pesos = self.get_pesos_demanda_or()
+        metodo = 'promedio_simple'
+        pct_cubierta = None
+
+        if info_pesos is not None:
+            pesos = info_pesos['pesos']
+            df_pond = df[df['or_codigo'].isin(pesos.keys())].copy()
+            if not df_pond.empty:
+                df_pond['peso'] = df_pond['or_codigo'].map(pesos)
+                cu_prom = (df_pond['cu_minorista_total'] * df_pond['peso']).sum() / df_pond['peso'].sum()
+                metodo = 'ponderado_demanda_real'
+                pct_cubierta = round(info_pesos['pct_cubierta'], 1)
+            else:
+                cu_prom = df['cu_minorista_total'].mean()
+        else:
+            cu_prom = df['cu_minorista_total'].mean()
+
         cu_min  = df['cu_minorista_total'].min()
         cu_max  = df['cu_minorista_total'].max()
         fecha_g = df['fecha_g'].iloc[0] if 'fecha_g' in df.columns else None
@@ -595,5 +670,7 @@ class CUMinoristaService:
             'cu_minorista_max': round(cu_max, 2),
             'or_mas_caro': or_mas_caro.get('or_codigo', ''),
             'or_menos_caro': or_menos_caro.get('or_codigo', ''),
+            'metodo': metodo,
+            'pct_demanda_cubierta_ponderacion': pct_cubierta,
             'n_operadores': len(df),
         }
