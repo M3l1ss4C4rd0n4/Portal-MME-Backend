@@ -802,14 +802,19 @@ CONDICIONADO:
 
 ### 8.1 God Services (lista de vigilancia)
 
+> Líneas verificadas 2026-09-01 (`grep -c "^"` real, no de memoria) — varias cambiaron sustancialmente desde la última revisión de esta tabla, y se agregaron 2 servicios nuevos que no existían antes (`portal_report_service.py`, `asistente_ia_service.py`).
+
 | Servicio | Líneas | Output Canónico | Restricción Especial |
 |---|---|---|---|
-| report_service.py | 1.850 | PDF | pdftotext diff obligatorio |
+| report_service.py | **3.584** (antes 1.850) | PDF | pdftotext diff obligatorio |
+| portal_report_service.py | **2.819** (nuevo, no estaba en esta tabla) | Informe ejecutivo público del portal | pdftotext diff obligatorio |
 | executive_report_service.py | 1.618 | PDF ejecutivo | pdftotext diff obligatorio |
-| cu_service.py | 1.010 | Datos XM | Mock de XM obligatorio |
-| losses_nt_service.py | 1.199 | Cálculos regulatorios | Validación contra cálculo manual |
+| asistente_ia_service.py | **1.443** (nuevo, no estaba en esta tabla) | Tool-calling Asistente IA (streaming SSE) | Correr `scripts/asistente/run_golden_dataset.py` antes de dar por cerrado un cambio de prompt/catálogo de tools |
+| notification_service.py | 1.347 | Alertas Telegram/email | Probar en canal de prueba antes de producción |
+| losses_nt_service.py | **1.208** (antes 1.199) | Cálculos regulatorios | Validación contra cálculo manual |
+| cu_service.py | **1.122** (antes 1.010) | Datos XM | Mock de XM obligatorio |
+| predictions_service_extended.py | **887** (antes 698) | ML | Fixture de modelo |
 | simulation_service.py | 748 | Monte Carlo | Seed fijo en tests |
-| predictions_service_extended.py | 698 | ML | Fixture de modelo |
 
 ---
 

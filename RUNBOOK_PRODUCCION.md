@@ -25,13 +25,27 @@
 
 ## 2. Tareas programadas (Celery Beat)
 
+> **Actualizado 2026-09-01** — la tabla anterior solo tenía 5 de las ~15 tareas reales (`tasks/__init__.py::app.conf.beat_schedule`). Faltaban, entre otras, el sanador de vistas de ontología (cada 5 min) y el backtest riguroso de predicciones (mensual) — ambos subsistemas construidos después de la última versión de este runbook.
+
 | Hora (COT) | Tarea | Descripción |
 |---|---|---|
 | Cada 6h (0, 6, 12, 18) | `etl_incremental_all_metrics` | ETL incremental datos XM → PostgreSQL |
-| 03:00 | `clean_old_logs` | Limpieza de logs antiguos |
+| 03:00 diario | `clean_old_logs` | Limpieza de logs antiguos |
 | Cada 30 min | `check_anomalies` | Detección de anomalías (gene, precio, embalses, CU, PNT) |
 | 08:30 | `send_daily_generate` | Informe ejecutivo: genera PDF, Telegram, encola emails en paralelo |
+| 08:35 | `enviar_informe_diario_push` | Push FCM del informe a la app móvil EnergIA |
 | 10:00 | `calcular_cu_diario` | Cálculo Costo Unitario + Pérdidas NT |
+| Lunes 01:15 | `actualizar_pdo_soi` | Refresco semanal de índices climáticos PDO/SOI (NOAA) |
+| Lunes 01:30 | `actualizar_oni` | Refresco semanal del índice ONI (NOAA CPC) |
+| Dom/Mié/Sáb 02:00 | `regenerar_predicciones` | Reentrenamiento del ensemble Prophet+SARIMAX (embalses/demanda/generación/etc.) |
+| 1er domingo del mes 03:30 | `ejecutar_backtests_predicciones` | Backtest riguroso out-of-sample (5 fuentes) — la validación real de precisión, no el holdout optimista. Ver `docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md` |
+| 7h, 12h, 19h | `refresh_news_cache` | Refresco de caché de noticias del sector |
+| Lunes 02:15 | `refresh_senda_referencia` | Refresco semanal de la Senda de Referencia CREG |
+| Día 1 del mes 03:00 | `refresh_precios_escasez` | Refresco mensual de Precios de Escasez (PEI/PE/PES) |
+| 08:45 | `generar_diagnosticos_homeslider` | Diagnósticos generados por IA para el slider del home |
+| **Cada 5 min** | `verificar_vistas_ontologia` | Sanador automático de las vistas materializadas del esquema `ontologia` — se reparan solas si un ETL externo las tumba con `DROP CASCADE` |
+
+Fuente de verdad real: `tasks/__init__.py::app.conf.beat_schedule` — regenerar esta tabla desde ahí si vuelve a quedar desactualizada, no confiar en esta copia indefinidamente.
 
 ---
 
@@ -206,31 +220,40 @@ Logs estructurados de email: buscar `[EMAIL]` en logs Celery. El callback `email
 
 ## 4. Umbrales de alerta configurados
 
+> Corregido 2026-09-01: P_NT tenía un solo umbral (8%) documentado, el código real (`domain/services/losses_nt_service.py`, perfil nacional) usa 2 umbrales distintos (`pnt_warn_pct=6.0`, `pnt_crit_pct=10.0`). Los umbrales de embalses también se corrigieron para coincidir con la unificación IDEAM/UNGRD (`core/umbrales_ideam_ungrd.py`, ver `docs/tecnicos/ANALISIS_HIDROLOGIA_SEMAFORO.md` §10) — **distinto** del Índice NE regulatorio de la CREG (compara contra la senda de referencia mensual, no un umbral fijo).
+
 | Indicador | Umbral | Severidad | Acción |
 |---|---|---|---|
 | CU > 400 COP/kWh | ALERTA | Monitorear | Revisar precio de bolsa |
 | CU > 600 COP/kWh | CRÍTICO | Urgente | Posible crisis energética — escalar |
-| P_NT > 8% | ALERTA | Monitorear | Revisar metodología o datos fuente |
-| Embalses < 30% | CRÍTICO | Urgente | Riesgo de racionamiento |
-| Embalses < 40% | ALERTA | Monitorear | Aumentar vigilancia |
+| P_NT > 6% | ALERTA | Monitorear | Revisar metodología o datos fuente |
+| P_NT > 10% | CRÍTICO | Urgente | Escalar — pérdidas no técnicas fuera de rango |
+| Embalses < 27% | CRÍTICO — RACIONAMIENTO | Urgente | Riesgo de racionamiento (IDEAM) |
+| Embalses 27%-40% | ALERTA — NIVEL BAJO | Monitorear | Aumentar vigilancia (IDEAM) |
+| Embalses > 90% | ALERTA/CRÍTICO — NIVEL ALTO | Monitorear/Urgente | Riesgo de desbordamiento (UNGRD) |
+| Índice NE (CREG, agregado SIN) | vs. senda de referencia mensual, no un % fijo | Variable | Ver `core/umbrales_oficiales.py::clasificar_indice_ne()` — nunca confundir con el umbral de embalses de arriba |
 | Datos > 24h sin actualizar | ALERTA | Monitorear | Verificar ETL y XM API |
 
 ---
 
 ## 5. Logs importantes
 
-| Log | Ubicación |
+> **⚠️ Corrección crítica 2026-09-01**: las rutas `logs/api-access.log` / `logs/api-error.log` de la versión anterior de esta tabla **no existen**. El `portal-api.service` real (verificado en `/etc/systemd/system/portal-api.service`) corre `uvicorn` plano y redirige todo su stdout/stderr fuera del repo, a `/var/log/portal-api.log` — un operador buscando errores en `logs/api-error.log` durante un incidente real no encontraría nada.
+
+| Log | Ubicación real |
 |---|---|
-| API acceso | `/home/admonctrlxm/server/logs/api-access.log` |
-| API errores | `/home/admonctrlxm/server/logs/api-error.log` |
+| **API (stdout+stderr combinados)** | **`/var/log/portal-api.log`** — fuera del repo, vía `StandardOutput=append:...`/`StandardError=append:...` del systemd unit |
 | Dashboard acceso | `/home/admonctrlxm/server/logs/gunicorn_access.log` |
 | Dashboard errores | `/home/admonctrlxm/server/logs/gunicorn_error.log` |
-| Celery / ETL | `/home/admonctrlxm/server/logs/celery*.log` |
-| Systemd services | `journalctl -u portal-api -f` / `journalctl -u dashboard-mme -f` |
+| Bot de Telegram | `/home/admonctrlxm/server/whatsapp_bot/logs/telegram_polling.log` / `telegram_polling_error.log` |
+| Celery / ETL | `/home/admonctrlxm/server/logs/celery/*.log`, `/home/admonctrlxm/server/logs/etl/*.log` |
+| Systemd services | `journalctl -u portal-api -f` / `journalctl -u dashboard-mme -f` / `journalctl -u telegram-polling -f` |
 
 ```bash
-# Ver errores recientes API:
-tail -50 /home/admonctrlxm/server/logs/api-error.log
+# Ver errores recientes API (ruta REAL, fuera del repo):
+tail -50 /var/log/portal-api.log
+# o, equivalente, vía journalctl:
+journalctl -u portal-api.service -f
 
 # Ver errores recientes Dashboard:
 tail -50 /home/admonctrlxm/server/logs/gunicorn_error.log
@@ -238,8 +261,8 @@ tail -50 /home/admonctrlxm/server/logs/gunicorn_error.log
 # Ver logs de celery en tiempo real:
 journalctl -u celery-worker@1 -f
 
-# Buscar errores CRÍTICOS del último día:
-grep -i "CRITICAL\|ERROR" /home/admonctrlxm/server/logs/*.log | tail -20
+# Buscar errores CRÍTICOS del último día en la API real:
+grep -i "CRITICAL\|ERROR" /var/log/portal-api.log | tail -20
 ```
 
 ---
@@ -256,14 +279,20 @@ grep -i "CRITICAL\|ERROR" /home/admonctrlxm/server/logs/*.log | tail -20
 
 ### Interpretar `/health` de la API
 
+> Corregido 2026-09-01: la clave real es `"services"`, no `"checks"`, y hay un bloque `predictions` adicional no documentado antes. Ejemplo real capturado hoy:
+
 ```json
 {
-  "status": "healthy | degraded | unhealthy",
-  "checks": {
-    "database": { "status": "ok", "latency_ms": 12 },
-    "redis": { "status": "ok", "latency_ms": 1 },
-    "xm_api": { "circuit_state": "CLOSED" },
-    "data_freshness": { "hours_since_update": 6.0 }
+  "status": "healthy",
+  "timestamp": "2026-09-01T01:22:12.560775",
+  "environment": "production",
+  "version": "1.0.0",
+  "services": {
+    "database": { "status": "healthy", "latency_ms": 215.1, "rows": 10069439 },
+    "redis": { "status": "healthy", "latency_ms": 0.2 },
+    "xm_api": { "status": "healthy", "circuit_state": "closed", "consecutive_failures": 0, "times_opened": 0 },
+    "data_freshness": { "status": "healthy", "last_date": "2027-07-15", "hours_since_update": -7606.6 },
+    "predictions": { "status": "healthy", "total": 1877 }
   }
 }
 ```

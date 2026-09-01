@@ -3,12 +3,14 @@
 **Fecha:** 6 de febrero de 2026 (actualizado 20 de febrero de 2026)  
 **Estado:** ✅ API Completamente Funcional
 
+> Corregido 2026-09-01: esta guía documenta ~25 endpoints de ejemplo (metrics/predictions) de un total real de **110 endpoints en ~30 archivos de rutas**. Para el listado completo por dominio (ontología, RAG, Asistente IA, voz, CU, simulación, subsidios, comunidades, contratos OR, FENOGE, supervisión, presupuesto, etc.) ver [`api/README.md`](../api/README.md), que sí tiene la tabla completa y verificada. Esta guía se mantiene como tutorial de los endpoints núcleo (metrics/predictions), no como referencia completa.
+
 ---
 
 ## ✅ **ESTADO ACTUAL**
 
 El servidor FastAPI está **funcionando correctamente** en:
-- **URL Base:** `http://localhost:8000` (local) / `https://portalenergetico.minenergia.gov.co` (público)
+- **URL Base:** `http://localhost:8000` (local) / `https://portaldireccionee.minenergia.gov.co` (público — dominio real de producción; `portalenergetico.minenergia.gov.co` es legado)
 - **Documentación Swagger:** `http://localhost:8000/api/docs`
 - **Documentación ReDoc:** `http://localhost:8000/api/redoc`
 - **Modo:** Producción (autenticación API Key activa)
@@ -29,9 +31,9 @@ sudo systemctl restart portal-api.service
 
 **Características:**
 - ✅ Autenticación API Key activa (`X-API-Key` requerido)
-- ✅ Gunicorn con múltiples workers
+- ✅ `uvicorn` plano vía systemd (corregido 2026-09-01: no Gunicorn/múltiples workers — ver `ExecStart` real de `portal-api.service` en `RUNBOOK_PRODUCCION.md`)
 - ✅ Auto-restart si falla
-- ✅ Monitoreo cada 5 minutos (cron)
+- ✅ Monitoreo cada 5 minutos (`scripts/monitor_api.sh`, cron)
 - ✅ Disponible 24/7
 
 ### **Opción 2: Inicio Manual (Desarrollo)**

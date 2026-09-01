@@ -43,6 +43,8 @@ domain/interfaces/
 
 ## 🔌 Interfaces Disponibles
 
+> Corregido 2026-09-01: esta sección documentaba 9 interfaces; el código real (`grep "^class I" domain/interfaces/*.py`) tiene **17**. Las 8 faltantes son las agregadas durante la construcción de la ontología de datos (Fases 1-28 del plan de "Portal MME → Plataforma de Inteligencia Analítica").
+
 ### Repositorios (Acceso a Datos)
 
 | Interface | Implementación | Propósito |
@@ -52,6 +54,13 @@ domain/interfaces/
 | `IDistributionRepository` | `DistributionRepository` | Datos de distribución |
 | `ITransmissionRepository` | `TransmissionRepository` | Líneas de transmisión |
 | `IPredictionsRepository` | `PredictionsRepository` | Predicciones ML |
+| `IGeografiaRepository` | `GeografiaRepository` | Ontología — geografía DANE (departamento/municipio) |
+| `IEmpresaRepository` | `EmpresaRepository` | Ontología — empresa/NIT, alias, interventorías |
+| `IProyectoRepository` | `ProyectoRepository` | Ontología — proyecto (contratos OR, Colombia Solar, FENOGE) |
+| `IMetricaRepository` | `MetricaRepository` | Ontología — catálogo de métricas (`dim_metrica`) |
+| `IRecursoRepository` | `RecursoRepository` | Ontología — planta/recurso (`dim_recurso`) |
+| `IContratoRepository` | `ContratoRepository` | Ontología — detalle de contrato de supervisión por id |
+| `ISemanticSearchRepository` | `SemanticSearchRepository` | RAG — búsqueda vectorial + full-text sobre informes/contratos indexados |
 
 ### Fuentes de Datos Externas
 
@@ -59,6 +68,7 @@ domain/interfaces/
 |-----------|----------------|-----------|
 | `IXMDataSource` | `XMService` | API de XM (pydataxm) |
 | `ISIMEMDataSource` | `SIMEMService` | API SIMEM (transmisión) |
+| `IIDEAMDataSource` | (implementación en `infrastructure/`) | Datos climatológicos IDEAM |
 
 ### Gestión de Base de Datos
 
@@ -111,19 +121,19 @@ service = GenerationService(repository=repo)
 
 ## 🔄 Plan de Migración (Sin Romper Nada)
 
-### Fase Actual: ✅ COMPLETADA
-- [x] Crear interfaces en `domain/interfaces/`
-- [x] Documentar contratos y propósitos
+> Corregido 2026-09-01: esta sección describía la migración como "siguiente fase"/"fase final" pendientes. Ya están hechas — verificado que los repositorios de la ontología (`GeografiaRepository`, `EmpresaRepository`, `ProyectoRepository`, `MetricaRepository`, `RecursoRepository`, `ContratoRepository`) implementan sus interfaces y se inyectan vía `core/container.py` (patrón lazy-singleton, ej. `get_geografia_repository()`), consumidos por `OntologiaService` con DI real, no imports directos de infraestructura.
 
-### Siguiente Fase: Implementar Interfaces
-1. Hacer que repositorios implementen interfaces
-2. NO modificar servicios aún (compatible hacia atrás)
-3. Probar que todo sigue funcionando
+### Fase 1 — Crear interfaces: ✅ COMPLETADA
+- [x] Interfaces creadas en `domain/interfaces/`
+- [x] Contratos y propósitos documentados
 
-### Fase Final: Refactorizar Servicios
-1. Modificar servicios para recibir interfaces
-2. Implementar inyección de dependencias
-3. Eliminar imports directos de infrastructure
+### Fase 2 — Implementar interfaces: ✅ COMPLETADA
+- [x] Los repositorios reales implementan sus interfaces (`class MetricsRepository(IMetricsRepository)`, etc.)
+- [x] Compatible hacia atrás durante la transición
+
+### Fase 3 — Refactorizar servicios con DI real: 🟡 PARCIAL
+- [x] Los servicios de la ontología (`OntologiaService`) y varios servicios más nuevos reciben repositorios vía `core/container.py`
+- [ ] Algunos servicios más antiguos (`MetricsService`, `GenerationService`, etc.) todavía instancian su repositorio directamente en `__init__` en vez de recibirlo inyectado — no se ha hecho una migración exhaustiva de los ~42 servicios de dominio, solo de los construidos en fases recientes
 
 ## ✅ Ventajas de Este Enfoque
 

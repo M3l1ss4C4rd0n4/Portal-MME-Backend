@@ -33,19 +33,23 @@ API REST + Dashboard Analítico + ETL Pipeline
 
 Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 
-- **API REST** (FastAPI): 52+ endpoints para consumo del frontend Next.js
-- **Dashboard Analítico** (Dash): 17 tableros interactivos legacy
-- **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive, y (jul-2026) despacho diario XM en PDF e hidrocarburos (Excel + scraping de precios WTI/Brent)
-- **Sistema de Alertas**: Notificaciones Telegram basadas en anomalías
-- **Capa de Ontología** (jul-2026, en evolución): esquema `ontologia` con dimensiones de geografía/empresa/proyecto y embeddings vectoriales para RAG, que le permite al asistente de IA del portal responder consultando datos reales del sistema en lugar de depender solo del conocimiento general del modelo de lenguaje
+- **API REST** (FastAPI): **110 endpoints** en 30 archivos de rutas (`api/v1/routes/`) para consumo del frontend Next.js y de la app móvil EnergIA
+- **Dashboard Analítico** (Dash): tableros interactivos legacy
+- **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive/SharePoint, despacho diario XM en PDF, hidrocarburos (Excel + scraping de precios WTI/Brent), y normativa CREG/UPME/MME (scraping de gestores normativos oficiales)
+- **Sistema de Alertas**: Notificaciones Telegram/email basadas en anomalías, con marco regulatorio explícito (Índice NE/HSIN/PBP citando resoluciones CREG) y vigilancia automática de cambios normativos
+- **Capa de Ontología** (esquema Postgres `ontologia`): dimensiones de geografía/empresa/proyecto/métrica/recurso, grafo de relaciones multi-hop, y un corpus RAG (búsqueda semántica híbrida vector+full-text) sobre informes de XM/CREG/UPME/MME/SharePoint — ver `docs/FUENTES_RAG.md`
+- **Asistente IA** (`api/v1/routes/chatbot.py` + `domain/services/asistente_ia_service.py`, ~1.440 líneas): agente conversacional con ~45 herramientas (tool-calling), failover automático entre proveedores (Gemini → Groq → OpenRouter), y **voz en tiempo real** (`api/v1/routes/voz.py`, Gemini Live API)
+- **Sistema de predicciones con validación rigurosa**: ensemble Prophet+SARIMAX con backtest out-of-sample real (no solo holdout de entrenamiento) — ver `docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md`
+- **CU (Costo Unitario)**: cálculo mayorista y minorista (tarifa usuario final por operador de red), ponderado por demanda real — ver `docs/METODOLOGIA_CU.md`
 
-### Estadísticas
+### Estadísticas (verificadas 2026-09-01)
 
-- **350 archivos Python**
-- **30 servicios de dominio**
-- **17 scripts ETL**
-- **354 tests recopilados (347 pasan, 7 fallando)**
-- **~113,000 líneas de código**
+- **459 archivos Python** (excluyendo entornos virtuales)
+- **42 servicios de dominio** (`domain/services/*.py`, nivel raíz — sin contar subcarpetas `orchestrator/`, `report_chapters/`)
+- **110 endpoints REST** en 30 archivos de rutas
+- **40 migraciones SQL** (`sql/migrations/`)
+- **373 tests pasando, 0 fallando** (10 deseleccionados; `pytest tests/ -q`)
+- **13 interfaces de dominio** (`domain/interfaces/`) con inyección de dependencias activa en 23 archivos consumidores
 
 ---
 
@@ -215,35 +219,35 @@ server/
 
 ## Servicios de Dominio
 
-### Servicios Principales (por tamaño)
+### Servicios Principales (por tamaño, verificado 2026-09-01)
 
 | Servicio | Líneas | Función | Estado |
 |----------|--------|---------|--------|
-| `report_service.py` | 1,850 | Generación de informes | ✅ Activo |
+| `report_service.py` | 3,584 | Generación de informes (creció ~94% desde la última auditoría) | ✅ Activo — candidato prioritario a refactor, ver `docs/refactoring/ARCHIVOS_GRANDES_PLAN.md` |
+| `portal_report_service.py` | 2,819 | Generador del PDF del dashboard de predicciones/portal | ✅ Activo (no listado en versiones anteriores de este README) |
 | `executive_report_service.py` | 1,618 | Informes ejecutivos | ✅ Activo |
-| `cu_service.py` | 1,010 | Comercialización mayorista | ✅ Activo |
-| `losses_nt_service.py` | 1,199 | Pérdidas no técnicas | ✅ Activo |
-| `notification_service.py` | 1,178 | Notificaciones Telegram | ✅ Activo |
-| `intelligent_analysis_service.py` | 829 | Análisis con IA | ✅ Activo |
-| `simulation_service.py` | 748 | Simulaciones | ✅ Activo |
-| `predictions_service_extended.py` | 698 | Predicciones ML | ✅ Activo |
-| `cu_minorista_service.py` | 599 | Comercialización minorista | ✅ Activo |
-| `ai_service.py` | 504 | Integración LLM | ✅ Activo |
-| `commercial_service.py` | 342 | Datos comerciales | ✅ Activo |
-| `hydrology_service.py` | 368 | Datos hidrológicos | ✅ Activo |
+| `asistente_ia_service.py` | 1,443 | Asistente IA — loop de tool-calling (~45 herramientas), streaming, voz | ✅ Activo (no listado en versiones anteriores de este README) |
+| `notification_service.py` | 1,347 | Notificaciones Telegram/email | ✅ Activo |
+| `losses_nt_service.py` | 1,208 | Pérdidas no técnicas | ✅ Activo |
+| `cu_service.py` | 1,122 | Comercialización mayorista (CU) | ✅ Activo |
+| `news_service.py` | 901 | Noticias del sector (multi-fuente, scraping de texto completo) | ✅ Activo (no listado en versiones anteriores de este README) |
+| `intelligent_analysis_service.py` | 892 | Análisis con IA | ✅ Activo |
+| `predictions_service_extended.py` | 887 | Predicciones ML | ✅ Activo |
+| `simulation_service.py` | 748 | Simulaciones CREG | ✅ Activo |
+| `cu_minorista_service.py` | 676 | Comercialización minorista (tarifa usuario final) | ✅ Activo |
+| `ai_service.py` | 574 | `AgentIA` — integración LLM compartida (informes, WhatsApp) | ✅ Activo — 388 aristas en el grafo, uno de los 10 "god nodes" del sistema |
 | `investment_service.py` | 523 | Inversiones | ✅ Activo |
 | `distribution_service.py` | 480 | Distribución | ✅ Activo |
 | `generation_service.py` | 448 | Generación | ✅ Activo |
-| `metrics_service.py` | 222 | Métricas calculadas | ✅ Activo |
-| `restrictions_service.py` | 222 | Restricciones | ✅ Activo |
-| `transmission_service.py` | 207 | Transmisión | ✅ Activo |
-| `indicators_service.py` | 173 | Indicadores | ✅ Activo |
-| `system_service.py` | 193 | Sistema | ✅ Activo |
-| `validators.py` | 247 | Validaciones | ✅ Activo |
-| `confianza_politica.py` | 122 | Análisis político | ⚠️ Sin documentar |
+| `hydrology_service.py` | 460 | Datos hidrológicos | ✅ Activo |
+| `graph_service.py` | — | Grafo de relaciones ontología (empresa/proyecto/geografía) | ✅ Activo (no listado en versiones anteriores) |
+| `ontologia_service.py` | — | Capa de ontología semántica + RAG | ✅ Activo (no listado en versiones anteriores) |
+| `voz_ia_service.py` | — | Asistente de voz en tiempo real (Gemini Live API) | ✅ Activo (no listado en versiones anteriores) |
 | `geo_service.py` | 32 | Georreferenciación | ⚠️ DEPRECATED |
 | `orchestrator_service.py` | 4 | Orquestación | ⚠️ DEPRECATED |
 | `predictions_service.py` | 10 | Predicciones (stub) | ⚠️ DEPRECATED |
+
+> Tabla no exhaustiva (42 servicios en total en `domain/services/`, ver `graphify-out/GRAPH_REPORT.md` para el listado y grafo completo). Los "god nodes" más conectados del sistema (por número de aristas en el grafo, 2026-08-30): `MetricsService` (473), `GenerationService` (451), `HydrologyService` (425), `MetricsRepository` (419), `PostgreSQLConnectionManager` (414), `AgentIA` (388), `CommercialService` (378), `DistributionService` (375), `TransmissionService` (369), `LossesService` (354).
 
 ### Servicios Deprecated
 
@@ -257,18 +261,24 @@ Los siguientes servicios están marcados como deprecated y serán eliminados en 
 
 ## API Endpoints
 
-### Endpoints Principales
+**110 endpoints en total**, distribuidos en 30 archivos de rutas (`api/v1/routes/`). Grupos principales:
 
-| Endpoint | Método | Descripción | Cache |
-|----------|--------|-------------|-------|
-| `/api/v1/restrictions` | GET | Restricciones del SIN | 5 min |
-| `/api/v1/distribution` | GET | Datos de distribución | 5 min |
-| `/api/v1/system/metrics` | GET | Métricas del sistema | 1 min |
-| `/api/v1/commercial` | GET | Datos comerciales | 5 min |
-| `/api/v1/generation` | GET | Generación eléctrica | 5 min |
-| `/api/v1/cu` | GET | Comercialización mayorista | 5 min |
-| `/api/v1/predictions` | GET | Predicciones ML | 1 hora |
-| `/health` | GET | Health check | No |
+| Grupo de rutas | Archivo | Descripción |
+|---|---|---|
+| Métricas del sector | `metrics.py`, `system.py`, `generation.py`, `hydrology.py`, `commercial.py`, `distribution.py`, `transmission.py`, `restrictions.py`, `losses.py` | Datos operativos del SIN (XM) |
+| Predicciones | `predictions.py` | Pronósticos ML + validación rigurosa (backtest out-of-sample) |
+| Costo Unitario | `cu.py` | CU mayorista y minorista (tarifa usuario final) |
+| **Ontología** | `ontologia.py` (17 endpoints) | Geografía/empresa/proyecto/métrica/recurso, grafo de relaciones, búsqueda RAG |
+| **Asistente IA** | `chatbot.py` | Orquestador de intents (~100 mapeados) + Asistente IA con tool-calling |
+| **Voz en tiempo real** | `voz.py` | `/v1/voz/token`, `/v1/voz/ws` (Gemini Live API) |
+| Informes/reportes | `reports.py`, `informes_tableros.py` | Generación e histórico de informes ejecutivos/PDF |
+| Simulación | `simulation.py`, `riesgo.py` | Escenarios CREG, riesgo de atraso de contratos OR |
+| Dominios sectoriales | `comunidades.py`, `contratos_or.py`, `fenoge.py`, `subsidios.py`, `presupuesto.py`, `supervision_portal.py` | Comunidades energéticas, contratos OR, FENOGE, subsidios, presupuesto, supervisión |
+| App móvil / alertas | `energia_app.py`, `energia_dashboard.py`, `whatsapp_alerts.py` | Endpoints para la app EnergIA y alertas de WhatsApp |
+| Observabilidad | `observability.py`, `internal.py` | Health checks internos, métricas de sistema |
+| `/health` | — | Health check general (JSON con clave `services`, no `checks`) |
+
+Documentación completa: [`docs/GUIA_USO_API.md`](./docs/GUIA_USO_API.md) (nota: pendiente de actualización — ver sección de deuda documental abajo).
 
 ### Autenticación
 
@@ -447,65 +457,81 @@ sudo logrotate -f /etc/logrotate.d/server-mme
 
 ## Documentación Adicional
 
-- [Guía de Onboarding](./docs/GUIA_ONBOARDING.md)
-- [Arquitectura E2E](./docs/ARQUITECTURA_E2E.md)
-- [Guía Troubleshooting](./docs/GUIA_TROUBLESHOOTING.md)
-- [Uso de API](./docs/GUIA_USO_API.md)
-- [Índice Completo](./docs/INDICE.md)
+> **Nota (2026-09-01):** los 2 enlaces que aparecían aquí antes (`ARQUITECTURA_E2E.md`, `INDICE.md`) apuntaban a archivos que no existen — corregido. Una auditoría completa de ~25 documentos del proyecto encontró varios más en el mismo estado (ver "Deuda documental" abajo).
+
+**Vigentes y verificados:**
+- [Fuentes del corpus RAG](./docs/FUENTES_RAG.md) — el mejor mantenido del set, verificado línea por línea
+- [Metodología de Costo Unitario](./docs/METODOLOGIA_CU.md) — incluye §9.14, ponderación por demanda real (2026-08)
+- [Predicciones de embalses — validación rigurosa](./docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md) (2026-08)
+- [Análisis Hidrológico y Semáforo de Riesgos](./docs/tecnicos/ANALISIS_HIDROLOGIA_SEMAFORO.md) — incluye §10, distinción Índice NE (CREG) vs. IDEAM/UNGRD (2026-08)
+- [Guía de Troubleshooting](./docs/GUIA_TROUBLESHOOTING.md)
+- [Contenido del Informe Ejecutivo](./docs/INFORME_EJECUTIVO_CONTENIDO.md)
+- [Nota — fila de totales en Excel](./docs/tecnicos/NOTA_FILA_TOTALES_EXCEL.md)
+
+**Necesitan actualización** (ver auditoría completa en `docs/AUDITORIA_DOCUMENTACION_2026-09.md`):
+- [Guía de Onboarding](./docs/GUIA_ONBOARDING.md) — enlaces rotos a documentos inexistentes
+- [Uso de API](./docs/GUIA_USO_API.md) — documenta 25 endpoints, hay 110 reales
+- [Runbook de Producción](./RUNBOOK_PRODUCCION.md) — rutas de logs incorrectas, tabla de tareas Celery incompleta
 
 ---
 
-## Estado de Corrección V4
+## Deuda documental (auditoría 2026-09-01)
 
-### Fases Completadas
+Una auditoría completa de ~25 documentos `.md` del proyecto (contra el código real, no solo lectura visual) encontró que varios habían quedado desactualizados tras meses de crecimiento del sistema — ver detalle completo en `docs/AUDITORIA_DOCUMENTACION_2026-09.md`. Resumen:
 
-| Fase | Descripción | Estado |
-|------|-------------|--------|
-| 1 | Limpieza basura | ✅ 6 archivos eliminados |
-| 2 | Documentar deuda técnica | ✅ 3 servicios deprecated |
-| 3 | Optimización espacio | ✅ ~1GB liberado |
-| 4 | Arquitectura | ⏸️ Diferida a V5 |
-| 5 | Documentación | ✅ README actualizado |
+- **2 documentos obsoletos, recomendados para borrar** (superados por otros ya vigentes): `docs/tecnicos/DOCUMENTACION_TECNICA_IA_ML.md` (arquitectura SQLite/Dash pre-PostgreSQL, dic-2025), `docs/tecnicos/README_SEMAFORO.md` (matriz de riesgo ya desautorizada por `ANALISIS_HIDROLOGIA_SEMAFORO.md`).
+- **Hallazgo operativo crítico**: `RUNBOOK_PRODUCCION.md` documentaba rutas de logs de la API (`logs/api-error.log`) que no existen — la ruta real es `/var/log/portal-api.log` (systemd `StandardOutput`/`StandardError`). `AGENTS.md` documentaba un pool de conexiones async (`asyncpg`/`get_pool()`) que tampoco existe — la conexión real es `psycopg2.ThreadedConnectionPool` vía `infrastructure/database/connection.py`.
+- **Hallazgo operativo crítico #2**: `whatsapp_bot/GUIA_TELEGRAM_BOT_PASO_A_PASO.md` instruye configurar un webhook de Telegram — si se sigue, **rompería el bot real en producción**, que usa `long polling` (`telegram_polling.py`/`telegram-polling.service`) y no puede coexistir con un webhook activo.
+- **Patrón sistémico**: 5+ enlaces rotos repetidos en varios documentos (`ARQUITECTURA_E2E.md`, `INDICE.md`, `DOCUMENTACION_TECNICA_ORQUESTADOR.md`, `MAPEO_COMPLETO_METRICAS.md`, `INVENTARIO_SERVIDOR.md` — ninguno existe).
+- **`api/README.md`** documenta ~2 de los 30 archivos de rutas reales — no menciona Ontología, Asistente IA, Voz ni CU en absoluto.
 
-### Deuda Técnica Documentada
+### Deuda Técnica de Código (última verificación 2026-09-01)
 
-- **Archivos con print():** 72 (planificado para V5)
-- **Archivos con except Exception:** 171 (planificado para V5)
-- **Tests de integración:** 0 (planificado para V5)
+- **Archivos con print():** 72 (sin cambio material)
+- **Archivos con except Exception:** por verificar de nuevo
+- **Tests de integración:** 0 (`tests/integration/` vacío)
+- **Tests unitarios:** 373 pasando, 0 fallando
 
 ---
 
-## Notas de Arquitectura (Validadas por Grafo — 2026-05-01)
+## Notas de Arquitectura (Validadas por Grafo — 2026-08-30)
 
-> Estas notas complementan la documentación anterior con datos validados mediante Graphify (análisis estático del grafo de código).
+> Estas notas complementan la documentación anterior con datos validados mediante Graphify (análisis estático del grafo de código). Actualizado 2026-09-01 con la corrida más reciente disponible.
 
 ### Métricas reales del codebase
 
 | Métrica | Valor |
 |---|---|
-| Archivos analizados | 394 |
-| Nodos en grafo | 6.021 |
-| Aristas (conexiones) | 13.887 |
-| Comunidades detectadas | 244 |
-| Aristas INFERRED | 47% (~6.476) |
-| Aristas EXTRACTED | 53% (~7.411) |
+| Archivos analizados | 505 (~1.070.909 palabras) |
+| Nodos en grafo | 8.545 |
+| Aristas (conexiones) | 24.964 |
+| Comunidades detectadas | 953 |
+| Aristas EXTRACTED | 36% |
+| Aristas INFERRED | 64% (confianza promedio 0.53) |
 
-### God Nodes validados
+### God Nodes validados (por aristas totales, 2026-08-30)
 
-| Nodo | Aristas totales | EXTRACTED | INFERRED | Nota |
-|---|---|---|---|---|
-| `PostgreSQLConnectionManager` | 256 | 2 (0.8%) | 254 (99.2%) | Hub real de conexiones DB. Las INFERRED son imports reales no extraídos por AST. |
-| `MetricsService` | 219 | ~13 (6%) | ~206 (94%) | Servicio central. Posible doble conteo de imports (hipótesis no confirmada). |
-| `GenerationService` | 217 | — | — | Servicio de generación eléctrica, altamente conectado. |
+| # | Nodo | Aristas |
+|---|---|---|
+| 1 | `MetricsService` | 473 |
+| 2 | `GenerationService` | 451 |
+| 3 | `HydrologyService` | 425 |
+| 4 | `MetricsRepository` | 419 |
+| 5 | `PostgreSQLConnectionManager` | 414 |
+| 6 | `AgentIA` | 388 — el hub de IA compartido (informes, WhatsApp), no listado en auditorías previas |
+| 7 | `CommercialService` | 378 |
+| 8 | `DistributionService` | 375 |
+| 9 | `TransmissionService` | 369 |
+| 10 | `LossesService` | 354 |
 
 ### Subproyectos embebidos detectados
 
 Además de la API REST y el Dashboard, el monolito contiene:
 
-- **`whatsapp_bot/`** — 522 nodos en el grafo. Bot de WhatsApp/Telegram con handlers, AI integration y lógica de subsidios. **Es casi tan grande como la API principal.**
+- **`whatsapp_bot/`** — 607 nodos en el grafo (26 archivos, 9.702 líneas), cifra corregida el 2026-09-01 (antes se citaba 522, ya desactualizado). Comparación aclarada: es ~94% del tamaño de `api/` sola (644 nodos/12.881 líneas), pero solo ~12% del backend completo (`api`+`domain`+`infrastructure`+`core`+`interface` = 4.865 nodos/91.740 líneas) — la comparación anterior ("casi tan grande como la API principal") dependía de qué se comparaba exactamente. Nota operativa importante: el canal de producción real hoy es **Telegram** (`telegram_polling.py`, long polling); el canal WhatsApp/Twilio está activo pero sin tráfico real desde hace días, y la integración `whatsapp-web.js` nunca se desplegó (sin `node_modules` ni Chrome instalados) — ver `docs/AUDITORIA_DOCUMENTACION_2026-09.md`.
 - **`energia_app/`** — App móvil React Native (Android/iOS).
 - **`experiments/`** — Experimentos ML (XGBoost, SARIMA, LightGBM).
-- **`scripts/`** — 43 scripts de utilidad, algunos con lógica ETL duplicada.
+- **`scripts/`** — scripts de utilidad ETL/ontología/CU/predicciones.
 
 ### Deuda técnica validada por el grafo
 
@@ -525,9 +551,9 @@ Además de la API REST y el Dashboard, el monolito contiene:
 
 ## Contacto
 
-- **Desarrollador Principal:** [Tu nombre/email]
 - **Infraestructura:** Equipo TI MinMinas
-- **Repositorio:** [URL del repositorio]
+- **Repositorio:** `git@github.com:M3l1ss4C4rd0n4/Portal-MME-Backend.git`
+- **Desarrollador Principal:** *(sin completar — no se encontró un dato real verificable para rellenar este campo; se deja marcado en vez de inventar un nombre)*
 
 ---
 

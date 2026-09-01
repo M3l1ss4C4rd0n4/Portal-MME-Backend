@@ -160,100 +160,102 @@ Selecciona tu bot y sube una imagen:
 
 ### 2.4 Configurar comandos
 
+> **⚠️ Actualizado 2026-09-01**: la lista de abajo refleja los comandos REALES que el bot en producción implementa (`whatsapp_bot/telegram_polling.py` líneas 2479-2487 + `whatsapp_bot/subsidios_handler.py` líneas 1322-1331) — la lista anterior de esta guía (`precio`, `generacion`, `demanda`, `mix`, `grafico`, `resumen`) nunca existió como comandos reales, era un ejemplo genérico. Registrar esa lista vieja con BotFather le mostraría a los usuarios un menú que no coincide con lo que el bot realmente hace.
+
 ```
 /setcommands
 ```
 
-Selecciona tu bot y envía esta lista:
+Selecciona tu bot y envía esta lista (comandos reales, verificados contra el código):
 ```
 start - Iniciar bot y ver menú principal
-precio - Ver precio actual de bolsa eléctrica
-generacion - Ver generación por fuente energética
-demanda - Ver demanda actual del sistema
-mix - Ver mix energético nacional
-grafico - Generar gráfico de datos
-resumen - Resumen ejecutivo del día
+menu - Ver menú principal
+estado - Estado actual del sistema eléctrico
+predicciones - Predicciones del sistema (embalses, precio, generación)
+anomalias - Anomalías/alertas detectadas
+noticias - Últimas noticias del sector
+informe - Informe ejecutivo del día
 ayuda - Ver todos los comandos disponibles
+subsidios - Menú de subsidios
+deuda - Deuda total de subsidios
+deuda_empresa - Deuda de subsidios por empresa
+deuda_fondo - Deuda de subsidios por fondo
+trimestre_pagado - Pagos del trimestre
+pagado_anio - Pagado en el año
+porcentaje_pagado - % pagado
+resoluciones - Resoluciones de subsidios
+estado_resoluciones - Estado de resoluciones
+buscar_empresa - Buscar empresa en subsidios
 ```
 
 ---
 
-## 🌐 Paso 3: Configurar Webhook
+## 🌐 Paso 3: Cómo se conecta realmente el bot (long polling, NO webhook)
 
-### 3.1 Verificar que tu webhook esté accesible
+> **⚠️ CORRECCIÓN CRÍTICA (2026-09-01)**: esta sección antes instruía configurar un **webhook** de Telegram (`setWebhook`). **NO sigas esas instrucciones si el bot ya está en producción** — el bot real (`telegram_polling.py`, servicio `telegram-polling.service`) usa **long polling** (`app.run_polling(...)`), y Telegram **no permite tener un webhook activo y hacer polling al mismo tiempo** (si hay un webhook configurado, `getUpdates`/polling falla con error 409 "Conflict"). Configurar un webhook sobre un bot que ya usa polling **rompería el bot en producción**.
+
+### 3.1 Por qué polling y no webhook
+
+El propio código documenta la razón (`telegram_polling.py`, docstring): *"Modo polling: el bot se conecta A Telegram (bypassa firewall del Ministerio)"* — la red del Ministerio no permite exponer un endpoint público fácilmente, así que el bot se conecta hacia afuera (polling) en vez de esperar que Telegram le llegue (webhook).
+
+### 3.2 Si el bot NO tiene ningún webhook configurado (instalación nueva)
+
+No hace falta hacer nada especial — simplemente inicia el bot con polling (ver Paso 4) y funciona. Telegram usa polling por defecto si nunca se llamó a `setWebhook`.
+
+### 3.3 Si por error se configuró un webhook alguna vez, hay que quitarlo antes de usar polling
 
 ```bash
-curl https://portalenergetico.minenergia.gov.co/whatsapp/health
+TOKEN="<tu token real, o el valor de TELEGRAM_BOT_TOKEN en whatsapp_bot/.env>"
+curl -X POST "https://api.telegram.org/bot${TOKEN}/deleteWebhook"
 ```
 
-Debe responder con status 200.
-
-### 3.2 Configurar webhook en Telegram
-
-Telegram permite configurar el webhook vía API. Ejecuta:
-
-```bash
-# Reemplaza <TU_TOKEN> con el token que te dio BotFather
-TOKEN="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-1234567"
-WEBHOOK_URL="https://portalenergetico.minenergia.gov.co/whatsapp/webhook/telegram"
-
-curl -X POST "https://api.telegram.org/bot${TOKEN}/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d "{\"url\": \"${WEBHOOK_URL}\"}"
-```
-
-Respuesta esperada:
-```json
-{
-  "ok": true,
-  "result": true,
-  "description": "Webhook was set"
-}
-```
-
-### 3.3 Verificar webhook configurado
-
+Verificar que quedó sin webhook:
 ```bash
 curl "https://api.telegram.org/bot${TOKEN}/getWebhookInfo"
+# Debe mostrar "url": "" (vacío)
 ```
-
-Debe mostrar tu URL configurada.
 
 ---
 
-## ⚙️ Paso 4: Configurar el Bot Python
+## ⚙️ Paso 4: Configurar y correr el bot real (systemd, ya construido)
 
-### 4.1 Instalar librería de Telegram
+### 4.1 El bot ya está instalado y corriendo
+
+En este servidor, el bot NO se arranca manualmente — corre como servicio systemd:
+
+```bash
+systemctl status telegram-polling.service
+# Debe mostrar: active (running)
+
+# Reiniciar tras un cambio de código:
+sudo systemctl restart telegram-polling.service
+
+# Ver logs en vivo:
+tail -f /home/admonctrlxm/server/whatsapp_bot/logs/telegram_polling.log
+tail -f /home/admonctrlxm/server/whatsapp_bot/logs/telegram_polling_error.log
+```
+
+Configuración real del servicio (`/etc/systemd/system/telegram-polling.service`):
+- `WorkingDirectory=/home/admonctrlxm/server/whatsapp_bot`
+- `EnvironmentFile=/home/admonctrlxm/server/whatsapp_bot/.env` (aquí vive `TELEGRAM_BOT_TOKEN`)
+- `ExecStart=.../whatsapp_bot/venv/bin/python .../whatsapp_bot/telegram_polling.py`
+- `Restart=always` — si el bot se cae, systemd lo reinicia solo
+
+### 4.2 Instalar/actualizar la librería (solo si se necesita reinstalar el venv)
 
 ```bash
 cd /home/admonctrlxm/server/whatsapp_bot
 source venv/bin/activate
-pip install python-telegram-bot==20.7
+pip install python-telegram-bot==20.7   # versión confirmada en requirements.txt
 ```
 
-### 4.2 Actualizar .env
+### 4.3 Variables de entorno reales (`whatsapp_bot/.env`)
 
 ```bash
-nano .env
+TELEGRAM_BOT_TOKEN=<tu token real de BotFather>
 ```
 
-Agregar estas líneas:
-
-```bash
-# ===== TELEGRAM BOT =====
-TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-1234567
-TELEGRAM_ENABLED=true
-
-# Puedes tener múltiples proveedores activos
-# El bot responderá a mensajes de WhatsApp Y Telegram simultáneamente
-WHATSAPP_PROVIDER=meta  # O twilio, o whatsapp-web
-```
-
-Guardar: `Ctrl+O`, `Enter`, `Ctrl+X`
-
-### 4.3 Crear manejador de Telegram
-
-Voy a crear el archivo para ti automáticamente. Se llamará `app/telegram_handler.py`.
+**Nota importante, corrige una afirmación de esta guía en versiones anteriores**: Telegram (`telegram_polling.py`) y WhatsApp (`app/webhook.py` → `orchestrator/bot.py`) son **dos implementaciones de código completamente separadas**, no "el mismo código" compartido — Telegram llama a la API HTTP del backend principal (`http://localhost:8000/api/v1/chatbot/orchestrator`); WhatsApp usa un `BotOrchestrator`/`AgentIA` local dentro del propio proceso de `whatsapp_bot`. No asumas que un cambio en un canal se refleja automáticamente en el otro.
 
 ---
 
@@ -282,17 +284,17 @@ uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 Envía:
 ```
-precio
+/estado
 ```
 
-Deberías recibir el precio actual de bolsa.
+Deberías recibir el estado actual del sistema eléctrico.
 
 Envía:
 ```
-generacion
+/predicciones
 ```
 
-Deberías recibir datos de generación.
+Deberías recibir las predicciones del sistema (embalses, precio, generación).
 
 ---
 
@@ -300,7 +302,7 @@ Deberías recibir datos de generación.
 
 ### 6.1 El bot ya funciona!
 
-Una vez que el webhook esté configurado y el bot corriendo, ya está en producción.
+Una vez que `telegram-polling.service` esté corriendo (`systemctl status telegram-polling.service` → `active`), ya está en producción — no requiere ningún webhook ni configuración adicional en Telegram.
 
 **Diferencias con WhatsApp:**
 - ✅ Los usuarios deben buscar y iniciar el bot (`/start`)
@@ -338,43 +340,21 @@ https://t.me/PortalEnergeticoMME_bot
 
 ---
 
-## 🆚 Telegram vs WhatsApp: ¿Cuál usar?
+## 🆚 Telegram vs WhatsApp: estado real (2026-09-01)
 
-### 🎯 Usa AMBOS (Recomendado)
+> **Corrección**: la versión anterior de esta sección presentaba ambos canales como "el mismo bot unificado" corriendo en paralelo. Verificado contra logs y `systemctl` el 2026-09-01: **no es así**. Son dos servicios y dos implementaciones de código independientes.
 
-El bot puede funcionar simultáneamente en:
-- ✅ WhatsApp (para público general)
-- ✅ Telegram (para usuarios técnicos/internos)
+| | Telegram (`telegram-polling.service`) | WhatsApp (`whatsapp-bot.service`, Twilio) |
+|---|---|---|
+| Estado del servicio | `active (running)` | `active (running)` |
+| Tráfico real | ✅ Es el canal con tráfico real de producción | ⚠️ Activo pero sin tráfico real registrado en logs desde hace días |
+| Mecanismo | Long polling (`telegram_polling.py`) | Webhook Twilio (`app/webhook.py`) |
+| Backend usado | Llama por HTTP al orquestador del backend principal (`localhost:8000/api/v1/chatbot/orchestrator`) | Usa un `BotOrchestrator`/`AgentIA` local, en el propio proceso |
+| Código compartido con el otro canal | ❌ No — implementación separada | ❌ No — implementación separada |
 
-**Ventajas de tener ambos:**
-- Mayor alcance
-- WhatsApp = más usuarios
-- Telegram = más funciones y gratis
-- Telegram = mejor para grupos internos del ministerio
+Además existe un tercer componente, `whatsapp_bot/whatsapp-web-service/` (integración vía `whatsapp-web.js`), que **nunca llegó a desplegarse** (sin `node_modules`, sin Chrome/Chromium instalado, ningún proceso corriendo) — no es una alternativa activa hoy.
 
-### 💡 Estrategia Sugerida
-
-```
-┌─────────────────────────────────────────┐
-│         PORTAL ENERGÉTICO MME            │
-└─────────────────────────────────────────┘
-                    │
-        ┌───────────┴───────────┐
-        │                       │
-┌───────▼────────┐    ┌────────▼───────┐
-│   WHATSAPP     │    │   TELEGRAM     │
-│   (Público)    │    │   (Interno)    │
-└────────────────┘    └────────────────┘
-        │                       │
-        │                       │
-┌───────▼───────────────────────▼────────┐
-│        BOT UNIFICADO (FastAPI)         │
-│     Orquestador + IA + Datos           │
-└────────────────────────────────────────┘
-```
-
-**WhatsApp:** Para público general (más popular en Colombia)
-**Telegram:** Para equipo técnico del ministerio (gratis, sin límites)
+**Conclusión práctica**: si vas a tocar o depurar el bot, **Telegram es el canal real de producción**. Cambios en el código de WhatsApp no afectan a Telegram y viceversa — no asumas que arreglar algo en un lado lo arregla en el otro.
 
 ---
 
