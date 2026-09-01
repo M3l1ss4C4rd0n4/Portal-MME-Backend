@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
+from core.umbrales_oficiales import clasificar_visual_embalse
+from core.umbrales_ideam_ungrd import clasificar_riesgo_embalse_ideam_ungrd
 
 logger = get_logger(__name__)
 
@@ -306,42 +308,40 @@ class AnomaliaHandlerMixin:
             # Si está por debajo (< -25%), es NORMAL o INFO (bueno para consumidores)
             
         elif indicador == 'Embalses':
-            # EMBALSES: Umbrales OFICIALES según IDEAM y UNGRD (Colombia)
-            # 
-            # POR NIVEL ALTO (riesgo de desbordamiento):
-            #   > 95%: Alerta Roja - Acción inmediata, desbordamiento inminente
-            #   90-95%: Alerta Naranja - Preparación para descargas preventivas
-            #   80-90%: Alerta Amarilla - Vigilancia, monitorear caudales
-            #   40-80%: Normal - Operación estable
-            #
-            # POR NIVEL BAJO (riesgo de desabastecimiento/apagón):
-            #   < 27%: Alerta Roja - Riesgo crítico de racionamiento
-            #   27-40%: Alerta Naranja/Amarilla - Alerta de seguimiento
-            #   40-80%: Normal - Operación estable
-            
-            # RIESGO POR NIVEL CRÍTICAMENTE BAJO (según IDEAM)
-            if valor_actual < 27:
+            # EMBALSES: Umbrales OFICIALES según IDEAM y UNGRD (Colombia) —
+            # unificados 2026-08-26 en core/umbrales_ideam_ungrd.py (antes
+            # había 5 copias inconsistentes de esta misma lógica en el
+            # proyecto; esta es ahora la única fuente).
+            nivel_ideam, _color_ideam, _emoji_ideam, mensaje_ideam = (
+                clasificar_riesgo_embalse_ideam_ungrd(valor_actual)
+            )
+            if nivel_ideam in ('CRÍTICO — RACIONAMIENTO', 'CRÍTICO — DESBORDAMIENTO'):
                 severidad = 'crítico'
-                razon_severidad.append(f"ALERTA ROJA: Nivel crítico ({valor_actual:.1f}%) - Riesgo de racionamiento/apagón. Activar medidas de choque.")
-            elif valor_actual < 40:
+                razon_severidad.append(f"ALERTA ROJA: {mensaje_ideam}")
+            elif nivel_ideam != 'NORMAL':
                 severidad = 'alerta'
-                razon_severidad.append(f"ALERTA: Nivel bajo ({valor_actual:.1f}%) - Alerta de seguimiento. Preparar medidas preventivas.")
-            
-            # RIESGO POR NIVEL ALTO (riesgo de desbordamiento)
-            elif valor_actual > 95:
-                severidad = 'crítico'
-                razon_severidad.append(f"ALERTA ROJA: Nivel crítico ({valor_actual:.1f}%) - Desbordamiento inminente. Descargas masivas en curso.")
-            elif valor_actual > 90:
-                severidad = 'alerta'
-                razon_severidad.append(f"ALERTA NARANJA: Nivel muy alto ({valor_actual:.1f}%) - Preparar descargas preventivas. Avisar comunidades aguas abajo.")
-            elif valor_actual > 80:
-                severidad = 'alerta'
-                razon_severidad.append(f"ALERTA AMARILLA: Nivel elevado ({valor_actual:.1f}%) - Vigilancia activa. Monitorear caudales de entrada.")
-            
-            # RIESGO POR TENDENCIA (cambios rápidos)
+                razon_severidad.append(f"ALERTA: {mensaje_ideam}")
+
+            # RIESGO POR TENDENCIA (cambios rápidos) — solo si el nivel
+            # absoluto ya no disparó una severidad por sí mismo.
             elif desviacion_signada < -25:
                 severidad = 'alerta'
                 razon_severidad.append(f"Caída acelerada ({desviacion_signada:.1f}%) - Riesgo de agotamiento rápido de reservas")
+
+            # SEÑAL SEPARADA: condición regulatoria CREG (Índice NE, marco de
+            # desabastecimiento eléctrico) — un marco normativo DISTINTO del
+            # IDEAM/UNGRD de arriba (seguridad de presas/riesgo de desborde).
+            # Un mismo % de embalse puede ser "favorable" en un marco y
+            # "vigilancia" en el otro — nunca se fusionan bajo una sola
+            # etiqueta. Ver Fase 39.
+            try:
+                etiqueta_creg, _color_creg, justificacion_creg = clasificar_visual_embalse(valor_actual)
+                resultado['condicion_regulatoria_creg'] = {
+                    'etiqueta': etiqueta_creg,
+                    'justificacion': justificacion_creg,
+                }
+            except Exception as e:
+                logger.debug(f"[ANOMALIAS] No se pudo clasificar condición CREG de embalses: {e}")
         else:
             # Indicador genérico: usar desviación simple
             if desviacion_pct > 30:
@@ -409,7 +409,8 @@ class AnomaliaHandlerMixin:
             confianza_pred=confianza_pred,
             prediccion_excluida=resultado.get('prediccion_excluida'),
             severidad=severidad,
-            razon_severidad=razon_severidad
+            razon_severidad=razon_severidad,
+            condicion_regulatoria_creg=resultado.get('condicion_regulatoria_creg'),
         )
         
         resultado['comentario'] = comentario
@@ -945,7 +946,8 @@ class AnomaliaHandlerMixin:
         confianza_pred: Optional[float],
         prediccion_excluida: bool,
         severidad: str,
-        razon_severidad: List[str]
+        razon_severidad: List[str],
+        condicion_regulatoria_creg: Optional[Dict[str, str]] = None,
     ) -> str:
         """
         Genera una descripción natural y entendible para humanos de la anomalía.
@@ -1017,7 +1019,17 @@ class AnomaliaHandlerMixin:
                 partes.append(f". ⚠️ ATENCIÓN: {razon}")
             elif severidad == 'alerta':
                 partes.append(f". ℹ️ Nota: {razon}")
-        
+
+        # 8. Condición regulatoria CREG (Índice NE) — marco DISTINTO del
+        # riesgo de desborde IDEAM/UNGRD evaluado arriba, siempre se muestra
+        # por separado y nunca se mezcla con la severidad de seguridad de
+        # presas.
+        if condicion_regulatoria_creg:
+            partes.append(
+                f". Condición regulatoria CREG: {condicion_regulatoria_creg['etiqueta']} "
+                f"({condicion_regulatoria_creg['justificacion']})"
+            )
+
         # Unir todo
         descripcion = "".join(partes)
         

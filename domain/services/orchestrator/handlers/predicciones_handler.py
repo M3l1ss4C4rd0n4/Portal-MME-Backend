@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
+from core.umbrales_oficiales import clasificar_indice_ne
 
 logger = get_logger(__name__)
 
@@ -561,13 +562,45 @@ class PrediccionesHandlerMixin:
 
                 recomendaciones = []
                 recomendaciones.append(f"📋 Monitorear la generación {fuente_normalizada.lower()} real vs predicha para validar el modelo")
-                if fuente_normalizada == 'Hidráulica' and promedio < 150:
-                    recomendaciones.append(
-                        "⚡ Generación hidráulica predicha por debajo del umbral histórico. "
-                        "Verificar niveles de embalses y disponibilidad de respaldo térmico"
-                    )
-                elif fuente_normalizada == 'Hidráulica' and promedio > 200:
-                    recomendaciones.append("💧 Generación hidráulica predicha en niveles altos, favorable para el sistema")
+                # 2026-08-26 (a pedido del usuario): se retiró el umbral
+                # inventado (150/200 GWh/día sobre generación, sin cita) y
+                # se reemplazó por el Índice NE OFICIAL (Res. CREG 209/2020
+                # + 101 112/2026) — la misma lógica que ya usan las alertas
+                # en tiempo real (core/umbrales_oficiales.py) — aplicada al
+                # % de embalse PRONOSTICADO para el mismo horizonte, en vez
+                # de un umbral propio sobre la generación en GWh.
+                if fuente_normalizada == 'Hidráulica':
+                    try:
+                        df_embalses_pred = self.predictions_service.get_predictions(
+                            metric_id='EMBALSES_PCT',
+                            start_date=fecha_inicio.isoformat(),
+                            end_date=fecha_fin.isoformat(),
+                            model_name="ENSEMBLE_SECTOR_v1.0",
+                        )
+                        if not df_embalses_pred.empty:
+                            embalse_pct_prom = float(df_embalses_pred['valor_gwh_predicho'].mean())
+                            nivel_ne, _desc_ne, senda = clasificar_indice_ne(embalse_pct_prom, fecha_fin)
+                            if nivel_ne == 'INFERIOR':
+                                recomendaciones.append(
+                                    f"🔴 El embalse pronosticado para este horizonte ({embalse_pct_prom:.1f}%) "
+                                    f"estaría por debajo de la senda de referencia CREG ({senda:.1f}%) — "
+                                    f"Índice NE en nivel INFERIOR (Res. CREG 209/2020 + 101 112/2026). "
+                                    f"Verificar disponibilidad de respaldo térmico."
+                                )
+                            elif nivel_ne == 'ALERTA':
+                                recomendaciones.append(
+                                    f"🟡 El embalse pronosticado para este horizonte ({embalse_pct_prom:.1f}%) "
+                                    f"estaría cerca de la senda de referencia CREG ({senda:.1f}%) — "
+                                    f"Índice NE en ALERTA (Res. CREG 209/2020 + 101 112/2026)."
+                                )
+                            else:
+                                recomendaciones.append(
+                                    f"🟢 El embalse pronosticado para este horizonte ({embalse_pct_prom:.1f}%) "
+                                    f"estaría sobre la senda de referencia CREG ({senda:.1f}%) — "
+                                    f"Índice NE SUPERIOR, condición favorable."
+                                )
+                    except Exception as e:
+                        logger.warning(f"[PREDICCIONES] No se pudo clasificar el Índice NE pronosticado: {e}")
                 if cv_pred > 10:
                     recomendaciones.append("🔧 La alta variabilidad anticipada sugiere preparar capacidad de respaldo flexible")
                 data['recomendaciones'] = recomendaciones

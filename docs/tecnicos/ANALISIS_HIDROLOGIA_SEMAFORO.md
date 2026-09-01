@@ -1,5 +1,8 @@
 # 📊 Análisis Hidrológico y Sistema de Semáforo de Riesgos
 
+> **⚠️ ACTUALIZACIÓN AGOSTO 2026 — leer antes de usar la matriz de la Sección 3.**
+> La matriz "Participación × Volumen" descrita más abajo (Sección 3, con el factor de "participación estratégica" del embalse) **ya no refleja la lógica real del código**. En 2026-08-26 se unificaron 5 implementaciones distintas e inconsistentes de este mismo concepto (cada una con umbrales propios, ninguna citada) en un único módulo (`core/umbrales_ideam_ungrd.py`) — y se retiró el factor de "participación", porque nunca tuvo ninguna fuente normativa que lo respaldara: IDEAM/UNGRD solo publican umbrales por **% de volumen útil**, no por participación del embalse en el sistema. Ver la nueva **Sección 10** al final de este documento para la lógica real actual, y la distinción crítica con el Índice NE regulatorio de la CREG (un concepto relacionado pero **no intercambiable**).
+
 ## 🎯 Resumen Ejecutivo
 
 Este documento explica el sistema de análisis hidrológico implementado en el Dashboard del Ministerio de Minas y Energía, incluyendo el **Sistema de Semáforo de Riesgos** para la evaluación automática del estado operativo de los embalses del Sistema Interconectado Nacional (SIN).
@@ -575,6 +578,42 @@ Ejemplo: >80% del sistema en verde
 **Versión**: 1.0  
 **Fecha**: Septiembre 2025  
 **Actualización**: Tiempo real vía API XM  
+
+---
+
+## 🔧 10. ACTUALIZACIÓN AGOSTO 2026 — Unificación del semáforo IDEAM/UNGRD y distinción con el Índice NE (CREG)
+
+### 10.1 Unificación de 5 implementaciones duplicadas
+
+Se encontraron **5 implementaciones independientes** del mismo cálculo de riesgo por embalse individual, cada una con umbrales ligeramente distintos entre sí y ninguna con una cita normativa real:
+
+- `domain/services/orchestrator/handlers/anomalias_handler.py` (la única con cita real — origen de los umbrales correctos).
+- `interface/pages/hidrologia/utils.py::calcular_semaforo_embalse()` y `::clasificar_riesgo_embalse()`.
+- `interface/pages/hidrologia/data_services.py::calcular_semaforo_embalse_local()` y `::clasificar_riesgo_embalse_local()`.
+- `whatsapp_bot/services/informe_charts.py::_clasificar_riesgo_embalse()`.
+
+Todas las versiones anteriores además incorporaban un factor de **"participación estratégica"** del embalse en el sistema nacional (la matriz Participación × Volumen descrita en la Sección 3 de este documento) — **sin ninguna fuente que lo respaldara**. Se confirmó contra las publicaciones reales de IDEAM/UNGRD que estas entidades solo clasifican riesgo por **% de volumen útil**, sin ponderar por el tamaño relativo del embalse.
+
+**Corregido**: nuevo módulo canónico `core/umbrales_ideam_ungrd.py` (función `clasificar_riesgo_embalse_ideam_ungrd(volumen_util_pct)`), con réplica exacta en TypeScript en `portal-direccion-mme/src/lib/embalse-utils.ts`. Los 5 sitios originales ahora importan de este único módulo. La Sección 3 de este documento (matriz con participación) queda **obsoleta** — se conserva como referencia histórica, no como lógica vigente.
+
+### 10.2 Umbrales reales vigentes (un solo factor: % de volumen útil)
+
+| % Volumen útil | Nivel | Color | Fuente |
+|---|---|---|---|
+| < 27% | 🔴 CRÍTICO — RACIONAMIENTO | `#EF4444` | IDEAM |
+| 27% – 39,99% | 🟡 ALERTA — NIVEL BAJO | `#F97316` | IDEAM |
+| 40% – 80% | 🟢 NORMAL | `#22C55E` | — |
+| 80,01% – 90% | 🟡 ALERTA — NIVEL ELEVADO | `#F59E0B` | UNGRD |
+| 90,01% – 95% | 🟠 ALERTA — NIVEL MUY ALTO | `#F97316` | UNGRD |
+| > 95% | 🔴 CRÍTICO — DESBORDAMIENTO | `#EF4444` | UNGRD |
+
+### 10.3 Distinción crítica: esto NO es lo mismo que el Índice NE de la CREG
+
+Existe un segundo marco, completamente distinto, que **también** clasifica el nivel de embalses: el **Índice NE** del Estatuto de Racionamiento (CREG), implementado en `core/umbrales_oficiales.py::clasificar_indice_ne()`. Ese marco compara el nivel del embalse **agregado del SIN** contra la **senda de referencia** del mes (un valor que cambia estacionalmente, no un umbral fijo) — mide riesgo de **desabastecimiento eléctrico del sistema completo**, no seguridad de presa de un embalse individual.
+
+**Un mismo % de embalse puede ser "favorable" en el marco CREG (por estar sobre la senda de referencia) y "NORMAL" o "ALERTA" en este marco IDEAM/UNGRD** — nunca deben fusionarse bajo una sola etiqueta ni presentarse como si fueran la misma medición.
+
+**Bug regulatorio real, encontrado y corregido en agosto 2026**: el Índice NE tenía una regla adicional heredada ("SUPERIOR si el embalse ≥ senda de referencia **O** ≥ 70% absoluto del volumen útil agregado del SIN") que la **Resolución CREG 101 112 de 2026** derogó — desde su vigencia (17 de junio de 2026), el Índice NE se determina **exclusivamente** comparando contra la senda de referencia, sin el umbral absoluto del 70%. El código del portal seguía aplicando la regla derogada dos meses después de su derogación — corregido en `core/umbrales_oficiales.py::clasificar_indice_ne()`, con impacto real y visible: el mismo día del fix, la condición del sistema pasó de mostrarse como favorable a mostrarse como "RIESGO" para el mismo dato hidrológico, porque así lo exige la norma vigente. Se construyó además un mecanismo de vigilancia normativa (`scripts/ontologia/vigilancia_normativa_creg.py`, corrida diaria) que detecta automáticamente futuras modificaciones a las 8 resoluciones CREG que sustentan estos umbrales, para que un cambio similar no vuelva a pasar desapercibido durante meses.
 
 ---
 

@@ -267,8 +267,13 @@ def _clasificar_estado(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── Crisis operacional (independiente del stock, pero embalse no debe estar sano) ───
     # Térmica CRÍTICO + Precio CRÍTICO simultáneos = despacho forzado bajo
-    # precio de escasez → riesgo real. Sin embargo, si embalse ≥ 70% los tanques
-    # todavía tienen buffer suficiente → es vigilancia, no crisis.
+    # precio de escasez → riesgo real. El 70% aquí es un umbral PROXIO propio
+    # de este backtest (no requiere unir la senda de referencia mensual por
+    # fecha histórica, a diferencia de producción) — NO es la regla absoluta
+    # del Índice NE que el Estatuto CREG derogó (Res. CREG 101 112/2026, ver
+    # Fase 38/39 en producción, alertas_energeticas.py). Si se decide unificar
+    # con la senda real por fecha, requiere JOIN contra
+    # sector_energetico.senda_referencia — no implementado aquí todavía.
     _crisis_operacional = (
         df["flag_termico_critico"] & df["flag_precio_critico"]
         & (df["embalse_pct"] < 70.0)

@@ -220,39 +220,27 @@ def generate_generation_pie() -> Tuple[Optional[str], str, str]:
 
 def _clasificar_riesgo_embalse(participacion: float, volumen_pct: float) -> str:
     """
-    Replica la lógica exacta del semáforo del dashboard
-    (generacion_hidraulica_hidrologia.py → clasificar_riesgo_embalse).
+    Clasifica el riesgo de un embalse individual según IDEAM/UNGRD.
 
-    Matriz 2D: participación (importancia estratégica) × volumen útil (%).
+    Unificado 2026-08-26 (a pedido del usuario) — ver core/umbrales_
+    ideam_ungrd.py, la única fuente ahora para esta clasificación en todo
+    el proyecto (antes esta función tenía su propia matriz de umbrales,
+    distinta e inconsistente con las 4 otras copias que existían). El
+    parámetro ``participacion`` se conserva por compatibilidad de firma,
+    pero ya no se usa. Los 6 estados oficiales se colapsan a 3 emoji para
+    este mapa simple por región (los 2 estados CRÍTICO y el de nivel muy
+    alto — que ya recomienda preparar descargas preventivas — se tratan
+    como riesgo "alto").
 
     Returns: '🔴' | '🟡' | '🟢'
     """
-    if participacion >= 15:
-        if volumen_pct < 30:
-            return '🔴'
-        elif volumen_pct < 70:
-            return '🟡'
-        else:
-            return '🟢'
-    elif participacion >= 10:
-        if volumen_pct < 20:
-            return '🔴'
-        elif volumen_pct < 60:
-            return '🟡'
-        else:
-            return '🟢'
-    elif participacion >= 5:
-        if volumen_pct < 15:
-            return '🔴'
-        elif volumen_pct < 50:
-            return '🟡'
-        else:
-            return '🟢'
-    else:  # participación < 5%
-        if volumen_pct < 25:
-            return '🟡'
-        else:
-            return '🟢'
+    from core.umbrales_ideam_ungrd import clasificar_riesgo_embalse_ideam_ungrd
+    nivel, _color, _emoji, _mensaje = clasificar_riesgo_embalse_ideam_ungrd(volumen_pct or 0)
+    if nivel in ('CRÍTICO — RACIONAMIENTO', 'CRÍTICO — DESBORDAMIENTO', 'ALERTA — NIVEL MUY ALTO'):
+        return '🔴'
+    if nivel in ('ALERTA — NIVEL BAJO', 'ALERTA — NIVEL ELEVADO'):
+        return '🟡'
+    return '🟢'
 
 
 _RIESGO_COLOR = {'🔴': '#dc3545', '🟡': '#ffc107', '🟢': '#28a745'}

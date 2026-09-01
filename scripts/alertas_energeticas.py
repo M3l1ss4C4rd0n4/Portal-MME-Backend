@@ -62,6 +62,9 @@ from core.umbrales_oficiales import (
     PRECIO_ESCASEZ_PES_REF_2026_01,
     # Capacidad e información oficial del SIN
     OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT,
+    # Índice PBP y combinación oficial NE+HSIN+PBP (Estatuto CREG 026/2014 art. 2-3)
+    clasificar_indice_pbp,
+    determinar_condicion_sistema,
 )
 import json
 
@@ -167,14 +170,6 @@ UMBRALES = {
         'DIAS_BAJO_MINIMO': 4,   # 4 de 7 días → nivel BAJO (CREG 026/2014)
         'fuente': 'Resolución CREG 026 de 2014 art. 2 + CREG 101 066/2024',
     },
-    # ─── MARGEN OPERATIVO ────────────────────────────────────────────────────
-    # CRITERIO OPERATIVO CND (no normado en Estatuto CREG):
-    # margen (%) = (GENE_TOTAL_pred − DEMANDA_pred) / DEMANDA_pred × 100
-    'MARGEN_OPERATIVO': {
-        'CRITICO': 3.0,    # < 3 % → riesgo real de déficit
-        'ALERTA':  8.0,    # 3–8 % → vigilancia
-        'fuente': 'Criterio operativo CND para evaluación de balance energético',
-    },
     # ─── ESTRÉS TÉRMICO ──────────────────────────────────────────────────────
     # CRITERIO OPERATIVO CND (no normado en Estatuto CREG):
     # participación (%) = Térmica / DEMANDA × 100
@@ -213,6 +208,14 @@ class SistemaAlertasEnergeticas:
         self.conn = self._get_connection()
         self.notification_service = NotificationService()
         print("✅ Sistema de notificaciones inicializado")
+        # Niveles oficiales CREG (Estatuto 026/2014 art. 2-3), poblados por
+        # evaluar_embalses()/evaluar_aportes_hidricos()/evaluar_precio_bolsa()
+        # cuando hay datos suficientes — usados por _determinar_estado_general()
+        # para la condición regulatoria vía determinar_condicion_sistema().
+        # Ver Fase 39.
+        self.nivel_ne = None
+        self.nivel_hsin = None
+        self.nivel_pbp = None
         
     def _get_connection(self):
         """Obtiene conexión a PostgreSQL"""
@@ -337,7 +340,7 @@ class SistemaAlertasEnergeticas:
                 'categoria': 'DEMANDA',
                 'severidad': 'CRÍTICO',
                 'clave': 'DEMANDA_CRITICA',
-                'titulo': f'Demanda excesiva sostenida: {dias_criticos}/{total} días > {umbral_crit} GWh',
+                'titulo': f'Demanda excesiva sostenida: {dias_criticos}/{total} días > {umbral_crit} GWh [criterio operativo CND, no CREG]',
                 'descripcion': (
                     f'Pico máximo: {maximo:.1f} GWh/día. Promedio: {promedio:.1f} GWh/día. '
                     f'El {dias_criticos/total*100:.0f}% de los últimos {total} días supera el p99 histórico. '
@@ -354,7 +357,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'DEMANDA',
                 'severidad': 'ALERTA',
-                'titulo': f'Demanda elevada: {dias_alerta}/{total} días > {umbral_alert} GWh',
+                'titulo': f'Demanda elevada: {dias_alerta}/{total} días > {umbral_alert} GWh [criterio operativo CND, no CREG]',
                 'descripcion': f'Promedio: {promedio:.1f} GWh/día. Máximo: {maximo:.1f} GWh/día.',
                 'valor': promedio,
                 'umbral': umbral_alert,
@@ -404,6 +407,7 @@ class SistemaAlertasEnergeticas:
 
         # Clasificación oficial CREG
         nivel_hsin, descripcion_hsin = clasificar_hsin(hsin_pct)
+        self.nivel_hsin = nivel_hsin
 
         total = len(df)
         minimo = float(df['valor_gwh'].min())
@@ -458,10 +462,11 @@ class SistemaAlertasEnergeticas:
     def evaluar_embalses(self, horizonte=30):
         """Evalúa el nivel de embalses usando el ÍNDICE NE OFICIAL del Estatuto CREG.
 
-        Marco regulatorio: Resolución CREG 209 de 2020.
-        El nivel real del embalse del SIN se compara con la SENDA DE REFERENCIA
-        mensual publicada por XM/CND. Niveles del Índice NE:
-            SUPERIOR: embalse ≥ senda  O  embalse ≥ 70% (regla absoluta CREG)
+        Marco regulatorio: Resolución CREG 209 de 2020, mod. Res. CREG 101 112
+        de 2026 (deroga la regla absoluta del 70%, vigente desde 17-jun-2026).
+        El nivel real del embalse del SIN se compara EXCLUSIVAMENTE con la
+        SENDA DE REFERENCIA mensual publicada por XM/CND. Niveles del Índice NE:
+            SUPERIOR: embalse ≥ senda
             ALERTA:   senda − X ≤ embalse < senda
             INFERIOR: embalse < senda − X
 
@@ -485,6 +490,7 @@ class SistemaAlertasEnergeticas:
         # Clasificación oficial Índice NE
         nivel_ne, descripcion_ne, senda = clasificar_indice_ne(pct_actual)
         nivel_ne_min, _, _ = clasificar_indice_ne(pct_min)
+        self.nivel_ne = nivel_ne
 
         if nivel_ne_min == 'INFERIOR':
             self.alertas.append({
@@ -594,6 +600,14 @@ class SistemaAlertasEnergeticas:
         df_bolsa_sorted = df_bolsa.sort_values('fecha', ascending=False).head(ventana)
         dias_alto = int((df_bolsa_sorted['valor_gwh'] >= pe_vigente).sum())
         dias_pes = int((df_bolsa_sorted['valor_gwh'] >= pes_vigente).sum())
+
+        # Clasificación oficial del Índice PBP (Estatuto CREG 026/2014 art. 2),
+        # con los mismos datos ya cargados arriba — usada solo para la
+        # combinación de _determinar_estado_general(), no cambia las alertas
+        # de PRECIO_MERCADO ya evaluadas con su propia lógica de PES/PE.
+        self.nivel_pbp, _ = clasificar_indice_pbp(
+            df_bolsa_sorted['valor_gwh'].tolist(), pe_vigente
+        )
         n_ventana = len(df_bolsa_sorted)
 
         # Suavizado: media móvil 3 días sobre la serie completa (anti-ruido)
@@ -665,6 +679,14 @@ class SistemaAlertasEnergeticas:
         Esta evaluación sólo tiene sentido con predicciones futuras donde puede
         existir un déficit proyectado. Con datos históricos reales, el estrés
         operativo se refleja en niveles de embalses, aportes hídricos y precios.
+
+        2026-08-25: el umbral "MARGEN_OPERATIVO" que originalmente motivó este
+        método se eliminó de UMBRALES — no tenía ninguna fuente ni normativa
+        real que lo respaldara (a diferencia de DEMANDA/ESTRÉS_TÉRMICO, que sí
+        citan un criterio operativo real del CND). Este método se deja como
+        no-operativo (nunca generó alertas, confirmado por grep en todo el
+        proyecto) en vez de eliminarlo, para no tocar su call site en
+        tasks/anomaly_tasks.py sin necesidad.
         """
         print("⚖️  Balance energético: no evaluable con datos históricos reales.")
         print("     Gene ≈ DemaSIN por física del SIN (oferta = demanda en tiempo real).")
@@ -724,7 +746,7 @@ class SistemaAlertasEnergeticas:
                 'categoria': 'ESTRES_TERMICO',
                 'severidad': 'CRÍTICO',
                 'clave': 'ESTRES_TERMICO_CRITICO',
-                'titulo': f'Estrés térmico crítico: {participacion_prom:.1f}% participación sostenida',
+                'titulo': f'Estrés térmico crítico: {participacion_prom:.1f}% participación sostenida [criterio operativo CND, no CREG]',
                 'descripcion': (
                     f'{dias_criticos}/{total} días con participación térmica > {umb["CRITICO"]}%. '
                     f'Alta dependencia térmica indica déficit hidráulico estructural.'
@@ -740,7 +762,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'ESTRES_TERMICO',
                 'severidad': 'ALERTA',
-                'titulo': f'Estrés térmico moderado: {participacion_prom:.1f}% participación',
+                'titulo': f'Estrés térmico moderado: {participacion_prom:.1f}% participación [criterio operativo CND, no CREG]',
                 'descripcion': (
                     f'{dias_alerta}/{total} días con participación térmica > {umb["ALERTA"]}%. '
                     f'Sistema en modo de compensación hidráulica.'
@@ -905,13 +927,20 @@ class SistemaAlertasEnergeticas:
         self._enviar_notificaciones()
         
         # 3. Generar reporte JSON
+        condicion_creg, descripcion_creg = self.obtener_condicion_regulatoria_creg()
         reporte = {
             'fecha_generacion': datetime.now().isoformat(),
             'total_alertas': len(self.alertas),
             'alertas_criticas': len([a for a in self.alertas if a['severidad'] == 'CRÍTICO']),
             'alertas_importantes': len([a for a in self.alertas if a['severidad'] == 'ALERTA']),
             'alertas': self.alertas,
-            'estado_general': self._determinar_estado_general()
+            # Riesgo operativo combinado (taxonomía CND, ver docstring)
+            'estado_general': self._determinar_estado_general(),
+            # Condición regulatoria oficial del Estatuto CREG 026/2014 art. 3
+            # (NORMAL/VIGILANCIA/RIESGO) — señal DISTINTA de 'estado_general',
+            # nunca se deben mezclar. Ver Fase 39.
+            'condicion_regulatoria_creg': condicion_creg,
+            'condicion_regulatoria_creg_descripcion': descripcion_creg,
         }
         
         if output_file:
@@ -921,8 +950,29 @@ class SistemaAlertasEnergeticas:
         
         return reporte
     
+    def obtener_condicion_regulatoria_creg(self):
+        """Condición del sistema según el Estatuto CREG 026/2014 art. 3 —
+        taxonomía OFICIAL (NORMAL/VIGILANCIA/RIESGO), distinta del "riesgo
+        operativo combinado" propio del CND que calcula
+        _determinar_estado_general() (que además mezcla térmica/demanda,
+        criterios sin equivalente CREG). Requiere que evaluar_embalses(),
+        evaluar_aportes_hidricos() y evaluar_precio_bolsa() ya hayan corrido
+        en esta ejecución (poblan self.nivel_ne/nivel_hsin/nivel_pbp).
+
+        Returns:
+            (condicion, descripcion) o (None, motivo) si falta algún índice.
+        """
+        if self.nivel_ne is None or self.nivel_hsin is None or self.nivel_pbp is None:
+            return (None, 'Índice NE, HSIN o PBP no evaluado en esta corrida (datos insuficientes).')
+        if self.nivel_pbp == 'INDETERMINADO':
+            return (None, 'Índice PBP indeterminado (menos de 7 días de precio de bolsa).')
+        return determinar_condicion_sistema(self.nivel_ne, self.nivel_hsin, self.nivel_pbp)
+
     def _determinar_estado_general(self):
-        """Clasifica el estado general del SIN.
+        """Clasifica el RIESGO OPERATIVO COMBINADO del SIN — taxonomía propia
+        del CND (demanda/térmica/precio/embalses agregados en una sola señal
+        de seguimiento), NO la "condición del sistema" regulatoria del
+        Estatuto CREG (ver obtener_condicion_regulatoria_creg() para esa).
 
         Reglas alineadas con criterio CND / XM:
 
@@ -949,18 +999,18 @@ class SistemaAlertasEnergeticas:
         embalse_comprometido = (
             'EMBALSES' in cats_criticas or 'EMBALSES' in cats_alerta
         )
-        # Valor numérico de embalse para la guarda de nivel
-        embalse_val = next(
-            (a.get('valor', 100) for a in self.alertas if a.get('categoria') == 'EMBALSES'),
-            100
-        )
         # Crisis operacional: despacho físico bajo precio de escasez.
-        # Requiere que los tanques NO estén sanos (< 70%): con embalse ≥ 70%
-        # térmica + precio alto es vigilancia, no crisis estructural.
+        # Requiere que los tanques NO estén "sanos" — se usa el Índice NE
+        # oficial (nivel_ne != 'SUPERIOR') en vez de un umbral numérico
+        # arbitrario, para no reintroducir el mismo "70%" que el Estatuto
+        # CREG ya derogó como regla absoluta (Res. CREG 101 112/2026, ver
+        # Fase 38/39): con NE=SUPERIOR (por encima de la senda), térmica +
+        # precio alto es vigilancia, no crisis estructural.
         crisis_operacional = (
             'ESTRES_TERMICO' in cats_criticas
             and 'PRECIO_MERCADO' in cats_criticas
-            and embalse_val < 70
+            and self.nivel_ne is not None
+            and self.nivel_ne != 'SUPERIOR'
         )
 
         if n_criticos >= 3:
