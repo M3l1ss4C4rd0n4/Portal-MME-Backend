@@ -1,6 +1,6 @@
 # AGENTS.md — Server Backend MME
 
-> **Última actualización:** 2026-05-02  
+> **Última actualización:** 2026-05-02 (creación) — **corregido 2026-09-01**: stack de BD real (psycopg2, no asyncpg), líneas reales de God Files, deuda técnica de tests ya resuelta  
 > **Framework:** SKILL_PACK_V4.1.md (Field Medic Framework — Jerarquía de Verdad + CDA + Ciclos + Hardware Physics)
 > **Ubicación:** `/home/admonctrlxm/server/SKILL_PACK_V4.1.md`  
 > Corregido 2026-09-01: la referencia anterior a una copia en `/home/admonctrlxm/portal-direccion-mme/SKILL_PACK_V4.1.md` era incorrecta — ese archivo no existe en el repo del frontend. Solo hay una copia, en este repo.
