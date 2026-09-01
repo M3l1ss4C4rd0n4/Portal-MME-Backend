@@ -875,13 +875,32 @@ METRICAS_CONFIG = {
         'prophet_cv': False,
         # SARIMAX: ONI como variable exógena en SARIMA (hace el componente estadístico climate-aware)
         'use_sarimax': True,
+        # Fase 42 continuación (2026-08-31): SOI agregado como 2da exógena de
+        # SARIMAX (antes solo ONI). La tesis de Melissa Cardona (análisis de
+        # correlación/Granger, 2000-2018) encontró que SOI correlaciona más
+        # fuerte que ONI con los aportes hídricos (xm_PorcApor): r=0.32
+        # contemporáneo, r=0.46 con 30 días de rezago vs. r=0.15-0.23 de ONI
+        # — señal que hoy solo llega a Prophet (vía add_regressor), nunca a
+        # SARIMAX. Cambio arquitectónico real, validado con backtest
+        # antes/después antes de considerarlo definitivo (ver plan, Fase 42
+        # Tier 2).
+        'sarimax_exog_extra': ['soi_index'],
         # Prophet optimizado para hidrología colombiana bimodal andina
         # Colombia tiene dos temporadas de lluvia: abr-may y oct-nov (no un ciclo anual único)
         'prophet_growth': 'flat',               # serie estacionaria cíclica, sin tendencia lineal
         'prophet_seasonality_mode': 'multiplicative',  # amplitud varía con nivel (correcto para %)
         'prophet_weekly_seasonality': False,    # embalses no tienen ciclo semanal
         'prophet_semi_annual_seasonality': True,  # segundo ciclo bimodal andino (oct-nov)
-        'prophet_changepoint_prior_scale': 0.01,  # menos breakpoints → curva más suave
+        # Fase 42 (2026-08-31): con prophet_growth='flat' (arriba) este valor
+        # es INERTE hoy — verificado leyendo el código fuente de Prophet
+        # 1.3.0: flat_trend() devuelve una constante en predict_trend() Y en
+        # sample_predictive_trend(), ignorando por completo `deltas`/
+        # changepoints en ambos casos (no hay tendencia por tramos que
+        # suavizar cuando la tendencia es plana). Se deja documentado, no
+        # eliminado, porque tomaría efecto real si `prophet_growth` cambiara
+        # a 'linear' en el futuro (decisión arquitectónica mayor, fuera de
+        # alcance de esta ronda — ver plan, Tier 2/3).
+        'prophet_changepoint_prior_scale': 0.01,  # menos breakpoints → curva más suave (inerte bajo growth='flat')
         'prophet_seasonality_prior_scale': 20.0,  # más peso a estacionalidad conocida
         # Señales climáticas: precipitación actual vs promedio + índice ONI
         'regresores': {
@@ -1272,6 +1291,41 @@ def get_postgres_connection():
     return psycopg2.connect(**conn_params)
 
 
+def _calcular_pendiente_calibracion(y_real, ci_lower, ci_upper, target_cob: float = 0.92) -> float:
+    """
+    Fase 42 (2026-08-31): estima cuánto crece la incertidumbre real dentro del
+    propio holdout, comparando la cobertura empírica del intervalo de
+    confianza en la primera mitad vs. la segunda mitad del período de
+    validación. Corrige un bug real: el factor de calibración del IC se
+    calculaba una sola vez sobre TODO el holdout y se aplicaba de forma
+    PLANA a cualquier horizonte de pronóstico (1 día o 730 días por igual) —
+    verificado contra el código fuente de Prophet 1.3.0 que, con
+    growth='flat' + mcmc_samples=0 (config de EMBALSES_PCT), el intervalo de
+    Prophet no se ensancha en absoluto con el horizonte, así que sin este
+    ajuste la única fuente de crecimiento real de incertidumbre era el peso
+    (normalmente minoritario) de SARIMAX en el ensemble.
+
+    Devuelve una "pendiente" >= 0 (nunca negativa — nunca angostamos la banda
+    respecto al factor base, solo la ensanchamos más rápido si la evidencia
+    del propio holdout ya muestra que la incertidumbre crece).
+    """
+    n = len(y_real)
+    mitad = n // 2
+    if mitad < 10:
+        return 0.0
+
+    def _factor(idx_ini, idx_fin):
+        dentro = np.sum((y_real[idx_ini:idx_fin] >= ci_lower[idx_ini:idx_fin]) &
+                         (y_real[idx_ini:idx_fin] <= ci_upper[idx_ini:idx_fin]))
+        cob = float(dentro / (idx_fin - idx_ini))
+        return min((target_cob / max(cob, 0.50)) if cob < target_cob else 1.0, 2.0)
+
+    fcal_primera_mitad = _factor(0, mitad)
+    fcal_segunda_mitad = _factor(mitad, n)
+    pendiente = max(0.0, (fcal_segunda_mitad - fcal_primera_mitad) / max(fcal_primera_mitad, 1e-6))
+    return round(float(pendiente), 4)
+
+
 class PredictorMetricaSectorial:
     """Predictor especializado para métricas del sector energético"""
     
@@ -1285,120 +1339,29 @@ class PredictorMetricaSectorial:
         # FASE 3: soporte para regresores Prophet
         self.regresores_nombres = []        # nombres de columnas regresoras en df_prophet
         self.regresores_completo: pd.DataFrame | None = None    # DataFrame fecha→valor para todo el rango (hist+futuro)
-        # SARIMAX: serie ONI alineada para usar como variable exógena en SARIMA
-        self._exog_oni_serie: pd.Series | None = None
-        # FASE 4.3: Ajuste adaptativo basado en quality_history ex-post
-        self._adjust_weights_from_history()
-
-    def _adjust_weights_from_history(self):
-        """
-        FASE 4.3: Ensemble adaptativo — ajusta pesos iniciales Prophet/SARIMA.
-
-        Señales en orden de prioridad:
-        1. Historial de entrenamiento (mape_prophet/mape_sarima en predictions):
-           inverse-error formula sobre últimas 5 ejecuciones con decay=0.8.
-        2. Señales ex-post (predictions_quality_history): detecta drift/overfitting
-           que anula el prior del paso 1.
-        """
-        try:
-            conn = get_postgres_connection()
-            cur = conn.cursor()
-
-            # ── Señal 1: historial de per-model MAPEs de entrenamientos previos ──
-            # UNION con predictions_history: cada retrain borra el batch anterior
-            # de `predictions` (archivado por el trigger trg_predictions_archive_on_delete),
-            # así que sin esta unión esta consulta nunca ve más de 1 fila (el batch vivo).
-            cur.execute("""
-                SELECT mape_prophet, mape_sarima, fecha_generacion
-                FROM (
-                    SELECT mape_prophet, mape_sarima, fecha_generacion
-                    FROM predictions
-                    WHERE fuente = %s
-                      AND mape_prophet IS NOT NULL
-                      AND mape_sarima  IS NOT NULL
-                    UNION ALL
-                    SELECT mape_prophet, mape_sarima, fecha_generacion
-                    FROM predictions_history
-                    WHERE fuente = %s
-                      AND mape_prophet IS NOT NULL
-                      AND mape_sarima  IS NOT NULL
-                ) combined
-                ORDER BY fecha_generacion DESC
-                LIMIT 5
-            """, (self.nombre, self.nombre))
-            train_rows = cur.fetchall()
-
-            if train_rows:
-                tw, w_mp, w_ms = 0.0, 0.0, 0.0
-                decay = 1.0
-                for mp, ms, _ in train_rows:
-                    w_mp += float(mp) * decay
-                    w_ms += float(ms) * decay
-                    tw   += decay
-                    decay *= 0.8
-                avg_mp = w_mp / tw
-                avg_ms = w_ms / tw
-                total  = avg_mp + avg_ms
-                if total > 0:
-                    p = avg_ms / total   # inverse-error: menor MAPE → mayor peso
-                    s = avg_mp / total
-                    self.pesos = {'prophet': round(p, 3), 'sarima': round(s, 3)}
-                    print(f"  🔄 [ADAPTATIVO-HIST] {self.nombre}: "
-                          f"Prophet MAPE_hist={avg_mp:.4f}, SARIMA MAPE_hist={avg_ms:.4f} "
-                          f"→ Pesos ({p:.2f}/{s:.2f})")
-
-            # ── Señal 2: ex-post evaluation (puede sobreescribir si hay drift grave) ──
-            cur.execute("""
-                SELECT mape_expost, mape_train, fecha_evaluacion, modelo
-                FROM predictions_quality_history
-                WHERE fuente = %s
-                ORDER BY fecha_evaluacion DESC
-                LIMIT 5
-            """, (self.nombre,))
-            rows = cur.fetchall()
-            conn.close()
-
-            if not rows:
-                return
-
-            total_weight = 0.0
-            weighted_mape = 0.0
-            avg_train_mape = 0.0
-            decay = 1.0
-            for mape_ex, mape_tr, _, _ in rows:
-                if mape_ex is not None:
-                    weighted_mape += mape_ex * decay
-                    if mape_tr is not None:
-                        avg_train_mape += mape_tr * decay
-                    total_weight += decay
-                    decay *= 0.7
-
-            if total_weight == 0:
-                return
-
-            mape_expost_avg = weighted_mape / total_weight
-            mape_train_avg = avg_train_mape / total_weight if avg_train_mape > 0 else None
-
-            if mape_expost_avg > 0.20:
-                self.pesos = {'prophet': 0.85, 'sarima': 0.15}
-                print(f"  🔄 [ADAPTATIVO-EXPOST] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} > 20% "
-                      f"→ Prophet dominante (0.85/0.15)")
-            elif mape_train_avg and mape_expost_avg > mape_train_avg * 1.5:
-                self.pesos = {'prophet': 0.70, 'sarima': 0.30}
-                print(f"  🔄 [ADAPTATIVO-EXPOST] {self.nombre}: Overfitting detectado "
-                      f"(ex-post={mape_expost_avg:.1%} vs train={mape_train_avg:.1%}) "
-                      f"→ Pesos ajustados (0.70/0.30)")
-            elif mape_expost_avg < 0.05:
-                self.pesos = {'prophet': 0.55, 'sarima': 0.45}
-                print(f"  🔄 [ADAPTATIVO-EXPOST] {self.nombre}: Buen rendimiento ex-post={mape_expost_avg:.1%} "
-                      f"→ Balance equilibrado (0.55/0.45)")
-            else:
-                if not train_rows:
-                    print(f"  ℹ️ [ADAPTATIVO] {self.nombre}: MAPE ex-post={mape_expost_avg:.1%} "
-                          f"→ Pesos default (0.60/0.40)")
-
-        except Exception as e:
-            print(f"  ⚠️ [ADAPTATIVO] {self.nombre}: No se pudo consultar historial: {e}")
+        # SARIMAX: columnas exógenas (ONI + las que agregue 'sarimax_exog_extra'
+        # en config, ej. SOI — Fase 42 continuación, 2026-08-31) alineadas para
+        # usar como variables exógenas en SARIMA/SARIMAX.
+        self._exog_sarimax_cols: list = []
+        self._exog_sarimax_df: pd.DataFrame | None = None
+        # Fase 42 (2026-08-31): se eliminó aquí una llamada a un mecanismo de
+        # pesos adaptativos (_adjust_weights_from_history(), FASE 4.3) que
+        # consultaba las tablas predictions/predictions_history/
+        # predictions_quality_history EN VIVO y SIN filtro de fecha de corte
+        # — una fuga temporal real en principio (un backtest con corte 2022
+        # corrido hoy vería resultados de 2023-2026). Verificado por grep
+        # exhaustivo de todo self.pesos en el archivo: el valor que fijaba
+        # este mecanismo siempre se sobreescribía en validar_y_generar()
+        # (las 4 ramas) antes de cualquier lectura real — el único código que
+        # lee self.pesos vive dentro de validar_y_generar() (después de su
+        # propia reasignación) y dentro de predecir() (que siempre corre
+        # después de validar_y_generar() en los 2 call sites existentes,
+        # producción y main_backtest()). Era inofensivo en la práctica, pero
+        # un invariante frágil (solo correcto porque nada llama a predecir()
+        # sin pasar antes por validar_y_generar()) y desperdiciaba 2 consultas
+        # a BD en cada entrenamiento. El valor por defecto de abajo
+        # (0.6/0.4) es el único punto de partida ahora — nunca se lee tal
+        # cual, siempre se reemplaza en validar_y_generar().
 
     def entrenar_prophet(self, df_prophet):
         """Entrena modelo Prophet con estacionalidad anual"""
@@ -1456,21 +1419,34 @@ class PredictorMetricaSectorial:
         use_sarimax = self.config.get('use_sarimax', False)
         print(f"  → Entrenando {'SARIMAX' if use_sarimax else 'SARIMA'} para {self.nombre} (puede tardar)...", flush=True)
 
-        # Preparar exog ONI para SARIMAX
+        # Preparar exog para SARIMAX: ONI siempre + lo que agregue
+        # 'sarimax_exog_extra' en config (Fase 42 continuación, 2026-08-31 —
+        # ej. SOI para EMBALSES_PCT). Antes SARIMAX solo usaba ONI, pese a
+        # que Prophet ya recibía las 7 señales vía add_regressor — la tesis
+        # de Melissa Cardona encontró que SOI correlaciona más fuerte que
+        # ONI con los aportes hídricos (r=0.32-0.46 vs. r=0.15-0.23), señal
+        # que hoy SARIMAX nunca ve.
         exog_train = None
         if use_sarimax and self.regresores_completo is not None and 'oni_index' in self.regresores_completo.columns:
             try:
+                cols_exog = ['oni_index'] + [
+                    c for c in self.config.get('sarimax_exog_extra', [])
+                    if c in self.regresores_completo.columns
+                ]
                 serie_clean = serie_sarima.dropna()
-                oni_aligned = (
-                    self.regresores_completo['oni_index']
+                exog_aligned = (
+                    self.regresores_completo[cols_exog]
                     .reindex(serie_clean.index)
                     .ffill()
                     .bfill()
                     .fillna(0.0)
                 )
-                if len(oni_aligned) == len(serie_clean) and not oni_aligned.isna().all():
-                    exog_train = oni_aligned.values.reshape(-1, 1)
-                    self._exog_oni_serie = self.regresores_completo['oni_index']
+                if len(exog_aligned) == len(serie_clean) and not exog_aligned.isna().all().all():
+                    exog_train = exog_aligned.values
+                    self._exog_sarimax_cols = cols_exog
+                    self._exog_sarimax_df = self.regresores_completo[cols_exog]
+                    if len(cols_exog) > 1:
+                        print(f"    ℹ️  SARIMAX exog: {cols_exog}", flush=True)
             except Exception as e_exog:
                 print(f"    ⚠️  SARIMAX exog prep falló ({e_exog}). Usando SARIMA univariado.", flush=True)
                 exog_train = None
@@ -1478,14 +1454,26 @@ class PredictorMetricaSectorial:
         try:
             modelo = auto_arima(
                 serie_sarima.dropna(),
-                exogenous=exog_train,
+                # Fase 42 continuación (2026-08-31): bug real y preexistente
+                # encontrado — pmdarima 2.1.1 renombró el parámetro de
+                # exógenas de auto_arima()/.fit()/.predict() de 'exogenous' a
+                # 'X'. Como auto_arima() tiene **fit_args al final de su
+                # firma, pasar exogenous=... se absorbía SILENCIOSAMENTE sin
+                # error ni warning — SARIMAX nunca usó ninguna variable
+                # exógena (ni ONI) en este proyecto hasta este fix,
+                # verificado comparando el AIC con exog real/con ruido
+                # puro/sin exog: los 3 daban el mismo AIC exacto.
+                X=exog_train,
                 seasonal=True,
                 m=7,
                 max_order=5,
                 suppress_warnings=True,
                 error_action='ignore',
                 stepwise=True,
-                n_jobs=-1
+                # Fase 42: n_jobs=-1 se quitó — pmdarima lo descarta
+                # silenciosamente cuando stepwise=True (búsqueda inherentemente
+                # secuencial, confirmado en pmdarima/arima/_validation.py::
+                # check_n_jobs()), era configuración muerta sin efecto real.
             )
             self.modelo_sarima = modelo
             modo = "SARIMAX" if exog_train is not None else "SARIMA"
@@ -1566,41 +1554,42 @@ class PredictorMetricaSectorial:
                 serie_train_s = serie_sarima.iloc[:-dias_validacion]
                 serie_val_s = serie_sarima.iloc[-dias_validacion:]
 
-                # Preparar exog para holdout si SARIMAX está activo
+                # Preparar exog para holdout si SARIMAX está activo (ONI +
+                # extras de sarimax_exog_extra, ej. SOI — Fase 42 continuación)
                 exog_h_train = None
                 exog_h_val = None
-                if self._exog_oni_serie is not None:
+                if self._exog_sarimax_df is not None:
                     try:
-                        oni_h_train = (
-                            self._exog_oni_serie.reindex(serie_train_s.dropna().index)
+                        exog_h_train_df = (
+                            self._exog_sarimax_df.reindex(serie_train_s.dropna().index)
                             .ffill().bfill().fillna(0.0)
                         )
-                        oni_h_val = (
-                            self._exog_oni_serie.reindex(serie_val_s.index)
+                        exog_h_val_df = (
+                            self._exog_sarimax_df.reindex(serie_val_s.index)
                             .ffill().bfill().fillna(0.0)
                         )
-                        if len(oni_h_train) == len(serie_train_s.dropna()):
-                            exog_h_train = oni_h_train.values.reshape(-1, 1)
-                            exog_h_val = oni_h_val.values.reshape(-1, 1)
+                        if len(exog_h_train_df) == len(serie_train_s.dropna()):
+                            exog_h_train = exog_h_train_df.values
+                            exog_h_val = exog_h_val_df.values
                     except Exception:
                         exog_h_train = None
                         exog_h_val = None
 
                 modelo_sarima_temp = auto_arima(
                     serie_train_s.dropna(),
-                    exogenous=exog_h_train,
+                    X=exog_h_train,  # Fase 42: renombrado de exogenous=, ver entrenar_sarima()
                     seasonal=True, m=7,
                     max_order=5,
                     suppress_warnings=True, error_action='ignore',
-                    stepwise=True, n_jobs=-1
+                    stepwise=True,  # Fase 42: n_jobs=-1 quitado, ver entrenar_sarima()
                 )
                 pred_sarima_val = modelo_sarima_temp.predict(
-                    n_periods=dias_validacion, exogenous=exog_h_val
+                    n_periods=dias_validacion, X=exog_h_val
                 )
                 # CI SARIMAX para holdout (mismo patrón que en predecir())
                 try:
                     sarima_conf_h = modelo_sarima_temp.predict(
-                        n_periods=dias_validacion, return_conf_int=True, exogenous=exog_h_val
+                        n_periods=dias_validacion, return_conf_int=True, X=exog_h_val
                     )
                     ci_sarima_lower_val = sarima_conf_h[1][:, 0] if len(sarima_conf_h) > 1 else pred_sarima_val * 0.8
                     ci_sarima_upper_val = sarima_conf_h[1][:, 1] if len(sarima_conf_h) > 1 else pred_sarima_val * 1.2
@@ -1648,6 +1637,10 @@ class PredictorMetricaSectorial:
                 factor_cal = (_TARGET_COB / max(cobertura_empirica, 0.50)
                               if cobertura_empirica < _TARGET_COB else 1.0)
                 factor_cal = min(float(factor_cal), 2.0)
+                # Fase 42: pendiente de crecimiento de la calibración dentro del
+                # propio holdout — usada en predecir() para ensanchar el IC de
+                # forma creciente con el horizonte, no de forma plana.
+                pendiente_cal = _calcular_pendiente_calibracion(y_real, ci_ens_lower_v, ci_ens_upper_v)
 
                 self.metricas = {
                     'mape_ensemble': mape_ensemble,
@@ -1657,12 +1650,14 @@ class PredictorMetricaSectorial:
                     'confianza': max(0.0, 1.0 - mape_ensemble),
                     'cobertura_ci': round(cobertura_empirica, 4),
                     'factor_calibracion': round(factor_cal, 4),
+                    'factor_calibracion_pendiente': pendiente_cal,
                 }
 
                 print(f"    ✓ MAPE Prophet: {mape_prophet:.2%}, SARIMA: {mape_sarima:.2%}", flush=True)
                 print(f"    ✓ MAPE Ensemble: {mape_ensemble:.2%}", flush=True)
                 print(f"    ✓ RMSE: {rmse_ensemble:.4f}, Confianza: {self.metricas['confianza']:.2%}", flush=True)
-                print(f"    ✓ CI cobertura holdout: {cobertura_empirica:.2%} → factor calibración: {factor_cal:.3f}", flush=True)
+                print(f"    ✓ CI cobertura holdout: {cobertura_empirica:.2%} → factor calibración: {factor_cal:.3f} "
+                      f"(pendiente horizonte: {pendiente_cal:.3f})", flush=True)
                 print(f"    Pesos óptimos: Prophet={self.pesos['prophet']:.2f}, SARIMA={self.pesos['sarima']:.2f}", flush=True)
             else:
                 # SARIMA holdout falló, calibrar CI solo con Prophet
@@ -1674,6 +1669,7 @@ class PredictorMetricaSectorial:
                 cob_p = float(dentro_p / len(y_real))
                 _TARGET_COB = 0.92
                 fcal_p = min((_TARGET_COB / max(cob_p, 0.50)) if cob_p < _TARGET_COB else 1.0, 2.0)
+                pendiente_p = _calcular_pendiente_calibracion(y_real, ci_prophet_lower_val, ci_prophet_upper_val)
                 self.metricas = {
                     'mape_ensemble': mape_prophet,
                     'mape_prophet': mape_prophet,
@@ -1682,9 +1678,11 @@ class PredictorMetricaSectorial:
                     'confianza': max(0.0, 1.0 - mape_prophet),
                     'cobertura_ci': round(cob_p, 4),
                     'factor_calibracion': round(fcal_p, 4),
+                    'factor_calibracion_pendiente': pendiente_p,
                 }
                 print(f"    ✓ MAPE Prophet (solo, SARIMA holdout falló): {mape_prophet:.2%}", flush=True)
-                print(f"    ✓ CI cobertura holdout: {cob_p:.2%} → factor calibración: {fcal_p:.3f}", flush=True)
+                print(f"    ✓ CI cobertura holdout: {cob_p:.2%} → factor calibración: {fcal_p:.3f} "
+                      f"(pendiente horizonte: {pendiente_p:.3f})", flush=True)
         else:
             from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
             mape_prophet = mean_absolute_percentage_error(y_real, pred_prophet_val)  # type: ignore[arg-type]
@@ -1694,6 +1692,7 @@ class PredictorMetricaSectorial:
             cob_p = float(dentro_p / len(y_real))
             _TARGET_COB = 0.92
             fcal_p = min((_TARGET_COB / max(cob_p, 0.50)) if cob_p < _TARGET_COB else 1.0, 2.0)
+            pendiente_p = _calcular_pendiente_calibracion(y_real, ci_prophet_lower_val, ci_prophet_upper_val)
             self.metricas = {
                 'mape_ensemble': mape_prophet,
                 'mape_prophet': mape_prophet,
@@ -1701,9 +1700,11 @@ class PredictorMetricaSectorial:
                 'confianza': max(0.0, 1.0 - mape_prophet),
                 'cobertura_ci': round(cob_p, 4),
                 'factor_calibracion': round(fcal_p, 4),
+                'factor_calibracion_pendiente': pendiente_p,
             }
             print(f"    ✓ MAPE Prophet (solo): {mape_prophet:.2%}", flush=True)
-            print(f"    ✓ CI cobertura holdout: {cob_p:.2%} → factor calibración: {fcal_p:.3f}", flush=True)
+            print(f"    ✓ CI cobertura holdout: {cob_p:.2%} → factor calibración: {fcal_p:.3f} "
+                  f"(pendiente horizonte: {pendiente_p:.3f})", flush=True)
 
         # Walk-forward CV opcional: activar con 'prophet_cv': True en el config de la métrica.
         # Usa Prophet.diagnostics.cross_validation para evaluar sobre múltiples ventanas históricas.
@@ -1752,28 +1753,38 @@ class PredictorMetricaSectorial:
         # SARIMA / SARIMAX
         if self.modelo_sarima:
             try:
-                # Preparar exog futuro si SARIMAX está activo (ONI forecast de NOAA)
+                # Preparar exog futuro si SARIMAX está activo (ONI forecast de
+                # NOAA + extras de sarimax_exog_extra, ej. SOI — Fase 42
+                # continuación; SOI no tiene pronóstico oficial, así que su
+                # columna se propaga por ffill/decay como ya hace Prophet)
                 exog_future = None
-                if self._exog_oni_serie is not None:
+                if self._exog_sarimax_df is not None:
                     try:
                         future_dates = pred_prophet['ds'].dt.normalize()
-                        oni_future = (
-                            self._exog_oni_serie.reindex(future_dates)
+                        exog_future_df = (
+                            self._exog_sarimax_df.reindex(future_dates)
                             .ffill().bfill().fillna(0.0)
                         )
-                        if len(oni_future) == horizonte_dias:
-                            exog_future = oni_future.values.reshape(-1, 1)
+                        if len(exog_future_df) == horizonte_dias:
+                            exog_future = exog_future_df.values
                     except Exception:
                         exog_future = None
 
-                pred_sarima = self.modelo_sarima.predict(n_periods=horizonte_dias, exogenous=exog_future)
+                pred_sarima = self.modelo_sarima.predict(n_periods=horizonte_dias, X=exog_future)  # Fase 42: renombrado de exogenous=
                 # Obtener intervalos de confianza REALES de SARIMA (no ±20%)
                 sarima_conf = self.modelo_sarima.predict(
-                    n_periods=horizonte_dias, return_conf_int=True, exogenous=exog_future
+                    n_periods=horizonte_dias, return_conf_int=True, X=exog_future
                 )
                 sarima_lower = sarima_conf[1][:, 0] if len(sarima_conf) > 1 else pred_sarima * 0.8
                 sarima_upper = sarima_conf[1][:, 1] if len(sarima_conf) > 1 else pred_sarima * 1.2
-                
+                # Fase 42: semi-ancho NATIVO de SARIMAX — a diferencia de
+                # Prophet (constante con growth='flat'+mcmc_samples=0, ver
+                # abajo), la varianza de pronóstico de un ARIMA/SARIMAX crece
+                # genuinamente con el horizonte por construcción estadística.
+                # Se usa esta forma real (no una fórmula inventada) para que
+                # el IC del ensemble efectivamente se ensanche con el tiempo.
+                sarima_semi_ancho = (sarima_upper - sarima_lower) / 2.0
+
                 # Ensemble ponderado
                 predicciones_ensemble = (
                     self.pesos['prophet'] * pred_prophet['yhat'].values +  # type: ignore[operator]
@@ -1791,18 +1802,48 @@ class PredictorMetricaSectorial:
                 predicciones_ensemble = pred_prophet['yhat'].values
                 intervalo_inferior = pred_prophet['yhat_lower'].values
                 intervalo_superior = pred_prophet['yhat_upper'].values
+                sarima_semi_ancho = None
         else:
             predicciones_ensemble = pred_prophet['yhat'].values
             intervalo_inferior = pred_prophet['yhat_lower'].values
             intervalo_superior = pred_prophet['yhat_upper'].values
-        
-        # Calibración empírica de CI: ajuste proporcional al factor medido en holdout
-        factor_cal = float(self.metricas.get('factor_calibracion', 1.0))
-        if factor_cal != 1.0:
+            sarima_semi_ancho = None
+
+        # Calibración empírica de CI: Fase 42 (2026-08-31) — el ensanchamiento
+        # del IC ya no se aplica plano en todo el horizonte. Antes: un solo
+        # escalar (calibrado una vez contra el holdout de dias_validacion
+        # días) se multiplicaba igual en el día 1 y en el día 730 —
+        # verificado que, con growth='flat'+mcmc_samples=0 (EMBALSES_PCT), el
+        # IC de Prophet no se ensancha en absoluto con el horizonte, así que
+        # esto dejaba la banda igual de ancha cerca de hoy que lejos en el
+        # futuro (explica la cobertura ~100% pareja observada en el backtest
+        # de 3 años). Ahora se combinan 2 señales de crecimiento real, nunca
+        # inventadas: (1) la forma nativa de SARIMAX (crece por construcción
+        # estadística, ver arriba) y (2) la pendiente de degradación de
+        # cobertura observada dentro del propio holdout (validar_y_generar()).
+        # Se toma el máximo de ambas — evita "doble contar" el mismo
+        # fenómeno si las dos apuntan en la misma dirección, y sigue
+        # reaccionando aunque UNA sola de las 2 señales indique crecimiento.
+        # Verificado en vivo (backtest 2024) que depender solo de (2) deja el
+        # mecanismo dormido cuando el holdout ya muestra ~100% de cobertura
+        # desde el día 1 (factor_cal_base=1.0, pendiente=0) — con (1) el IC
+        # ahora crece igual, anclado en la varianza real de SARIMAX.
+        factor_cal_base = float(self.metricas.get('factor_calibracion', 1.0))
+        pendiente_cal = float(self.metricas.get('factor_calibracion_pendiente', 0.0))
+        dias_val_ref = int(self.config.get('dias_validacion', 180)) or 180
+        dias_desde_corte_pred = np.arange(1, horizonte_dias + 1, dtype=float)
+        forma_pendiente = 1.0 + pendiente_cal * dias_desde_corte_pred / dias_val_ref
+        if sarima_semi_ancho is not None and sarima_semi_ancho[0] > 1e-9:
+            forma_sarima = np.clip(sarima_semi_ancho / sarima_semi_ancho[0], 1.0, 4.0)
+        else:
+            forma_sarima = np.ones(horizonte_dias)
+        factor_horizonte = np.maximum(forma_sarima, forma_pendiente)
+        factor_cal_horizonte = np.clip(factor_cal_base * factor_horizonte, 1.0, 4.0)
+        if np.any(factor_cal_horizonte != 1.0):
             semi_inf = predicciones_ensemble - intervalo_inferior
             semi_sup = intervalo_superior - predicciones_ensemble
-            intervalo_inferior = predicciones_ensemble - semi_inf * factor_cal
-            intervalo_superior = predicciones_ensemble + semi_sup * factor_cal
+            intervalo_inferior = predicciones_ensemble - semi_inf * factor_cal_horizonte
+            intervalo_superior = predicciones_ensemble + semi_sup * factor_cal_horizonte
 
         # Asimetría El Niño: CI inferior más ancho cuando ONI > 0.5 (droughts caen más rápido)
         _oni_val = float((self.regresores_completo['oni_index'].dropna().iloc[-1]
@@ -2261,7 +2302,7 @@ def _aplicar_decay_neutral(
     return pd.Series(resultado, index=fechas_futuras)
 
 
-def construir_regresores_futuros(regresores_config, predicciones_memoria, fechas_futuras=None):
+def construir_regresores_futuros(regresores_config, predicciones_memoria, fechas_futuras=None, fecha_referencia=None):
     """
     Construye DataFrame de regresores futuros.
     Soporta cuatro modos:
@@ -2270,6 +2311,11 @@ def construir_regresores_futuros(regresores_config, predicciones_memoria, fechas
     - futura_bd=True: carga el pronóstico directamente de la BD (ej. ONI oficial NOAA)
     - futura_ffill=True: propaga el último valor histórico conocido (para índices sin pronóstico oficial
                          cuyo valor actual es significativo, ej. PDO=−2.71, SOI=−1.5)
+
+    fecha_referencia: fecha a tratar como "hoy" (default: pd.Timestamp.today()). Necesario
+    para backtesting fiel a producción — sin esto, un backtest con corte histórico (ej.
+    2022-12-31) usaría por error los datos/pronósticos disponibles HOY, no los que
+    realmente existían en la fecha de corte (Fase 42).
     """
     series = {}
 
@@ -2296,7 +2342,7 @@ def construir_regresores_futuros(regresores_config, predicciones_memoria, fechas
                 recurso = reg_cfg.get('recurso')
                 entidad = reg_cfg.get('entidad')
                 agg_fn = reg_cfg.get('agg', 'AVG')
-                hoy = pd.Timestamp.today().normalize()
+                hoy = (fecha_referencia or pd.Timestamp.today()).normalize()
                 fecha_inicio_bd = (hoy - pd.Timedelta(days=90)).strftime('%Y-%m-%d')
 
                 if recurso:
@@ -2367,7 +2413,7 @@ def construir_regresores_futuros(regresores_config, predicciones_memoria, fechas
                 recurso = reg_cfg.get('recurso')
                 entidad = reg_cfg.get('entidad')
                 agg_fn = reg_cfg.get('agg', 'AVG')
-                hoy = pd.Timestamp.today().normalize()
+                hoy = (fecha_referencia or pd.Timestamp.today()).normalize()
                 fecha_inicio_bd = (hoy - pd.Timedelta(days=90)).strftime('%Y-%m-%d')
 
                 if recurso:
@@ -2625,7 +2671,25 @@ def guardar_predicciones_bd(metrica_nombre, df_predicciones, config,
             print(f"    CI calibración: cobertura={cobertura_ci_val:.2%}, factor={factor_cal_val:.3f}")
         print(f"    método: {metodo_prediccion}, modelo: {modelo_v}")
 
-        # Insertar nuevas predicciones
+        # Insertar nuevas predicciones — UN solo timestamp de fecha_generacion
+        # compartido por todas las filas de este batch (calculado una sola
+        # vez ANTES del loop). Bug real encontrado (2026-08-25): antes se
+        # llamaba datetime.now() dentro del loop, dando a cada fila su propio
+        # timestamp con precisión de microsegundos — scripts/monitor_
+        # predictions_quality.py agrupa por fecha_generacion para reconstruir
+        # el "batch" evaluable ex-post, así que cada fila terminaba siendo su
+        # propio "batch" de una sola predicción, incapaz de acumular los 3+
+        # días de overlap necesarios para evaluarse — por eso GENE_TOTAL,
+        # PRECIO_BOLSA, EMBALSES_PCT y el resto de métricas de este script
+        # llevaban semanas sin refrescar su MAPE ex-post real
+        # (predictions_quality_history), mostrando un valor de hasta 28 días
+        # de antigüedad en el informe/correo diario mientras el tablero de
+        # predicciones (que usa el MAPE de entrenamiento, otra columna)
+        # mostraba un número distinto y actualizado — confusión real
+        # reportada por el usuario. Las fuentes de generación por catálogo
+        # (Hidráulica/Térmica/Solar/Eólica/Biomasa, otro script) ya
+        # calculaban esto correctamente, una sola vez por batch.
+        fecha_generacion_batch = datetime.now()
         for _, row in df_predicciones.iterrows():
             # FASE 8: columna metodo_prediccion per-row si existe en df
             metodo_row = row.get('metodo_prediccion', metodo_prediccion)
@@ -2641,7 +2705,7 @@ def guardar_predicciones_bd(metrica_nombre, df_predicciones, config,
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 row['fecha_prediccion'],
-                datetime.now(),
+                fecha_generacion_batch,
                 metrica_nombre,
                 float(row['valor_predicho']),
                 float(row['intervalo_inferior']),
@@ -7151,36 +7215,49 @@ def main():
     print("\n✅ Proceso completado\n")
 
 
-def main_backtest(backtest_year: int):
+def main_backtest(backtest_year: int, fuente: str = 'EMBALSES_PCT'):
     """
-    Backtesting out-of-sample de EMBALSES_PCT.
-    Entrena con datos hasta {backtest_year}-12-31 usando señales climáticas reales
-    del período de test (perfect-foresight sobre índices climáticos).
-    No modifica la BD ni el cache. Solo guarda un JSON de diagnóstico.
+    Backtesting out-of-sample para métricas del ensemble Prophet+SARIMAX
+    (PredictorMetricaSectorial): EMBALSES_PCT, DEMANDA, GENE_TOTAL.
+    Entrena con datos hasta {backtest_year}-12-31 usando señales reales
+    (climáticas y/o de calendario) del período de test (perfect-foresight,
+    es decir, se usa el valor REAL ya conocido del regresor en el período de
+    test — nunca una predicción de otro modelo — para aislar el error
+    atribuible al modelo de la métrica bajo prueba).
+    No modifica la BD ni el cache. Guarda un JSON de diagnóstico y una fila
+    en predictions_backtest_history.
+
+    Fase 41 (2026-08-26), generalización: originalmente solo EMBALSES_PCT
+    (hardcodeado). PRECIO_BOLSA (RandomForest) y APORTES_HIDRICOS (LightGBM)
+    usan clases de modelo distintas y NO pasan por esta función — tienen su
+    propio backtest en main_backtest_directo() (ver más abajo).
     """
     import json
     from pathlib import Path
+
+    if fuente not in METRICAS_CONFIG:
+        print(f"❌ Fuente desconocida: {fuente}")
+        return
+    config = METRICAS_CONFIG[fuente]
 
     fecha_corte = pd.Timestamp(f"{backtest_year}-12-31")
     fecha_test_start = pd.Timestamp(f"{backtest_year + 1}-01-01")
 
     print(f"\n{'='*70}")
-    print(f"🔬 BACKTESTING EMBALSES_PCT — Corte: {fecha_corte.date()}")
+    print(f"🔬 BACKTESTING {fuente} — Corte: {fecha_corte.date()}")
     print(f"{'='*70}\n")
 
-    # 1. Cargar EMBALSES_PCT completo (el corte se hace por DataFrame, no por SQL)
-    conn = get_postgres_connection()
-    df_raw = pd.read_sql_query("""
-        SELECT fecha::date AS fecha, AVG(valor_gwh) * 100 AS valor
-        FROM metrics
-        WHERE metrica = 'PorcVoluUtilDiar' AND entidad = 'Sistema'
-          AND fecha >= '2000-01-01' AND valor_gwh > 0
-        GROUP BY fecha::date ORDER BY fecha
-    """, conn)
-    conn.close()
-
-    if len(df_raw) == 0:
-        print("❌ No hay datos de EMBALSES_PCT en la BD")
+    # 1. Cargar la serie objetivo completa — reutiliza el MISMO loader que
+    # usa el flujo de producción (cargar_datos_metrica), para que el
+    # backtest reproduzca exactamente la misma agregación/escala/filtro de
+    # entidad que ya usa el entrenamiento real de cada fuente, en vez de
+    # reimplementar la lógica a mano (como hacía la versión EMBALSES_PCT-only).
+    df_raw = cargar_datos_metrica(
+        config['metricas'][0], config,
+        fecha_inicio=config.get('fecha_inicio_override', '2000-01-01'),
+    )
+    if df_raw is None or len(df_raw) == 0:
+        print(f"❌ No hay datos de {fuente} en la BD")
         return
 
     df_raw['fecha'] = pd.to_datetime(df_raw['fecha'])
@@ -7196,85 +7273,112 @@ def main_backtest(backtest_year: int):
           f"({df_train_raw['fecha'].min().date()} → {df_train_raw['fecha'].max().date()})")
     print(f"  Período test  : {n_test} días desde {df_actuals.index.min().date()}")
 
-    # 2. Cargar regressores históricos completos (training + test con valores reales del DB)
-    config = METRICAS_CONFIG['EMBALSES_PCT']
+    # 2. Cargar regresores — calendario (deterministas) + BD (valores REALES,
+    # históricos y del propio período de test, nunca predicciones de otro
+    # modelo — ver docstring). regresores_bd_config puede quedar vacío para
+    # fuentes sin señales BD (ej. DEMANDA solo usa calendario), lo cual es
+    # válido y no debe abortar el backtest.
+    reg_config = config.get('regresores', {})
     regresores_bd_config = {
-        k: v for k, v in config['regresores'].items()
+        k: v for k, v in reg_config.items()
         if v.get('tipo') != 'calendario' and 'metrica_bd' in v
     }
+    tiene_calendario = any(v.get('tipo') == 'calendario' for v in reg_config.values())
 
-    conn = get_postgres_connection()
     series: dict = {}
-    for nombre_reg, reg_cfg in regresores_bd_config.items():
-        metrica = reg_cfg['metrica_bd']
-        recurso = reg_cfg.get('recurso')
-        offset  = reg_cfg.get('offset', 0.0)
-        escala  = reg_cfg.get('escala', 1.0)
-        lag_dias = reg_cfg.get('lag_dias', 0)
 
-        try:
-            if recurso:
-                df_reg = pd.read_sql_query(
-                    "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
-                    "FROM metrics WHERE metrica=%s AND recurso=%s AND valor_gwh IS NOT NULL "
-                    "GROUP BY fecha::date ORDER BY fecha",
-                    conn, params=(metrica, recurso)
-                )
-            else:
-                df_reg = pd.read_sql_query(
-                    "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
-                    "FROM metrics WHERE metrica=%s AND valor_gwh IS NOT NULL "
-                    "GROUP BY fecha::date ORDER BY fecha",
-                    conn, params=(metrica,)
-                )
-        except Exception as exc:
-            print(f"  ⚠️  Error cargando {nombre_reg}: {exc}")
-            continue
+    if tiene_calendario:
+        rango_completo = pd.date_range(df_raw['fecha'].min(), df_raw['fecha'].max(), freq='D')
+        df_cal = construir_regresores_calendario(rango_completo)
+        for col in df_cal.columns:
+            series[col] = df_cal[col]
+        print(f"  Regresores calendario: {list(df_cal.columns)}")
 
-        if len(df_reg) == 0:
-            print(f"  ⚠️  Sin datos para {nombre_reg} — excluido del backtest")
-            continue
+    if regresores_bd_config:
+        conn = get_postgres_connection()
+        for nombre_reg, reg_cfg in regresores_bd_config.items():
+            metrica = reg_cfg['metrica_bd']
+            recurso = reg_cfg.get('recurso')
+            offset  = reg_cfg.get('offset', 0.0)
+            escala  = reg_cfg.get('escala', 1.0)
+            lag_dias = reg_cfg.get('lag_dias', 0)
 
-        df_reg['fecha'] = pd.to_datetime(df_reg['fecha'])
-        s = df_reg.set_index('fecha')['valor'].astype(float) * escala + offset
-        if lag_dias > 0:
-            s = s.shift(lag_dias, freq='D')
-        series[nombre_reg] = s
+            try:
+                if recurso:
+                    df_reg = pd.read_sql_query(
+                        "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
+                        "FROM metrics WHERE metrica=%s AND recurso=%s AND valor_gwh IS NOT NULL "
+                        "GROUP BY fecha::date ORDER BY fecha",
+                        conn, params=(metrica, recurso)
+                    )
+                else:
+                    df_reg = pd.read_sql_query(
+                        "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
+                        "FROM metrics WHERE metrica=%s AND valor_gwh IS NOT NULL "
+                        "GROUP BY fecha::date ORDER BY fecha",
+                        conn, params=(metrica,)
+                    )
+            except Exception as exc:
+                print(f"  ⚠️  Error cargando {nombre_reg}: {exc}")
+                continue
 
-    conn.close()
+            if len(df_reg) == 0:
+                print(f"  ⚠️  Sin datos para {nombre_reg} — excluido del backtest")
+                continue
 
-    if not series:
-        print("❌ No se pudo cargar ningún regresor climático")
+            df_reg['fecha'] = pd.to_datetime(df_reg['fecha'])
+            s = df_reg.set_index('fecha')['valor'].astype(float) * escala + offset
+            if lag_dias > 0:
+                s = s.shift(lag_dias, freq='D')
+            series[nombre_reg] = s
+        conn.close()
+
+    if reg_config and not series:
+        print("❌ Se esperaban regresores pero no se pudo cargar ninguno")
         return
 
-    # Combinar regressores en DataFrame diario con interpolación
-    df_regs_completo = pd.DataFrame(series).sort_index()
-    df_regs_completo = df_regs_completo.resample('D').mean().interpolate('linear').ffill().bfill()
-    reg_cols = list(df_regs_completo.columns)
-    print(f"  Regressores cargados: {reg_cols}")
+    if series:
+        # Combinar regresores en DataFrame diario con interpolación (solo
+        # aplica a las columnas BD continuas; las de calendario son 0/1 y
+        # el ffill/bfill posterior no las altera al ya estar completas).
+        df_regs_completo = pd.DataFrame(series).sort_index()
+        df_regs_completo = df_regs_completo.resample('D').mean().interpolate('linear').ffill().bfill()
+        reg_cols = list(df_regs_completo.columns)
+        print(f"  Regresores totales: {reg_cols}")
+    else:
+        df_regs_completo = pd.DataFrame()
+        reg_cols = []
+        print("  Sin regresores configurados para esta fuente.")
 
-    # 3. Construir df_prophet de entrenamiento con regressores
+    # 3. Construir df_prophet de entrenamiento con regresores
     df_prophet = df_train_raw.rename(columns={'fecha': 'ds', 'valor': 'y'})
-    df_regs_hist = df_regs_completo[df_regs_completo.index <= fecha_corte]
-
-    for col in reg_cols:
-        if col in df_regs_hist.columns:
-            df_prophet[col] = df_prophet['ds'].map(df_regs_hist[col])
+    if reg_cols:
+        df_regs_hist = df_regs_completo[df_regs_completo.index <= fecha_corte]
+        for col in reg_cols:
+            if col in df_regs_hist.columns:
+                df_prophet[col] = df_prophet['ds'].map(df_regs_hist[col])
 
     df_prophet = df_prophet.dropna(subset=['y'])
     serie_sarima = df_train_raw.set_index('fecha')['valor'].asfreq('D')
 
     # 4. Entrenar predictor
-    predictor = EnsemblePredictor('EMBALSES_PCT', config)
+    # Fase 41 (2026-08-26): corregido — la clase real es PredictorMetricaSectorial
+    # (EnsemblePredictor nunca existió en este archivo). Este NameError impedía
+    # que main_backtest() corriera aunque sea una sola vez; confirma que la
+    # función, pese a documentar una metodología de validación out-of-sample
+    # rigurosa, nunca se había ejecutado con éxito en la práctica.
+    predictor = PredictorMetricaSectorial(fuente, config)
     predictor.regresores_nombres = reg_cols
-    predictor.regresores_completo = df_regs_completo
+    predictor.regresores_completo = df_regs_completo if reg_cols else None
+
+    dias_val = int(config.get('dias_validacion', 180))
 
     print(f"\n  🤖 Entrenando Prophet (datos hasta {fecha_corte.date()})...")
     predictor.entrenar_prophet(df_prophet)
     print(f"  🤖 Entrenando SARIMAX...")
     predictor.entrenar_sarima(serie_sarima)
-    print(f"  📊 Validando holdout 180 días...")
-    predictor.validar_y_generar(df_prophet, serie_sarima, dias_validacion=180)
+    print(f"  📊 Validando holdout {dias_val} días...")
+    predictor.validar_y_generar(df_prophet, serie_sarima, dias_validacion=dias_val)
 
     mape_train = predictor.metricas.get('mape_ensemble')
     print(f"  MAPE holdout in-sample: {mape_train:.2%}" if mape_train else "  MAPE holdout: N/A")
@@ -7306,11 +7410,37 @@ def main_backtest(backtest_year: int):
     cobertura_ci = float(np.mean((y_real_eval >= ci_lower_eval) & (y_real_eval <= ci_upper_eval)))
     robusto      = mape_expost < (mape_train or 0.10) * 2.0
 
+    # Fase 41 (2026-08-30): el MAPE único de arriba mezcla el error a 30 días
+    # con el error a 730 días — un pronóstico a 2 años es intrínsecamente
+    # menos confiable que uno a 1 mes. Se desglosa por horizonte (días desde
+    # el corte de entrenamiento) para saber si el modelo es genuinamente
+    # malo o solo se degrada lejos en el futuro, algo que el número único no
+    # permitía distinguir.
+    dias_desde_corte = np.array([(f - fecha_corte).days for f in fechas_pred[mask]])
+    horizontes = [30, 90, 180, 365, 730]
+    mape_por_horizonte = {}
+    lim_inf = 0
+    for lim_sup in horizontes:
+        bucket_mask = (dias_desde_corte > lim_inf) & (dias_desde_corte <= lim_sup)
+        n_bucket = int(bucket_mask.sum())
+        if n_bucket >= 5:
+            y_r = y_real_eval[bucket_mask]
+            y_p = y_pred_eval[bucket_mask]
+            mape_bucket = float(np.mean(np.abs((y_r - y_p) / np.clip(y_r, 1.0, None))))
+            mape_por_horizonte[f"{lim_inf + 1}-{lim_sup}d"] = {
+                "mape": round(mape_bucket, 4),
+                "n_dias": n_bucket,
+            }
+        lim_inf = lim_sup
+
     print(f"\n  📈 RESULTADOS BACKTEST {backtest_year}:")
     print(f"     MAPE in-sample  (holdout)  : {mape_train:.2%}" if mape_train else "")
     print(f"     MAPE out-of-sample {backtest_year + 1}   : {mape_expost:.2%}")
     print(f"     Cobertura CI 95% empírica  : {cobertura_ci:.2%}")
     print(f"     Diagnóstico : {'✅ Modelo robusto (MAPE OOS < 2× holdout)' if robusto else '⚠️ Posible sobreajuste (MAPE OOS ≥ 2× holdout)'}")
+    print(f"     MAPE por horizonte:")
+    for etiqueta, v in mape_por_horizonte.items():
+        print(f"       {etiqueta:>10} (n={v['n_dias']:>3}): {v['mape']:.2%}")
 
     resultado = {
         "corte_entrenamiento": str(fecha_corte.date()),
@@ -7321,14 +7451,586 @@ def main_backtest(backtest_year: int):
         "mape_expost": round(mape_expost, 4),
         "cobertura_ci_95": round(cobertura_ci, 4),
         "modelo_robusto": robusto,
+        "mape_por_horizonte": mape_por_horizonte,
     }
 
-    log_path = Path("/home/admonctrlxm/server/logs") / f"backtest_{backtest_year}.json"
+    log_path = Path("/home/admonctrlxm/server/logs") / f"backtest_{fuente}_{backtest_year}.json"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(json.dumps(resultado, indent=2, ensure_ascii=False))
 
     print(f"\n  ✅ Guardado en: {log_path}")
     print(json.dumps(resultado, indent=2))
+
+    # Fase 41 (2026-08-26): persistir también en predictions_backtest_history
+    # para que el portal pueda leer el MAPE riguroso (out-of-sample real) vía
+    # API en vez de depender de un JSON en disco o de un número hardcodeado.
+    try:
+        conn_bt = get_postgres_connection()
+        cur_bt = conn_bt.cursor()
+        cur_bt.execute("""
+            INSERT INTO predictions_backtest_history
+                (fuente, modelo, anio_corte, fecha_test_inicio, fecha_test_fin,
+                 n_dias_test, mape_train_holdout, mape_expost, cobertura_ci_95,
+                 modelo_robusto, mape_por_horizonte, ejecutado_en)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (fuente, modelo, anio_corte) DO UPDATE SET
+                fecha_test_inicio  = EXCLUDED.fecha_test_inicio,
+                fecha_test_fin     = EXCLUDED.fecha_test_fin,
+                n_dias_test        = EXCLUDED.n_dias_test,
+                mape_train_holdout = EXCLUDED.mape_train_holdout,
+                mape_expost        = EXCLUDED.mape_expost,
+                cobertura_ci_95    = EXCLUDED.cobertura_ci_95,
+                modelo_robusto     = EXCLUDED.modelo_robusto,
+                mape_por_horizonte = EXCLUDED.mape_por_horizonte,
+                ejecutado_en       = now()
+        """, (
+            fuente, 'ENSEMBLE_SECTOR_v1.0', backtest_year,
+            resultado["periodo_test"][0], resultado["periodo_test"][1],
+            resultado["n_dias_test"], resultado["mape_train_holdout"],
+            resultado["mape_expost"], resultado["cobertura_ci_95"],
+            resultado["modelo_robusto"], json.dumps(resultado["mape_por_horizonte"]),
+        ))
+        conn_bt.commit()
+        cur_bt.close()
+        conn_bt.close()
+        print(f"  ✅ Guardado en predictions_backtest_history (fuente={fuente}, año={backtest_year})")
+    except Exception as e_bt:
+        print(f"  ⚠️  No se pudo guardar en predictions_backtest_history: {e_bt}")
+
+
+def main_backtest_produccion_fiel(backtest_year: int, fuente: str = 'EMBALSES_PCT'):
+    """
+    Fase 42 (2026-08-31): variante de main_backtest() que reconstruye los
+    regresores del período de PRUEBA con la MISMA lógica que usa producción
+    real (construir_regresores_futuros(), ancladas en fecha_corte vía el
+    parámetro fecha_referencia) en vez de sustituir los valores reales que
+    hoy ya se conocen del pasado (perfect-foresight).
+
+    main_backtest() sigue existiendo tal cual — sirve como techo optimista
+    ("qué tan bueno sería el modelo si el clima futuro se conociera
+    perfectamente"). Esta función da una medición honesta de lo que
+    producción realmente puede lograr: más allá del corto plazo, PDO/SOI/GMST
+    decaen a neutral y precipitación/aportes se asumen en cero (ver
+    _aplicar_decay_neutral() / construir_regresores_futuros()) — solo ONI
+    tiene un pronóstico real hacia adelante en ambos escenarios.
+
+    Limitación conocida, documentada explícitamente (no resuelta en esta
+    ronda): la tabla `metrics` no guarda un histórico versionado de "qué se
+    sabía en qué fecha" — el pronóstico ONI reconstruido usa los valores HOY
+    almacenados con fecha > fecha_corte, que pueden diferir del pronóstico
+    NOAA real vigente en ese momento histórico si el pronóstico se actualizó
+    después. Esto solo afecta a ONI (el único regresor con futura_bd=True
+    para EMBALSES_PCT); PDO/SOI/GMST/precipitación/aportes no tienen este
+    problema porque su reconstrucción fiel a producción depende de
+    decaimiento/cero determinista, no de un pronóstico almacenado.
+    """
+    import json
+    from pathlib import Path
+
+    if fuente not in METRICAS_CONFIG:
+        print(f"❌ Fuente desconocida: {fuente}")
+        return
+    config = METRICAS_CONFIG[fuente]
+
+    fecha_corte = pd.Timestamp(f"{backtest_year}-12-31")
+    fecha_test_start = pd.Timestamp(f"{backtest_year + 1}-01-01")
+
+    print(f"\n{'='*70}")
+    print(f"🔬 BACKTESTING (fiel a producción) {fuente} — Corte: {fecha_corte.date()}")
+    print(f"{'='*70}\n")
+
+    # 1. Cargar la serie objetivo completa (idéntico a main_backtest())
+    df_raw = cargar_datos_metrica(
+        config['metricas'][0], config,
+        fecha_inicio=config.get('fecha_inicio_override', '2000-01-01'),
+    )
+    if df_raw is None or len(df_raw) == 0:
+        print(f"❌ No hay datos de {fuente} en la BD")
+        return
+
+    df_raw['fecha'] = pd.to_datetime(df_raw['fecha'])
+    df_train_raw = df_raw[df_raw['fecha'] <= fecha_corte].copy()
+    df_actuals   = df_raw[df_raw['fecha'] >= fecha_test_start].copy().set_index('fecha')
+
+    n_test = min(730, len(df_actuals))
+    if n_test < 60:
+        print("❌ Datos reales insuficientes post-corte para evaluar (< 60 días)")
+        return
+
+    print(f"  Entrenamiento : {len(df_train_raw)} días "
+          f"({df_train_raw['fecha'].min().date()} → {df_train_raw['fecha'].max().date()})")
+    print(f"  Período test  : {n_test} días desde {df_actuals.index.min().date()}")
+
+    # 2. Regresores — histórico REAL hasta fecha_corte (idéntico a
+    # main_backtest(), pero filtrado a <= fecha_corte explícitamente); el
+    # período de prueba se reconstruye en el paso 2b, fiel a producción.
+    reg_config = config.get('regresores', {})
+    regresores_bd_config = {
+        k: v for k, v in reg_config.items()
+        if v.get('tipo') != 'calendario' and 'metrica_bd' in v
+    }
+    tiene_calendario = any(v.get('tipo') == 'calendario' for v in reg_config.values())
+
+    series_hist: dict = {}
+
+    if tiene_calendario:
+        rango_hist = pd.date_range(df_raw['fecha'].min(), fecha_corte, freq='D')
+        df_cal = construir_regresores_calendario(rango_hist)
+        for col in df_cal.columns:
+            series_hist[col] = df_cal[col]
+        print(f"  Regresores calendario: {list(df_cal.columns)}")
+
+    if regresores_bd_config:
+        conn = get_postgres_connection()
+        for nombre_reg, reg_cfg in regresores_bd_config.items():
+            metrica = reg_cfg['metrica_bd']
+            recurso = reg_cfg.get('recurso')
+            offset  = reg_cfg.get('offset', 0.0)
+            escala  = reg_cfg.get('escala', 1.0)
+            lag_dias = reg_cfg.get('lag_dias', 0)
+
+            try:
+                if recurso:
+                    df_reg = pd.read_sql_query(
+                        "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
+                        "FROM metrics WHERE metrica=%s AND recurso=%s AND valor_gwh IS NOT NULL "
+                        "AND fecha::date <= %s GROUP BY fecha::date ORDER BY fecha",
+                        conn, params=(metrica, recurso, fecha_corte.date())
+                    )
+                else:
+                    df_reg = pd.read_sql_query(
+                        "SELECT fecha::date AS fecha, AVG(valor_gwh) AS valor "
+                        "FROM metrics WHERE metrica=%s AND valor_gwh IS NOT NULL "
+                        "AND fecha::date <= %s GROUP BY fecha::date ORDER BY fecha",
+                        conn, params=(metrica, fecha_corte.date())
+                    )
+            except Exception as exc:
+                print(f"  ⚠️  Error cargando {nombre_reg}: {exc}")
+                continue
+
+            if len(df_reg) == 0:
+                print(f"  ⚠️  Sin datos para {nombre_reg} — excluido del backtest")
+                continue
+
+            df_reg['fecha'] = pd.to_datetime(df_reg['fecha'])
+            s = df_reg.set_index('fecha')['valor'].astype(float) * escala + offset
+            if lag_dias > 0:
+                s = s.shift(lag_dias, freq='D')
+            series_hist[nombre_reg] = s
+        conn.close()
+
+    if reg_config and not series_hist:
+        print("❌ Se esperaban regresores pero no se pudo cargar ninguno")
+        return
+
+    if series_hist:
+        df_regs_hist = pd.DataFrame(series_hist).sort_index()
+        df_regs_hist = df_regs_hist[df_regs_hist.index <= fecha_corte]
+        df_regs_hist = df_regs_hist.resample('D').mean().interpolate('linear').ffill().bfill()
+        reg_cols = list(df_regs_hist.columns)
+        print(f"  Regresores históricos: {reg_cols}")
+    else:
+        df_regs_hist = pd.DataFrame()
+        reg_cols = []
+        print("  Sin regresores configurados para esta fuente.")
+
+    # 2b. Regresores del período de PRUEBA — fieles a producción real, no
+    # perfect-foresight: construir_regresores_futuros() con fecha_referencia=
+    # fecha_corte hace que PDO/SOI/GMST decaigan desde su último valor
+    # conocido AL CORTE (no hoy), precipitación/aportes se asuman en cero, y
+    # ONI reciba su pronóstico NOAA (única señal con futuro real).
+    fechas_futuras = pd.date_range(fecha_corte + pd.Timedelta(days=1), periods=n_test, freq='D')
+    df_regs_futuro = construir_regresores_futuros(
+        reg_config, {}, fechas_futuras=fechas_futuras, fecha_referencia=fecha_corte,
+    )
+    if df_regs_futuro is None:
+        df_regs_futuro = pd.DataFrame(index=fechas_futuras)
+    # construir_regresores_futuros() no construye columnas de calendario
+    # (deterministas, sin BD) — se reusa la misma construcción de arriba.
+    if tiene_calendario:
+        df_cal_fut = construir_regresores_calendario(fechas_futuras)
+        for col in df_cal_fut.columns:
+            df_regs_futuro[col] = df_cal_fut[col]
+
+    if reg_cols:
+        df_regs_completo = pd.concat([df_regs_hist, df_regs_futuro.reindex(columns=reg_cols)])
+        df_regs_completo = df_regs_completo.sort_index()
+        df_regs_completo = df_regs_completo[~df_regs_completo.index.duplicated(keep='last')]
+    else:
+        df_regs_completo = pd.DataFrame()
+
+    # 3. Construir df_prophet de entrenamiento con regresores (idéntico a main_backtest())
+    df_prophet = df_train_raw.rename(columns={'fecha': 'ds', 'valor': 'y'})
+    if reg_cols:
+        for col in reg_cols:
+            if col in df_regs_hist.columns:
+                df_prophet[col] = df_prophet['ds'].map(df_regs_hist[col])
+
+    df_prophet = df_prophet.dropna(subset=['y'])
+    serie_sarima = df_train_raw.set_index('fecha')['valor'].asfreq('D')
+
+    # 4. Entrenar predictor (idéntico a main_backtest())
+    predictor = PredictorMetricaSectorial(fuente, config)
+    predictor.regresores_nombres = reg_cols
+    predictor.regresores_completo = df_regs_completo if reg_cols else None
+
+    dias_val = int(config.get('dias_validacion', 180))
+
+    print(f"\n  🤖 Entrenando Prophet (datos hasta {fecha_corte.date()})...")
+    predictor.entrenar_prophet(df_prophet)
+    print(f"  🤖 Entrenando SARIMAX...")
+    predictor.entrenar_sarima(serie_sarima)
+    print(f"  📊 Validando holdout {dias_val} días...")
+    predictor.validar_y_generar(df_prophet, serie_sarima, dias_validacion=dias_val)
+
+    mape_train = predictor.metricas.get('mape_ensemble')
+    print(f"  MAPE holdout in-sample: {mape_train:.2%}" if mape_train else "  MAPE holdout: N/A")
+
+    # 5. Predecir horizonte de test — predecir() ya lee de
+    # self.regresores_completo, que ahora contiene la reconstrucción fiel a
+    # producción para las fechas > fecha_corte (paso 2b).
+    print(f"\n  🔮 Prediciendo {n_test} días post-corte (regresores fieles a producción)...")
+    df_pred = predictor.predecir(n_test, allow_negative=False)
+
+    # 6. Evaluar contra valores reales (idéntico a main_backtest())
+    fechas_pred = pd.DatetimeIndex(df_pred['fecha_prediccion'])
+    y_pred     = df_pred['valor_predicho'].values
+    ci_lower   = df_pred['intervalo_inferior'].values
+    ci_upper   = df_pred['intervalo_superior'].values
+
+    y_real_aligned = df_actuals['valor'].reindex(fechas_pred)
+    mask = y_real_aligned.notna().values
+
+    n_overlap = int(mask.sum())
+    if n_overlap < 10:
+        print("❌ Muy pocos días con datos reales comparables")
+        return
+
+    y_pred_eval   = y_pred[mask]
+    y_real_eval   = y_real_aligned.values[mask]
+    ci_lower_eval = ci_lower[mask]
+    ci_upper_eval = ci_upper[mask]
+
+    mape_expost  = float(np.mean(np.abs((y_real_eval - y_pred_eval) / np.clip(y_real_eval, 1.0, None))))
+    cobertura_ci = float(np.mean((y_real_eval >= ci_lower_eval) & (y_real_eval <= ci_upper_eval)))
+    robusto      = mape_expost < (mape_train or 0.10) * 2.0
+
+    dias_desde_corte = np.array([(f - fecha_corte).days for f in fechas_pred[mask]])
+    horizontes = [30, 90, 180, 365, 730]
+    mape_por_horizonte = {}
+    lim_inf = 0
+    for lim_sup in horizontes:
+        bucket_mask = (dias_desde_corte > lim_inf) & (dias_desde_corte <= lim_sup)
+        n_bucket = int(bucket_mask.sum())
+        if n_bucket >= 5:
+            y_r = y_real_eval[bucket_mask]
+            y_p = y_pred_eval[bucket_mask]
+            mape_bucket = float(np.mean(np.abs((y_r - y_p) / np.clip(y_r, 1.0, None))))
+            mape_por_horizonte[f"{lim_inf + 1}-{lim_sup}d"] = {
+                "mape": round(mape_bucket, 4),
+                "n_dias": n_bucket,
+            }
+        lim_inf = lim_sup
+
+    print(f"\n  📈 RESULTADOS BACKTEST FIEL A PRODUCCIÓN {backtest_year}:")
+    print(f"     MAPE in-sample  (holdout)  : {mape_train:.2%}" if mape_train else "")
+    print(f"     MAPE out-of-sample {backtest_year + 1}   : {mape_expost:.2%}")
+    print(f"     Cobertura CI 95% empírica  : {cobertura_ci:.2%}")
+    print(f"     Diagnóstico : {'✅ Modelo robusto (MAPE OOS < 2× holdout)' if robusto else '⚠️ Posible sobreajuste (MAPE OOS ≥ 2× holdout)'}")
+    print(f"     MAPE por horizonte:")
+    for etiqueta, v in mape_por_horizonte.items():
+        print(f"       {etiqueta:>10} (n={v['n_dias']:>3}): {v['mape']:.2%}")
+
+    resultado = {
+        "corte_entrenamiento": str(fecha_corte.date()),
+        "periodo_test": [str(fecha_test_start.date()), str(fechas_pred[mask][-1].date())],
+        "n_dias_test": n_overlap,
+        "regressores_usados": reg_cols,
+        "mape_train_holdout": round(float(mape_train), 4) if mape_train else None,
+        "mape_expost": round(mape_expost, 4),
+        "cobertura_ci_95": round(cobertura_ci, 4),
+        "modelo_robusto": robusto,
+        "mape_por_horizonte": mape_por_horizonte,
+        "metodologia": "produccion_fiel",
+    }
+
+    # Fase 42 continuación: sufijo por señales exógenas extra (ej. _SOI) para
+    # no pisar el JSON de la línea base al experimentar con sarimax_exog_extra.
+    _extra_exog_sufijo = config.get('sarimax_exog_extra') or []
+    _sufijo_archivo = (
+        '_' + '_'.join(c.replace('_index', '').upper() for c in _extra_exog_sufijo)
+        if _extra_exog_sufijo else ''
+    )
+    log_path = Path("/home/admonctrlxm/server/logs") / f"backtest_prodfiel_{fuente}_{backtest_year}{_sufijo_archivo}.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(resultado, indent=2, ensure_ascii=False))
+
+    print(f"\n  ✅ Guardado en: {log_path}")
+    print(json.dumps(resultado, indent=2))
+
+    # Mismo patrón de persistencia que main_backtest(), con modelo distinto
+    # ('..._PRODFIEL') para que ambas series de resultados (perfect-foresight
+    # y fiel a producción) convivan en la misma tabla sin chocar con la
+    # clave única (fuente, modelo, anio_corte) — sin necesidad de migración.
+    try:
+        # Fase 42 continuación: si esta corrida usa exógenas extra en SARIMAX
+        # (ej. sarimax_exog_extra=['soi_index']), se guarda bajo un nombre de
+        # modelo DISTINTO (sufijo por señal) — así el experimento (SOI) no
+        # sobreescribe la línea base ya establecida (solo ONI) en la misma
+        # tabla, y ambas quedan disponibles para comparar.
+        _extra_exog = config.get('sarimax_exog_extra') or []
+        _modelo_nombre = 'ENSEMBLE_SECTOR_v1.0_PRODFIEL' + (
+            ('_' + '_'.join(c.replace('_index', '').upper() for c in _extra_exog))
+            if _extra_exog else ''
+        )
+
+        conn_bt = get_postgres_connection()
+        cur_bt = conn_bt.cursor()
+        cur_bt.execute("""
+            INSERT INTO predictions_backtest_history
+                (fuente, modelo, anio_corte, fecha_test_inicio, fecha_test_fin,
+                 n_dias_test, mape_train_holdout, mape_expost, cobertura_ci_95,
+                 modelo_robusto, mape_por_horizonte, ejecutado_en)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (fuente, modelo, anio_corte) DO UPDATE SET
+                fecha_test_inicio  = EXCLUDED.fecha_test_inicio,
+                fecha_test_fin     = EXCLUDED.fecha_test_fin,
+                n_dias_test        = EXCLUDED.n_dias_test,
+                mape_train_holdout = EXCLUDED.mape_train_holdout,
+                mape_expost        = EXCLUDED.mape_expost,
+                cobertura_ci_95    = EXCLUDED.cobertura_ci_95,
+                modelo_robusto     = EXCLUDED.modelo_robusto,
+                mape_por_horizonte = EXCLUDED.mape_por_horizonte,
+                ejecutado_en       = now()
+        """, (
+            fuente, _modelo_nombre, backtest_year,
+            resultado["periodo_test"][0], resultado["periodo_test"][1],
+            resultado["n_dias_test"], resultado["mape_train_holdout"],
+            resultado["mape_expost"], resultado["cobertura_ci_95"],
+            resultado["modelo_robusto"], json.dumps(resultado["mape_por_horizonte"]),
+        ))
+        conn_bt.commit()
+        cur_bt.close()
+        conn_bt.close()
+        print(f"  ✅ Guardado en predictions_backtest_history "
+              f"(fuente={fuente}, modelo={_modelo_nombre}, año={backtest_year})")
+    except Exception as e_bt:
+        print(f"  ⚠️  No se pudo guardar en predictions_backtest_history: {e_bt}")
+
+
+def main_backtest_directo(fuente: str, backtest_year: int):
+    """
+    Backtesting out-of-sample para las fuentes de predicción directa que NO
+    usan el ensemble Prophet+SARIMAX: PRECIO_BOLSA (RandomForest, FASE 10) y
+    APORTES_HIDRICOS (LightGBM, FASE 11).
+
+    Fase 41 (2026-08-26): main_backtest() (Prophet+SARIMAX) no aplica a estas
+    2 fuentes — usan clases de modelo distintas (PredictorRandomForest /
+    PredictorLGBMDirecto), con su propia construcción de features (rolling
+    stats + regresores BD + calendario, sin lags recursivos). Se reutiliza
+    construir_dataset() de cada clase (la MISMA función que ya usa el
+    entrenamiento de producción) para no reimplementar la ingeniería de
+    features — solo se cambia CÓMO se separan train/test (por fecha de
+    corte real, no por los últimos N días como hace entrenar_y_validar()).
+
+    Igual que main_backtest(): no modifica BD/cache de predictions, solo
+    guarda diagnóstico (JSON + predictions_backtest_history).
+    """
+    import json
+    from pathlib import Path
+    from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
+
+    _MAPEO = {
+        'PRECIO_BOLSA':     ('RandomForest', 'RANDOMFOREST_v1.0', PRECIO_BOLSA_RF_CONFIG),
+        'APORTES_HIDRICOS': ('LightGBM', 'LGBM_DIRECTO_v1.0', APORTES_HIDRICOS_LGBM_CONFIG),
+    }
+    if fuente not in _MAPEO:
+        print(f"❌ main_backtest_directo no soporta fuente={fuente} (solo PRECIO_BOLSA / APORTES_HIDRICOS)")
+        return
+
+    tipo_modelo, modelo_version, config = _MAPEO[fuente]
+
+    # 1. Construir dataset completo — MISMA función que usa producción
+    # (rolling stats calculadas de forma causal, ver docstring de la clase:
+    # "sin lags recursivos" — no hay fuga de información hacia atrás en el
+    # tiempo dentro de una misma fila).
+    if fuente == 'PRECIO_BOLSA':
+        predictor = PredictorRandomForest(fuente, config)
+    else:
+        predictor = PredictorLGBMDirecto(fuente, config)
+
+    df, feature_cols = predictor.construir_dataset()
+    if df is None or len(df) < 90:
+        print(f"❌ Datos insuficientes para backtest de {fuente}")
+        return
+
+    # Fase 41 (2026-08-26): a diferencia de main_backtest() (Prophet+SARIMAX,
+    # datos desde 2000 o 2020), estas 2 fuentes usan un `ventana_meses`
+    # deliberadamente corto en su config de producción (PRECIO_BOLSA: 15
+    # meses — el régimen de precios cambia rápido, ver docstring de la
+    # clase) — construir_dataset() solo devuelve esa ventana reciente, así
+    # que un backtest_year de hace varios años (ej. 2024) puede caer FUERA
+    # del rango disponible y dejar el set de entrenamiento vacío (visto en
+    # vivo: 0 filas, RandomForestRegressor.fit() lanzó ValueError). Por
+    # eso el corte se calcula sobre los datos REALMENTE disponibles: si
+    # backtest_year cae dentro del rango, se usa esa fecha; si no, se hace
+    # un split proporcional (70% train / 30% test) del rango disponible.
+    fecha_corte_pref = pd.Timestamp(f"{backtest_year}-12-31")
+    if df.index.min() <= fecha_corte_pref <= df.index.max():
+        fecha_corte = fecha_corte_pref
+    else:
+        rango = df.index.max() - df.index.min()
+        fecha_corte = df.index.min() + rango * 0.7
+        print(f"  ⚠️  backtest_year={backtest_year} fuera del rango disponible "
+              f"({df.index.min().date()} → {df.index.max().date()}, ventana corta "
+              f"por diseño) — usando split proporcional 70/30, corte={fecha_corte.date()}")
+
+    print(f"\n{'='*70}")
+    print(f"🔬 BACKTESTING {fuente} ({tipo_modelo}) — Corte: {fecha_corte.date()}")
+    print(f"{'='*70}\n")
+
+    df_train = df[df.index <= fecha_corte]
+    df_test_full = df[df.index > fecha_corte]
+    n_test = min(730, len(df_test_full))
+    if n_test < 30 or len(df_train) < 60:
+        print(f"❌ Datos insuficientes tras el split (train={len(df_train)}, test={n_test})")
+        return
+    df_test = df_test_full.iloc[:n_test]
+
+    print(f"  Entrenamiento : {len(df_train)} días "
+          f"({df_train.index.min().date()} → {df_train.index.max().date()})")
+    print(f"  Período test  : {n_test} días desde {df_test.index.min().date()}")
+
+    X_train = df_train[feature_cols]
+    y_train = df_train['valor']
+    X_test  = df_test[feature_cols]
+    y_test  = df_test['valor'].values
+
+    piso = config.get('piso', 0.0)
+
+    # 2. Entrenar SOLO con datos hasta la fecha de corte (nunca vio el
+    # período de test) — mismos hiperparámetros base que producción, sin
+    # Optuna (búsqueda bayesiana) para mantener el backtest rápido y
+    # reproducible; los hiperparámetros ya fueron tuneados una vez para
+    # producción y no deberían diferir sustancialmente para una ventana
+    # de entrenamiento algo más corta.
+    if fuente == 'PRECIO_BOLSA':
+        from sklearn.ensemble import RandomForestRegressor
+        params = config.get('rf_params', {})
+        modelo = RandomForestRegressor(
+            n_estimators=params.get('n_estimators', 300),
+            max_depth=params.get('max_depth', 12),
+            min_samples_leaf=params.get('min_samples_leaf', 5),
+            random_state=params.get('random_state', 42),
+            n_jobs=params.get('n_jobs', -1),
+        )
+    else:
+        from lightgbm import LGBMRegressor
+        params = config.get('lgbm_params', {})
+        modelo = LGBMRegressor(**params)
+
+    print(f"\n  🤖 Entrenando {tipo_modelo} (datos hasta {fecha_corte.date()})...")
+    modelo.fit(X_train, y_train)
+
+    # 3. Predecir el período de test y evaluar
+    y_pred = np.maximum(modelo.predict(X_test), piso)
+
+    mape_expost = float(mean_absolute_percentage_error(y_test, y_pred))
+    rmse_expost = float(np.sqrt(mean_squared_error(y_test, y_pred)))
+
+    # Holdout in-sample de referencia (últimos 30 días del período de
+    # entrenamiento, mismo criterio que entrenar_y_validar() en producción)
+    # — para poder comparar la cifra optimista vs. la rigurosa, igual que
+    # main_backtest() hace para el ensemble Prophet+SARIMAX.
+    dias_holdout_ref = min(30, len(df_train) // 10)
+    mape_train_holdout = None
+    if dias_holdout_ref >= 10:
+        df_tr2 = df_train.iloc[:-dias_holdout_ref]
+        df_ho2 = df_train.iloc[-dias_holdout_ref:]
+        modelo_ref = (
+            RandomForestRegressor(**{k: v for k, v in
+                dict(n_estimators=params.get('n_estimators', 300),
+                     max_depth=params.get('max_depth', 12),
+                     min_samples_leaf=params.get('min_samples_leaf', 5),
+                     random_state=params.get('random_state', 42),
+                     n_jobs=params.get('n_jobs', -1)).items()})
+            if fuente == 'PRECIO_BOLSA' else LGBMRegressor(**params)
+        )
+        modelo_ref.fit(df_tr2[feature_cols], df_tr2['valor'])
+        y_pred_ho2 = np.maximum(modelo_ref.predict(df_ho2[feature_cols]), piso)
+        mape_train_holdout = float(mean_absolute_percentage_error(df_ho2['valor'].values, y_pred_ho2))
+
+    # Intervalo de confianza — mismo criterio que predecir() en producción
+    # (residuos absolutos, esta vez SOLO del set de entrenamiento para no
+    # optimizar el CI con datos que el backtest no debería haber visto),
+    # con el mismo factor de ensanchamiento cuadrático suave por horizonte.
+    residuos_train = np.abs(y_train.values - modelo.predict(X_train))
+    std_residuos = float(np.std(residuos_train))
+    factores = np.array([1.0 + 0.05 * i + 0.001 * i**2 for i in range(n_test)])
+    lower = np.maximum(y_pred - 1.96 * std_residuos * factores, piso)
+    upper = y_pred + 1.96 * std_residuos * factores
+    cobertura_ci = float(np.mean((y_test >= lower) & (y_test <= upper)))
+
+    robusto = mape_expost < (mape_train_holdout or 0.10) * 2.0
+    anio_corte_real = int(fecha_corte.year)
+
+    print(f"\n  📈 RESULTADOS BACKTEST {fuente} (corte {fecha_corte.date()}):")
+    print(f"     MAPE holdout in-sample     : {mape_train_holdout:.2%}" if mape_train_holdout else "")
+    print(f"     MAPE out-of-sample         : {mape_expost:.2%}")
+    print(f"     Cobertura CI 95% empírica  : {cobertura_ci:.2%}")
+    print(f"     Diagnóstico : {'✅ Modelo robusto (MAPE OOS < 2× holdout)' if robusto else '⚠️ Posible sobreajuste (MAPE OOS ≥ 2× holdout)'}")
+
+    resultado = {
+        "fuente": fuente,
+        "modelo": modelo_version,
+        "corte_entrenamiento": str(fecha_corte.date()),
+        "periodo_test": [str(df_test.index.min().date()), str(df_test.index.max().date())],
+        "n_dias_test": n_test,
+        "features_usadas": feature_cols,
+        "mape_train_holdout": round(mape_train_holdout, 4) if mape_train_holdout else None,
+        "mape_expost": round(mape_expost, 4),
+        "rmse_expost": round(rmse_expost, 4),
+        "cobertura_ci_95": round(cobertura_ci, 4),
+        "modelo_robusto": robusto,
+    }
+
+    log_path = Path("/home/admonctrlxm/server/logs") / f"backtest_{fuente}_{anio_corte_real}.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(resultado, indent=2, ensure_ascii=False))
+    print(f"\n  ✅ Guardado en: {log_path}")
+    print(json.dumps(resultado, indent=2))
+
+    try:
+        conn_bt = get_postgres_connection()
+        cur_bt = conn_bt.cursor()
+        cur_bt.execute("""
+            INSERT INTO predictions_backtest_history
+                (fuente, modelo, anio_corte, fecha_test_inicio, fecha_test_fin,
+                 n_dias_test, mape_train_holdout, mape_expost, cobertura_ci_95,
+                 modelo_robusto, ejecutado_en)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (fuente, modelo, anio_corte) DO UPDATE SET
+                fecha_test_inicio  = EXCLUDED.fecha_test_inicio,
+                fecha_test_fin     = EXCLUDED.fecha_test_fin,
+                n_dias_test        = EXCLUDED.n_dias_test,
+                mape_train_holdout = EXCLUDED.mape_train_holdout,
+                mape_expost        = EXCLUDED.mape_expost,
+                cobertura_ci_95    = EXCLUDED.cobertura_ci_95,
+                modelo_robusto     = EXCLUDED.modelo_robusto,
+                ejecutado_en       = now()
+        """, (
+            fuente, modelo_version, anio_corte_real,
+            resultado["periodo_test"][0], resultado["periodo_test"][1],
+            resultado["n_dias_test"], resultado["mape_train_holdout"],
+            resultado["mape_expost"], resultado["cobertura_ci_95"],
+            resultado["modelo_robusto"],
+        ))
+        conn_bt.commit()
+        cur_bt.close()
+        conn_bt.close()
+        print(f"  ✅ Guardado en predictions_backtest_history (fuente={fuente}, año={anio_corte_real})")
+    except Exception as e_bt:
+        print(f"  ⚠️  No se pudo guardar en predictions_backtest_history: {e_bt}")
 
 
 if __name__ == "__main__":
@@ -7471,8 +8173,34 @@ Ejemplos:
         '--backtest', type=int, default=None,
         metavar='YYYY',
         help='Backtesting out-of-sample: entrena hasta YYYY-12-31 y evalúa en período '
-             'siguiente. Solo para EMBALSES_PCT. No modifica BD ni Redis. '
-             'Guarda resultado en logs/backtest_YYYY.json. Ejemplo: --backtest 2014',
+             'siguiente. Aplica al ensemble Prophet+SARIMAX (EMBALSES_PCT, DEMANDA, '
+             'GENE_TOTAL — usar junto con --backtest-fuente). No modifica BD ni Redis. '
+             'Guarda resultado en logs/backtest_<fuente>_YYYY.json y en '
+             'predictions_backtest_history. Ejemplo: --backtest 2014',
+    )
+    parser.add_argument(
+        '--backtest-fuente', type=str, default='EMBALSES_PCT',
+        choices=['EMBALSES_PCT', 'DEMANDA', 'GENE_TOTAL'],
+        help='Fuente a evaluar con --backtest (default: EMBALSES_PCT).',
+    )
+    parser.add_argument(
+        '--backtest-directo', type=str, default=None,
+        choices=['PRECIO_BOLSA', 'APORTES_HIDRICOS'],
+        metavar='FUENTE',
+        help='Backtesting out-of-sample para las fuentes de predicción directa '
+             '(RandomForest/LightGBM, sin Prophet+SARIMAX) — usar junto con '
+             '--backtest para el año de corte. Ejemplo: --backtest-directo PRECIO_BOLSA --backtest 2024',
+    )
+    parser.add_argument(
+        '--produccion-fiel', action='store_true',
+        help='Fase 42: usar junto con --backtest/--backtest-fuente. En vez del '
+             'backtest perfect-foresight normal (usa valores climáticos reales '
+             'ya conocidos hoy para todo el período de prueba), reconstruye el '
+             'período de prueba con la misma lógica que usa producción real '
+             '(PDO/SOI/GMST decaen a neutral, precipitación/aportes en cero, '
+             'solo ONI con pronóstico real) — mide honestamente lo que '
+             'producción puede lograr, no un techo optimista. '
+             'Ejemplo: --backtest 2022 --produccion-fiel',
     )
     args = parser.parse_args()
     
@@ -7523,9 +8251,17 @@ Ejemplos:
         print(f"\n  🔬 Optuna activado — búsqueda bayesiana de hiperparámetros (FASE 21)")
 
     dual_args = args.horizonte_dual if args.horizonte_dual is not None else args.test_horizonte_dual
-    if args.backtest is not None:
-        # Backtesting out-of-sample (diagnóstico, no modifica BD)
-        main_backtest(args.backtest)
+    if args.backtest is not None and args.backtest_directo:
+        # Backtesting out-of-sample para modelos de predicción directa
+        # (RandomForest PRECIO_BOLSA / LightGBM APORTES_HIDRICOS)
+        main_backtest_directo(args.backtest_directo, args.backtest)
+    elif args.backtest is not None and args.produccion_fiel:
+        # Fase 42: backtest fiel a producción (sin perfect-foresight)
+        main_backtest_produccion_fiel(args.backtest, fuente=args.backtest_fuente)
+    elif args.backtest is not None:
+        # Backtesting out-of-sample para el ensemble Prophet+SARIMAX
+        # (diagnóstico, no modifica BD)
+        main_backtest(args.backtest, fuente=args.backtest_fuente)
     elif args.cv_all:
         # FASE 14: CV todas las métricas
         main_cross_validation()

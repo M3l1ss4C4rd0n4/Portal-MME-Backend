@@ -96,6 +96,18 @@ app.conf.beat_schedule = {
         'task': 'tasks.etl_tasks.regenerar_predicciones',
         'schedule': crontab(hour=2, minute=0, day_of_week='0,3,6'),  # Dom/Mié/Sáb 02:00 AM
     },
+    # Fase 41 (2026-08-26): re-corre el backtest riguroso (out-of-sample real,
+    # no el holdout optimista) de las 5 fuentes con validación — sin esto, la
+    # cifra de "MAPE (validación rigurosa)" que muestra el portal quedaría
+    # congelada en la última corrida manual. Mensual (no semanal): cada
+    # backtest de Prophet+SARIMAX puede tardar 15-25 min y usar varios GB de
+    # RAM — se corre secuencial, nunca junto al reentrenamiento de las 02:00.
+    # 1er domingo del mes, 03:30 AM (day_of_month='1-7' + day_of_week='0'
+    # es el patrón estándar de Celery para "primer domingo del mes").
+    'backtests-predicciones-mensual': {
+        'task': 'tasks.etl_tasks.ejecutar_backtests_predicciones',
+        'schedule': crontab(hour=3, minute=30, day_of_week='0', day_of_month='1-7'),
+    },
     # Sincronización SharePoint: cron 4:00 AM + watcher cada 5 min (no Celery).
     # (ver etl/etl_sharepoint_watcher.py y crontab del servidor).
     # La tarea Celery duplicada sync-sharepoint-xlsx-diario fue retirada para evitar

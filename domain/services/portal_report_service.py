@@ -2413,6 +2413,24 @@ async def _build_predicciones(captures: dict | None = None, params: dict | None 
     emb_pico_d = (emb.get("pico") or {}).get("dias_desde_hoy") or 0
     mape       = float(emb.get("mape") or 0) * 100
     confianza  = float(emb.get("confianza") or 0) * 100
+    mape_riguroso = bool(emb.get("mape_es_riguroso"))
+    cobertura_ci  = emb.get("cobertura_ci")
+    backtest_info = emb.get("backtest") or {}
+    # Fase 41 (2026-08-30): el error real varía según el año de corte usado
+    # para entrenar (verificado: 2022->22.6%, 2024->9.3%) — cuando hay más
+    # de un año evaluado, se comunica el rango en vez de un solo número.
+    mape_rango_min = emb.get("mape_rango_min")
+    mape_rango_max = emb.get("mape_rango_max")
+    mape_anios_evaluados = emb.get("mape_anios_evaluados") or []
+    hay_rango_real = (
+        mape_rango_min is not None and mape_rango_max is not None
+        and float(mape_rango_max) > float(mape_rango_min)
+    )
+    mape_rango_texto = (
+        f"{float(mape_rango_min)*100:.1f}%-{float(mape_rango_max)*100:.1f}%"
+        if hay_rango_real else ""
+    )
+    mape_anios_texto = " y ".join(str(a) for a in mape_anios_evaluados)
     modelo     = emb.get("modelo") or "–"
     oni_val    = oni_d.get("actual")
     oni_estado = oni_d.get("estado") or "–"
@@ -2428,9 +2446,11 @@ async def _build_predicciones(captures: dict | None = None, params: dict | None 
       {_kpi("Nivel Actual", f"{emb_actual:.1f}", "%", "#3B82F6")}
       {_kpi("Pico Proyectado", f"{emb_pico_v:.1f}",
             f"% — {str(emb_pico_f)[:10]} ({emb_pico_d}d)", "#22C55E")}
-      {_kpi("Precisión Modelo", f"{100-mape:.1f}",
-            f"% (MAPE={mape:.2f}%)", "#F59E0B")}
-      {_kpi("Confianza Forecast", f"{confianza:.0f}", "%", "#A78BFA")}
+      {_kpi("Precisión Modelo", f"{100-mape:.1f}" if not hay_rango_real else "—",
+            (f"% MAPE {mape_rango_texto} — rango histórico validado" if hay_rango_real
+             else f"% (MAPE={mape:.2f}%{' — validación rigurosa' if mape_riguroso else ' — prueba interna'})"), "#F59E0B")}
+      {_kpi("Cobertura del intervalo", f"{(cobertura_ci or 0)*100:.0f}" if cobertura_ci is not None else "–",
+            "%", "#A78BFA")}
     </div>
     {_section("VARIABLES CLIMÁTICAS")}
     <div class="kpi-grid">
@@ -2554,23 +2574,53 @@ async def _build_predicciones(captures: dict | None = None, params: dict | None 
           <strong style="color:#DC2626">(+{_gmst_v:.2f}°C)</strong>
           activarán un descenso sostenido:
           <strong style="color:#DC2626">la ventana de mayor riesgo energético se ubica entre {_risk_text}</strong>.
-          Pronóstico basado en seis indicadores climáticos oficiales (NOAA, NASA, XM),
-          validado con un margen de error del
-          <strong style="color:#16A34A">{mape:.2f}%</strong> sobre 180 días reales."""
+          Pronóstico basado principalmente en el índice ONI (NOAA), con cinco señales
+          climáticas adicionales (NASA, XM) como contexto complementario. {
+            (f"Validado entrenando el modelo con distintos años de corte ({mape_anios_texto}): el error real "
+             f"observado varió entre <strong style='color:#16A34A'>{mape_rango_texto}</strong> según el año — "
+             f"no es una cifra fija (ver detalle).")
+            if hay_rango_real else
+            (("Validado comparando el modelo contra " + str(backtest_info.get('n_dias_test', 'cientos de'))
+              + " días reales ya ocurridos (entrenado solo con datos anteriores a ese período): error real del "
+              if mape_riguroso else "En pruebas internas el modelo tuvo un error promedio del ")
+             + f'<strong style="color:#16A34A">{mape:.2f}%</strong> (ver detalle).')
+          }"""
 
         _detalle = f"""Para proyectar el nivel de los embalses del Sistema Interconectado Nacional, se combinan
         dos métodos de predicción entrenados sobre <strong>26 años de datos históricos</strong>.
         El primero, <strong>Prophet</strong> (Meta), reconoce automáticamente los dos ciclos lluviosos anuales
-        de la cordillera andina colombiana. El segundo, <strong>SARIMAX</strong>, incorpora el índice oceánico
-        ONI directamente en su estructura matemática. Los dos resultados se combinan obteniendo un producto
-        más preciso que cualquiera por separado. Validado sobre <strong>180 días reales</strong>,
-        el sistema registra un error medio absoluto del <strong>{mape:.2f}%</strong>.<br><br>
-        El ONI registra <strong style="color:{_oni_col}">{'+' if _oni_v>0 else ''}{_oni_v:.2f}°C (El Niño {_oni_lbl})</strong>{_maxfc_text}.
+        de la cordillera andina colombiana y se ajusta con seis señales climáticas e hidrológicas. El segundo,
+        <strong>SARIMAX</strong>, es más simple: incorpora directamente en su estructura solo el índice
+        oceánico ONI (sin las otras cinco señales). Los dos resultados se combinan ponderando más al que
+        haya sido históricamente más preciso.
+        {(f'La precisión reportada ({mape_rango_texto}) viene de correr esta misma validación rigurosa con '
+          f'más de un año de corte ({mape_anios_texto}): se entrenó el modelo solo con datos hasta finales de '
+          f'cada año (sin dejarle ver lo que pasó después) y se compararon sus pronósticos contra los días '
+          f'reales que efectivamente ocurrieron después. El resultado varió bastante según el año — '
+          f'<strong>{mape_rango_texto}</strong> de error real— lo que indica que la precisión depende de '
+          f'qué tan parecidas fueron las condiciones climáticas del período entrenado a las del período '
+          f'validado, no de una capacidad fija del modelo. En el seguimiento semana a semana de pronósticos '
+          f'ya publicados el error también ha rondado el 7% en promedio, con picos puntuales de hasta 30%.'
+          if hay_rango_real else
+          f'La precisión reportada ({mape:.2f}%) viene de una validación rigurosa: se entrenó el modelo solo '
+          f'con datos hasta finales de {backtest_info.get("anio_corte", "—")} (sin dejarle ver lo que pasó '
+          f'después) y se compararon sus pronósticos contra los <strong>{backtest_info.get("n_dias_test", "—")} '
+          f'días reales</strong> que efectivamente ocurrieron después — un período que incluye El Niño activo '
+          f'y transiciones climáticas reales, no solo condiciones estables. En el seguimiento semana a semana '
+          f'de pronósticos ya publicados el error también ha rondado el 7% en promedio, con picos puntuales de '
+          f'hasta 30%.'
+          if mape_riguroso else
+          f'En una prueba interna sobre <strong>180 días históricos</strong>, el sistema registró un error '
+          f'medio absoluto del <strong>{mape:.2f}%</strong>.')}<br><br>
+        El ONI registra <strong style="color:{_oni_col}">{'+' if _oni_v>0 else ''}{_oni_v:.2f}°C (El Niño {_oni_lbl})</strong>{_maxfc_text}
+        — es la única señal con un pronóstico real hacia adelante; las demás se mantienen en su valor
+        actual o se asumen en condición normal para las fechas futuras.
         El PDO (<strong style="color:#A78BFA">{'+' if _pdo_v > 0 else ''}{_pdo_v:.2f}, {pdo_fase}</strong>)
         {'amplifica' if (pdo_fase or '').endswith('+') else 'atenúa'} el episodio en curso.
         El SOI registra <strong style="color:#2DD4BF">{'+' if _soi_v > 0 else ''}{_soi_v:.2f} ({_soi_lbl})</strong>.
         La anomalía GMST es <strong style="color:#F87171">+{_gmst_v:.2f}°C</strong> —el valor más alto del
-        registro instrumental—, amplificando entre un 10 y un 15% la intensidad de cada grado extra de El Niño."""
+        registro instrumental—, parte del trasfondo de un planeta más caliente que puede intensificar
+        el impacto regional de El Niño."""
 
         diagnostico_html = f"""
         <div style="border:1px solid #E8A838;border-radius:10px;background:#FFFBEB;padding:16px;margin-bottom:16px">
