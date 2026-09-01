@@ -369,8 +369,22 @@ def actualizar_tablero_mino(_n, region_sel, or_sel, rango_dias, estrato_sel, iva
         signo_delta = '+' if pct_delta >= 0 else ''
 
         # ── KPIs ─────────────────────────────────────────────
+        # Fase 40 Ronda 3: promedio ponderado por demanda real (no simple)
+        # cuando hay pesos disponibles para el subconjunto filtrado — mismo
+        # criterio ya aplicado en CUMinoristaService.get_promedio_nacional_minorista()
+        # (home.py, portal), para que el "CU {estrato} Nacional/región" no
+        # muestre un número distinto del que ya se corrigió en otros lugares.
         cu_mayor_ref = float(df_todos['cu_mayorista'].iloc[0]) if not df_todos.empty else 0
-        cu_min_prom  = float(df[col_activa].mean())            if not df.empty else 0
+        if not df.empty:
+            pesos_or = _svc.get_pesos_demanda_or()
+            df_pesado = df[df['or_codigo'].isin((pesos_or or {}).get('pesos', {}))] if pesos_or else pd.DataFrame()
+            if pesos_or and not df_pesado.empty:
+                pesos_serie = df_pesado['or_codigo'].map(pesos_or['pesos'])
+                cu_min_prom = float((df_pesado[col_activa] * pesos_serie).sum() / pesos_serie.sum())
+            else:
+                cu_min_prom = float(df[col_activa].mean())
+        else:
+            cu_min_prom = 0
         cu_min_max   = float(df[col_activa].max())             if not df.empty else 0
         or_mas_caro  = df.loc[df[col_activa].idxmax(), 'or_codigo'] if not df.empty else '-'
         brecha       = cu_min_prom - cu_mayor_ref
@@ -647,12 +661,40 @@ def actualizar_tablero_mino(_n, region_sel, or_sel, rango_dias, estrato_sel, iva
 
                 df_all = pd.concat(registros, ignore_index=True)
                 df_all['fecha'] = pd.to_datetime(df_all['fecha'])
-                df_prom = df_all.groupby('fecha').agg(
-                    cu_prom=('cu_minorista_total', 'mean'),
-                    cu_min =('cu_minorista_total', 'min'),
-                    cu_max =('cu_minorista_total', 'max'),
-                    cu_mayor =('cu_mayorista', 'first'),
-                ).reset_index().sort_values('fecha')
+
+                # Fase 40 Ronda 3: ponderar por demanda real (mismo criterio
+                # que el KPI principal) en vez de promedio simple entre
+                # operadores — usa el peso más reciente disponible para
+                # todo el histórico (D/C/pérdidas por OR son estáticos de
+                # todas formas, solo cambia el peso con que se combinan).
+                _pesos_info = _svc.get_pesos_demanda_or()
+                if _pesos_info:
+                    _pesos = _pesos_info['pesos']
+                    df_all['_peso'] = df_all['or_codigo'].map(_pesos)
+                    df_pond = df_all.dropna(subset=['_peso'])
+                else:
+                    df_pond = pd.DataFrame()
+
+                if not df_pond.empty:
+                    df_prom = df_all.groupby('fecha').agg(
+                        cu_min=('cu_minorista_total', 'min'),
+                        cu_max=('cu_minorista_total', 'max'),
+                        cu_mayor=('cu_mayorista', 'first'),
+                    ).reset_index()
+                    df_prom_pond = (
+                        df_pond.assign(_ponderado=df_pond['cu_minorista_total'] * df_pond['_peso'])
+                        .groupby('fecha')
+                        .apply(lambda g: g['_ponderado'].sum() / g['_peso'].sum())
+                        .reset_index(name='cu_prom')
+                    )
+                    df_prom = df_prom.merge(df_prom_pond, on='fecha').sort_values('fecha')
+                else:
+                    df_prom = df_all.groupby('fecha').agg(
+                        cu_prom=('cu_minorista_total', 'mean'),
+                        cu_min =('cu_minorista_total', 'min'),
+                        cu_max =('cu_minorista_total', 'max'),
+                        cu_mayor =('cu_mayorista', 'first'),
+                    ).reset_index().sort_values('fecha')
 
                 fig = go.Figure()
                 # Banda min-max

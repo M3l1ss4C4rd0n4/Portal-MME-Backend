@@ -441,6 +441,118 @@ class CUService:
             '_factor_perdidas': round(factor_perdidas, 6),
         }
 
+    def _get_cargos_en_vivo(self, fecha: date) -> Optional[dict]:
+        """
+        Fase 40 — lee T (cargo_stn_mensual) y D/C/pérdidas ponderados
+        (cu_componentes_nacionales_ponderados) para el mes de `fecha`,
+        producidos por scripts/cu/etl_cargo_stn.py y
+        scripts/cu/build_mercado_or_alias.py.
+
+        Retorna None si no hay datos en vivo para ese mes (aún no se
+        corrió el ETL, o el mes cae fuera del histórico descargado) —
+        NUNCA inventa un valor de respaldo aquí, eso es responsabilidad
+        del llamador.
+        """
+        mes = fecha.replace(day=1)
+        query = """
+            SELECT cs.cargo_stn_cop_kwh,
+                   cp.d_pond_cop_kwh, cp.c_pond_cop_kwh, cp.perdidas_pond_pct,
+                   cp.pct_demanda_cubierta, cp.n_mercados_ponderados
+            FROM cargo_stn_mensual cs
+            LEFT JOIN cu_componentes_nacionales_ponderados cp ON cp.mes = cs.mes
+            WHERE cs.mes = %s
+        """
+        try:
+            with self._conn_mgr.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(query, (mes,))
+                row = cur.fetchone()
+                cur.close()
+                conn.commit()
+        except Exception as e:
+            logger.error(f"{_LOG} Error leyendo cargos en vivo para {mes}: {e}")
+            return None
+
+        if row is None or row[0] is None:
+            return None
+
+        t_vivo, d_pond, c_pond, perd_pond, pct_cubierta, n_mercados = row
+        if d_pond is None or c_pond is None or perd_pond is None:
+            return None
+
+        return {
+            'mes': mes,
+            't_cop_kwh': float(t_vivo),
+            'd_cop_kwh': float(d_pond),
+            'c_cop_kwh': float(c_pond),
+            'perdidas_pct': float(perd_pond),
+            'pct_demanda_cubierta': float(pct_cubierta) if pct_cubierta is not None else None,
+            'n_mercados_ponderados': n_mercados,
+        }
+
+    def calculate_cu_comparativo(self, fecha: date) -> Optional[dict]:
+        """
+        Fase 40 — calcula el CU con los cargos EN VIVO (T real de XM vía
+        CargoUsoSTN, D/C/pérdidas ponderados por demanda real desde
+        cu_tarifas_or) y lo compara contra el CU actual (cargos fijos
+        hardcodeados en core/config.py).
+
+        NO reemplaza calculate_cu_for_date() ni escribe en cu_daily —
+        es una herramienta de comparación para decidir, con evidencia
+        real, si conviene conmutar el cálculo de producción. Devuelve
+        None si no hay cargos en vivo para el mes de `fecha`.
+        """
+        fecha = _ensure_date(fecha)
+        cargos_vivo = self._get_cargos_en_vivo(fecha)
+        if cargos_vivo is None:
+            logger.warning(f"{_LOG} Sin cargos en vivo para {fecha.replace(day=1)} — corran los ETL de Fase 40")
+            return None
+
+        actual = self.calculate_cu_for_date(fecha)
+        if actual is None:
+            return None
+
+        try:
+            cu_vivo = calculate_cu_tecnico(
+                g=actual['componente_g'] if actual['componente_g'] is not None else 0.0,
+                t=cargos_vivo['t_cop_kwh'],
+                d=cargos_vivo['d_cop_kwh'],
+                c=cargos_vivo['c_cop_kwh'],
+                pr=0.0,
+                r=actual['componente_r'] if actual['componente_r'] is not None else 0.0,
+                pt=cargos_vivo['perdidas_pct'],
+            )
+        except ValueError as exc:
+            logger.error(f"{_LOG} {fecha}: Error calculando CU en vivo: {exc}")
+            return None
+
+        return {
+            'fecha': fecha,
+            'cu_actual': {
+                't': self._cargo_t, 'd': self._cargo_d, 'c': self._cargo_c,
+                'perdidas_pct': round((actual['perdidas_pct'] or 0.0), 4),
+                'cu_total': actual['cu_total'],
+                'fuente_cargos': 'hardcodeado (core/config.py, sin fecha de verificación)',
+            },
+            'cu_en_vivo': {
+                't': round(cargos_vivo['t_cop_kwh'], 4),
+                'd': round(cargos_vivo['d_cop_kwh'], 4),
+                'c': round(cargos_vivo['c_cop_kwh'], 4),
+                'perdidas_pct': round(cargos_vivo['perdidas_pct'], 4),
+                'cu_total': round(cu_vivo, 4),
+                'pct_demanda_cubierta_ponderacion': cargos_vivo['pct_demanda_cubierta'],
+                'n_mercados_ponderados': cargos_vivo['n_mercados_ponderados'],
+                'fuente_cargos': (
+                    'T: XM CargoUsoSTN/DemaCome en vivo (mensual, nacional, Art.4 Res.CREG119/2007); '
+                    'D/C/pérdidas: cu_tarifas_or (SSPD) ponderado por demanda real DemaCome por mercado'
+                ),
+            },
+            'diferencia_cop_kwh': round(cu_vivo - actual['cu_total'], 4),
+            'diferencia_pct': round(
+                ((cu_vivo - actual['cu_total']) / actual['cu_total']) * 100, 2
+            ) if actual['cu_total'] else None,
+        }
+
     def save_cu_for_date(self, fecha: date) -> bool:
         """
         Calcula y guarda en cu_daily. Usa ON CONFLICT DO NOTHING.

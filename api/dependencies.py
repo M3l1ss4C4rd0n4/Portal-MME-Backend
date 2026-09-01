@@ -249,6 +249,17 @@ def get_cu_service():
     return _get_cu_service()
 
 
+def get_cu_minorista_service():
+    """
+    Singleton del servicio de CU minorista (tarifa usuario final por OR).
+
+    Returns:
+        Instancia compartida de CUMinoristaService
+    """
+    from core.container import get_cu_minorista_service as _get_cu_minorista_service
+    return _get_cu_minorista_service()
+
+
 def get_losses_nt_service():
     """
     Singleton del servicio de Pérdidas No Técnicas.

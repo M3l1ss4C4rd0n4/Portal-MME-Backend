@@ -259,7 +259,20 @@ class DependencyContainer:
             self._cu_service = CUService()
             logger.debug("CUService creado (singleton)")
         return self._cu_service
-    
+
+    def get_cu_minorista_service(self):
+        """
+        Obtiene CUMinoristaService como singleton lazy.
+
+        Returns:
+            CUMinoristaService para cálculo de CU tarifa usuario final por OR.
+        """
+        if not hasattr(self, '_cu_minorista_service') or self._cu_minorista_service is None:
+            from domain.services.cu_minorista_service import CUMinoristaService
+            self._cu_minorista_service = CUMinoristaService()
+            logger.debug("CUMinoristaService creado (singleton)")
+        return self._cu_minorista_service
+
     @property
     def losses_nt_service(self):
         """Obtiene LossesNTService como singleton lazy."""
@@ -524,6 +537,11 @@ def get_transmission_service() -> TransmissionService:
 def get_cu_service() -> CUService:
     """Función de conveniencia para obtener CUService."""
     return container.get_cu_service()
+
+
+def get_cu_minorista_service():
+    """Función de conveniencia para obtener CUMinoristaService."""
+    return container.get_cu_minorista_service()
 
 
 def get_losses_nt_service():

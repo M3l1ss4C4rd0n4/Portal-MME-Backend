@@ -790,11 +790,29 @@ El módulo de comparación permite visualizar la brecha entre el precio mayorist
 
 | Limitación | Impacto | Plan de mejora |
 |---|---|---|
-| Cargos D/C/pérdidas fijos (SSPD 2024-Q4) | No refleja actualizaciones trimestrales automáticas | Script de scraping del boletín SSPD a implementar |
+| Cargos D/C/pérdidas fijos (SSPD 2024-Q4 para la mayoría de ORs) | No refleja actualizaciones trimestrales automáticas | Re-parsear el Boletín Tarifario SSPD más reciente (4T-2025 ya descargado) — el formato del boletín cambió y el parser actual no lo reconoce; pendiente de reescritura tabla por tabla |
 | Nivel de Tensión único (NT1) | No diferencia NT2/NT3 para industria/comercio | Ampliar cuadro a NT2 para E5/E6/Industrial/Comercial |
 | Factor de estrato uniforme (no por consumo) | Subestima el diferencial para consumos bajos, sobreestima para consumos altos | Implementar cálculo por tramos con límite de subsistencia |
-| 20 ORs de referencia | No cubre todos los comercializadores (hay sub-OR locales) | Ampliar con OR de ZNI registrados en SSPD |
+| 26 ORs cargados, ~84% de la demanda nacional cubierta por la ponderación (ver 9.14) | El 16% restante de la demanda usa el promedio simple como respaldo | Completar roster con los 7 operadores reales identificados en la Tabla 26 SSPD sin cargar aún (CETSA, CEO, ELECTROCAQUETÁ, EMEESA, EEBP, EEP, ENERGUAVIARE) |
 | Cargos sociales FAZNI/FAER/PRONE fijos | Pueden variar por resolución CREG | Actualizable mediante parámetros en BD |
+
+### 9.14 Actualización agosto 2026 — Promedio nacional ponderado por demanda real (no simple)
+
+Hasta esta actualización, el "CU Usuario Final" mostrado como KPI nacional en el portal (`GET /v1/cu/minorista/promedio-nacional`, tablero `costo_usuario_final.py`) se calculaba en tres etapas sucesivas, cada una corrigiendo un problema real encontrado en la anterior:
+
+1. **Origen del problema**: el KPI nunca llamaba al servicio minorista real (`CUMinoristaService`, ya construido y correcto) — usaba `cu_mayorista × 1,42`, un multiplicador sin ninguna base normativa ni empírica. Corregido conectando el KPI al endpoint real `/v1/cu/minorista/promedio-nacional`.
+2. **Promedio simple → promedio ponderado por demanda real**: el promedio nacional inicial pesaba los 26 operadores por igual, sin importar cuántos usuarios sirve cada uno. Se construyó un nuevo ETL (`scripts/cu/etl_cargo_stn.py`, `scripts/cu/build_mercado_or_alias.py`) que descarga la demanda real por Mercado de Comercialización (métrica `DemaCome` de XM) y la mapea a cada operador de red usando la **Tabla 26** del Boletín Tarifario SSPD ("Operadores de Red y mercados") como fuente autoritativa — no por coincidencia de nombre de departamento, que resultó dar asignaciones incorrectas en 3 casos reales verificados.
+3. **Corrección de datos encontrada en el camino**: la Tabla 26 reveló que `EMSA` y `ENERCA` estaban intercambiados en `cu_tarifas_or` desde antes de esta ronda — EMSA es en realidad la Electrificadora del Meta (no de Casanare), y ENERCA es la Empresa de Energía de Casanare (no de Caquetá). Corregido en migración `036_cu_tarifas_or_fix_emsa_enerca.sql` (solo los campos de identificación, los cargos numéricos de esas 2 filas no se tocaron).
+
+**Cobertura de la ponderación**: 21 de 29 mercados de comercialización resueltos con la Tabla 26 (antes 19, y 3 de esos 19 estaban mal asignados) — cubre el **84,1% de la demanda nacional real**. El 15,9% restante (mercados sin resolver de forma inequívoca contra la Tabla 26) recae en el promedio simple como respaldo, nunca deja el KPI sin valor.
+
+**T (Transmisión) en vivo**: se agregó además un ETL (`scripts/cu/etl_cargo_stn.py`) que calcula el componente T_STN mensual real desde `CargoUsoSTN`/`DemaCome` de XM (`sql/migrations/035_cu_componentes_en_vivo.sql`), sustituyendo al valor fijo (SSPD enero-2026) cuando hay dato disponible del mes en curso — validado de forma independiente contra la propia Tabla 24 del boletín SSPD (que publica su propio cálculo trimestral de T): los dos cálculos, de fuentes distintas, coinciden dentro de ~1 COP/kWh.
+
+**Resultado**: el "CU Usuario Final" mostrado en el portal pasó de 881,35 (con el multiplicador inventado) → 939,70 (promedio simple, 26 operadores) → **941,88 COP/kWh (promedio ponderado por demanda real, `metodo: "ponderado_demanda_real"`)** — el mismo valor exacto en los 3 lugares donde se muestra hoy: el KPI del home, el tablero `/costo-unitario`, y el propio endpoint REST.
+
+Ver también `sql/migrations/037_cu_mercado_or_alias_metodo_sspd.sql` (curación de alias mercado↔OR) y `038_cu_pesos_demanda_or.sql` (tabla de pesos por operador, reutilizada tanto por el promedio ponderado como por la serie histórica del tablero Dash).
+
+**Backlog explícito, no implementado**: (1) re-parsear el Boletín Tarifario SSPD más reciente (4T-2025) para refrescar D/C/pérdidas de los ~22 operadores que siguen en datos de 2024 o más viejos — el parser actual no reconoce el nuevo formato del boletín (decenas de tablas temáticas en vez de una tabla única); (2) completar el roster con los 7 operadores reales de la Tabla 26 aún no cargados; (3) los pesos de demanda usan el mes más reciente disponible para toda consulta histórica del tablero, en vez de unir por mes exacto — aproximación razonable dado que la demanda por mercado es relativamente estable mes a mes, pero no es el peso real de cada mes histórico.
 
 ---
 
@@ -890,4 +908,4 @@ Este flujo garantiza que una variación en el mercado mayorista (ej. subida del 
 ---
 
 *Documento preparado por el equipo tecnico del Portal Energetico — MME.*  
-*Ultima actualizacion: Marzo 2026*
+*Ultima actualizacion: Agosto 2026 (§9.14 — promedio nacional ponderado por demanda real)*
