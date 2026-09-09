@@ -31,6 +31,20 @@ def _fmt_cop(val) -> str:
     return f"${v:,.0f}"
 
 
+def _fmt_cop_millones(val) -> str:
+    """Como _fmt_cop(), pero para columnas que ya vienen en MILLONES de pesos
+    (no pesos crudos) — caso de subsidios.deficit_historico (subsidios,
+    contribuciones, deficit_anual, deficit_acumulado, apropiacion_pgn,
+    recursos_faltantes), cargadas directo del Excel "Hoja5" en esa unidad.
+    Corregido 2026-09-09: _q_deficit_historico() usaba _fmt_cop() directo
+    sobre estos valores, asumiéndolos en pesos crudos — un error de escala
+    de 1.000.000x (ej. mostraba "$3.68 millones" cuando el dato real, ya
+    confirmado contra el texto del propio tablero, es "$3.68 billones")."""
+    if val is None:
+        return "N/D"
+    return _fmt_cop(float(val) * 1e6)
+
+
 def _fix_area(val) -> str:
     if val is None or str(val) == "None":
         return "General"
@@ -592,52 +606,101 @@ def _q_deficit_historico() -> str:
         "📉 **DÉFICIT HISTÓRICO DE SUBSIDIOS**",
         f"📅 Último año registrado: {ultimo or 'N/D'}",
         "",
-        f"**Déficit acumulado ({ult['anio']}):** {_fmt_cop(ult.get('deficit_acumulado'))}",
-        f"Apropiación PGN: {_fmt_cop(ult.get('apropiacion_pgn'))}",
+        f"**Déficit acumulado ({ult['anio']}):** {_fmt_cop_millones(ult.get('deficit_acumulado'))}",
+        f"Apropiación PGN: {_fmt_cop_millones(ult.get('apropiacion_pgn'))}",
         "",
         "**Últimos años:**",
     ]
     for r in rows[-5:]:
         lines.append(
-            f"• {r['anio']}: déficit {_fmt_cop(r.get('deficit_anual'))} "
-            f"(acum. {_fmt_cop(r.get('deficit_acumulado'))})"
+            f"• {r['anio']}: déficit {_fmt_cop_millones(r.get('deficit_anual'))} "
+            f"(acum. {_fmt_cop_millones(r.get('deficit_acumulado'))})"
         )
     return "\n".join(lines)
 
 
 # ── Validaciones ──────────────────────────────────────────────────────────────
 
+# Corregido 2026-09-09: la versión anterior agregaba TODOS los cortes
+# mensuales históricos de subsidios.subsidios_validaciones (19 snapshots
+# distintos, 2024-04 → 2026-08) en vez de filtrar al mes vigente, y exigía
+# estado_validacion_organizado IS NOT NULL — columna vacía en el 99% de las
+# filas del mes actual. No fallaba (sin excepción), pero daba una cifra
+# sistemáticamente incorrecta (mezclaba meses viejos, excluía casi todo el
+# mes vigente). Ahora replica exactamente la lógica ya probada en producción
+# de portal-direccion-mme/src/app/api/subsidios/validaciones/route.ts
+# (AREA_SQL, ESTADO_SQL y el filtro de fecha_actualizacion más reciente).
+
+_AREA_SQL = """
+    CASE
+      WHEN (area = 'NA' OR area IS NULL) AND fondo = 'FOES' THEN 'SIN'
+      ELSE area
+    END
+"""
+
+_ESTADO_SQL = """
+    CASE
+      WHEN estado_validacion_organizado IS NOT NULL THEN estado_validacion_organizado
+      WHEN estado_validacion = 'VF'    THEN 'e. VF'
+      WHEN estado_validacion = 'VP'    THEN 'd. VP'
+      WHEN estado_validacion = 'VI'    THEN 'b. VI'
+      WHEN estado_validacion = 'VI SP' THEN 'c. VI SP'
+      ELSE 'a. Otros'
+    END
+"""
+
+
 def _q_validaciones_resumen() -> str:
     with connection_manager.get_connection(use_dict_cursor=True) as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT estado_validacion_organizado AS estado, COUNT(*) AS total
+            cur.execute("SELECT MAX(fecha_actualizacion) AS max FROM subsidios.subsidios_validaciones")
+            fecha = (cur.fetchone() or {}).get("max")
+            if fecha is None:
+                return "✅ **VALIDACIONES DE SUBSIDIOS**\n\nSin datos disponibles."
+
+            where = f"""
+                {_AREA_SQL} IN ('SIN', 'ZNI')
+                AND trimestre IS NOT NULL
+                AND (estado_validacion IS NOT NULL OR estado_validacion_organizado IS NOT NULL)
+                AND EXTRACT(YEAR FROM fecha_actualizacion) = %s
+                AND EXTRACT(MONTH FROM fecha_actualizacion) = %s
+            """
+            params = (fecha.year, fecha.month)
+
+            cur.execute(
+                f"""
+                SELECT {_ESTADO_SQL} AS estado, COUNT(*) AS total
                 FROM subsidios.subsidios_validaciones
-                WHERE area IN ('SIN', 'ZNI')
-                  AND estado_validacion_organizado IS NOT NULL
-                GROUP BY estado_validacion_organizado
+                WHERE {where}
+                GROUP BY {_ESTADO_SQL}
                 ORDER BY total DESC
-            """)
+                """,
+                params,
+            )
             resumen = cur.fetchall()
 
-            cur.execute("""
+            cur.execute(
+                f"""
                 SELECT COUNT(DISTINCT nombre_prestador) AS n
                 FROM subsidios.subsidios_validaciones
-                WHERE area IN ('SIN', 'ZNI')
-            """)
+                WHERE {where}
+                """,
+                params,
+            )
             n_prest = int((cur.fetchone() or {}).get("n") or 0)
 
-            cur.execute("SELECT MAX(fecha_actualizacion) FROM subsidios.subsidios_validaciones")
-            fecha = (cur.fetchone() or {}).get("max")
-
-    fecha_str = fecha.strftime("%d/%m/%Y") if fecha else "N/D"
+    _MESES_ES = {
+        1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+        7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+    }
+    fecha_str = fecha.strftime("%d/%m/%Y")
     total = sum(int(r["total"] or 0) for r in resumen)
 
     lines = [
         "✅ **VALIDACIONES DE SUBSIDIOS**",
-        f"📅 Corte: {fecha_str}",
+        f"📅 Mes vigente: {_MESES_ES.get(fecha.month, fecha.month)} de {fecha.year} (corte {fecha_str})",
         "",
-        f"**Registros SIN/ZNI:** {total:,}".replace(",", "."),
+        f"**Registros SIN/ZNI del mes vigente:** {total:,}".replace(",", "."),
         f"**Prestadores:** {n_prest:,}".replace(",", "."),
         "",
         "**Por estado de validación:**",

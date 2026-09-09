@@ -238,6 +238,7 @@ class ChatbotOrchestratorService(
             "contratos_or": self._handle_contratos_or_menu,
             "fenoge_menu": self._handle_fenoge_menu,
             "fenoge": self._handle_fenoge_menu,
+            "fenoge_seguimiento": self._handle_fenoge_seguimiento,
             "colombia_solar_menu": self._handle_colombia_solar_menu,
             "colombia_solar": self._handle_colombia_solar_menu,
             "supervision_menu": self._handle_supervision_menu,

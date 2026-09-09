@@ -125,4 +125,34 @@ PREGUNTAS: List[Dict[str, Any]] = [
         "tool_esperada": "supervision_contratos_por_estado",
         "palabras_clave_esperadas": ["no existe"],
     },
+    {
+        # Auditoría de los 18 tableros (2026-09-09): contratos_or_menu fallaba
+        # en el 100% de las invocaciones (tabla contratos_or.seguimiento
+        # inexistente, mismo patrón que Supervisión) — ahora corregido.
+        "pregunta": "¿Cuántos contratos OR hay y cuál es su avance documental y físico?",
+        "tool_esperada": "contratos_or_menu",
+        "palabras_clave_esperadas": ["18"],
+    },
+    {
+        # Validaciones mezclaba 19 cortes mensuales históricos en vez del mes
+        # vigente — ahora filtra correctamente al último fecha_actualizacion.
+        "pregunta": "¿Cuántas validaciones de subsidios hay en el mes vigente para SIN y ZNI?",
+        "tool_esperada": "subsidios_validaciones",
+        "palabras_clave_esperadas": ["vigente"],
+    },
+    {
+        # Bug de escala 1.000.000x: deficit_historico ya viene en millones de
+        # pesos, no en pesos crudos — antes decía "$3.68 millones" en vez de
+        # "$3.68 billones" para el déficit acumulado 2025.
+        "pregunta": "¿Cuál es el déficit acumulado de subsidios del último año registrado?",
+        "tool_esperada": "subsidios_deficit_historico",
+        "palabras_clave_esperadas": ["billones"],
+    },
+    {
+        # Brecha de cobertura: FENOGE no tenía ninguna tool de avance real vs.
+        # programado, pese a que el propio catálogo de tableros lo describe así.
+        "pregunta": "¿Cómo va el avance real vs. programado de los contratos de FENOGE?",
+        "tool_esperada": "fenoge_seguimiento",
+        "palabras_clave_esperadas": ["programado"],
+    },
 ]

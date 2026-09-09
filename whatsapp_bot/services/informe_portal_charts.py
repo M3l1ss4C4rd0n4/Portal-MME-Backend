@@ -289,28 +289,34 @@ def chart_fen_seguimiento(data: Dict[str, Any]) -> Optional[str]:
 # ── Subsidios ─────────────────────────────────────────────────────────────────
 
 def chart_sub_subsidios_contrib(rows: List[Dict[str, Any]]) -> Optional[str]:
+    # Corregido 2026-09-09: subsidios.deficit_historico.subsidios/contribuciones
+    # ya vienen en MILLONES de pesos (Excel "Hoja5") — dividir por 1e6 los
+    # convertía en "millones de millones" (billones) mal etiquetados como
+    # "millones COP". Sin división: el valor crudo YA está en la unidad del título.
     if len(rows) < 2:
         return None
     anios = [r["anio"] for r in rows]
     fig = go.Figure()
-    fig.add_trace(go.Bar(name="Subsidios", x=anios, y=[r["subsidios"] / 1e6 for r in rows], marker_color=C["primary"]))
-    fig.add_trace(go.Bar(name="Contribuciones", x=anios, y=[r["contribuciones"] / 1e6 for r in rows], marker_color=C["teal"]))
+    fig.add_trace(go.Bar(name="Subsidios", x=anios, y=[r["subsidios"] for r in rows], marker_color=C["primary"]))
+    fig.add_trace(go.Bar(name="Contribuciones", x=anios, y=[r["contribuciones"] for r in rows], marker_color=C["teal"]))
     fig.update_layout(title="Subsidios y contribuciones por año (millones COP)", barmode="group")
     return _save(fig, "sub_subsidios_contrib")
 
 
 def chart_sub_deficit_combo(rows: List[Dict[str, Any]]) -> Optional[str]:
+    # Corregido 2026-09-09: mismo problema de escala — los valores ya están en
+    # millones, así que /1e3 (no /1e9) da "miles de millones" como dice el título.
     if len(rows) < 2:
         return None
     anios = [r["anio"] for r in rows]
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Bar(name="Déficit acumulado", x=anios,
-                         y=[r["deficit_acumulado"] / 1e9 for r in rows], marker_color=C["primary"]), secondary_y=False)
+                         y=[r["deficit_acumulado"] / 1e3 for r in rows], marker_color=C["primary"]), secondary_y=False)
     fig.add_trace(go.Scatter(name="Déficit anual", x=anios,
-                             y=[r["deficit_anual"] / 1e9 for r in rows], mode="lines+markers",
+                             y=[r["deficit_anual"] / 1e3 for r in rows], mode="lines+markers",
                              line=dict(color=C["orange"], width=2)), secondary_y=True)
     fig.add_trace(go.Scatter(name="Apropiación PGN", x=anios,
-                             y=[r["apropiacion_pgn"] / 1e9 for r in rows], mode="lines+markers",
+                             y=[r["apropiacion_pgn"] / 1e3 for r in rows], mode="lines+markers",
                              line=dict(color=C["gold"], width=2, dash="dot")), secondary_y=True)
     fig.update_layout(title="Déficit acumulado, déficit anual y apropiación PGN")
     fig.update_yaxes(title_text="Acumulado (miles de millones)", secondary_y=False)
@@ -319,13 +325,14 @@ def chart_sub_deficit_combo(rows: List[Dict[str, Any]]) -> Optional[str]:
 
 
 def chart_sub_apropiacion(rows: List[Dict[str, Any]]) -> Optional[str]:
+    # Corregido 2026-09-09: mismo ajuste de escala que chart_sub_deficit_combo.
     if len(rows) < 2:
         return None
     anios = [r["anio"] for r in rows]
-    a1 = [rows[i - 1]["deficit_acumulado"] / 1e9 if i > 0 else 0 for i in range(len(rows))]
+    a1 = [rows[i - 1]["deficit_acumulado"] / 1e3 if i > 0 else 0 for i in range(len(rows))]
     fig = go.Figure()
     fig.add_trace(go.Bar(name="Apropiación PGN", x=anios,
-                         y=[r["apropiacion_pgn"] / 1e9 for r in rows], marker_color=C["teal"]))
+                         y=[r["apropiacion_pgn"] / 1e3 for r in rows], marker_color=C["teal"]))
     fig.add_trace(go.Bar(name="Déficit acum. A-1", x=anios, y=a1, marker_color=C["orange"]))
     fig.update_layout(title="Apropiación PGN y déficit acumulado año anterior", barmode="stack")
     return _save(fig, "sub_apropiacion")

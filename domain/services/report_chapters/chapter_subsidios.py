@@ -20,7 +20,10 @@ def build_chapter_subsidios(
         chapter_cover(3, "Subsidios — D&eacute;ficit Hist&oacute;rico", "Tablero FSSRI / FOES")
         + kpi_row([
             {"label": "Último año", "valor": ult.get("anio", "N/D"), "unidad": ""},
-            {"label": "Déficit acumulado", "valor": f'${ult.get("deficit_acumulado", 0)/1e9:.1f} mil M' if ult else "N/D", "unidad": ""},
+            # subsidios.deficit_historico.deficit_acumulado ya viene en MILLONES de
+            # pesos (fuente: Excel "Hoja5", confirmado 2026-09-09 contra el texto real
+            # del tablero) — dividir por 1e6 (no 1e9) da directamente "billones" COP.
+            {"label": "Déficit acumulado", "valor": f'${ult.get("deficit_acumulado", 0)/1e6:.2f} billones' if ult else "N/D", "unidad": ""},
         ])
     )
     specs_def = [

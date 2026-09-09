@@ -242,7 +242,13 @@ TOOLS: List[Dict[str, Any]] = [
                 "informes, no para conteos o KPIs estructurados. Si la pregunta "
                 "encaja claramente en un tipo de informe conocido, usa el parámetro "
                 "'tema' para garantizar que ese documento aparezca (en vez de "
-                "depender solo de similitud)."
+                "depender solo de similitud). IMPORTANTE: cada resultado es un "
+                "FRAGMENTO de texto extraído de un documento, no el documento "
+                "completo — si el usuario pide el 'resumen ejecutivo diario', el "
+                "boletín o un informe completo para leer/descargar, cita lo "
+                "encontrado como contenido real de ese documento pero deja claro "
+                "que es un extracto, y menciona que el archivo completo se "
+                "descarga desde el tablero 'Informes y Documentos' del portal."
             ),
             "parameters": {
                 "type": "object",
@@ -629,7 +635,21 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "fenoge_menu",
-            "description": "Resumen del programa FENOGE (1.0 y 1.1).",
+            "description": "Resumen del programa FENOGE (1.0 y 1.1): totales de comunidades, capacidad, beneficiarios e inversión.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fenoge_seguimiento",
+            "description": (
+                "Avance financiero REAL vs. PROGRAMADO de los contratos de FENOGE "
+                "(seguimiento de obra por contrato/región) — úsala para preguntas "
+                "como '¿cómo va el avance real vs. programado de FENOGE?' o "
+                "'¿qué contratos de FENOGE están más rezagados?'. Distinta de "
+                "'fenoge_menu', que solo da totales estáticos sin avance real/programado."
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },

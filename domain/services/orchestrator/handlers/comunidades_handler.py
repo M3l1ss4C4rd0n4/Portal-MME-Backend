@@ -7,6 +7,7 @@ from infrastructure.logging.logger import get_logger
 from typing import Any, Dict, List, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
+from domain.services.contratos_or_parsing import fetch_contratos_or_kpis
 from domain.services.orchestrator.utils.decorators import handle_service_error
 from infrastructure.database.connection import connection_manager
 
@@ -107,73 +108,35 @@ def _fetch_comunidades_implementadas() -> Dict[str, Any]:
 
 
 def _fetch_contratos_or() -> Dict[str, Any]:
+    """Corregido 2026-09-09: antes referenciaba contratos_or.seguimiento, una
+    tabla que ya no existe (fue reemplazada por seguimiento_avance_fisico/
+    seguimiento_avance_documental/resumen cuando el ETL se reestructuró) —
+    fallaba en el 100% de las invocaciones, capturado en silencio por
+    handle_service_error. Ahora reusa fetch_contratos_or_kpis(), la misma
+    lógica ya probada en producción por api/v1/routes/contratos_or.py
+    (el tablero real /contratos-or)."""
     with connection_manager.get_connection(use_dict_cursor=True) as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                WITH pagados AS (
-                    SELECT nombre_proyecto_id, nro_desembolso
-                    FROM contratos_or.seguimiento
-                    WHERE necesaria_para_desembolso = 'Sí'
-                    GROUP BY nombre_proyecto_id, nro_desembolso
-                    HAVING COUNT(*) = COUNT(CASE WHEN estado = 'Completo' THEN 1 END)
-                )
-                SELECT
-                    COUNT(DISTINCT s.nombre_proyecto_id) AS n_contratos,
-                    ROUND(AVG(s.avance) * 100, 1) AS avance_general,
-                    ROUND(COALESCE(SUM(
-                        CASE WHEN p.nro_desembolso IS NOT NULL AND s.desembolso IS NOT NULL
-                             THEN s.desembolso ELSE 0 END
-                    ), 0) / NULLIF(COUNT(DISTINCT s.nombre_proyecto_id), 0) * 100, 1) AS avance_financiero,
-                    COUNT(DISTINCT CASE WHEN p.nro_desembolso IS NOT NULL
-                          THEN s.nombre_proyecto_id || '-' || s.nro_desembolso::text END) AS pagos_realizados,
-                    COUNT(DISTINCT s.nombre_proyecto_id) *
-                        COUNT(DISTINCT CASE WHEN s.nro_desembolso IS NOT NULL
-                              THEN s.nro_desembolso END) AS pagos_posibles
-                FROM contratos_or.seguimiento s
-                LEFT JOIN pagados p
-                    ON s.nombre_proyecto_id = p.nombre_proyecto_id
-                   AND s.nro_desembolso = p.nro_desembolso
-                   AND s.necesaria_para_desembolso = 'Sí'
-            """)
-            g = cur.fetchone() or {}
+            r = fetch_contratos_or_kpis(cur)
 
-            cur.execute("""
-                WITH pagados AS (
-                    SELECT nombre_proyecto_id, nro_desembolso
-                    FROM contratos_or.seguimiento
-                    WHERE necesaria_para_desembolso = 'Sí'
-                    GROUP BY nombre_proyecto_id, nro_desembolso
-                    HAVING COUNT(*) = COUNT(CASE WHEN estado = 'Completo' THEN 1 END)
-                )
-                SELECT s.nombre_proyecto_id AS nombre,
-                       ROUND(AVG(s.avance) * 100, 1) AS avance
-                FROM contratos_or.seguimiento s
-                LEFT JOIN pagados p ON s.nombre_proyecto_id = p.nombre_proyecto_id
-                GROUP BY s.nombre_proyecto_id
-                ORDER BY avance DESC
-                LIMIT 5
-            """)
-            top = cur.fetchall()
-
-            cur.execute("SELECT MAX(fecha_carga) FROM contratos_or.seguimiento")
-            fecha = (cur.fetchone() or {}).get("max")
-
-    pag_real = int(g.get("pagos_realizados") or 0)
-    pag_pos = int(g.get("pagos_posibles") or 0)
-    pct_pagos = round(pag_real / pag_pos * 100, 1) if pag_pos else 0.0
-    fecha_str = fecha.strftime("%d/%m/%Y") if fecha else "N/D"
+    top = sorted(
+        r["proyectos"], key=lambda p: p["avance_general"] or 0, reverse=True
+    )[:5]
 
     return {
         "titulo": "Contratos OR",
         "subtitulo": "Seguimiento desembolsos comunidades energéticas",
-        "fecha_corte": fecha_str,
+        "fecha_corte": r["fecha_corte"] or "N/D",
         "kpis": [
-            {"label": "Contratos", "valor": int(g.get("n_contratos") or 0), "unidad": "", "emoji": "📄"},
-            {"label": "Avance general", "valor": float(g.get("avance_general") or 0), "unidad": "%", "emoji": "🏗️"},
-            {"label": "Avance financiero", "valor": float(g.get("avance_financiero") or 0), "unidad": "%", "emoji": "💳"},
-            {"label": "Pagos realizados", "valor": pct_pagos, "unidad": "%", "emoji": "✅"},
+            {"label": "Contratos", "valor": r["n_contratos"], "unidad": "", "emoji": "📄"},
+            {"label": "Avance documental", "valor": r["avance_general"], "unidad": "%", "emoji": "🏗️"},
+            {"label": "Avance financiero", "valor": r["avance_financiero"], "unidad": "%", "emoji": "💳"},
+            {"label": "Avance físico", "valor": r["avance_fisico"], "unidad": "%", "emoji": "🔧"},
+            {"label": "Pagos realizados", "valor": r["pct_pagos_realizados"], "unidad": "%", "emoji": "✅"},
         ],
-        "top_proyectos": [{"nombre": r["nombre"], "avance": float(r["avance"] or 0)} for r in top],
+        "top_proyectos": [
+            {"nombre": p["nombre"], "avance": p["avance_general"] or 0.0} for p in top
+        ],
         "opcion_regresar": _REGRESAR_COMUNIDADES,
     }
 
@@ -224,37 +187,154 @@ def _fetch_fenoge() -> Dict[str, Any]:
 def _fetch_colombia_solar() -> Dict[str, Any]:
     with connection_manager.get_connection(use_dict_cursor=True) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS filas FROM colombia_solar.base")
-            base_n = int((cur.fetchone() or {}).get("filas") or 0)
-
+            # Curva S — MISMA fuente que el tablero real /colombia-solar
+            # (portal-direccion-mme/src/lib/colombia-solar-curva-s.ts).
             cur.execute("SELECT COUNT(DISTINCT proyecto) AS n FROM colombia_solar.proyectado_usuarios")
             n_proy = int((cur.fetchone() or {}).get("n") or 0)
 
+            cur.execute("SELECT MAX(fecha_carga) FROM colombia_solar.proyectado_usuarios")
+            fecha_curva = (cur.fetchone() or {}).get("max")
+
+            # colombia_solar.base — fuente DISTINTA (registro planeado vs.
+            # ejecutado por proyecto), que el tablero de curva S NO usa.
+            # Corregido 2026-09-09: antes se mezclaba bajo un solo resumen sin
+            # aclarar que viene de otra tabla — separado y etiquetado explícito.
             cur.execute("""
-                SELECT COUNT(DISTINCT departamento) AS n
+                SELECT
+                    COUNT(DISTINCT departamento) FILTER (WHERE departamento IS NOT NULL AND TRIM(departamento) != '') AS n_deptos,
+                    SUM(planeado_usuarios) AS planeado_usuarios,
+                    SUM(ejecutado_usuarios) AS ejecutado_usuarios,
+                    SUM(capacidad_kwp_planeada) AS kwp_planeada,
+                    SUM(capacidad_kwp_ejecutada) AS kwp_ejecutada,
+                    SUM(inversion) AS inversion
                 FROM colombia_solar.base
-                WHERE departamento IS NOT NULL AND TRIM(departamento) != ''
             """)
-            n_deptos = int((cur.fetchone() or {}).get("n") or 0)
+            b = cur.fetchone() or {}
 
             cur.execute("SELECT MAX(fecha_carga) FROM colombia_solar.base")
-            fecha = (cur.fetchone() or {}).get("max")
+            fecha_base = (cur.fetchone() or {}).get("max")
 
-    fecha_str = fecha.strftime("%d/%m/%Y") if fecha else "N/D"
+    planeado = float(b.get("planeado_usuarios") or 0)
+    ejecutado = float(b.get("ejecutado_usuarios") or 0)
+    pct_avance = round(ejecutado / planeado * 100, 1) if planeado else 0.0
+    fecha_str = fecha_curva.strftime("%d/%m/%Y") if fecha_curva else "N/D"
     return {
         "titulo": "Colombia Solar",
         "subtitulo": "Curva S — programación vs avance reportado (OR)",
         "fecha_corte": fecha_str,
         "kpis": [
-            {"label": "Proyectos OR", "valor": n_proy, "unidad": "", "emoji": "🌞"},
-            {"label": "Registros base", "valor": base_n, "unidad": "", "emoji": "📊"},
-            {"label": "Departamentos", "valor": n_deptos, "unidad": "", "emoji": "🗺️"},
+            {"label": "Proyectos OR (curva S)", "valor": n_proy, "unidad": "", "emoji": "🌞"},
         ],
+        "registro_planeado_vs_ejecutado": {
+            "nota": (
+                "Fuente DISTINTA a la curva S de arriba — colombia_solar.base, "
+                "un registro de avance planeado vs. ejecutado por proyecto, "
+                "sin cruce directo con los 'Proyectos OR' de la curva S. "
+                "No mezclar ambas cifras como si fueran la misma fuente."
+            ),
+            "fecha_corte": fecha_base.strftime("%d/%m/%Y") if fecha_base else "N/D",
+            "departamentos": int(b.get("n_deptos") or 0),
+            "usuarios_planeados": int(planeado),
+            "usuarios_ejecutados": int(ejecutado),
+            "pct_avance_usuarios": pct_avance,
+            "capacidad_kwp_planeada": round(float(b.get("kwp_planeada") or 0), 1),
+            "capacidad_kwp_ejecutada": round(float(b.get("kwp_ejecutada") or 0), 1),
+            "inversion": _fmt_cop(b.get("inversion")),
+        },
         "nota": (
             "Incluye curvas S de obras civiles, usuarios, potencia e internas "
             "según el tablero Colombia Solar del portal."
         ),
         "opcion_regresar": _REGRESAR_COMUNIDADES,
+    }
+
+
+def _fetch_fenoge_seguimiento() -> Dict[str, Any]:
+    """Nuevo 2026-09-09: avance real vs. programado de FENOGE, dato descrito
+    por el propio catálogo de tableros ('seguimiento financiero de proyectos
+    real vs. programado') pero que ninguna tool cubría — fenoge_menu solo da
+    totales estáticos. Reusa fenoge.seguimiento, la misma tabla que alimenta
+    GET /v1/fenoge/seguimiento (api/v1/routes/fenoge.py) — toma el dato más
+    reciente por contrato (las fechas de corte varían entre contratos)."""
+    with connection_manager.get_connection(use_dict_cursor=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT ON (numero_contrato)
+                    numero_contrato, region, nombre_comunidad, dia_actualizacion,
+                    avance_real_acumulado_pct, avance_programado_acumulado_pct
+                FROM fenoge.seguimiento
+                WHERE numero_contrato IS NOT NULL
+                  AND dia_actualizacion IS NOT NULL
+                  AND (avance_real_acumulado_pct IS NOT NULL
+                       OR avance_programado_acumulado_pct IS NOT NULL)
+                ORDER BY numero_contrato, dia_actualizacion DESC
+            """)
+            rows = cur.fetchall()
+
+    contratos: List[Dict[str, Any]] = []
+    for r in rows:
+        real = float(r["avance_real_acumulado_pct"]) * 100 if r["avance_real_acumulado_pct"] is not None else None
+        prog = float(r["avance_programado_acumulado_pct"]) * 100 if r["avance_programado_acumulado_pct"] is not None else None
+        contratos.append({
+            "contrato": r["numero_contrato"],
+            "region": r["region"] or "Sin región",
+            "comunidad": r["nombre_comunidad"],
+            "fecha_ultimo_dato": r["dia_actualizacion"].strftime("%d/%m/%Y") if r["dia_actualizacion"] else None,
+            "avance_real_pct": round(real, 1) if real is not None else None,
+            "avance_programado_pct": round(prog, 1) if prog is not None else None,
+            "brecha_pct": round(real - prog, 1) if real is not None and prog is not None else None,
+        })
+
+    reales = [c["avance_real_pct"] for c in contratos if c["avance_real_pct"] is not None]
+    progs = [c["avance_programado_pct"] for c in contratos if c["avance_programado_pct"] is not None]
+    avg_real = round(sum(reales) / len(reales), 1) if reales else 0.0
+    avg_prog = round(sum(progs) / len(progs), 1) if progs else 0.0
+
+    por_region: Dict[str, Dict[str, Any]] = {}
+    for c in contratos:
+        d = por_region.setdefault(c["region"], {"n_contratos": 0, "reales": [], "progs": []})
+        d["n_contratos"] += 1
+        if c["avance_real_pct"] is not None:
+            d["reales"].append(c["avance_real_pct"])
+        if c["avance_programado_pct"] is not None:
+            d["progs"].append(c["avance_programado_pct"])
+
+    resumen_por_region = [
+        {
+            "region": region,
+            "n_contratos": d["n_contratos"],
+            "avance_real_promedio_pct": round(sum(d["reales"]) / len(d["reales"]), 1) if d["reales"] else None,
+            "avance_programado_promedio_pct": round(sum(d["progs"]) / len(d["progs"]), 1) if d["progs"] else None,
+        }
+        for region, d in sorted(por_region.items())
+    ]
+
+    con_brecha = sorted(
+        (c for c in contratos if c["brecha_pct"] is not None),
+        key=lambda c: c["brecha_pct"],
+    )
+
+    return {
+        "titulo": "FENOGE — Avance real vs. programado",
+        "subtitulo": "Seguimiento financiero de proyectos (curva de avance acumulado)",
+        "n_contratos": len(contratos),
+        "avance_real_promedio_pct": avg_real,
+        "avance_programado_promedio_pct": avg_prog,
+        "brecha_promedio_pct": round(avg_real - avg_prog, 1),
+        "por_region": resumen_por_region,
+        "contratos_mas_rezagados": [
+            {
+                "contrato": c["contrato"], "comunidad": c["comunidad"], "region": c["region"],
+                "avance_real_pct": c["avance_real_pct"], "avance_programado_pct": c["avance_programado_pct"],
+                "brecha_pct": c["brecha_pct"],
+            }
+            for c in con_brecha[:5]
+        ],
+        "nota": (
+            "El 'avance real' de cada contrato usa su dato más reciente "
+            "disponible — las fechas de corte varían por contrato, no todos "
+            "comparten la misma fecha de actualización."
+        ),
     }
 
 
@@ -284,6 +364,12 @@ class ComunidadesHandlerMixin:
         self, parameters: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
         return await asyncio.to_thread(_fetch_fenoge), []
+
+    @handle_service_error
+    async def _handle_fenoge_seguimiento(
+        self, parameters: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
+        return await asyncio.to_thread(_fetch_fenoge_seguimiento), []
 
     @handle_service_error
     async def _handle_colombia_solar_menu(

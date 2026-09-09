@@ -101,6 +101,19 @@ def _fmt_money(val) -> str:
     return f"${v:,.0f}"
 
 
+def _fmt_money_millones(val) -> str:
+    """Como _fmt_money(), pero para columnas que ya vienen en MILLONES de
+    pesos (no pesos crudos) — caso de subsidios.deficit_historico (subsidios,
+    contribuciones, deficit_anual, deficit_acumulado, apropiacion_pgn),
+    cargadas directo del Excel "Hoja5" en esa unidad. Corregido 2026-09-09:
+    q_deficit_historico() usaba _fmt_money() directo sobre estos valores,
+    asumiéndolos en pesos crudos — error de escala de 1.000.000x (mismo bug
+    ya corregido en domain/services/orchestrator/handlers/subsidios_handler.py)."""
+    if val is None:
+        return "N/D"
+    return _fmt_money(float(val) * 1e6)
+
+
 def _fmt_pct(val) -> str:
     if val is None:
         return "N/A"
@@ -874,15 +887,15 @@ def q_deficit_historico() -> str:
         "📉 *DÉFICIT HISTÓRICO DE SUBSIDIOS*",
         f"Cap. 3 — evolución anual del déficit",
         "",
-        f"*Déficit acumulado ({ult['anio']}):* {_fmt_money(ult.get('deficit_acumulado'))}",
-        f"Apropiación PGN: {_fmt_money(ult.get('apropiacion_pgn'))}",
+        f"*Déficit acumulado ({ult['anio']}):* {_fmt_money_millones(ult.get('deficit_acumulado'))}",
+        f"Apropiación PGN: {_fmt_money_millones(ult.get('apropiacion_pgn'))}",
         "",
         "*Últimos años:*",
     ]
     for r in rows[-5:]:
         lines.append(
-            f"• {r['anio']}: {_fmt_money(r.get('deficit_anual'))} "
-            f"(acum. {_fmt_money(r.get('deficit_acumulado'))})"
+            f"• {r['anio']}: {_fmt_money_millones(r.get('deficit_anual'))} "
+            f"(acum. {_fmt_money_millones(r.get('deficit_acumulado'))})"
         )
     return "\n".join(lines)
 
