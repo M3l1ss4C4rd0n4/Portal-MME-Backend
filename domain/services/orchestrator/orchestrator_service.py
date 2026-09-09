@@ -242,6 +242,7 @@ class ChatbotOrchestratorService(
             "colombia_solar": self._handle_colombia_solar_menu,
             "supervision_menu": self._handle_supervision_menu,
             "supervision": self._handle_supervision_menu,
+            "supervision_contratos_por_estado": self._handle_supervision_contratos_por_estado,
             "presupuesto_menu": self._handle_presupuesto_menu,
             "presupuesto": self._handle_presupuesto_menu,
             "subsidios_menu": self._handle_subsidios_menu,

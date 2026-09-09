@@ -109,4 +109,20 @@ PREGUNTAS: List[Dict[str, Any]] = [
         "tool_esperada": None,
         "palabras_clave_esperadas": [],
     },
+    {
+        # Fase 43 (2026-09-08): supervision_menu estaba roto (columna "contrato"
+        # que no existe) y no había ninguna tool para desglosar por etapa —
+        # caso real reportado por el usuario, ahora corregido.
+        "pregunta": "¿Cuántos contratos se encuentran en ejecución en Supervisión?",
+        "tool_esperada": "supervision_contratos_por_estado",
+        "palabras_clave_esperadas": ["307", "ejecución"],
+    },
+    {
+        # Caso adversarial de datos: "suspendido" no existe como estado_del_contrato
+        # (solo FINALIZADO/VIGENTE/POR INICIAR) — la respuesta debe ser honesta,
+        # no inventar una cifra de "0 suspendidos" ni mezclarla con la actividad AOM.
+        "pregunta": "¿Cuántos contratos están suspendidos a la fecha en Supervisión?",
+        "tool_esperada": "supervision_contratos_por_estado",
+        "palabras_clave_esperadas": ["no existe"],
+    },
 ]

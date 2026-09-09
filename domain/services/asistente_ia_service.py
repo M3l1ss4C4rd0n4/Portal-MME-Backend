@@ -652,6 +652,49 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "supervision_contratos_por_estado",
+            "description": (
+                "Conteo/desglose de contratos de Supervisión por estado o etapa, con filtros "
+                "opcionales — úsala para preguntas de conteo como '¿cuántos contratos están "
+                "en ejecución/finalizados/vigentes en Supervisión?', a diferencia de "
+                "'supervision_menu' que da un resumen general sin desglosar por estado. "
+                "IMPORTANTE sobre 'estado_del_contrato': solo existen 3 valores reales — "
+                "FINALIZADO, VIGENTE, POR INICIAR. NO existe un estado 'SUSPENDIDO' a nivel "
+                "de contrato — si te preguntan por contratos suspendidos, llama esta tool "
+                "de todas formas SIN el parámetro 'estado' (para traer el desglose completo); "
+                "la respuesta incluirá, aparte, el dato real y DISTINTO de 'actividad de AOM "
+                "suspendida' (a nivel de actividad, no de contrato) — nunca presentes ese "
+                "número como si fuera 'contratos suspendidos'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "estado": {
+                        "type": "string",
+                        "enum": ["FINALIZADO", "VIGENTE", "POR INICIAR"],
+                        "description": "Filtro opcional por estado real del contrato (solo estos 3 valores existen).",
+                    },
+                    "etapa": {
+                        "type": "string",
+                        "description": (
+                            "Filtro opcional por etapa. Puede ser un valor exacto (ej. "
+                            "'LIQUIDADO - AOM') o una categoría agrupada: 'ejecucion', 'aom', "
+                            "'liquidacion', 'liquidado', 'perdida_competencia' — usa la "
+                            "categoría agrupada si la pregunta es genérica (ej. 'en ejecución')."
+                        ),
+                    },
+                    "fondo": {"type": "string", "description": "Filtro opcional por fondo (ej. FAER, PRONE, FAZNI)."},
+                    "departamento": {"type": "string", "description": "Filtro opcional por departamento."},
+                    "municipio": {"type": "string", "description": "Filtro opcional por municipio."},
+                    "ano_min": {"type": "integer", "description": "Año mínimo (default 2003)."},
+                    "ano_max": {"type": "integer", "description": "Año máximo (default 2026)."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "presupuesto_menu",
             "description": "Resumen de ejecución presupuestal.",
             "parameters": {"type": "object", "properties": {}},

@@ -21,8 +21,12 @@ from slowapi.util import get_remote_address
 from api.dependencies import get_api_key
 from domain.services.supervision_parsing import (
     FOTOVOLTAICO_TIPOS_SQL,
-    sql_parse_cop,
+    base_year_where as _base_year_where,
+    build_filter as _build_filter,
+    kpi_filter_where as _kpi_filter_where,
+    sql_parse_cop_guarded,
     sql_parse_int,
+    sql_parse_pct,
 )
 from infrastructure.database.connection import PostgreSQLConnectionManager
 
@@ -33,105 +37,19 @@ limiter = Limiter(key_func=get_remote_address)
 _cm = PostgreSQLConnectionManager()
 
 # ─── Parsers con validación de rango ────────────────────────────────────────
-# _PARSE_FIN: parsea % desembolsos y descarta valores > 1 (100%) como anómalos
-_PARSE_FIN = """
-    CASE
-      WHEN (porcentaje_de_desembolsos)::text ~ '[0-9]' AND (porcentaje_de_desembolsos)::text ~ '%%'
-        THEN CASE
-          WHEN CAST(REPLACE(REPLACE(TRIM((porcentaje_de_desembolsos)::text),'%%',''),',','.') AS numeric) / 100 <= 1
-            THEN CAST(REPLACE(REPLACE(TRIM((porcentaje_de_desembolsos)::text),'%%',''),',','.') AS numeric) / 100
-          ELSE NULL
-        END
-      WHEN (porcentaje_de_desembolsos)::text ~ '^[0-9.]'
-           AND TRIM((porcentaje_de_desembolsos)::text) ~ '^[0-9. ]+$'
-        THEN CASE
-          WHEN CAST(TRIM((porcentaje_de_desembolsos)::text) AS numeric) <= 1
-            THEN CAST(TRIM((porcentaje_de_desembolsos)::text) AS numeric)
-          ELSE NULL
-        END
-    END
-"""
+# _PARSE_FIN: % desembolsos, vía sql_parse_pct (domain/services/supervision_parsing.py)
+# — antes vivía duplicado aquí con su propia copia del CASE; ahora es la única fuente.
+_PARSE_FIN = sql_parse_pct("porcentaje_de_desembolsos")
 
-# _PARSE_AR: valor por proyecto — descarta valores con escala incorrecta (> 1e11)
-_PARSE_AR = f"""
-    CASE
-      WHEN ({sql_parse_cop("valor_por_proyecto_informacion_apoyos_tecnicos")}) > 1e11
-        THEN NULL
-      ELSE ({sql_parse_cop("valor_por_proyecto_informacion_apoyos_tecnicos")})
-    END
-"""
-
-# _PARSE_AU: valor desembolsado — descarta valores con escala incorrecta (> 1e11)
-_PARSE_AU = f"""
-    CASE
-      WHEN ({sql_parse_cop("valor_desembolsado_informacion_apoyos_financieros")}) > 1e11
-        THEN NULL
-      ELSE ({sql_parse_cop("valor_desembolsado_informacion_apoyos_financieros")})
-    END
-"""
-
-# _PARSE_AV: valor por desembolsar — descarta valores con escala incorrecta (> 1e11)
-_PARSE_AV = f"""
-    CASE
-      WHEN ({sql_parse_cop("valor_por_desembolsar")}) > 1e11
-        THEN NULL
-      ELSE ({sql_parse_cop("valor_por_desembolsar")})
-    END
-"""
+# _PARSE_AR/AU/AV: vía sql_parse_cop_guarded (domain/services/supervision_parsing.py)
+# — descartan valores con escala incorrecta (> 1e11) como anómalos; antes cada
+# uno tenía su propia copia del CASE de guardia aquí mismo.
+_PARSE_AR = sql_parse_cop_guarded("valor_por_proyecto_informacion_apoyos_tecnicos")
+_PARSE_AU = sql_parse_cop_guarded("valor_desembolsado_informacion_apoyos_financieros")
+_PARSE_AV = sql_parse_cop_guarded("valor_por_desembolsar")
 
 _PARSE_UC = sql_parse_int("numero_de_usuarios_totales_contratados")
 _PARSE_UF = sql_parse_int("numero_de_usuarios_totales_finales")
-
-_FILTER_COLS = [
-    ("fondo", "fondo"),
-    ("estado_del_contrato", "estado"),
-    ("etapa_del_contrato", "etapa"),
-    ("departamento", "departamento"),
-    ("municipio", "municipio"),
-]
-
-
-def _build_filter(filters: list[tuple[str, Optional[str]]]) -> tuple[str, list]:
-    params: list[str] = []
-    clauses: list[str] = []
-    for col, val in filters:
-        if val is not None:
-            params.append(val)
-            clauses.append(f"{col} = %s")
-    where = ("AND " + " AND ".join(clauses)) if clauses else ""
-    return where, params
-
-
-def _base_year_where(ano_min: int, ano_max: int) -> str:
-    return f"""
-        FLOOR(ano)::integer BETWEEN {ano_min} AND {ano_max}
-        AND estado_del_contrato IS NOT NULL AND TRIM(estado_del_contrato) != ''
-    """
-
-
-def _kpi_filter_where(
-    ano_min: int,
-    ano_max: int,
-    fondo: Optional[str],
-    estado: Optional[str],
-    etapa: Optional[str],
-    departamento: Optional[str],
-    municipio: Optional[str],
-) -> tuple[str, list[str]]:
-    kpi_params: list[str] = []
-    kpi_clauses: list[str] = [_base_year_where(ano_min, ano_max)]
-    for col, val in [
-        ("fondo", fondo),
-        ("estado_del_contrato", estado),
-        ("etapa_del_contrato", etapa),
-        ("departamento", departamento),
-        ("municipio", municipio),
-    ]:
-        if val is not None:
-            kpi_params.append(val)
-            kpi_clauses.append(f"{col} = %s")
-    return " AND ".join(kpi_clauses), kpi_params
-
 
 def _float(v) -> float:
     return float(v) if v is not None else 0.0
