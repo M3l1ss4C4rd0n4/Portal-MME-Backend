@@ -1004,7 +1004,12 @@ def _es_error_de_disponibilidad(e: Exception) -> bool:
     infrastructure/ml/llm_failover.py a propósito — mismo criterio ya
     documentado ahí de no acoplar este módulo, que ya tiene su propio
     failover verificado en producción."""
-    if isinstance(e, (openai.RateLimitError, openai.APIConnectionError, openai.NotFoundError)):
+    if isinstance(e, (
+        openai.RateLimitError,
+        openai.APIConnectionError,
+        openai.NotFoundError,
+        openai.InternalServerError,  # cualquier 5xx — ej. 503 "high demand"/"UNAVAILABLE"
+    )):
         return True
     if isinstance(e, openai.APIStatusError) and getattr(e, "status_code", None) == 413:
         return True
@@ -1223,6 +1228,16 @@ async def _resolver_tool_calls(
             # truncado fuera del payload en empresas con muchos contratos).
             # El handler del orquestador anida el dict real bajo la clave
             # "vecindario" (ver ontologia_handler.py::_handle_vecindario_empresa).
+            #
+            # 'contratos_verificados' (int) también se excluye — corregido
+            # 2026-09-10: es el conteo de contratos INCLUIDOS en el grafo
+            # truncado (ej. 50), no el total real (ese es
+            # 'total_contratos_verificados', ej. 315). Verificado en vivo que
+            # el LLM confundía ambos campos por su nombre casi idéntico y
+            # citaba el truncado como si fuera el total real (GENSA: dijo
+            # "50 contratos verificados (de 315)" — el 50 nunca fue una
+            # respuesta válida a "¿cuántos contratos tiene?"). Con un solo
+            # campo de conteo en el payload no hay ambigüedad posible.
             resultado_para_llm = resultado
             if nombre == "vecindario_empresa" and isinstance(resultado, dict):
                 vecindario = resultado.get("vecindario")
@@ -1230,7 +1245,8 @@ async def _resolver_tool_calls(
                     resultado_para_llm = {
                         **{k: v for k, v in resultado.items() if k != "vecindario"},
                         "vecindario": {
-                            k: v for k, v in vecindario.items() if k not in ("nodos", "aristas")
+                            k: v for k, v in vecindario.items()
+                            if k not in ("nodos", "aristas", "contratos_verificados")
                         },
                     }
             contenido_json = json.dumps(resultado_para_llm, ensure_ascii=False, default=str)
