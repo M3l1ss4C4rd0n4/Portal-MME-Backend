@@ -120,10 +120,15 @@ def broadcast_telegram(
     message: str,
     pdf_path: Optional[str] = None,
     parse_mode: Optional[str] = None,
+    chat_ids: Optional[List[int]] = None,
 ) -> Dict[str, int]:
     """
-    Envía un mensaje (y opcionalmente un PDF) a todos los usuarios
-    de Telegram registrados en PostgreSQL.
+    Envía un mensaje (y opcionalmente un PDF) a usuarios de Telegram.
+
+    Por defecto, a TODOS los usuarios activos registrados en PostgreSQL
+    (get_telegram_users()). Si se pasa `chat_ids`, se envía SOLO a esos
+    chat_ids (ej. una alerta técnica dirigida solo al desarrollador del
+    portal) — no consulta la tabla de usuarios en ese caso.
 
     Retorna {"sent": N, "failed": M}.
     """
@@ -132,7 +137,7 @@ def broadcast_telegram(
         logger.error("TELEGRAM_BOT_TOKEN no configurado — broadcast cancelado")
         return {"sent": 0, "failed": 0}
 
-    users = get_telegram_users()
+    users = [{"chat_id": cid} for cid in chat_ids] if chat_ids is not None else get_telegram_users()
     if not users:
         logger.warning("No hay usuarios de Telegram para broadcast")
         return {"sent": 0, "failed": 0}
@@ -277,6 +282,75 @@ def _log_email_event(
     logger.info("[EMAIL] %s", json.dumps(payload, ensure_ascii=False))
 
 
+_SMTP_LOCK_KEY = "portal_mme_smtp_send"
+SMTP_432_MAX_REINTENTOS = int(os.getenv("SMTP_432_MAX_REINTENTOS", "3"))
+SMTP_432_REINTENTO_ESPERA_S = float(os.getenv("SMTP_432_REINTENTO_ESPERA_S", "8"))
+
+
+def _acquire_smtp_send_lock():
+    """
+    Adquiere un advisory lock de Postgres para serializar TODAS las
+    conexiones SMTP salientes del portal — tanto dentro del mismo proceso
+    (el ThreadPoolExecutor de send_email(), max_workers=min(len(to_list),6))
+    como ENTRE procesos distintos (el fanout de Celery,
+    tasks/anomaly_tasks.py::send_daily_emails_fanout, una tarea
+    independiente por destinatario).
+
+    Causa real que motiva esto: Office365 respondía
+    "432 Concurrent connections limit exceeded" cuando varias conexiones
+    SMTP se abrían al mismo tiempo a la misma cuenta — agravado por una
+    coincidencia real de horario (el cron de refresh_ontologia.py a las
+    4:30 AM y el Celery beat de check_anomalies, cada 30 min, coinciden en
+    el minuto :30). Un advisory lock de Postgres es visible por todas las
+    sesiones/procesos conectados a la misma base — el mecanismo correcto
+    para serializar algo que cruza límites de proceso, no solo de hilo.
+
+    Best-effort: si el lock no se puede adquirir (ej. BD no disponible en
+    ese instante), se degrada a NO serializar en vez de bloquear el envío
+    del correo por completo — un email sin serializar sigue siendo mejor
+    que ninguno.
+
+    Usa una conexión psycopg2 propia y dedicada (mismo patrón ya usado por
+    get_telegram_users() en este archivo, `psycopg2.connect(**_pg_params())`
+    — no el pool compartido de infrastructure.database.manager) que se
+    cierra por completo al liberar, en vez de devolverse a un pool — así un
+    olvido de pg_advisory_unlock nunca deja el lock colgado indefinidamente:
+    cerrar la conexión libera cualquier advisory lock de sesión igual.
+
+    Retorna la conexión si se adquirió, o None si no — liberar siempre con
+    _release_smtp_send_lock(conn), incluso en el caso degradado (no-op seguro).
+    """
+    try:
+        conn = psycopg2.connect(**_pg_params())
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (_SMTP_LOCK_KEY,))
+        return conn
+    except Exception as e:
+        logger.warning("No se pudo adquirir el lock SMTP (se envía sin serializar): %s", e)
+        return None
+
+
+def _release_smtp_send_lock(conn) -> None:
+    """Libera el advisory lock tomado por _acquire_smtp_send_lock() y cierra
+    la conexión dedicada — session-level (pg_advisory_lock, no _xact_), así
+    que además de la liberación explícita, cerrar la conexión es la red de
+    seguridad final."""
+    if conn is None:
+        return
+    try:
+        if not conn.closed:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (_SMTP_LOCK_KEY,))
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _send_one_email(
     dest: str,
     subject: str,
@@ -286,6 +360,12 @@ def _send_one_email(
 ) -> Tuple[bool, Optional[str], int]:
     """
     Envía un email a un único destinatario.
+
+    Serializa la conexión SMTP real (advisory lock, ver
+    _acquire_smtp_send_lock()) y reintenta hasta SMTP_432_MAX_REINTENTOS
+    veces, con espera SMTP_432_REINTENTO_ESPERA_S segundos, específicamente
+    ante un 432 de Office365 ("Concurrent connections limit exceeded") —
+    cualquier otro código SMTP o excepción falla de inmediato, sin reintento.
 
     Returns:
         (success, error_message, duration_ms)
@@ -309,22 +389,38 @@ def _send_one_email(
                 )
                 msg.attach(part)
 
-        context = ssl.create_default_context()
-        with smtplib.SMTP(
-            smtp_cfg['server'],
-            smtp_cfg['port'],
-            timeout=SMTP_TIMEOUT_SECONDS,
-        ) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            server.login(smtp_cfg['user'], smtp_cfg['password'])
-            server.sendmail(smtp_cfg['user'], dest, msg.as_string())
+        lock_conn = _acquire_smtp_send_lock()
+        try:
+            for intento in range(1, SMTP_432_MAX_REINTENTOS + 1):
+                try:
+                    context = ssl.create_default_context()
+                    with smtplib.SMTP(
+                        smtp_cfg['server'],
+                        smtp_cfg['port'],
+                        timeout=SMTP_TIMEOUT_SECONDS,
+                    ) as server:
+                        server.ehlo()
+                        server.starttls(context=context)
+                        server.ehlo()
+                        server.login(smtp_cfg['user'], smtp_cfg['password'])
+                        server.sendmail(smtp_cfg['user'], dest, msg.as_string())
 
-        duration_ms = int((time.monotonic() - started) * 1000)
-        _log_email_event(dest, "ok", duration_ms)
-        logger.info("✅ Email enviado a %s", dest)
-        return True, None, duration_ms
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    _log_email_event(dest, "ok", duration_ms)
+                    logger.info("✅ Email enviado a %s", dest)
+                    return True, None, duration_ms
+                except smtplib.SMTPResponseException as e:
+                    if e.smtp_code == 432 and intento < SMTP_432_MAX_REINTENTOS:
+                        logger.warning(
+                            "⏳ SMTP 432 (límite de conexiones concurrentes) enviando a %s "
+                            "— reintento %s/%s en %ss",
+                            dest, intento, SMTP_432_MAX_REINTENTOS, SMTP_432_REINTENTO_ESPERA_S,
+                        )
+                        time.sleep(SMTP_432_REINTENTO_ESPERA_S)
+                        continue
+                    raise
+        finally:
+            _release_smtp_send_lock(lock_conn)
     except (socket.timeout, TimeoutError) as e:
         duration_ms = int((time.monotonic() - started) * 1000)
         err = f"SMTP timeout after {SMTP_TIMEOUT_SECONDS}s: {e}"
@@ -407,20 +503,32 @@ def broadcast_email_alert(
     pdf_path: Optional[str] = None,
     alertas: bool = False,
     diario: bool = False,
+    emails_override: Optional[List[str]] = None,
 ) -> Dict[str, int]:
     """
     Envía un email a los destinatarios configurados en alert_recipients.
     Filtra por tipo: alertas (anomalías) o diario (informe ejecutivo).
+
+    Si se pasa `emails_override`, se envía SOLO a esas direcciones (ej. una
+    alerta técnica dirigida solo al desarrollador del portal) — no consulta
+    `alert_recipients` en ese caso.
     """
-    recipients = get_email_recipients(alertas=alertas, diario=diario)
-    if not recipients:
+    if emails_override is not None:
+        emails = emails_override
+    else:
+        recipients = get_email_recipients(alertas=alertas, diario=diario)
+        if not recipients:
+            logger.info("No hay destinatarios de email para este tipo de notificación")
+            return {"sent": 0, "failed": 0}
+        emails = [r['correo'] for r in recipients]
+
+    if not emails:
         logger.info("No hay destinatarios de email para este tipo de notificación")
         return {"sent": 0, "failed": 0}
 
-    emails = [r['correo'] for r in recipients]
     logger.info(
         f"📧 Enviando a {len(emails)} destinatarios "
-        f"(alertas={alertas}, diario={diario})"
+        f"(alertas={alertas}, diario={diario}, override={emails_override is not None})"
     )
     return send_email(emails, subject, body_html, pdf_path)
 
@@ -468,6 +576,8 @@ def broadcast_alert(
     email_subject: Optional[str] = None,
     email_body_html: Optional[str] = None,
     is_daily: bool = False,
+    telegram_chat_ids: Optional[List[int]] = None,
+    email_override: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Punto de entrada principal para enviar notificaciones por todos los canales.
@@ -479,6 +589,11 @@ def broadcast_alert(
         email_subject: Asunto del email (si omitido, se genera automáticamente).
         email_body_html: Cuerpo HTML del email (si omitido, se genera del message).
         is_daily: True para informe diario, False para alertas.
+        telegram_chat_ids: si se pasa, restringe el envío de Telegram a estos
+            chat_ids exclusivamente (ej. una alerta técnica solo para el
+            desarrollador del portal) en vez de todos los usuarios activos.
+        email_override: si se pasa, restringe el envío de email a estas
+            direcciones exclusivamente, en vez de `alert_recipients`.
 
     Returns:
         Resumen de envíos por canal.
@@ -492,7 +607,7 @@ def broadcast_alert(
 
     # ── Telegram ──
     try:
-        tg = broadcast_telegram(message, pdf_path=pdf_path)
+        tg = broadcast_telegram(message, pdf_path=pdf_path, chat_ids=telegram_chat_ids)
         result["telegram"] = tg
     except Exception as e:
         logger.error(f"Error en broadcast Telegram: {e}")
@@ -512,6 +627,7 @@ def broadcast_alert(
             pdf_path=pdf_path,
             alertas=not is_daily,
             diario=is_daily,
+            emails_override=email_override,
         )
         result["email"] = em
     except Exception as e:
