@@ -48,6 +48,9 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
             "pagosPosibles":     r["pagos_posibles"],
             "pctPagosRealizados": r["pct_pagos_realizados"],
             "avanceFisico":      r["avance_fisico"],
+            "valorTotal":        r["valor_total"],
+            "usuariosTotal":     r["usuarios_total"],
+            "potenciaMwpTotal":  r["potencia_mwp_total"],
             "desembolsos": [
                 {
                     "numero":            d["numero"],
@@ -69,6 +72,9 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
                     "avanceFinanciero": p["avance_financiero"],
                     "totalDesembolsos": p["total_desembolsos"],
                     "pagosRealizados":  p["pagos_realizados"],
+                    "valor":            p["valor"],
+                    "usuarios":         p["usuarios"],
+                    "potenciaMwp":      p["potencia_mwp"],
                 }
                 for p in r["proyectos"]
             ],

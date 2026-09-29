@@ -92,20 +92,31 @@ def _resultados_typescript() -> list:
     return json.loads(proc.stdout)
 
 
-def main() -> int:
+def evaluar_sincronia() -> "tuple[bool | None, list, str | None]":
+    """Evalúa CASOS contra Python y TypeScript, sin logging ni notificación —
+    extraído en la Fase 44 para que otros scripts (ej. vigilancia_normativa_creg.py)
+    puedan invocarlo directamente e incluir el resultado real en su propio
+    mensaje, en vez de reimplementar la comparación o asumir un estado.
+
+    Retorna (sincronizado, discrepancias, error):
+      - (True, [], None)           — sin discrepancias.
+      - (False, [...], None)       — discrepancias reales encontradas.
+      - (None, [], "mensaje")      — no se pudo evaluar (ej. el runner TS falló).
+
+    `main()` sigue siendo el único punto que loguea/notifica — este contrato
+    puro no cambia ningún comportamiento ya existente.
+    """
     py = _resultados_python()
     try:
         ts = _resultados_typescript()
     except Exception as e:
-        logger.error(f"[SINCRONIA_UMBRALES] No se pudo ejecutar el runner TS: {e}")
-        return 2
+        return None, [], str(e)
 
     if len(py) != len(ts):
-        logger.error(
-            f"[SINCRONIA_UMBRALES] Cantidad de resultados no coincide: "
-            f"Python={len(py)} TS={len(ts)} — el runner TS pudo fallar a mitad de camino."
+        return None, [], (
+            f"Cantidad de resultados no coincide: Python={len(py)} TS={len(ts)} "
+            f"— el runner TS pudo fallar a mitad de camino."
         )
-        return 2
 
     discrepancias = []
     for p, t in zip(py, ts):
@@ -139,7 +150,17 @@ def main() -> int:
                 f"(Python={p['visual_label']!r} vs TS={t['visual_label']!r})"
             )
 
-    if discrepancias:
+    return (len(discrepancias) == 0), discrepancias, None
+
+
+def main() -> int:
+    sincronizado, discrepancias, error = evaluar_sincronia()
+
+    if sincronizado is None:
+        logger.error(f"[SINCRONIA_UMBRALES] No se pudo ejecutar el runner TS: {error}")
+        return 2
+
+    if not sincronizado:
         logger.error(
             f"[SINCRONIA_UMBRALES] {len(discrepancias)} discrepancia(s) entre "
             f"core/umbrales_oficiales.py y umbralesOficiales.ts:"
@@ -168,8 +189,8 @@ def main() -> int:
         return 1
 
     logger.info(
-        f"[SINCRONIA_UMBRALES] OK — {len(py)} casos evaluados, sin discrepancias "
-        f"entre Python y TypeScript."
+        "[SINCRONIA_UMBRALES] OK — casos evaluados, sin discrepancias entre "
+        "Python y TypeScript."
     )
     return 0
 

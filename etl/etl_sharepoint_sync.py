@@ -36,6 +36,7 @@ Autor: Portal Energético MME
 
 import argparse
 import base64
+from collections import Counter
 import hashlib
 import json
 import logging
@@ -659,6 +660,84 @@ def _clean_col(name: str) -> str:
     return name[:63]
 
 
+# Patrón estricto de columna de fecha válida col_DD_MM_AAAA — idéntico al regex
+# que usa el frontend (portal-direccion-mme/src/lib/colombia-solar-curva-s.ts,
+# DATE_COL_RE) para construir las Curvas S. Si se desalinea con el frontend,
+# actualizar ambos lados.
+_DATE_COL_STRICT_RE = re.compile(r"^col_(\d{1,2})_(\d{1,2})_(\d{4})$")
+
+# Columnas que "casi" son una fecha (día_mes_año con el año de 5-6 dígitos en
+# vez de 4) — patrón real observado: arrastre de autocompletar de Excel que va
+# pegando un dígito extra al año en cada columna sucesiva (ej. "20262",
+# "20263", "20264"...). El día/mes se acotan a rango válido (1-31 / 1-12) para
+# no confundir esto con otros códigos numéricos de 3 segmentos que no son
+# fechas (ej. códigos de actividad tipo "0.01.1" en cronogramas).
+_DATE_COL_LOOSE_RE = re.compile(r"^col_(\d{1,2})_(\d{1,2})_(\d{5,6})$")
+
+
+def _validar_columnas_fecha_sospechosas(columnas_originales, sheet: str, table_name: str) -> None:
+    """
+    Detecta columnas de fecha corruptas/fuera de rango producidas por _clean_col()
+    a partir de encabezados de Excel mal digitados (ej. '09/06/20262' o
+    '30/08/2027' en vez de '30/08/2026'). Solo audita — NUNCA modifica el
+    DataFrame ni lanza excepciones hacia afuera, igual que _validate_supervision_data().
+
+    Se llama ANTES de load_dataframe(), sobre los encabezados crudos del Excel
+    (columnas_originales), replicando localmente _clean_col() para saber qué
+    nombre de columna resultará en Postgres — sin abrir cursor ni ejecutar SQL
+    adicional, para no añadir carga a la transacción atómica de
+    _load_sheets_to_schema (ver incidente de deadlock 2026-09-08).
+    """
+    try:
+        candidatos: list[tuple[str, str, int]] = []  # (clean_name, original_header, year)
+        for header in columnas_originales:
+            original = str(header)
+            clean = _clean_col(original)
+
+            m = _DATE_COL_STRICT_RE.match(clean)
+            if m:
+                candidatos.append((clean, original, int(m.group(3))))
+                continue
+
+            m_loose = _DATE_COL_LOOSE_RE.match(clean)
+            if m_loose:
+                dia, mes = int(m_loose.group(1)), int(m_loose.group(2))
+                if 1 <= dia <= 31 and 1 <= mes <= 12:
+                    logger.warning(
+                        "  ⚠️  Hoja '%s' (tabla '%s') — Columna '%s': posible fecha mal "
+                        "formada (año con dígitos de más, no matchea el patrón "
+                        "col_DD_MM_AAAA que usa el frontend). Encabezado original "
+                        "en Excel: %r — revisar y corregir esa celda de encabezado.",
+                        sheet, table_name, clean, original,
+                    )
+
+        if len(candidatos) < 2:
+            return  # no hay base suficiente para comparar años
+
+        year_counts = Counter(y for _, _, y in candidatos)
+        year_modal, modal_count = year_counts.most_common(1)[0]
+        # Solo comparar contra el año modal si tiene mayoría clara (>=70% de las
+        # columnas de fecha de la hoja) — evita falsos positivos en hojas que
+        # legítimamente cruzan un límite de año calendario con varias columnas
+        # en cada año.
+        if modal_count / len(candidatos) < 0.7:
+            return
+
+        for clean, original, year in candidatos:
+            if year != year_modal:
+                logger.warning(
+                    "  ⚠️  Hoja '%s' (tabla '%s') — Columna '%s': año %d no "
+                    "coincide con el año modal (%d) de las demás columnas de "
+                    "fecha de esta hoja — posible error de digitación en el "
+                    "encabezado. Encabezado original en Excel: %r",
+                    sheet, table_name, clean, year, year_modal, original,
+                )
+    except Exception as e:
+        # Defensivo: un bug aquí NUNCA debe abortar la transacción atómica de
+        # _load_sheets_to_schema.
+        logger.error("  Error validando columnas de fecha en hoja '%s': %s", sheet, e, exc_info=True)
+
+
 def _load_sheets_to_schema(
     xlsx_path: Path,
     schema: str,
@@ -729,6 +808,7 @@ def _load_sheets_to_schema(
                 if df.empty:
                     logger.info("  Hoja '%s' vacía, omitida", sheet)
                     continue
+                _validar_columnas_fecha_sospechosas(df.columns, sheet, table_name)
                 n = load_dataframe(
                     conn,
                     schema,
@@ -1035,6 +1115,7 @@ def handler_etl_supervision_onedrive(xlsx_path: Path, fecha_fuente: datetime | N
 
                 # ─── Validación de datos anómalos (2026-06-20) ────────────────────
                 _validate_supervision_data(df, sheet)
+                _validar_columnas_fecha_sospechosas(df.columns, sheet, table)
 
                 for col in df.select_dtypes(include="object").columns:
                     if df[col].dropna().apply(lambda v: isinstance(v, __import__("datetime").datetime)).any():

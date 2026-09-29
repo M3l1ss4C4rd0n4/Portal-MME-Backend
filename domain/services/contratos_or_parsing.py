@@ -18,7 +18,98 @@ silencio por handle_service_error — mismo patrón de bug que Supervisión.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Dict, List
+
+
+def _normalizar_texto(s: str | None) -> str:
+    """Mayúsculas, sin acentos, sin espacios sobrantes — para cruzar nombres
+    de departamento/municipio entre hojas de Excel distintas que no
+    mantienen el mismo formato (ej. 'Chocó' vs 'CHOCO')."""
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return " ".join(s.split()).upper()
+
+
+def _match_valores_base_general(
+    proyectos: List[Dict[str, Any]], filas_base: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Empareja cada proyecto de contratos_or (por nombre_proyecto_id) con su
+    fila correspondiente de colombia_solar.base_general_or_inicial (hoja
+    "Base General OR_Inicial" de Colombia_Solar_OR.xlsx), para traer
+    valor/usuarios/potencia_mwp.
+
+    Paso 1 — cruce exacto por (departamento, municipio) normalizado: funciona
+    para 17 de los 18 proyectos.
+
+    Paso 2 — por eliminación: el proyecto "14 - Santander" (municipio
+    'Municipios Rurales' en contratos_or) no tiene match exacto porque
+    'Base General OR_Inicial' guarda ahí la lista real de veredas
+    ('Bolivar, Charalá, El Peñón, ...'), no el texto 'Municipios Rurales'.
+    Como Santander solo tiene 2 filas en total y la otra ('Guaca') ya
+    emparejó en el paso 1, la única fila de Santander que queda sin
+    emparejar en ambos lados debe ser la correcta — se asignan entre sí.
+    """
+    restantes = list(filas_base)
+    resultado: Dict[str, Dict[str, Any]] = {}
+    sin_match: List[Dict[str, Any]] = []
+
+    for p in proyectos:
+        key = (_normalizar_texto(p["departamento"]), _normalizar_texto(p["municipio"]))
+        match = next(
+            (f for f in restantes
+             if (_normalizar_texto(f["departamento"]), _normalizar_texto(f["municipio"])) == key),
+            None,
+        )
+        if match:
+            resultado[p["nombre_proyecto_id"]] = match
+            restantes.remove(match)
+        else:
+            sin_match.append(p)
+
+    for p in sin_match:
+        depto = _normalizar_texto(p["departamento"])
+        candidatos = [f for f in restantes if _normalizar_texto(f["departamento"]) == depto]
+        if len(candidatos) == 1:
+            resultado[p["nombre_proyecto_id"]] = candidatos[0]
+            restantes.remove(candidatos[0])
+
+    return resultado
+
+
+_PREFIJO_NUMERO_RE = re.compile(r"^\d+\s*-\s*")
+
+
+def _match_avances_resumen(
+    proyectos: List[Dict[str, Any]], filas_gj: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Empareja cada proyecto con la fila correspondiente de la tabla
+    Ejecutor/Nombre Proyecto/Avance Financiero/Avance Documental que vive en
+    columnas G:J de la propia hoja "Resumen" (contratos_or.resumen,
+    unnamed_6..unnamed_9) — el usuario confirmó que esta tabla, no la hoja
+    Seguimiento_Avance_Documental, es la fuente correcta de estos dos avances.
+
+    Cruce por (ejecutor, nombre de proyecto sin el prefijo "NN - ")
+    normalizado — verificado 18/18 contra la BD real, sin casos especiales
+    (a diferencia del cruce con colombia_solar).
+    """
+    por_key = {
+        (_normalizar_texto(f["ejecutor"]), _normalizar_texto(f["nombre_proyecto"])): f
+        for f in filas_gj
+    }
+    resultado: Dict[str, Dict[str, Any]] = {}
+    for p in proyectos:
+        nombre_sin_prefijo = _PREFIJO_NUMERO_RE.sub("", p["nombre_proyecto_id"] or "").strip()
+        key = (_normalizar_texto(p["ejecutor"]), _normalizar_texto(nombre_sin_prefijo))
+        match = por_key.get(key)
+        if match:
+            resultado[p["nombre_proyecto_id"]] = match
+    return resultado
 
 
 def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
@@ -66,6 +157,24 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
         """
     )
     proyectos_rows = cur.fetchall()
+
+    # Avance Financiero/Documental por proyecto — tabla Ejecutor/Nombre
+    # Proyecto/Avance Financiero/Avance Documental en columnas G:J de la
+    # propia hoja Resumen (unnamed_6..unnamed_9), confirmada por el usuario
+    # como la fuente correcta (reemplaza el AVG(avance) de
+    # seguimiento_avance_documental usado antes). unnamed_8 es fracción 0-1
+    # (%×100 directo); unnamed_9 es el valor crudo que el Excel interpreta
+    # como puntos porcentuales tal cual — verificado contra la fórmula real
+    # de la celda B12 (`=AVERAGE(J3:J20)/100`), no necesita otra escala.
+    cur.execute(
+        """
+        SELECT unnamed_6 AS ejecutor, unnamed_7 AS nombre_proyecto,
+               unnamed_8 AS avance_financiero, unnamed_9 AS avance_documental
+        FROM contratos_or.resumen
+        WHERE unnamed_6 IS NOT NULL
+        """
+    )
+    filas_gj_resumen = cur.fetchall()
 
     # KPIs globales desde la hoja Resumen del Excel (pivot unnamed_0/unnamed_1)
     cur.execute(
@@ -155,6 +264,27 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
     )
     desembolsos_rows = cur.fetchall()
 
+    # Valor/usuarios/potencia — hoja "Base General OR_Inicial" de
+    # Colombia_Solar_OR.xlsx (schema colombia_solar, otro Excel fuente).
+    # departamento IS NOT NULL excluye la fila de totales que deja el ETL.
+    cur.execute(
+        """
+        SELECT departamento, municipio, valor, usuarios, potencia_mwp
+        FROM colombia_solar.base_general_or_inicial
+        WHERE departamento IS NOT NULL
+        """
+    )
+    filas_base_general = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT valor, usuarios, potencia_mwp
+        FROM colombia_solar.base_general_or_inicial
+        WHERE departamento IS NULL
+        """
+    )
+    totales_base_general = cur.fetchone() or {}
+
     def _f(v):
         return float(v) if v is not None else None
 
@@ -165,27 +295,40 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
     pagos_pos = int(g.get("total_pagos") or 0)
     avance_fisico = _f(af) or 0.0
 
+    valores_por_proyecto = _match_valores_base_general(proyectos_rows, filas_base_general)
+    avances_gj_por_proyecto = _match_avances_resumen(proyectos_rows, filas_gj_resumen)
+
     proyectos: List[Dict[str, Any]] = [
         {
             "nombre": p["nombre_proyecto_id"],
             "ejecutor": p["ejecutor"],
             "departamento": p["departamento"],
             "municipio": p["municipio"],
-            "avance_general": _f(p["avance_general"]),
+            "avance_general": _f(
+                (avances_gj_por_proyecto.get(p["nombre_proyecto_id"]) or {}).get("avance_documental")
+            ) if p["nombre_proyecto_id"] in avances_gj_por_proyecto else _f(p["avance_general"]),
             "avance_fisico": af_per_project.get(
                 p["nombre_proyecto_id"],
                 af_por_ubicacion.get(
                     (p["ejecutor"], p["departamento"], p["municipio"]), 0.0
                 ),
             ),
-            "avance_financiero": _f(p["avance_financiero"]),
+            "avance_financiero": (
+                (_f((avances_gj_por_proyecto.get(p["nombre_proyecto_id"]) or {}).get("avance_financiero")) or 0.0) * 100
+            ) if p["nombre_proyecto_id"] in avances_gj_por_proyecto else _f(p["avance_financiero"]),
             "total_desembolsos": int(p["total_desembolsos"]),
             "pagos_realizados": int(p["pagos_realizados"]),
+            "valor": _f((valores_por_proyecto.get(p["nombre_proyecto_id"]) or {}).get("valor")) or 0.0,
+            "usuarios": int((valores_por_proyecto.get(p["nombre_proyecto_id"]) or {}).get("usuarios") or 0),
+            "potencia_mwp": _f((valores_por_proyecto.get(p["nombre_proyecto_id"]) or {}).get("potencia_mwp")) or 0.0,
         }
         for p in proyectos_rows
     ]
 
     return {
+        "valor_total": _f(totales_base_general.get("valor")) or 0.0,
+        "usuarios_total": int(totales_base_general.get("usuarios") or 0),
+        "potencia_mwp_total": _f(totales_base_general.get("potencia_mwp")) or 0.0,
         "fecha_corte": ts_or.strftime("%d/%m/%Y, %H:%M") if ts_or else None,
         "n_contratos": n_contratos,
         "avance_general": round(avance_general, 1),
