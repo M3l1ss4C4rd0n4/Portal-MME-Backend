@@ -32,6 +32,7 @@ from api.v1.routes import (
     ontologia,
     riesgo,
     voz,
+    balance_oferta_demanda,
 )
 
 # Router principal de v1
@@ -248,6 +249,13 @@ api_router_v1.include_router(
     voz.router,
     prefix="/voz",
     tags=["🎙️ Asistente de voz"]
+)
+
+# 29. Balance Oferta-Demanda del SIN — hipótesis de retrasos UPME (Fase 45)
+api_router_v1.include_router(
+    balance_oferta_demanda.router,
+    prefix="/balance-oferta-demanda",
+    tags=["⚖️ Portal — Balance Oferta-Demanda"]
 )
 
 __all__ = ["api_router_v1"]

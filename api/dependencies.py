@@ -11,6 +11,7 @@ Autor: Arquitectura Dashboard MME
 Fecha: 3 de febrero de 2026
 """
 
+import hmac
 from typing import Optional
 from fastapi import Header, HTTPException, status, Depends
 from functools import lru_cache
@@ -22,6 +23,7 @@ from domain.services.ai_service import AgentIA
 from domain.services.ontologia_service import OntologiaService
 from domain.services.risk_service import RiskService
 from domain.services.graph_service import GraphService
+from domain.services.balance_oferta_demanda_service import BalanceOfertaDemandaService
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
 from infrastructure.database.repositories.geografia_repository import GeografiaRepository
@@ -66,14 +68,19 @@ async def get_api_key(x_api_key: Optional[str] = Header(None, description="API K
             headers={"WWW-Authenticate": "ApiKey"}
         )
     
-    # Validar que la API Key es correcta
-    if x_api_key != settings.API_KEY:
+    # Validar contra API_KEY + API_KEYS_WHITELIST (Fase 45 — permite rotar la
+    # clave sin downtime: la vieja y la nueva conviven en la whitelist durante
+    # la migración de cada consumidor, en vez de un corte duro). Comparación
+    # de tiempo constante (hmac.compare_digest) en vez de `!=` — evita fugar
+    # información por temporización, aunque el riesgo real es bajo al ser una
+    # API interna.
+    if not any(hmac.compare_digest(x_api_key, valid_key) for valid_key in settings.api_keys_list):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="API Key inválida",
             headers={"WWW-Authenticate": "ApiKey"}
         )
-    
+
     return x_api_key
 
 
@@ -202,6 +209,12 @@ def get_ontologia_service(
 def get_risk_service() -> RiskService:
     """Singleton del servicio de riesgo de atraso (Fase 4 — analítica predictiva)."""
     return RiskService()
+
+
+@lru_cache()
+def get_balance_oferta_demanda_service() -> BalanceOfertaDemandaService:
+    """Singleton del servicio de Balance Oferta-Demanda del SIN (Fase 45)."""
+    return BalanceOfertaDemandaService()
 
 
 def get_graph_service(
