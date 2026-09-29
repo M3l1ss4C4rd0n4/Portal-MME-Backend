@@ -38,6 +38,7 @@ import logging
 from interface.components.chart_card import crear_page_header, crear_filter_bar, crear_chart_card_custom
 from interface.components.kpi_card import crear_kpi_row
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
+from core.utils.prediction_bounds import clamp_intervalo_prediccion
 
 logger = logging.getLogger("seguimiento_predicciones")
 
@@ -588,7 +589,20 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
             np.nan
         )
         hay_comparacion = df_merged['real'].notna().any()
-    
+
+    # Límites físicos — métricas en % (ej. Embalses) no pueden salir de
+    # [0,100]; cubre el KPI de cobertura, la banda del gráfico y la tabla
+    # día-a-día de esta página, que leen intervalo_inferior/superior crudos.
+    if unidad == '%' and {'intervalo_inferior', 'intervalo_superior'}.issubset(df_merged.columns):
+        df_merged['predicho'], df_merged['intervalo_inferior'], df_merged['intervalo_superior'] = (
+            clamp_intervalo_prediccion(
+                df_merged['predicho'].values,
+                df_merged['intervalo_inferior'].values,
+                df_merged['intervalo_superior'].values,
+                piso=0.0, techo=100.0,
+            )
+        )
+
     # Filtrar por periodo
     periodo_dias = int(periodo_dias) if periodo_dias else 0
     if periodo_dias > 0:

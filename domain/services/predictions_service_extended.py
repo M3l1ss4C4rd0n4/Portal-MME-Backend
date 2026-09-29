@@ -13,6 +13,7 @@ from pathlib import Path
 from infrastructure.database.repositories.predictions_repository import PredictionsRepository
 from infrastructure.database.repositories.metrics_repository import MetricsRepository
 from core.config import settings
+from core.utils.prediction_bounds import get_physical_bounds, clamp_intervalo_prediccion
 
 # Importaciones de ML (manejo lazy para evitar errores si no están instalados)
 try:
@@ -164,6 +165,16 @@ class PredictionsService:
                 forecast_df=prediction_df,
                 confidence_level=confidence_level,
                 cal_days=conformal_cal_days,
+            )
+
+        # 3.6. Límites físicos (ej. embalses/pérdidas % no pueden salir de
+        # [0,100]) — cubre en un solo punto los endpoints /{metric_id} y
+        # /batch/forecast, que llaman ambos a este método.
+        piso, techo = get_physical_bounds(metric_id)
+        if piso is not None or techo is not None:
+            prediction_df['value'], prediction_df['lower'], prediction_df['upper'] = clamp_intervalo_prediccion(
+                prediction_df['value'].values, prediction_df['lower'].values, prediction_df['upper'].values,
+                piso=piso, techo=techo,
             )
 
         # 4. Añadir metadata
@@ -718,6 +729,19 @@ class PredictionsService:
         fut['confianza'] = confianza_num            # numérico → columna BD
         fut['clasificacion_confianza'] = clasificacion  # etiqueta → API response
         fut['fecha_generacion'] = datetime.now()
+
+        # Límites físicos (ej. embalses/pérdidas % no pueden salir de [0,100]).
+        # Este path (Prophet standalone) es independiente del ensemble de
+        # scripts/train_predictions_sector_energetico.py y no compartía su
+        # clamp — corre cada domingo vía Celery (regenerar_predicciones) y
+        # sus filas SÍ se sirven en producción como fallback fuera del
+        # horizonte del ensemble (ver PredictionsRepository.get_predictions).
+        piso, techo = get_physical_bounds(fuente)
+        if piso is not None or techo is not None:
+            fut['yhat'], fut['yhat_lower'], fut['yhat_upper'] = clamp_intervalo_prediccion(
+                fut['yhat'].values, fut['yhat_lower'].values, fut['yhat_upper'].values,
+                piso=piso, techo=techo,
+            )
 
         return fut[['ds', 'yhat', 'yhat_lower', 'yhat_upper',
                     'fuente', 'horizonte_dias', 'modelo',

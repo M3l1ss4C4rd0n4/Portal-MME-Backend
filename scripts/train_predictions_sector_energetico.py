@@ -28,6 +28,8 @@ from pmdarima import auto_arima
 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
 import argparse
 import logging
+
+from core.utils.prediction_bounds import clamp_intervalo_prediccion
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -867,6 +869,24 @@ METRICAS_CONFIG = {
         # Horizonte extendido: ONI oficial de NOAA cubre hasta ~Feb 2027 (~240 días)
         # Permite visualizar todo el ciclo El Niño en el dashboard
         'horizonte_override': 240,
+        # % volumen útil no puede superar 100 — simétrico a piso_historico,
+        # que ya existe para otras métricas (ver PRECIO_BOLSA). Sin esto
+        # intervalo_superior crecía sin límite (llegó a 289% en producción).
+        'techo_historico': 100.0,
+        # Fase 43 (2026-09-08): fuerza d=0 en auto_arima() (ARMA estacionario,
+        # sin diferenciación regular) — consistente con prophet_growth='flat'
+        # ("% embalses es estacionario", arriba). Antes, con d=None,
+        # auto_arima() estimaba d=1 (raíz unitaria) vía ndiffs()/KPSS, cuya
+        # varianza de pronóstico crece SIN LÍMITE con el horizonte — causa
+        # raíz confirmada de que el IC nunca dejaba de ensanchar hasta
+        # saturar [0,100] (cobertura_ci_95=100% en los 4 backtests
+        # 2022-2025). NO se aplica a otras métricas que comparten
+        # PredictorMetricaSectorial (ej. DEMANDA sí tiene tendencia real).
+        'sarima_d': 0,
+        # Reduce el espacio de búsqueda de auto_arima() — sinergia con el
+        # aislamiento por subproceso (menos candidatos vivos simultáneamente
+        # → menor techo de memoria durante el stepwise search).
+        'sarima_max_order': 4,
         # Holdout extendido: 180 días (6 meses) cubre al menos un ciclo estacional completo
         # Un holdout de 30 días producía MAPE artificialmente bajo (solo un ciclo corto)
         'dias_validacion': 180,
@@ -1065,6 +1085,7 @@ METRICAS_CONFIG = {
         'criticidad': 'IMPORTANTE',
         'prioridad': 2,
         'allow_negative': True,  # P_total puede variar; predicción podría ser ligeramente negativa
+        'techo_historico': 100.0,  # pérdidas no pueden superar el 100% de la energía
     },
 }
 
@@ -1326,6 +1347,68 @@ def _calcular_pendiente_calibracion(y_real, ci_lower, ci_upper, target_cob: floa
     return round(float(pendiente), 4)
 
 
+# Fase 43 (2026-09-08): aislamiento de auto_arima() en subproceso — ver
+# PredictorMetricaSectorial._entrenar_arima_aislado(). Corrige que un
+# SIGKILL del OOM killer del kernel (no capturable como excepción Python)
+# mataba TODO el proceso de backtest/entrenamiento, sin poder ejecutar el
+# fallback a solo-Prophet que ya existía en el except de entrenar_sarima().
+_MEM_LIMIT_PISO_BYTES = 1536 * 1024 * 1024      # 1.5GB — piso duro (ver docstring abajo)
+_MEM_LIMIT_TECHO_BYTES = 3072 * 1024 * 1024     # 3GB — no acaparar toda la RAM del server
+_MEM_LIMIT_FRACCION_DISPONIBLE = 0.5            # máx. 50% de la RAM "available" actual
+_MEM_LIMIT_DEFECTO_SIN_PSUTIL = 2048 * 1024 * 1024  # 2GB fijo si psutil no está disponible
+
+
+def _calcular_limite_memoria_sarimax():
+    """
+    Límite de RLIMIT_AS (bytes) para el subproceso de auto_arima(), o None si
+    no hay memoria suficiente ni para intentarlo.
+
+    RLIMIT_AS limita memoria VIRTUAL (VSZ), no RSS. Solo importar
+    numpy+pandas+pmdarima+statsmodels ya reserva >1GB de VSZ antes de tocar
+    ningún dato — un piso más bajo haría fallar la propia importación de las
+    librerías con MemoryError incluso para una serie trivial, de ahí el piso
+    de 1.5GB.
+    """
+    try:
+        import psutil
+        disponible = psutil.virtual_memory().available
+    except Exception:
+        return _MEM_LIMIT_DEFECTO_SIN_PSUTIL
+
+    limite = int(disponible * _MEM_LIMIT_FRACCION_DISPONIBLE)
+    if limite < _MEM_LIMIT_PISO_BYTES:
+        return None
+    return min(limite, _MEM_LIMIT_TECHO_BYTES)
+
+
+def _entrenar_auto_arima_subproceso(serie_vals, exog_vals, max_order, d, mem_limit_bytes, result_queue):
+    """
+    Corre en un proceso hijo (fork). Escribe (status, payload) a
+    result_queue:
+      ('ok', modelo)          — éxito
+      ('memory_error', None)  — RLIMIT_AS propio se disparó (limpio, catchable)
+      ('error', str(exc))     — cualquier otro error de auto_arima()
+    Si el proceso muere sin ejecutar ninguna rama (SIGKILL externo, ej. OOM
+    killer del kernel si el límite propio no alcanzó a evitarlo), NUNCA
+    escribe a la cola — el padre lo distingue por proc.is_alive()==False con
+    la cola vacía.
+    """
+    import resource
+    try:
+        if mem_limit_bytes:
+            resource.setrlimit(resource.RLIMIT_AS, (mem_limit_bytes, mem_limit_bytes))
+        modelo = auto_arima(
+            serie_vals, X=exog_vals, seasonal=True, m=7,
+            d=d, max_order=max_order,
+            suppress_warnings=True, error_action='ignore', stepwise=True,
+        )
+        result_queue.put(('ok', modelo))
+    except MemoryError:
+        result_queue.put(('memory_error', None))
+    except Exception as e:
+        result_queue.put(('error', str(e)))
+
+
 class PredictorMetricaSectorial:
     """Predictor especializado para métricas del sector energético"""
     
@@ -1413,7 +1496,84 @@ class PredictorMetricaSectorial:
         
         print(f"    ✓ Prophet entrenado", flush=True)
         return modelo
-    
+
+    def _entrenar_arima_aislado(self, serie_vals, exog_vals, d_forzado, max_order_metrica):
+        """
+        Fase 43: ejecuta auto_arima() en un proceso hijo aislado con límite
+        propio de memoria virtual (RLIMIT_AS) + timeout duro. Usado por
+        entrenar_sarima() y por el reajuste de holdout en
+        validar_y_generar() — antes cada uno llamaba a auto_arima()
+        directamente en el proceso principal, sin protección ante OOM.
+
+        Requiere que no haya conexión DB viva al hacer fork (confirmado en
+        main()/main_backtest(): la conexión de carga de regresores se cierra
+        antes de instanciar el predictor). Si esto cambia en el futuro, el
+        fork podría heredar un socket duplicado.
+
+        Devuelve el modelo entrenado, o None si falló/fue matado/excedió el
+        timeout — en todos los casos el llamador cae al mismo fallback de
+        solo-Prophet que ya existía.
+        """
+        import multiprocessing as mp
+        import queue as queue_mod
+        import time
+
+        mem_limit_bytes = _calcular_limite_memoria_sarimax()
+        if mem_limit_bytes is None:
+            print(f"    ⚠️  Memoria disponible insuficiente para intentar "
+                  f"SARIMA(X) ({self.nombre}). Usando solo Prophet.", flush=True)
+            return None
+
+        timeout_seg = int(self.config.get('sarima_timeout_seg', 1800))
+        ctx = mp.get_context('fork')
+        result_queue = ctx.Queue()
+        proc = ctx.Process(
+            target=_entrenar_auto_arima_subproceso,
+            args=(serie_vals, exog_vals, max_order_metrica, d_forzado,
+                  mem_limit_bytes, result_queue),
+            daemon=True,  # OK: stepwise=True nunca usa n_jobs/joblib, no genera nietos
+        )
+        proc.start()
+
+        deadline = time.time() + timeout_seg
+        status, payload = 'timeout', None
+        while True:
+            try:
+                status, payload = result_queue.get(timeout=1.0)
+                break
+            except queue_mod.Empty:
+                if not proc.is_alive():
+                    status, payload = 'crashed', None
+                    break
+                if time.time() >= deadline:
+                    status, payload = 'timeout', None
+                    break
+
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+        result_queue.close()
+
+        if status == 'ok':
+            return payload
+        if status == 'memory_error':
+            print(f"    ⚠️  SARIMA(X) excedió su límite propio de memoria "
+                  f"({mem_limit_bytes / 1024**3:.1f}GB) para {self.nombre}. Usando solo Prophet.", flush=True)
+        elif status == 'crashed':
+            print(f"    ⚠️  SARIMA(X) subproceso terminado abruptamente "
+                  f"(exitcode={proc.exitcode}, probable OOM del sistema) para {self.nombre}. "
+                  f"Usando solo Prophet.", flush=True)
+        elif status == 'timeout':
+            print(f"    ⚠️  SARIMA(X) excedió el timeout de {timeout_seg}s para {self.nombre}. "
+                  f"Usando solo Prophet.", flush=True)
+        else:
+            print(f"    ⚠️  SARIMA(X) falló: {payload}. Usando solo Prophet.", flush=True)
+        return None
+
     def entrenar_sarima(self, serie_sarima):
         """Entrena SARIMA o SARIMAX (si use_sarimax=True en config y ONI disponible)"""
         use_sarimax = self.config.get('use_sarimax', False)
@@ -1451,39 +1611,43 @@ class PredictorMetricaSectorial:
                 print(f"    ⚠️  SARIMAX exog prep falló ({e_exog}). Usando SARIMA univariado.", flush=True)
                 exog_train = None
 
-        try:
-            modelo = auto_arima(
-                serie_sarima.dropna(),
-                # Fase 42 continuación (2026-08-31): bug real y preexistente
-                # encontrado — pmdarima 2.1.1 renombró el parámetro de
-                # exógenas de auto_arima()/.fit()/.predict() de 'exogenous' a
-                # 'X'. Como auto_arima() tiene **fit_args al final de su
-                # firma, pasar exogenous=... se absorbía SILENCIOSAMENTE sin
-                # error ni warning — SARIMAX nunca usó ninguna variable
-                # exógena (ni ONI) en este proyecto hasta este fix,
-                # verificado comparando el AIC con exog real/con ruido
-                # puro/sin exog: los 3 daban el mismo AIC exacto.
-                X=exog_train,
-                seasonal=True,
-                m=7,
-                max_order=5,
-                suppress_warnings=True,
-                error_action='ignore',
-                stepwise=True,
-                # Fase 42: n_jobs=-1 se quitó — pmdarima lo descarta
-                # silenciosamente cuando stepwise=True (búsqueda inherentemente
-                # secuencial, confirmado en pmdarima/arima/_validation.py::
-                # check_n_jobs()), era configuración muerta sin efecto real.
-            )
-            self.modelo_sarima = modelo
+        # Fase 43 (2026-09-08): d forzado explícitamente a 0 SOLO si la
+        # métrica lo declara estacionaria vía 'sarima_d' en su config (ver
+        # EMBALSES_PCT en METRICAS_CONFIG). Sin cambios para métricas que no
+        # declaren 'sarima_d' (DEMANDA/GENE_TOTAL siguen con d=None, estimado
+        # por ndiffs()/KPSS como antes).
+        # OJO: NO es max_d=0 — verificado en pmdarima 2.1.1 (instalado) que
+        # ndiffs() rechaza max_d=0 con ValueError ("max_d must be a positive
+        # integer"); max_d solo acota la búsqueda de ndiffs() cuando d=None,
+        # nunca fuerza d=0 directamente. El único mecanismo correcto es pasar
+        # d=<valor>, que además evita la llamada a ndiffs() por completo.
+        d_forzado = self.config.get('sarima_d', None)
+        max_order_metrica = int(self.config.get('sarima_max_order', 5))
+        serie_dropna = serie_sarima.dropna()
+
+        if d_forzado is not None:
+            # Diagnóstico informativo (no bloqueante): confirma que la config
+            # de estacionariedad sigue vigente; si KPSS ya no coincide, solo
+            # se registra un warning — la decisión de negocio (config) manda.
+            try:
+                from pmdarima.arima import ndiffs
+                d_estimado = ndiffs(serie_dropna.values, test='kpss', max_d=2)
+                if d_estimado != d_forzado:
+                    print(f"    ⚠️  KPSS estima d={d_estimado} pero config fuerza "
+                          f"sarima_d={d_forzado} para {self.nombre}. Revisar si "
+                          f"la serie sigue siendo estacionaria.", flush=True)
+            except Exception:
+                pass
+
+        modelo = self._entrenar_arima_aislado(
+            serie_dropna.values, exog_train, d_forzado, max_order_metrica,
+        )
+        self.modelo_sarima = modelo
+        if modelo is not None:
             modo = "SARIMAX" if exog_train is not None else "SARIMA"
             print(f"    ✓ {modo} entrenado: {modelo.order} x {modelo.seasonal_order}", flush=True)
-            return modelo
+        return modelo
 
-        except Exception as e:
-            print(f"    ⚠️  SARIMA(X) falló: {e}. Usando solo Prophet.", flush=True)
-            return None
-    
     def validar_y_generar(self, df_prophet, serie_sarima, dias_validacion=30):
         """Validación REAL con holdout y cálculo de MAPE auténtico"""
         print(f"  → Validando modelos con holdout de {dias_validacion} días...", flush=True)
@@ -1575,14 +1739,18 @@ class PredictorMetricaSectorial:
                         exog_h_train = None
                         exog_h_val = None
 
-                modelo_sarima_temp = auto_arima(
-                    serie_train_s.dropna(),
-                    X=exog_h_train,  # Fase 42: renombrado de exogenous=, ver entrenar_sarima()
-                    seasonal=True, m=7,
-                    max_order=5,
-                    suppress_warnings=True, error_action='ignore',
-                    stepwise=True,  # Fase 42: n_jobs=-1 quitado, ver entrenar_sarima()
+                # Fase 43 (2026-09-08): mismo aislamiento por subproceso que
+                # entrenar_sarima() — esta llamada re-entrena sobre casi la
+                # misma cantidad de datos y es igual de vulnerable al OOM
+                # (ya murió 2 veces en el backtest 2022 antes de este fix).
+                d_forzado = self.config.get('sarima_d', None)
+                max_order_metrica = int(self.config.get('sarima_max_order', 5))
+                modelo_sarima_temp = self._entrenar_arima_aislado(
+                    serie_train_s.dropna().values, exog_h_train,
+                    d_forzado, max_order_metrica,
                 )
+                if modelo_sarima_temp is None:
+                    raise RuntimeError("SARIMA(X) holdout: subproceso no produjo modelo")
                 pred_sarima_val = modelo_sarima_temp.predict(
                     n_periods=dias_validacion, X=exog_h_val
                 )
@@ -1832,7 +2000,18 @@ class PredictorMetricaSectorial:
         pendiente_cal = float(self.metricas.get('factor_calibracion_pendiente', 0.0))
         dias_val_ref = int(self.config.get('dias_validacion', 180)) or 180
         dias_desde_corte_pred = np.arange(1, horizonte_dias + 1, dtype=float)
-        forma_pendiente = 1.0 + pendiente_cal * dias_desde_corte_pred / dias_val_ref
+        # Fase 43 (2026-09-08): forma saturante (exponencial asintótica) en
+        # vez de lineal sin límite. La pendiente se estima sobre un holdout
+        # de solo dias_validacion días (180) pero se aplicaba de forma LINEAL
+        # hasta el horizonte real completo (240-730 días, 1.3-4× fuera del
+        # rango de estimación) — extrapolar tendencias lineales muy más allá
+        # del rango de datos que las originó es desaconsejado (Hyndman &
+        # Athanasopoulos, Forecasting: Principles and Practice). Mantiene
+        # igual comportamiento cerca de dias_val_ref (evidencia empírica
+        # real) pero converge en vez de seguir creciendo sin tope para
+        # horizontes más largos — causa raíz confirmada de que cobertura_ci_95
+        # saturaba en 100% en los 4 backtests 2022-2025.
+        forma_pendiente = 1.0 + pendiente_cal * (1.0 - np.exp(-dias_desde_corte_pred / dias_val_ref))
         if sarima_semi_ancho is not None and sarima_semi_ancho[0] > 1e-9:
             forma_sarima = np.clip(sarima_semi_ancho / sarima_semi_ancho[0], 1.0, 4.0)
         else:
@@ -1846,27 +2025,41 @@ class PredictorMetricaSectorial:
             intervalo_superior = predicciones_ensemble + semi_sup * factor_cal_horizonte
 
         # Asimetría El Niño: CI inferior más ancho cuando ONI > 0.5 (droughts caen más rápido)
-        _oni_val = float((self.regresores_completo['oni_index'].dropna().iloc[-1]
-                          if self.regresores_completo is not None and 'oni_index' in (self.regresores_completo.columns if self.regresores_completo is not None else [])
-                          else 0.0))
+        # El ONI se toma "as of" la fecha de corte real de entrenamiento del
+        # modelo (self.modelo_prophet.history), no el último valor disponible
+        # en self.regresores_completo — en main_backtest() ese DataFrame
+        # incluye el ONI real hasta HOY sin importar qué backtest_year se está
+        # simulando, así que .iloc[-1] filtraba siempre el ONI de hoy en vez
+        # del vigente en cada ventana histórica evaluada.
+        _oni_val = 0.0
+        if (self.regresores_completo is not None
+                and 'oni_index' in self.regresores_completo.columns
+                and self.modelo_prophet is not None
+                and getattr(self.modelo_prophet, 'history', None) is not None):
+            _fecha_origen = pd.Timestamp(self.modelo_prophet.history['ds'].max())
+            _serie_oni = self.regresores_completo['oni_index'].dropna()
+            _oni_asof = _serie_oni[_serie_oni.index <= _fecha_origen]
+            if len(_oni_asof):
+                _oni_val = float(_oni_asof.iloc[-1])
         _UMBRAL_NINO = 0.5
         if _oni_val > _UMBRAL_NINO:
             _asimetria = min(0.30, (_oni_val - _UMBRAL_NINO) / 5.0)
             semi_inf_nino = predicciones_ensemble - intervalo_inferior
             intervalo_inferior = predicciones_ensemble - semi_inf_nino * (1.0 + _asimetria)
 
-        # CLAMP: Para métricas que no pueden ser negativas (demanda, generación, embalses, etc.)
-        if not allow_negative:
-            predicciones_ensemble = np.maximum(predicciones_ensemble, 0.0)  # type: ignore[call-overload,arg-type]
-            intervalo_inferior = np.maximum(intervalo_inferior, 0.0)  # type: ignore[call-overload,arg-type]
-            intervalo_superior = np.maximum(intervalo_superior, 0.0)  # type: ignore[call-overload,arg-type]
+        # CLAMP: límites físicos. Piso en 0 para métricas que no pueden ser
+        # negativas (o piso_historico configurable, ej. precio de bolsa nunca
+        # < 86 $/kWh); techo configurable para métricas acotadas por arriba
+        # (ej. embalses/pérdidas nunca > 100%). Antes no existía ningún techo
+        # simétrico al piso — intervalo_superior podía crecer sin límite.
+        piso_cfg = self.config.get('piso_historico', 0.0)
+        techo_cfg = self.config.get('techo_historico', None)
+        piso_efectivo = piso_cfg if piso_cfg > 0 else (0.0 if not allow_negative else None)
+        predicciones_ensemble, intervalo_inferior, intervalo_superior = clamp_intervalo_prediccion(
+            predicciones_ensemble, intervalo_inferior, intervalo_superior,
+            piso=piso_efectivo, techo=techo_cfg,
+        )
 
-        # Piso histórico configurable (ej: precio de bolsa nunca < 86 $/kWh)
-        piso = self.config.get('piso_historico', 0.0)
-        if piso > 0:
-            predicciones_ensemble = np.maximum(predicciones_ensemble, piso)  # type: ignore[call-overload,arg-type]
-            intervalo_inferior = np.maximum(intervalo_inferior, piso)  # type: ignore[call-overload,arg-type]
-        
         # Crear DataFrame
         fechas_prediccion = pred_prophet['ds'].values
         
@@ -2665,10 +2858,21 @@ def guardar_predicciones_bd(metrica_nombre, df_predicciones, config,
               f"mape={f'{mape_val:.4f}' if mape_val is not None else 'N/A'}, "
               f"rmse={f'{rmse_val:.2f}' if rmse_val is not None else 'N/A'}")
         if mape_prophet_val is not None:
+            # Fase 43 (2026-09-08): peso_sarima_val/mape_sarima_val pueden
+            # ser None aquí (ensemble Prophet-only, ej. cuando SARIMA(X) cae
+            # al fallback aislado por subproceso) — antes esta rama era
+            # inalcanzable porque un fallo de esa magnitud mataba el proceso
+            # completo (SIGKILL) antes de llegar a guardar; ahora que el
+            # fallo es recuperable, el formato ciego de estas dos variables
+            # ('unsupported format string passed to NoneType.__format__')
+            # rompía el guardado de las 341 predicciones ya generadas.
+            peso_sarima_str = f"{peso_sarima_val:.2f}" if peso_sarima_val is not None else "N/A"
+            mape_sarima_str = f"{mape_sarima_val:.4f}" if mape_sarima_val is not None else "N/A"
             print(f"    pesos ensemble: prophet={peso_prophet_val:.2f} (MAPE={mape_prophet_val:.4f}), "
-                  f"sarima={peso_sarima_val:.2f} (MAPE={mape_sarima_val:.4f})")
+                  f"sarima={peso_sarima_str} (MAPE={mape_sarima_str})")
         if cobertura_ci_val is not None:
-            print(f"    CI calibración: cobertura={cobertura_ci_val:.2%}, factor={factor_cal_val:.3f}")
+            factor_cal_str = f"{factor_cal_val:.3f}" if factor_cal_val is not None else "N/A"
+            print(f"    CI calibración: cobertura={cobertura_ci_val:.2%}, factor={factor_cal_str}")
         print(f"    método: {metodo_prediccion}, modelo: {modelo_v}")
 
         # Insertar nuevas predicciones — UN solo timestamp de fecha_generacion
@@ -6899,8 +7103,14 @@ def main_horizonte_dual(metricas_override=None):
     return resultados
 
 
-def main():
-    """Función principal - Genera predicciones para todas las métricas estratégicas"""
+def main(categorias_filtro=None):
+    """Función principal - Genera predicciones para todas las métricas estratégicas
+
+    categorias_filtro: si se pasa (ej. ['EMBALSES_PCT']), procesa SOLO esas
+    categorías de ORDEN_PROCESAMIENTO y omite los bloques RF/LGBM posteriores
+    al loop — permite regenerar una fuente puntual sin reentrenar todo el
+    pipeline. None (default) preserva el comportamiento anterior sin cambios.
+    """
     print("\n" + "="*70)
     print("🇨🇴 SISTEMA DE PREDICCIONES ESTRATÉGICAS - MINISTERIO DE ENERGÍA")
     print("   Viceministro de Energía - República de Colombia")
@@ -6930,8 +7140,11 @@ def main():
     
     # FASE 3: Procesar en orden (regresores disponibles antes de métricas que los usan)
     for categoria in ORDEN_PROCESAMIENTO:
+        if categorias_filtro and categoria not in categorias_filtro:
+            continue
+
         config = METRICAS_CONFIG[categoria]
-        
+
         # Saltar generación si ya está implementado
         if config.get('ya_implementado'):
             print(f"\n{'='*70}")
@@ -7089,98 +7302,102 @@ def main():
                 'error': str(e)
             })
     
-    # ── FASE 11: LightGBM directo para APORTES_HIDRICOS ──
-    # Se ejecuta DESPUÉS de las demás métricas (regresores ya generados).
-    print(f"\n{'='*70}")
-    print("🌿 FASE 11: LightGBM directo para APORTES_HIDRICOS")
-    print("="*70)
-    try:
-        ok_lgbm = main_lgbm_aportes()
-        if ok_lgbm:
-            total_predicciones += HORIZONTE_DIAS
-            resultados.append({
-                'categoria': 'APORTES_HIDRICOS',
-                'predicciones': HORIZONTE_DIAS,
-                'mape': None,  # Ya reportado en main_lgbm_aportes
-                'status': 'OK_LGBM'
-            })
-    except Exception as e:
-        print(f"  ❌ Error en LightGBM APORTES_HIDRICOS: {e}")
-        resultados.append({'categoria': 'APORTES_HIDRICOS', 'status': 'ERROR', 'error': str(e)})
+    # Los bloques RF/LGBM posteriores solo corren en modo producción
+    # completo (sin --fuente) — para reentrenarlos puntualmente ya existen
+    # flags dedicados (--rf_precio, --lgbm_aportes, etc.)
+    if categorias_filtro is None:
+        # ── FASE 11: LightGBM directo para APORTES_HIDRICOS ──
+        # Se ejecuta DESPUÉS de las demás métricas (regresores ya generados).
+        print(f"\n{'='*70}")
+        print("🌿 FASE 11: LightGBM directo para APORTES_HIDRICOS")
+        print("="*70)
+        try:
+            ok_lgbm = main_lgbm_aportes()
+            if ok_lgbm:
+                total_predicciones += HORIZONTE_DIAS
+                resultados.append({
+                    'categoria': 'APORTES_HIDRICOS',
+                    'predicciones': HORIZONTE_DIAS,
+                    'mape': None,  # Ya reportado en main_lgbm_aportes
+                    'status': 'OK_LGBM'
+                })
+        except Exception as e:
+            print(f"  ❌ Error en LightGBM APORTES_HIDRICOS: {e}")
+            resultados.append({'categoria': 'APORTES_HIDRICOS', 'status': 'ERROR', 'error': str(e)})
 
-    # ── FASE 12: LightGBM directo para Térmica ──
-    # Se ejecuta DESPUÉS de las demás métricas.
-    print(f"\n{'='*70}")
-    print("🔥 FASE 12: LightGBM directo para Térmica")
-    print("="*70)
-    try:
-        ok_lgbm_t = main_lgbm_termica()
-        if ok_lgbm_t:
-            total_predicciones += HORIZONTE_DIAS
-            resultados.append({
-                'categoria': 'Térmica',
-                'predicciones': HORIZONTE_DIAS,
-                'mape': None,
-                'status': 'OK_LGBM'
-            })
-    except Exception as e:
-        print(f"  ❌ Error en LightGBM Térmica: {e}")
-        resultados.append({'categoria': 'Térmica', 'status': 'ERROR', 'error': str(e)})
+        # ── FASE 12: LightGBM directo para Térmica ──
+        # Se ejecuta DESPUÉS de las demás métricas.
+        print(f"\n{'='*70}")
+        print("🔥 FASE 12: LightGBM directo para Térmica")
+        print("="*70)
+        try:
+            ok_lgbm_t = main_lgbm_termica()
+            if ok_lgbm_t:
+                total_predicciones += HORIZONTE_DIAS
+                resultados.append({
+                    'categoria': 'Térmica',
+                    'predicciones': HORIZONTE_DIAS,
+                    'mape': None,
+                    'status': 'OK_LGBM'
+                })
+        except Exception as e:
+            print(f"  ❌ Error en LightGBM Térmica: {e}")
+            resultados.append({'categoria': 'Térmica', 'status': 'ERROR', 'error': str(e)})
 
-    # ── FASE 13: LightGBM directo para Solar ──
-    print(f"\n{'='*70}")
-    print("☀️ FASE 13: LightGBM directo para Solar")
-    print("="*70)
-    try:
-        ok_lgbm_s = main_lgbm_solar()
-        if ok_lgbm_s:
-            total_predicciones += HORIZONTE_DIAS
-            resultados.append({
-                'categoria': 'Solar',
-                'predicciones': HORIZONTE_DIAS,
-                'mape': None,
-                'status': 'OK_LGBM'
-            })
-    except Exception as e:
-        print(f"  ❌ Error en LightGBM Solar: {e}")
-        resultados.append({'categoria': 'Solar', 'status': 'ERROR', 'error': str(e)})
+        # ── FASE 13: LightGBM directo para Solar ──
+        print(f"\n{'='*70}")
+        print("☀️ FASE 13: LightGBM directo para Solar")
+        print("="*70)
+        try:
+            ok_lgbm_s = main_lgbm_solar()
+            if ok_lgbm_s:
+                total_predicciones += HORIZONTE_DIAS
+                resultados.append({
+                    'categoria': 'Solar',
+                    'predicciones': HORIZONTE_DIAS,
+                    'mape': None,
+                    'status': 'OK_LGBM'
+                })
+        except Exception as e:
+            print(f"  ❌ Error en LightGBM Solar: {e}")
+            resultados.append({'categoria': 'Solar', 'status': 'ERROR', 'error': str(e)})
 
-    # ── FASE 13: LightGBM directo para Eólica ──
-    print(f"\n{'='*70}")
-    print("💨 FASE 13: LightGBM directo para Eólica")
-    print("="*70)
-    try:
-        ok_lgbm_e = main_lgbm_eolica()
-        if ok_lgbm_e:
-            total_predicciones += HORIZONTE_DIAS
-            resultados.append({
-                'categoria': 'Eólica',
-                'predicciones': HORIZONTE_DIAS,
-                'mape': None,
-                'status': 'OK_LGBM'
-            })
-    except Exception as e:
-        print(f"  ❌ Error en LightGBM Eólica: {e}")
-        resultados.append({'categoria': 'Eólica', 'status': 'ERROR', 'error': str(e)})
+        # ── FASE 13: LightGBM directo para Eólica ──
+        print(f"\n{'='*70}")
+        print("💨 FASE 13: LightGBM directo para Eólica")
+        print("="*70)
+        try:
+            ok_lgbm_e = main_lgbm_eolica()
+            if ok_lgbm_e:
+                total_predicciones += HORIZONTE_DIAS
+                resultados.append({
+                    'categoria': 'Eólica',
+                    'predicciones': HORIZONTE_DIAS,
+                    'mape': None,
+                    'status': 'OK_LGBM'
+                })
+        except Exception as e:
+            print(f"  ❌ Error en LightGBM Eólica: {e}")
+            resultados.append({'categoria': 'Eólica', 'status': 'ERROR', 'error': str(e)})
 
-    # ── FASE 10: RandomForest para PRECIO_BOLSA ──
-    # Se ejecuta DESPUÉS de todas las demás métricas (regresores ya generados).
-    print(f"\n{'='*70}")
-    print("🌲 FASE 10: RandomForest para PRECIO_BOLSA")
-    print("="*70)
-    try:
-        ok_rf = main_randomforest_precio()
-        if ok_rf:
-            total_predicciones += HORIZONTE_DIAS
-            resultados.append({
-                'categoria': 'PRECIO_BOLSA',
-                'predicciones': HORIZONTE_DIAS,
-                'mape': None,  # Ya reportado en main_randomforest_precio
-                'status': 'OK_RF'
-            })
-    except Exception as e:
-        print(f"  ❌ Error en RandomForest PRECIO_BOLSA: {e}")
-        resultados.append({'categoria': 'PRECIO_BOLSA', 'status': 'ERROR', 'error': str(e)})
+        # ── FASE 10: RandomForest para PRECIO_BOLSA ──
+        # Se ejecuta DESPUÉS de todas las demás métricas (regresores ya generados).
+        print(f"\n{'='*70}")
+        print("🌲 FASE 10: RandomForest para PRECIO_BOLSA")
+        print("="*70)
+        try:
+            ok_rf = main_randomforest_precio()
+            if ok_rf:
+                total_predicciones += HORIZONTE_DIAS
+                resultados.append({
+                    'categoria': 'PRECIO_BOLSA',
+                    'predicciones': HORIZONTE_DIAS,
+                    'mape': None,  # Ya reportado en main_randomforest_precio
+                    'status': 'OK_RF'
+                })
+        except Exception as e:
+            print(f"  ❌ Error en RandomForest PRECIO_BOLSA: {e}")
+            resultados.append({'categoria': 'PRECIO_BOLSA', 'status': 'ERROR', 'error': str(e)})
 
     # Reporte final
     print("\n" + "="*70)
@@ -8170,6 +8387,14 @@ Ejemplos:
              'Solo aplica a métricas con prophet_cv configurado.',
     )
     parser.add_argument(
+        '--fuente', nargs='+', default=None, metavar='CATEGORIA',
+        help='Ejecutar el modo producción estándar solo para categoría(s) de '
+             'ORDEN_PROCESAMIENTO (ej. --fuente EMBALSES_PCT), en vez de '
+             'reentrenar las ~10 métricas del pipeline completo. Omite los '
+             'bloques RF/LGBM posteriores al loop (tienen sus propios flags '
+             'dedicados). Sin este flag: comportamiento actual sin cambios.',
+    )
+    parser.add_argument(
         '--backtest', type=int, default=None,
         metavar='YYYY',
         help='Backtesting out-of-sample: entrena hasta YYYY-12-31 y evalúa en período '
@@ -8306,5 +8531,6 @@ Ejemplos:
         metricas = dual_args if dual_args else None
         main_horizonte_dual(metricas_override=metricas or None)
     else:
-        # Modo producción estándar (ensemble + RF PRECIO_BOLSA)
-        main()
+        # Modo producción estándar (ensemble + RF PRECIO_BOLSA), o solo
+        # las categorías pasadas en --fuente si se especificó
+        main(categorias_filtro=args.fuente)

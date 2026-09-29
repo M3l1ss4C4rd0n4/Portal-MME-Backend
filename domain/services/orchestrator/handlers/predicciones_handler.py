@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
 from core.umbrales_oficiales import clasificar_indice_ne
+from core.utils.prediction_bounds import get_physical_bounds, clamp_intervalo_prediccion
 
 logger = get_logger(__name__)
 
@@ -61,6 +62,19 @@ class PrediccionesHandlerMixin:
             ficha["error"] = f"Sin predicción confiable: {'; '.join(razon)}."
             ficha["puntos_disponibles"] = puntos_disponibles
             return ficha
+
+        # Límites físicos — métricas en % (ej. EMBALSES_PCT) no pueden salir
+        # de [0,100]; el modelo de origen podía entregar un IC sin techo.
+        if unidad == "%":
+            df_pred = df_pred.copy()
+            df_pred['valor_gwh_predicho'], df_pred['intervalo_inferior'], df_pred['intervalo_superior'] = (
+                clamp_intervalo_prediccion(
+                    df_pred['valor_gwh_predicho'].values,
+                    df_pred['intervalo_inferior'].values,
+                    df_pred['intervalo_superior'].values,
+                    piso=0.0, techo=100.0,
+                )
+            )
 
         # ── FASE 7B: Verificar confianza real del modelo ──
         CONFIANZA_MINIMA_PRED = 0.60
@@ -501,6 +515,20 @@ class PrediccionesHandlerMixin:
                 end_date=fecha_fin.isoformat(),
                 model_name=modelo_forzado,
             )
+
+            # Límites físicos — alimenta el informe ejecutivo diario/Telegram
+            # (tasks/anomaly_tasks.py), que promedia estos intervalos crudos.
+            piso, techo = get_physical_bounds(fuente_normalizada)
+            if not df_predicciones.empty and (piso is not None or techo is not None):
+                df_predicciones = df_predicciones.copy()
+                (df_predicciones['valor_gwh_predicho'],
+                 df_predicciones['intervalo_inferior'],
+                 df_predicciones['intervalo_superior']) = clamp_intervalo_prediccion(
+                    df_predicciones['valor_gwh_predicho'].values,
+                    df_predicciones['intervalo_inferior'].values,
+                    df_predicciones['intervalo_superior'].values,
+                    piso=piso, techo=techo,
+                )
 
             if df_predicciones.empty:
                 data['fuente'] = fuente_normalizada
