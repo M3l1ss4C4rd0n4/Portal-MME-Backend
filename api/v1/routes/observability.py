@@ -4,10 +4,11 @@ Observability Routes
 Endpoints para monitoreo y observabilidad del sistema.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any, Optional
 import asyncio
 
+from api.dependencies import get_api_key
 from infrastructure.observability import (
     metrics_collector,
     health_checker,
@@ -25,7 +26,16 @@ from infrastructure.observability.alerts.alert_manager import (
     LogNotificationChannel
 )
 
-router = APIRouter(prefix="/observability", tags=["observability"])
+# Fase 45 (auditoría de seguridad): confirmado que este router NO está
+# montado en ningún lado hoy (api/v1/routes/__init__.py, api/main.py) — sin
+# esto, quedaría sin autenticación desde el día uno si algún día se monta
+# por accidente. dependencies a nivel de router protege TODOS los endpoints
+# de una sola vez, sin tocar cada función.
+router = APIRouter(
+    prefix="/observability",
+    tags=["observability"],
+    dependencies=[Depends(get_api_key)],
+)
 
 
 @router.get("/metrics")

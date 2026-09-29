@@ -443,7 +443,7 @@ async def get_predictions_dashboard(
                     {
                         "fecha": str(row["fecha"]),
                         "valor": round(float(row["valor"]), 2),
-                        "lower": round(float(row["lower"]), 2),
+                        "lower": max(round(float(row["lower"]), 2), 0.0),
                         "upper": min(round(float(row["upper"]), 2), 100.0),
                         "oni": round(float(row["oni"]), 3) if pd.notna(row.get("oni", float("nan"))) else None,
                         "pdo": round(float(row["pdo"]), 3) if pd.notna(row.get("pdo", float("nan"))) else None,
@@ -938,7 +938,9 @@ async def cache_stats(
     summary="Limpiar cache de predicciones",
     description="Elimina todas las keys pred:* de Redis. Útil después de re-entrenamiento."
 )
+@limiter.limit("10/minute")
 async def cache_flush(
+    request: Request,
     api_key: str = Depends(get_api_key)
 ) -> dict:
     """Flush all prediction cache keys."""
@@ -968,7 +970,9 @@ async def cache_flush(
         "Proceso síncrono — puede tardar 3-8 minutos."
     ),
 )
+@limiter.limit("5/hour")
 async def generate_long_term(
+    request: Request,
     horizonte_dias: int = Query(default=90, ge=30, le=365, description="Días a predecir (30–365)"),
     fuentes: Optional[List[str]] = Query(default=None, description="Fuentes a generar (None = todas)"),
     api_key: str = Depends(get_api_key),

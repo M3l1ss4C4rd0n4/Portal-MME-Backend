@@ -14,14 +14,20 @@ import os
 import tempfile
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from api.dependencies import get_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+# Fase 45 (auditoría de seguridad): ya protegido por X-API-Key y por el
+# allowlist de nginx (solo 127.0.0.1/::1, ver docstring del módulo) — el
+# rate limit es una capa adicional de defensa en profundidad, no la única.
+limiter = Limiter(key_func=get_remote_address)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -87,7 +93,9 @@ async def upsert_telegram_user(
     tags=["🔒 Internal"],
     response_class=Response,
 )
+@limiter.limit("10/minute")
 async def generate_pdf_report(
+    request: Request,
     body: PdfReportRequest,
     api_key: str = Depends(get_api_key),
 ) -> Response:

@@ -185,8 +185,11 @@ def _api_key() -> str:
         from core.config import settings
         return settings.API_KEY
     except Exception:
+        # Fase 45: sin fallback hardcodeado — si settings no está disponible,
+        # se falla cerrado (la llamada al orquestador dará 403) en vez de
+        # autenticar con un valor público conocido.
         import os
-        return os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
+        return os.getenv('API_KEY', '')
 
 
 def obtener_resumen_subsidios():

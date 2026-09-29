@@ -90,7 +90,10 @@ class AgentIA:
         """Llama al orquestador local para obtener datos estructurados en tiempo real."""
         try:
             import requests
-            api_key = os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
+            # Fase 45: sin fallback hardcodeado — si settings.API_KEY no está
+            # configurada, la llamada falla con 403 en vez de autenticar con
+            # un valor público conocido.
+            api_key = settings.API_KEY
             response = requests.post(
                 'http://localhost:8000/v1/chatbot/orchestrator',
                 json={

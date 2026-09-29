@@ -18,9 +18,11 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from api.dependencies import get_api_key, get_orchestrator_service
 from core.config import settings
@@ -29,6 +31,9 @@ from domain.services.orchestrator_service import ChatbotOrchestratorService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+# Fase 45 (auditoría de seguridad): /audio/consulta dispara una llamada real
+# al Asistente IA (Gemini) + síntesis TTS — costoso, sin límite antes.
+limiter = Limiter(key_func=get_remote_address)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -331,8 +336,10 @@ async def get_informe_diario_audio(
     summary="Consulta libre en audio",
     description="Recibe texto de una pregunta y devuelve la respuesta como MP3 narrado."
 )
+@limiter.limit("10/minute")
 async def post_consulta_audio(
-    request: ConsultaRequest,
+    request: Request,
+    body: ConsultaRequest,
     _api_key: str = Depends(get_api_key),
 ):
     """
@@ -348,12 +355,12 @@ async def post_consulta_audio(
     de lo que se narra.
     """
     try:
-        logger.info(f"[ENERGIA-APP] Consulta audio: '{request.texto[:80]}'")
+        logger.info(f"[ENERGIA-APP] Consulta audio: '{body.texto[:80]}'")
 
         # 1. Preguntarle al Asistente IA (sin historial — cada consulta de
         # audio es una pregunta suelta, mismo patrón que ya usaba pregunta_libre).
         from domain.services.asistente_ia_service import responder_completo
-        texto_respuesta = await responder_completo(request.texto, historial=[])
+        texto_respuesta = await responder_completo(body.texto, historial=[])
         if not texto_respuesta:
             texto_respuesta = "Lo siento, hubo un problema al procesar tu consulta. Por favor intenta de nuevo."
 

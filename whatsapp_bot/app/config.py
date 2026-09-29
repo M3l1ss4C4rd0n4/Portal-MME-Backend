@@ -2,7 +2,7 @@
 Configuración centralizada del WhatsApp Bot
 """
 from pathlib import Path
-from typing import Literal
+from typing import List, Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -145,7 +145,30 @@ class Settings(BaseSettings):
         default="your-secret-key-for-sessions",
         description="Secret key"
     )
-    
+
+    # Fase 45 (auditoría de seguridad, 2026-09-10): antes CORSMiddleware
+    # usaba allow_origins=["*"] junto con allow_credentials=True — combinación
+    # que la mayoría de navegadores ya rechaza por spec, pero sigue siendo
+    # mala práctica (y no protege a clientes no-navegador). Mismo patrón que
+    # API_CORS_ORIGINS del backend principal (core/config.py).
+    CORS_ORIGINS_STR: str = Field(
+        default=(
+            "https://portaldireccionee.minenergia.gov.co,"
+            "https://portalviceministerioenergia.minenergia.gov.co,"
+            "https://portalenergetico.minenergia.gov.co"
+        ),
+        description="Orígenes CORS permitidos (separados por comas)",
+        alias="CORS_ORIGINS",
+    )
+
+    @property
+    def CORS_ORIGINS(self) -> List[str]:
+        """Lista de orígenes CORS permitidos."""
+        if self.CORS_ORIGINS_STR == "*":
+            return ["*"]
+        return [o.strip() for o in self.CORS_ORIGINS_STR.split(",") if o.strip()]
+
+
     # ═══════════════════════════════════════════════════════════
     # Rate Limiting
     # ═══════════════════════════════════════════════════════════

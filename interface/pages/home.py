@@ -718,8 +718,11 @@ def cargar_noticias_kpi(_):
             from core.config import settings as _s
             _api_key = _s.API_KEY
         except Exception:
+            # Fase 45: sin fallback hardcodeado — si settings no está
+            # disponible, se falla cerrado (la llamada al orquestador dará
+            # 403) en vez de autenticar con un valor público conocido.
             import os
-            _api_key = os.getenv('API_KEY', 'mme-portal-energetico-2026-secret-key')
+            _api_key = os.getenv('API_KEY', '')
         resp = req.post(
             'http://localhost:8000/v1/chatbot/orchestrator',
             json={'sessionId': 'home_noticias_kpi', 'intent': 'noticias_sector', 'parameters': {}},

@@ -15,11 +15,16 @@ from typing import Optional
 from datetime import datetime
 import logging
 import httpx
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from api.dependencies import get_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+# Fase 45 (auditoría de seguridad): este endpoint hace broadcast a TODOS los
+# usuarios del bot de WhatsApp — sin límite, era abusable para spam.
+limiter = Limiter(key_func=get_remote_address)
 
 # Configuración del WhatsApp Bot de Oscar
 WHATSAPP_BOT_CONFIG = {
@@ -76,6 +81,7 @@ class AlertNotification(BaseModel):
     """,
     tags=["🤖 Chatbot"]
 )
+@limiter.limit("10/minute")
 async def send_alert_to_whatsapp(
     request: Request,
     api_key: str = Depends(get_api_key),

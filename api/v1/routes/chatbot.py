@@ -405,7 +405,13 @@ TAMANO_MAXIMO_ARCHIVO_BYTES = 10 * 1024 * 1024  # 10MB — Gemini soporta inline
 
 class ArchivoAdjunto(BaseModel):
     mime_type: str
-    data_base64: str = Field(..., min_length=1)
+    # Fase 45 (auditoría de seguridad): antes sin max_length — el chequeo de
+    # TAMANO_MAXIMO_ARCHIVO_BYTES corría DESPUÉS de decodificar base64, así
+    # que un payload sobredimensionado ya se había materializado en memoria
+    # antes de rechazarse. base64 expande ~4/3 el tamaño crudo: 10MB ->
+    # ~13.98M caracteres; margen a 15M para no rechazar un payload válido
+    # por el redondeo de la codificación.
+    data_base64: str = Field(..., min_length=1, max_length=15_000_000)
 
 
 class AsistenteRequest(BaseModel):
