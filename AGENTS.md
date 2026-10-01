@@ -45,14 +45,17 @@ Cualquier cambio que afecte ambos (API contracts, DB schema, deploy coordinado) 
 | Frontend | `/home/admonctrlxm/portal-direccion-mme/` | Next.js 15 + React 19 | `portal-direccion-mme/AGENTS.md` |
 | WhatsApp Bot | `/home/admonctrlxm/server/whatsapp_bot/` | FastAPI (puerto 8001) | Este archivo |
 
-## Servicios Systemd (4 servicios activos)
+## Servicios Systemd (9 servicios activos, verificado 2026-09-30)
 
 | Servicio | Propósito | Puertos | Restricción |
 |---|---|---|---|
-| `portal-api.service` | API principal FastAPI | 8000 | Tocar solo con backup + `systemctl status` pre/post |
-| `dashboard-mme.service` | Dash legacy | — | Mismo que arriba |
-| `whatsapp-bot.service` | Bot WhatsApp | 8001 | **NO tocar venv anidado** — ver Decisiones Congeladas abajo |
-| `telegram-polling.service` | Bot Telegram | — | Mismo que arriba |
+| `portal-api.service` | API principal FastAPI | 8000 (loopback) | Tocar solo con backup + `systemctl status` pre/post |
+| `dashboard-mme.service` | Dash legacy | 8050 (loopback) | Mismo que arriba |
+| `whatsapp-bot.service` | Bot WhatsApp — instalado, sin tráfico real (proveedor Twilio no activado) | 8001 (loopback) | **NO tocar venv anidado** — ver Decisiones Congeladas abajo |
+| `telegram-polling.service` | Bot Telegram — único canal de mensajería realmente activo hoy | — | Mismo que arriba |
+| `celery-beat.service` | Scheduler de tareas periódicas (ver RUNBOOK §2) | — | Mismo que arriba |
+| `celery-worker.service`, `celery-worker@1.service`, `celery-worker@2.service` | 3 workers de Celery | — | Mismo que arriba |
+| `celery-flower.service` | Monitoreo web de Celery | 5555 (loopback) | Mismo que arriba |
 
 ## Roadmap y Decisiones Congeladas
 
@@ -169,9 +172,20 @@ Ver SKILL_PACK_V4.1.md Principio Fundamental para tabla completa.
 - ~~7 tests fallando~~ — corregido 2026-08-26: eran 3 tests desactualizados en `test_ai_service.py`
   que asumían el viejo diseño de `AgentIA` (un solo `client`/`provider` fijado en `__init__`); se
   actualizaron para reflejar el refactor del 2026-08-22 (`disponible` en vez de `client`). Suite
-  completa en verde: `pytest tests/ -q --tb=no` → 373 passed, 0 failed.
+  completa en verde: `pytest tests/ -q --tb=no` → 438 passed, 10 deselected, 0 failed (2026-09-30).
 - Servicios marcados "deprecated" que tienen imports activos: verificar con grep antes de eliminar
-- 65 archivos con `print()` en lugar de logger
+  (confirmado 2026-09-30: `geo_service.py`, `orchestrator_service.py` y `predictions_service.py`
+  siguen teniendo importadores reales — ver README.md § Servicios deprecated)
+- 66 archivos con `print()` en lugar de logger
+- **Balance oferta-demanda** (módulo nuevo, 29-sep): 5 endpoints en `api/v1/routes/
+  balance_oferta_demanda.py`, migraciones 043/044. La tabla de proyectos UPME es elaboración
+  propia, no dato oficial de XM — el tablero lo declara explícitamente. El agregado diario
+  (migración 044) se refresca por cron desde el 30-sep (`scripts/refrescar_balance_oferta_
+  demanda_diario.py`, ver `docs/CRON_JOB_ETL_POSTGRESQL.md`).
+- **Seguridad** (auditoría 10-sep, aplicada 29/30-sep): se eliminó un valor por defecto hardcodeado
+  en `API_KEY`, se agregó rate limiting a los endpoints costosos, se cerró CORS del bot de
+  WhatsApp, y se ató tanto la API como el frontend Next.js a loopback (ver RUNBOOK_PRODUCCION.md
+  §11). La llave de producción se rotó el 30-sep con el mecanismo de `API_KEYS_WHITELIST`.
 
 ---
 

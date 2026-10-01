@@ -1,6 +1,6 @@
 # 🎓 Guía de Onboarding - Portal Energético MME
 
-**Fecha:** Marzo 2026  
+**Fecha:** Marzo 2026 (enlaces corregidos 2026-09-30)
 **Versión:** 1.0  
 **Tiempo estimado:** 2-3 días
 
@@ -25,8 +25,9 @@ Bienvenido al equipo del Portal Energético MME. Esta guía te ayudará a config
 ### 1. Clonar Repositorio
 
 ```bash
-git clone https://github.com/MelissaCardona2003/Dashboard_Multipage_MME.git
-cd Dashboard_Multipage_MME
+git clone git@github.com:M3l1ss4C4rd0n4/Portal-MME-Backend.git
+cd Portal-MME-Backend
+# El frontend (Next.js) es un repo aparte: Portal-MME-Frontend
 ```
 
 ### 2. Configurar Entorno Virtual
@@ -144,11 +145,10 @@ python3 -m pytest tests/ -v --ignore=tests/legacy
 
 ### Lee en este orden:
 
-1. [../README.md](../README.md) - Visión general
-2. [ARQUITECTURA_E2E.md](ARQUITECTURA_E2E.md) - Arquitectura completa
-3. [GUIA_USO_API.md](GUIA_USO_API.md) - Cómo usar la API
-4. [DOCUMENTACION_TECNICA_ORQUESTADOR.md](DOCUMENTACION_TECNICA_ORQUESTADOR.md) - Orquestador
-5. [MAPEO_COMPLETO_METRICAS.md](MAPEO_COMPLETO_METRICAS.md) - Métricas XM
+1. [../README.md](../README.md) - Visión general y arquitectura completa (§ Arquitectura, § Estructura del Proyecto)
+2. [GUIA_USO_API.md](GUIA_USO_API.md) - Cómo usar la API (115 endpoints reales)
+3. [ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md](ENDPOINT_ORCHESTRATOR_PARA_OSCAR.md) - Orquestador para integraciones externas
+4. [../RUNBOOK_PRODUCCION.md](../RUNBOOK_PRODUCCION.md) - Operación real en producción (servicios, cron, troubleshooting)
 
 ---
 
@@ -270,8 +270,8 @@ pre-commit install
 ## 📚 Recursos Adicionales
 
 - [GUIA_TROUBLESHOOTING.md](GUIA_TROUBLESHOOTING.md) - Problemas comunes
-- [CRON_JOB_ETL_POSTGRESQL.md](CRON_JOB_ETL_POSTGRESQL.md) - ETL automatizado
-- [INVENTARIO_SERVIDOR.md](INVENTARIO_SERVIDOR.md) - Configuración del servidor
+- [CRON_JOB_ETL_POSTGRESQL.md](CRON_JOB_ETL_POSTGRESQL.md) - ETL automatizado (33 entradas de cron)
+- [../RUNBOOK_PRODUCCION.md](../RUNBOOK_PRODUCCION.md) - Inventario real de servicios, puertos y logs del servidor
 
 ---
 

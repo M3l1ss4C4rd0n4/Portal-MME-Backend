@@ -96,9 +96,6 @@ ALLOWED_TABLES: Set[str] = {
     'presupuesto.resumen',
     'presupuesto.compromisos_mensual',
 
-    # Tablas de contratos OR (schema: contratos_or)
-    'contratos_or.seguimiento',
-
     # Tablas de configuración
     'system_config',
     'app_settings',

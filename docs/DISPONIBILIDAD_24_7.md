@@ -135,7 +135,9 @@ Esto significa:
 
 ### Ver estado de la API
 ```bash
-ps aux | grep "gunicorn api.main" | grep -v grep
+# Corregido 2026-09-30: la API corre con uvicorn plano vía systemd, no con gunicorn
+systemctl status portal-api.service
+ps aux | grep "uvicorn api.main" | grep -v grep
 ```
 
 ### Ver logs de monitoreo

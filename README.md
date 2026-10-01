@@ -33,7 +33,7 @@ API REST + Dashboard Analítico + ETL Pipeline
 
 Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 
-- **API REST** (FastAPI): **110 endpoints** en 30 archivos de rutas (`api/v1/routes/`) para consumo del frontend Next.js y de la app móvil EnergIA
+- **API REST** (FastAPI): **115 endpoints** en 32 archivos de rutas (`api/v1/routes/`) para consumo del frontend Next.js y de la app móvil EnergIA, incluyendo el tablero de balance oferta-demanda del SIN (5 endpoints, 29-sep)
 - **Dashboard Analítico** (Dash): tableros interactivos legacy
 - **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive/SharePoint, despacho diario XM en PDF, hidrocarburos (Excel + scraping de precios WTI/Brent), y normativa CREG/UPME/MME (scraping de gestores normativos oficiales)
 - **Sistema de Alertas**: Notificaciones Telegram/email basadas en anomalías, con marco regulatorio explícito (Índice NE/HSIN/PBP citando resoluciones CREG) y vigilancia automática de cambios normativos
@@ -42,14 +42,22 @@ Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 - **Sistema de predicciones con validación rigurosa**: ensemble Prophet+SARIMAX con backtest out-of-sample real (no solo holdout de entrenamiento) — ver `docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md`
 - **CU (Costo Unitario)**: cálculo mayorista y minorista (tarifa usuario final por operador de red), ponderado por demanda real — ver `docs/METODOLOGIA_CU.md`
 
-### Estadísticas (verificadas 2026-09-01)
+### Estadísticas (verificadas 2026-09-30)
 
-- **459 archivos Python** (excluyendo entornos virtuales)
-- **42 servicios de dominio** (`domain/services/*.py`, nivel raíz — sin contar subcarpetas `orchestrator/`, `report_chapters/`)
-- **110 endpoints REST** en 30 archivos de rutas
-- **40 migraciones SQL** (`sql/migrations/`)
-- **373 tests pasando, 0 fallando** (10 deseleccionados; `pytest tests/ -q`)
-- **13 interfaces de dominio** (`domain/interfaces/`) con inyección de dependencias activa en 23 archivos consumidores
+- **464 archivos Python** (excluyendo entornos virtuales)
+- **43 servicios de dominio** (`domain/services/*.py`, nivel raíz — sin contar subcarpetas `orchestrator/`, `report_chapters/`)
+- **115 endpoints REST** en 32 archivos de rutas (incluye el tablero de balance oferta-demanda, agregado el 29-sep)
+- **44 migraciones SQL** (`sql/migrations/`)
+- **438 tests pasando, 0 fallando** (10 deseleccionados; `pytest tests/ -q`)
+- **17 interfaces de dominio** (`domain/interfaces/`) con inyección de dependencias activa
+
+### Seguridad (revisión del 10-sep, controles aplicados el 29-sep)
+
+Auditoría de seguridad del servidor y de los dos repositorios: se eliminó una clave de API con
+valor por defecto en el código, se añadieron límites de uso por minuto a los endpoints más costosos
+(generación de PDF, audio del Asistente IA, difusión de alertas), y se cerró la política de CORS
+del bot de WhatsApp a una lista explícita de dominios del Ministerio. Ver `api/dependencies.py` y
+el commit `291df26`.
 
 ---
 
@@ -69,7 +77,7 @@ Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 ├─────────────────────────────────────────────────────────────┤
 │  api/main.py (FastAPI)              app.py (Dash)          │
 │  ├── Puerto: 8000                   ├── Puerto: 8050       │
-│  ├── 52 endpoints REST              └── 17 tableros        │
+│  ├── 115 endpoints REST             └── 17 tableros        │
 │  └── Autenticación X-API-Key                                │
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -108,7 +116,7 @@ Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
           │         APPLICATION             │
           │         (Domain Layer)          │
           │  ┌─────────────────────────┐    │
-          │  │    30 Services          │    │
+          │  │    43 Services          │    │
           │  │  - cu_service            │    │
           │  │  - report_service        │    │
           │  │  - metrics_service       │    │
@@ -135,9 +143,9 @@ Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 
 ```
 server/
-├── api/                          (36 archivos)
+├── api/                          (52 archivos)
 │   ├── main.py                   → Entry point FastAPI
-│   ├── v1/routes/                → 52 endpoints REST
+│   ├── v1/routes/                → 115 endpoints REST
 │   │   ├── restrictions.py
 │   │   ├── distribution.py
 │   │   ├── system.py
@@ -147,7 +155,7 @@ server/
 │   │   └── ...
 │   └── dependencies.py           → Inyección FastAPI
 │
-├── core/                         (21 archivos)
+├── core/                         (24 archivos)
 │   ├── app_factory.py            → Factory Dash app
 │   ├── container.py              → DependencyContainer (DI)
 │   ├── config.py                 → Configuración centralizada
@@ -160,13 +168,15 @@ server/
 │   └── utils/
 │       └── date_utils.py         → Utilidades de fechas
 │
-├── domain/                       (53 archivos)
-│   ├── services/                 → 30 servicios
+├── domain/                       (81 archivos)
+│   ├── services/                 → 43 servicios (nivel raíz)
 │   ├── models/                   → Modelos Pydantic
 │   ├── schemas/                  → DTOs y validaciones
-│   └── interfaces/               → Interfaces abstractas
+│   ├── interfaces/               → 17 interfaces abstractas
+│   ├── orchestrator/             → Orquestador del Asistente IA (handlers)
+│   └── report_chapters/          → Capítulos del informe ejecutivo
 │
-├── infrastructure/               (41 archivos)
+├── infrastructure/               (69 archivos)
 │   ├── database/                 → Repositorios PostgreSQL
 │   ├── cache/                    → Redis cache manager
 │   ├── external/                 → Clientes APIs externas
@@ -176,21 +186,21 @@ server/
 │   ├── logging/                  → Sistema de logging
 │   └── observability/            → Métricas y health checks
 │
-├── interface/                    (17 archivos) [LEGACY]
-│   └── pages/                    → Páginas Dash
+├── interface/                    (46 archivos) [LEGACY]
+│   └── pages/                    → Páginas Dash (17 páginas registradas)
 │
-├── etl/                          (17 archivos)
+├── etl/                          (30 archivos)
 │   ├── etl_todas_metricas_xm.py  → Principal (cada 6h)
 │   ├── etl_xm_to_postgres.py     → Backfill manual
-│   ├── etl_nuevos_dashboards.py  → Datos dashboard
+│   ├── etl_nuevos_dashboards.py  → Datos dashboard (presupuesto, comunidades, subsidios)
 │   └── validaciones_rangos.py    → Validaciones
 │
 ├── tasks/                        → Celery tasks
 │   ├── anomaly_tasks.py
 │   └── etl_tasks.py
 │
-├── tests/                        (42 archivos)
-│   ├── unit/                     (35 archivos)
+├── tests/                        (57 archivos)
+│   ├── unit/                     (44 archivos)
 │   ├── integration/              (0 archivos) ⚠️
 │   └── e2e/                      (0 archivos) ⚠️
 │
@@ -208,10 +218,10 @@ server/
 │   ├── gunicorn_access.log
 │   └── celery/
 │
-├── docs/                         (24+ archivos MD)
+├── docs/                         (21 archivos MD)
 ├── backups/                      → Backups BD
 ├── experiments/                  → Experimentos ML
-├── scripts/                      (43 archivos)
+├── scripts/                      (47 archivos)
 └── app.py                        → Entry point Dash
 ```
 
@@ -247,21 +257,29 @@ server/
 | `orchestrator_service.py` | 4 | Orquestación | ⚠️ DEPRECATED |
 | `predictions_service.py` | 10 | Predicciones (stub) | ⚠️ DEPRECATED |
 
-> Tabla no exhaustiva (42 servicios en total en `domain/services/`, ver `graphify-out/GRAPH_REPORT.md` para el listado y grafo completo). Los "god nodes" más conectados del sistema (por número de aristas en el grafo, 2026-08-30): `MetricsService` (473), `GenerationService` (451), `HydrologyService` (425), `MetricsRepository` (419), `PostgreSQLConnectionManager` (414), `AgentIA` (388), `CommercialService` (378), `DistributionService` (375), `TransmissionService` (369), `LossesService` (354).
+> Tabla no exhaustiva (43 servicios en total en `domain/services/`; ver § "Notas de Arquitectura"
+> abajo para las cifras vigentes del grafo de código, regenerado el 2026-09-30).
 
-### Servicios Deprecated
+### Servicios deprecated — con shim de compatibilidad activo (NO eliminar sin migrar antes)
 
-Los siguientes servicios están marcados como deprecated y serán eliminados en V5:
+Estos tres archivos están marcados `⚠️ DEPRECATED` en su docstring porque la lógica real ya vive en
+otro módulo, pero **hoy siguen siendo importados por código en producción** — verificado el
+2026-09-30 con grep de importadores. Borrarlos sin antes migrar cada llamador rompería el portal:
 
-- `geo_service.py` → Funcionalidad no implementada
-- `orchestrator_service.py` → Vacío, sin uso
-- `predictions_service.py` → Consolidado en `predictions_service_extended.py`
+- `geo_service.py` → importado por `interface/pages/hidrologia/callbacks.py` y
+  `interface/pages/hidrologia/maps.py` (usa `REGIONES_COORDENADAS`).
+- `orchestrator_service.py` → re-exporta desde `domain/services/orchestrator/orchestrator_service.py`;
+  importado por `api/v1/routes/chatbot.py`, `api/v1/routes/energia_app.py`, `core/container.py`,
+  `scripts/auditoria_datos_orquestador.py` y 2 archivos de test.
+- `predictions_service.py` → re-exporta desde `predictions_service_extended.py`; importado por
+  `interface/pages/metricas_piloto.py`, `domain/services/executive_report_service.py`,
+  `domain/services/orchestrator/orchestrator_service.py` y su test unitario.
 
 ---
 
 ## API Endpoints
 
-**110 endpoints en total**, distribuidos en 30 archivos de rutas (`api/v1/routes/`). Grupos principales:
+**115 endpoints en total**, distribuidos en 32 archivos de rutas (`api/v1/routes/`). Grupos principales:
 
 | Grupo de rutas | Archivo | Descripción |
 |---|---|---|
@@ -274,11 +292,12 @@ Los siguientes servicios están marcados como deprecated y serán eliminados en 
 | Informes/reportes | `reports.py`, `informes_tableros.py` | Generación e histórico de informes ejecutivos/PDF |
 | Simulación | `simulation.py`, `riesgo.py` | Escenarios CREG, riesgo de atraso de contratos OR |
 | Dominios sectoriales | `comunidades.py`, `contratos_or.py`, `fenoge.py`, `subsidios.py`, `presupuesto.py`, `supervision_portal.py` | Comunidades energéticas, contratos OR, FENOGE, subsidios, presupuesto, supervisión |
+| **Balance oferta-demanda** (29-sep) | `balance_oferta_demanda.py` (5 endpoints) | Histórico oferta/demanda/margen de reserva del SIN, demanda no atendida por área, proyectos UPME con retraso, correlación MW retrasados vs. margen, simulador contrafactual |
 | App móvil / alertas | `energia_app.py`, `energia_dashboard.py`, `whatsapp_alerts.py` | Endpoints para la app EnergIA y alertas de WhatsApp |
 | Observabilidad | `observability.py`, `internal.py` | Health checks internos, métricas de sistema |
 | `/health` | — | Health check general (JSON con clave `services`, no `checks`) |
 
-Documentación completa: [`docs/GUIA_USO_API.md`](./docs/GUIA_USO_API.md) (nota: pendiente de actualización — ver sección de deuda documental abajo).
+Documentación completa: [`docs/GUIA_USO_API.md`](./docs/GUIA_USO_API.md) (reescrita 2026-09-30, cubre los 115 endpoints reales).
 
 ### Autenticación
 
@@ -464,14 +483,16 @@ sudo logrotate -f /etc/logrotate.d/server-mme
 - [Metodología de Costo Unitario](./docs/METODOLOGIA_CU.md) — incluye §9.14, ponderación por demanda real (2026-08)
 - [Predicciones de embalses — validación rigurosa](./docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md) (2026-08)
 - [Análisis Hidrológico y Semáforo de Riesgos](./docs/tecnicos/ANALISIS_HIDROLOGIA_SEMAFORO.md) — incluye §10, distinción Índice NE (CREG) vs. IDEAM/UNGRD (2026-08)
-- [Guía de Troubleshooting](./docs/GUIA_TROUBLESHOOTING.md)
+- [Guía de Troubleshooting](./docs/GUIA_TROUBLESHOOTING.md) (corregida 2026-09-30, ver nota abajo)
 - [Contenido del Informe Ejecutivo](./docs/INFORME_EJECUTIVO_CONTENIDO.md)
 - [Nota — fila de totales en Excel](./docs/tecnicos/NOTA_FILA_TOTALES_EXCEL.md)
+- [Uso de API](./docs/GUIA_USO_API.md) — reescrita 2026-09-30, cubre los 115 endpoints reales en 32 archivos
+- [Runbook de Producción](./RUNBOOK_PRODUCCION.md) — sincronizado 2026-09-30 (servicios systemd completos, sin contradicción entre secciones, balance oferta-demanda y seguridad agregados)
+- [Guía de Onboarding](./docs/GUIA_ONBOARDING.md) — enlaces corregidos 2026-09-30
 
 **Necesitan actualización** (ver auditoría completa en `docs/AUDITORIA_DOCUMENTACION_2026-09.md`):
-- [Guía de Onboarding](./docs/GUIA_ONBOARDING.md) — enlaces rotos a documentos inexistentes
-- [Uso de API](./docs/GUIA_USO_API.md) — documenta 25 endpoints, hay 110 reales
-- [Runbook de Producción](./RUNBOOK_PRODUCCION.md) — rutas de logs incorrectas, tabla de tareas Celery incompleta
+- Ninguno pendiente de los señalados por esa auditoría al 2026-09-30 — ver "Deuda documental" abajo
+  para el detalle de lo que se corrigió en cada ronda.
 
 ---
 
@@ -483,33 +504,33 @@ Una auditoría completa de ~25 documentos `.md` del proyecto (contra el código 
 - **Hallazgo operativo crítico**: `RUNBOOK_PRODUCCION.md` documentaba rutas de logs de la API (`logs/api-error.log`) que no existen — la ruta real es `/var/log/portal-api.log` (systemd `StandardOutput`/`StandardError`). `AGENTS.md` documentaba un pool de conexiones async (`asyncpg`/`get_pool()`) que tampoco existe — la conexión real es `psycopg2.ThreadedConnectionPool` vía `infrastructure/database/connection.py`.
 - **Hallazgo operativo crítico #2**: `whatsapp_bot/GUIA_TELEGRAM_BOT_PASO_A_PASO.md` instruye configurar un webhook de Telegram — si se sigue, **rompería el bot real en producción**, que usa `long polling` (`telegram_polling.py`/`telegram-polling.service`) y no puede coexistir con un webhook activo.
 - **Patrón sistémico**: 5+ enlaces rotos repetidos en varios documentos (`ARQUITECTURA_E2E.md`, `INDICE.md`, `DOCUMENTACION_TECNICA_ORQUESTADOR.md`, `MAPEO_COMPLETO_METRICAS.md`, `INVENTARIO_SERVIDOR.md` — ninguno existe).
-- **`api/README.md`** documenta ~2 de los 30 archivos de rutas reales — no menciona Ontología, Asistente IA, Voz ni CU en absoluto.
+- **`api/README.md`** documentaba ~2 de los 30 archivos de rutas reales y no mencionaba Ontología, Asistente IA, Voz ni CU — corregido el mismo día (ver nota al pie del propio archivo); hoy cubre los 115 endpoints en 32 archivos, incluido balance oferta-demanda (29-sep).
 
-### Deuda Técnica de Código (última verificación 2026-09-01)
+### Deuda Técnica de Código (última verificación 2026-09-30)
 
-- **Archivos con print():** 72 (sin cambio material)
+- **Archivos con print():** 66 (verificado 2026-09-30)
 - **Archivos con except Exception:** por verificar de nuevo
 - **Tests de integración:** 0 (`tests/integration/` vacío)
-- **Tests unitarios:** 373 pasando, 0 fallando
+- **Tests unitarios:** 438 pasando, 0 fallando (verificado 2026-09-30)
 
 ---
 
-## Notas de Arquitectura (Validadas por Grafo — 2026-08-30)
+## Notas de Arquitectura (Validadas por Grafo — regenerado 2026-09-30)
 
-> Estas notas complementan la documentación anterior con datos validados mediante Graphify (análisis estático del grafo de código). Actualizado 2026-09-01 con la corrida más reciente disponible.
+> Estas notas complementan la documentación anterior con datos validados mediante Graphify (análisis estático del grafo de código). Grafo regenerado el 2026-09-30 (`graphify update .`), ya incluye el trabajo de septiembre (balance oferta-demanda, seguridad, etc.) y los archivos eliminados en la limpieza de la misma fecha.
 
 ### Métricas reales del codebase
 
 | Métrica | Valor |
 |---|---|
-| Archivos analizados | 505 (~1.070.909 palabras) |
-| Nodos en grafo | 8.545 |
-| Aristas (conexiones) | 24.964 |
-| Comunidades detectadas | 953 |
+| Archivos analizados | 517 (~1.458.091 palabras) |
+| Nodos en grafo | 8.984 |
+| Aristas (conexiones) | 25.622 |
+| Comunidades detectadas | 1.155 |
 | Aristas EXTRACTED | 36% |
 | Aristas INFERRED | 64% (confianza promedio 0.53) |
 
-### God Nodes validados (por aristas totales, 2026-08-30)
+### God Nodes (por aristas totales, análisis de 2026-08-30 — no recalculado nodo por nodo en la corrida del 30-sep; usar `graphify explain "<nombre>" --graph graphify-out/graph.json` para el valor vigente de un nodo puntual)
 
 | # | Nodo | Aristas |
 |---|---|---|

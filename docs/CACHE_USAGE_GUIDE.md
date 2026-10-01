@@ -195,38 +195,42 @@ def generar_reporte(fecha):
 
 ## 🔌 Endpoints de Administración
 
-### Estadísticas de Caché
+> **Corregido 2026-09-30:** los endpoints de abajo (`/api/cache/stats`, `/api/cache/clear` en el
+> puerto 8050) nunca existieron — no hay ningún `/api/cache/*` registrado en el Dash server.
+> Los endpoints reales de administración de caché viven en la **API FastAPI** (puerto 8000,
+> `api/v1/routes/predictions.py`), requieren `X-API-Key`, y solo cubren el caché de predicciones
+> (`pred:*`) — no el caché general de `core/cache_manager.py` descrito en el resto de esta guía,
+> que no tiene endpoint HTTP propio (se administra desde código, con los decoradores/context
+> manager de las secciones anteriores).
+
+### Estadísticas del caché de predicciones
 
 ```bash
-# Ver estadísticas
-curl http://localhost:8050/api/cache/stats
+curl -H "X-API-Key: <tu-api-key>" http://localhost:8000/api/v1/predictions/cache/stats
 
-# Respuesta:
+# Respuesta real:
 {
-  "used_memory_human": "1.2M",
-  "total_keys": 150,
-  "connected_clients": 5,
-  "uptime_in_days": 12,
-  "hit_rate": 0.85
+  "status": "online",
+  "redis_version": "7.x",
+  "memory_used_human": "1.2M",
+  "memory_peak_human": "1.5M",
+  "total_pred_keys": 150,
+  "individual_keys": 120,
+  "batch_keys": 30,
+  "keys": [{"key": "pred:...", "ttl_seconds": 3200}],
+  "ttl_prediction": 3600,
+  "ttl_batch": 1800
 }
 ```
 
-### Limpiar Caché
+### Limpiar el caché de predicciones
 
 ```bash
-# Limpiar todo
-curl -X POST http://localhost:8050/api/cache/clear
+# DELETE, no POST — y sin parámetro de patrón: borra TODAS las keys pred:* de una vez
+curl -X DELETE -H "X-API-Key: <tu-api-key>" http://localhost:8000/api/v1/predictions/cache/flush
 
-# Limpiar por patrón
-curl -X POST http://localhost:8050/api/cache/clear \
-  -H "Content-Type: application/json" \
-  -d '{"pattern": "generacion:*"}'
-
-# Respuesta:
-{
-  "message": "Invalidadas 42 claves",
-  "pattern": "generacion:*"
-}
+# Respuesta real:
+{"status": "flushed", "deleted": 150}
 ```
 
 ---

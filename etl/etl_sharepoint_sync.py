@@ -10,7 +10,7 @@ Archivos configurados:
   1. Matriz_General_Reparto   → Matriz_General_Reparto.xlsx → schema supervision (3 tablas)
   2. Acuerdos_Gestion_DEE_2026 → Acuerdos_Gestion_DEE_2026.xlsx → schema presupuesto
   3. Base_Subsidios_DDE       → Base_Subsidios_DDE.xlsx      → schema subsidios (pagos, validaciones, empresas, mapa, kpis)
-  4. Seguimiento_Contratos_CE → Seguimiento_Contratos_CE.xlsx → contratos_or.seguimiento
+  4. Seguimiento_Contratos_CE → Seguimiento_Contratos_CE.xlsx → contratos_or.seguimiento_avance_fisico / seguimiento_avance_documental (el Excel pasó a tener 6 hojas; "contratos_or.seguimiento", el nombre viejo, ya no existe)
   5. Comunidades_Seguimiento_FENOGE → comunidades_seguimiento_fenoge.xlsx → fenoge.seguimiento
   6. Deficit_Historico_Subsidios → Deficit_Historico_Subsidios.xlsx → subsidios.deficit_historico
   7. Comunidades_Energeticas_FENOGE → Comunidades_Energeticas_fenoge.xlsx → fenoge.comunidades

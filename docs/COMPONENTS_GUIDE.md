@@ -6,24 +6,28 @@ Guía completa de uso de los componentes reutilizables del Portal Energético.
 
 ## 📁 Estructura de Componentes
 
+> **Corregido 2026-09-30** — este árbol describía `inputs/date_range.py`, `inputs/multi_select.py`,
+> `feedback/modal.py` y `layout/page_wrapper.py` como si existieran: ninguno de los cuatro existe
+> hoy (`inputs/` solo tiene un `__init__.py` vacío; no hay carpeta `layout/`, es un archivo
+> `layout.py` sin relación con "page wrapper"). El resto del árbol y los ejemplos de código de esta
+> guía (KPI Cards, Chart Cards, Data Tables, Skeleton, Toast, Breadcrumbs) sí están verificados
+> contra `interface/components/__init__.py` y coinciden con las firmas reales.
+
 ```
 interface/components/
-├── __init__.py              # Exporta todos los componentes
+├── __init__.py              # Exporta los componentes de abajo
 ├── data_display/            # Visualización de datos
-│   ├── kpi_card.py
-│   ├── chart_card.py
-│   └── data_table.py
+│   ├── kpi_card.py          # kpi_card, kpi_row, kpi_loading_card, kpi_error_card
+│   ├── chart_card.py        # chart_card, chart_card_loading, chart_card_error, chart_card_empty
+│   └── data_table.py        # data_table, data_table_from_dataframe, data_table_loading
 ├── feedback/                # Estados y feedback
-│   ├── skeleton.py
-│   ├── toast.py
-│   └── modal.py
-├── inputs/                  # Controles de entrada
-│   ├── date_range.py
-│   └── multi_select.py
-├── navigation/              # Navegación
-│   └── breadcrumbs.py
-└── layout/                  # Layout base
-    └── page_wrapper.py
+│   ├── skeleton.py          # skeleton_card, skeleton_kpi, skeleton_kpi_row, skeleton_chart, skeleton_table, skeleton_page, skeleton_text
+│   └── toast.py             # toast_container, show_toast, create_toast
+├── navigation/
+│   └── breadcrumbs.py       # breadcrumbs, breadcrumb_item
+├── inputs/                  # Solo __init__.py — sin componentes propios hoy
+├── chart_theme.py, chat_widget.py, header.py, layout.py, theme_toggle.py  # componentes sueltos de nivel raíz, fuera de este guía
+└── kpi_card.py, chart_card.py  # versiones legacy en español (crear_kpi, etc.) — no son las que exporta __init__.py
 ```
 
 ---

@@ -1,6 +1,6 @@
 # ⏰ Cron Jobs — Portal Energético MME
 
-**Última actualización de este documento**: 2026-09-01, reescrito directamente contra `crontab -l` real (el documento anterior decía "7 entradas" en el encabezado y "9 cron jobs" en el pie, ninguno de los dos correcto — el crontab real tiene **31 entradas**).
+**Última actualización de este documento**: 2026-09-01, reescrito directamente contra `crontab -l` real (el documento anterior decía "7 entradas" en el encabezado y "9 cron jobs" en el pie, ninguno de los dos correcto — el crontab real tenía 31 entradas (hoy, 2026-09-30, tiene **33**: se agregaron el refresco diario del balance oferta-demanda y el backup completo semanal)).
 
 **Fuente de verdad**: `crontab -l` (usuario `admonctrlxm`, el mismo que corre `portal-api.service`). Este documento es un snapshot legible de esa salida — si difieren, `crontab -l` manda.
 
@@ -8,7 +8,7 @@
 
 ---
 
-## 📋 Crontab completo (31 entradas)
+## 📋 Crontab completo (33 entradas)
 
 ### ETL núcleo de XM
 
@@ -32,6 +32,7 @@
 | Cada 6h, min 35 | `etl/etl_xm_to_postgres.py` | `metrics_hourly` incremental, ventana móvil 10 días |
 | Cada 6h, min 50 | `etl/etl_losses_detailed.py` | Pérdidas no técnicas (PNT) detallado, incremental |
 | Cada 6h (0,30 0,6,12,18) | `etl/etl_anomalies_pnt.py` | Detección de anomalías PNT vía Isolation Forest → tabla `anomalies` |
+| Diario 01:15 | `scripts/refrescar_balance_oferta_demanda_diario.py --desde-ultima-fecha` | Resumen diario precalculado del tablero Balance Oferta-Demanda (migración 044) — agregado de nuevo (29-sep) |
 
 ### Clima e índices climáticos (mensuales — alineados a la fecha de publicación real de cada fuente)
 
@@ -59,7 +60,8 @@
 | Horario | Script | Descripción |
 |---|---|---|
 | Diario 4:30 AM | `scripts/ontologia/refresh_ontologia.py` | Pipeline completo de la ontología: re-resuelve alias geografía/empresa/proyecto, reindexa RAG, refresca las 9 vistas materializadas — corre después del sync de SharePoint (4:02 AM) para reflejar los datos del día |
-| Domingos 3:00 AM | `pg_dump` de la tabla `metrics` | Backup semanal, retiene últimos 28 días (`find ... -mtime +28 -delete`) |
+| Domingos 3:00 AM | `pg_dump` de la tabla `metrics` | Backup semanal de esa tabla sola, retiene últimos 28 días (`find ... -mtime +28 -delete`) |
+| Domingos 4:30 AM | `scripts/backup_postgres_completo.sh` | Backup semanal de **toda** la base (los 11 esquemas), retiene 30 días — agregado el 30-sep porque el backup de arriba solo cubría `metrics` |
 | 1ro de cada mes 4:00 AM | `scripts/backfill_sistema_metricas.py --dias 90` | Backfill mensual de métricas Sistema |
 | Domingos 3:15 AM | `find ... -mtime +30 -delete` | Limpia informes ejecutivos diarios (`whatsapp_bot/informes/Informe_Ejecutivo_MME_*.pdf`) con más de 30 días |
 | Domingos 4:00 AM | `scripts/cleanup_predictions_history.py` | Limpia `predictions_history`, retención 120 días |
@@ -169,7 +171,8 @@ python3 scripts/diagnostico_metricas_etl.py --dias 7             # diagnóstico,
 | 2026-08-11→08-19 | Incidente: watcher de SharePoint colgado 8 días (`msal` sin timeout) — agregado `scripts/monitor_sp_watcher.sh` cada 15 min como self-healing |
 | 2026-08-25 | Retirada la integración ArcGIS Enterprise (llevaba meses fallando con `ModuleNotFoundError: pandas`, sin uso real) |
 | 2026-09-01 | Documento reescrito completo contra `crontab -l` real: 31 entradas (antes documentaba 7-9), corregido que `@reboot` usa `pm2 resurrect`, no `start_api_daemon.sh` |
+| 2026-09-30 | Se agregaron 2 entradas nuevas: refresco diario del balance oferta-demanda y backup completo semanal — total pasó de 31 a 33 |
 
 ---
 
-**Estado real verificado**: ✅ 31 entradas activas en `crontab -l` (2026-09-01). Este documento es un snapshot legible — ante cualquier duda, `crontab -l` es la fuente de verdad.
+**Estado real verificado**: ✅ 33 entradas activas en `crontab -l` (2026-09-30). Este documento es un snapshot legible — ante cualquier duda, `crontab -l` es la fuente de verdad.

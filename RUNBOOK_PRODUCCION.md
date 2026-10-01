@@ -15,10 +15,12 @@
 | API FastAPI | 127.0.0.1:8000 | uvicorn | `portal-api` |
 | PostgreSQL 16 | 127.0.0.1:5432 | postgresql | `postgresql` |
 | Redis | 127.0.0.1:6379 | redis-server | `redis-server` |
-| Celery Worker | background | celery worker | `celery-worker@1` |
+| Celery Worker (×3) | background | celery worker | `celery-worker`, `celery-worker@1`, `celery-worker@2` |
 | Celery Beat | background | celery beat | `celery-beat` (o cron) |
+| Celery Flower | 127.0.0.1:5555 | celery flower | `celery-flower` |
 | Nginx (reverse proxy) | 80/443 | nginx | `nginx` |
 | Telegram Bot | systemd | telegram-polling.service | `telegram-polling` |
+| WhatsApp Bot (instalado, sin tráfico real) | 127.0.0.1:8001 | uvicorn | `whatsapp-bot` |
 | MLflow | 127.0.0.1:5000 | uvicorn | (proceso propio) |
 
 ---
@@ -375,14 +377,37 @@ Internet
 Nginx :80/:443  (reverse proxy + SSL)
   │
   ├─→ Dashboard Dash :8050  (gunicorn, sync)
-  │     └─ 15 páginas + chat widget
+  │     └─ 17 páginas + chat widget
   │
-  ├─→ API FastAPI :8000  (gunicorn + uvicorn, async)
-  │     └─ 21 endpoints + chatbot orchestrator
+  ├─→ API FastAPI :8000  (uvicorn, async — sin gunicorn)
+  │     └─ 115 endpoints + chatbot orchestrator
   │
-  └─→ Telegram Bot : systemd (telegram-polling.service)
+  ├─→ Telegram Bot : systemd (telegram-polling.service)
+  │
+  └─→ WhatsApp Bot :8001 : systemd (whatsapp-bot.service) — instalado, sin tráfico
+        real hasta que se active el proveedor en producción (hoy el canal activo
+        es Telegram + correo)
 
-Celery Worker + Beat ──→ PostgreSQL :5432
-                     ──→ Redis :6379 (cache + broker)
-                     ──→ XM API (SIMEM) [con circuit breaker]
+Celery Worker (×3: base + @1 + @2) + Beat + Flower ──→ PostgreSQL :5432
+                                                    ──→ Redis :6379 (cache + broker)
+                                                    ──→ XM API (SIMEM) [con circuit breaker]
 ```
+
+---
+
+## 11. Seguridad (auditoría 10-sep, controles aplicados 29-sep y 30-sep)
+
+- La clave de API (`X-API-Key`) ya no acepta un valor por defecto si no está configurada — sin
+  clave, la petición se rechaza (antes se aceptaba). Se valida contra `API_KEYS_WHITELIST`
+  (`api/dependencies.py`), una lista que admite varias claves a la vez para poder rotar sin
+  downtime: se agrega la nueva, se reinician los 4 consumidores (`portal-api`, `dashboard-mme`,
+  `telegram-polling`/`whatsapp-bot` vía `whatsapp_bot/.env`, y el frontend vía `BACKEND_API_KEY`),
+  se confirma que la vieja ya no responde, y se retira de la lista. Última rotación: 2026-09-30.
+- Límites de uso (`slowapi`) en los endpoints más costosos: generación de PDF, audio del
+  Asistente IA, difusión de alertas por WhatsApp, vaciado de caché, predicciones de largo plazo.
+- CORS del bot de WhatsApp restringido a los dominios del Ministerio (antes aceptaba cualquier
+  origen con credenciales).
+- Next.js (frontend) atado a loopback (`-H 127.0.0.1`) desde el 29-sep — ya no es alcanzable
+  directamente sin pasar por `nginx`; requiere reiniciar el proceso PM2 para surtir efecto.
+- La API (uvicorn, puerto 8000) también escucha solo en loopback (`127.0.0.1:8000`), verificado
+  con `ss -ltnp` — no es alcanzable directamente desde fuera, solo vía `nginx`.

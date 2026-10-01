@@ -6,7 +6,7 @@ API RESTful construida con FastAPI para proporcionar acceso programático a los 
 
 ## 📋 Características
 
-- ✅ **110 endpoints reales** distribuidos en ~30 archivos de rutas (`api/v1/routes/`)
+- ✅ **115 endpoints reales** distribuidos en 32 archivos de rutas (`api/v1/routes/`)
 - ✅ **Métricas energéticas**: Generación, demanda, disponibilidad, precios, pérdidas técnicas y no técnicas
 - ✅ **Predicciones ML**: Prophet + SARIMAX (ensemble), con validación rigurosa (ver `docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md`)
 - ✅ **Ontología de datos**: geografía (DANE), empresa, proyecto, métrica, recurso — cruces entre 9+ esquemas antes aislados
@@ -66,6 +66,7 @@ La API cubre bastante más que métricas/predicciones. Conteo real de endpoints 
 | `simulation.py` | 5 | Simulación de escenarios CREG |
 | `energia_app.py` | 5 | App móvil EnergIA (incluye `/audio/consulta`, voz) |
 | `cu.py` | 5 | Costo Unitario (mayorista LAC + minorista Res. CREG 119/2007) |
+| `balance_oferta_demanda.py` | 5 | Balance oferta-demanda del SIN (29-sep): histórico, demanda no atendida regional, proyectos UPME, correlación de retraso, simulador contrafactual |
 | `generation.py` | 4 | Generación eléctrica por fuente |
 | `chatbot.py` | 4 | Asistente IA (`/v1/chatbot/asistente`), orquestador, feedback |
 | `transmission.py` | 3 | Transmisión |
@@ -137,11 +138,11 @@ api/
 ├── main.py                  # Aplicación FastAPI principal, montaje de routers
 ├── dependencies.py          # Dependencias compartidas (get_api_key, etc.)
 └── v1/
-    ├── routes/               # ~30 archivos de rutas — ver tabla de dominios arriba
+    ├── routes/               # 32 archivos de rutas — ver tabla de dominios arriba
     └── schemas/              # Esquemas Pydantic (request/response)
 ```
 
-La lógica de negocio real NO vive en `api/` — vive en `domain/services/*.py` (~42 servicios) y se accede vía inyección de dependencias desde `core/container.py`. Las rutas son delgadas: reciben la petición, llaman al servicio correspondiente, serializan la respuesta.
+La lógica de negocio real NO vive en `api/` — vive en `domain/services/*.py` (43 servicios) y se accede vía inyección de dependencias desde `core/container.py`. Las rutas son delgadas: reciben la petición, llaman al servicio correspondiente, serializan la respuesta.
 
 ### Flujo de datos
 
@@ -166,7 +167,7 @@ curl http://localhost:8000/api/v1/metrics/Gene
 curl -H "X-API-Key: tu-api-key" http://localhost:8000/api/v1/metrics/Gene
 ```
 
-Suite de tests del backend: 373 tests pasando (verificado 2026-09), corre con `pytest` desde `server/`.
+Suite de tests del backend: 438 tests pasando, 0 fallando (verificado 2026-09-30), corre con `pytest` desde `server/`.
 
 ## 📝 Convenciones de Datos
 
@@ -196,4 +197,4 @@ La API sigue las convenciones definidas en `docs/api_data_conventions.md`:
 
 ---
 
-**Última revisión de este documento:** 2026-09-01 — reescrito contra el código real (antes documentaba solo 2 de ~30 archivos de rutas).
+**Última revisión de este documento:** 2026-09-30 — se agregó balance_oferta_demanda.py (29-sep) y se sincronizaron los conteos (115 endpoints, 32 archivos, 43 servicios, 438 tests). Reescrito por completo el 2026-09-01 contra el código real (antes documentaba solo 2 de ~30 archivos de rutas).

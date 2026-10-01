@@ -1,6 +1,6 @@
 # 🔧 Guía de Troubleshooting - Portal Energético MME
 
-**Fecha:** Marzo 2026  
+**Fecha:** Marzo 2026 (enlace roto corregido 2026-09-30)
 **Versión:** 1.0
 
 Guía rápida para diagnosticar y resolver problemas comunes en el Portal Energético.
@@ -247,4 +247,4 @@ sudo systemctl restart celery-worker@1 celery-worker@2 dashboard-mme
 
 - [DISPONIBILIDAD_24_7.md](DISPONIBILIDAD_24_7.md) - Guía de disponibilidad
 - [GUIA_USO_API.md](GUIA_USO_API.md) - Guía de la API
-- [INVENTARIO_SERVIDOR.md](INVENTARIO_SERVIDOR.md) - Inventario del servidor
+- [../RUNBOOK_PRODUCCION.md](../RUNBOOK_PRODUCCION.md) - Inventario real del servidor (servicios, puertos, logs) — reemplaza a `INVENTARIO_SERVIDOR.md`, que no existe

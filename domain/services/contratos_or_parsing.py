@@ -9,11 +9,16 @@ IA) use la MISMA fuente de verdad, en vez de una copia divergente.
 Antes de esta extracción, el handler del Asistente (`_fetch_contratos_or`)
 referenciaba `contratos_or.seguimiento` — una tabla que ya no existe (fue
 reemplazada por `seguimiento_avance_fisico`/`seguimiento_avance_documental`/
-`resumen` cuando el ETL se reestructuró, ver etl/etl_nuevos_dashboards.py::
-etl_contratos_or(), que sigue cargando a la tabla vieja pero es un ETL sin
-consumidores activos hoy). El handler fallaba en el 100% de sus invocaciones
-con `relation "contratos_or.seguimiento" does not exist`, capturado en
-silencio por handle_service_error — mismo patrón de bug que Supervisión.
+`resumen` cuando el ETL se reestructuró; el ETL que la cargaba, sin
+consumidores activos, se eliminó en la limpieza de 2026-09-30). El handler
+fallaba en el 100% de sus invocaciones con
+`relation "contratos_or.seguimiento" does not exist`, capturado en silencio
+por handle_service_error — mismo patrón de bug que Supervisión.
+
+NOTA (2026-09-30): whatsapp_bot/services/informe_portal_data.py::
+fetch_contratos_or_full() todavía consulta la tabla vieja `contratos_or.
+seguimiento` directamente (no usa este módulo) — mismo bug, pendiente de
+corregir aparte; no se tocó en esta limpieza.
 """
 
 from __future__ import annotations

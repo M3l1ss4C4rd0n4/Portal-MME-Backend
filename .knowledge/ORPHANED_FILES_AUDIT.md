@@ -1,7 +1,15 @@
 # Archivos Huérfanos (No Sincronizados)
 
-**Fecha:** 14 de Mayo de 2026  
+**Fecha:** 14 de Mayo de 2026
 **Descubierto durante:** Auditoría ETL - Mapeo Excel → BD
+
+> **Actualizado 2026-09-30:** los 3 archivos de la fila "Archivos Válidos (pero huérfanos)" se
+> confirmaron sin ningún handler ni referencia en el código (ver evidencia abajo) y se eliminaron
+> de `data/onedrive/` en la limpieza de esa fecha. La narrativa de "archivo corrupto" de
+> `Matriz_Subsidios_KPIs.xlsx` ya no es cierta: hoy es un Excel válido (4.4 MB, verificado con
+> `file`) — pero sigue sin estar conectado a ningún handler activo del ETL de SharePoint
+> (`etl_sharepoint_sync.py` solo lo menciona en un comentario, no en `SHAREPOINT_FILES`). Queda
+> como pendiente de decisión real, sin relación con la corrupción original.
 
 ---
 
@@ -41,12 +49,13 @@
 
 ---
 
-## 🎯 Próximos Pasos
+## 🎯 Próximos Pasos (cerrados 2026-09-30)
 
-- [ ] **Verificar Comunidades_Energeticas_Avance:** ¿Es alternativa a Resumen_Implementación.xlsx?
-- [ ] **Verificar Matriz_Implementacion_Base:** ¿Reemplaza a Matriz_General_Reparto?
-- [ ] **Si se confirman como activas:** Agregar a SHAREPOINT_FILES con URLs de SharePoint
-- [ ] **Si son obsoletas:** Archivar o eliminar para limpiar data/onedrive/
+- [x] **Comunidades_Energeticas_Avance.xlsx/.csv:** confirmado sin handler ni referencia en 4 meses
+  — eliminados.
+- [x] **Matriz_Implementacion_Base.xlsx:** confirmado sin handler ni referencia — eliminado.
+- [ ] **Matriz_Subsidios_KPIs.xlsx:** sigue pendiente de decisión (ya no por corrupción, ver nota de
+  arriba) — no se eliminó porque el archivo en sí es válido, solo falta decidir si se conecta.
 
 ---
 

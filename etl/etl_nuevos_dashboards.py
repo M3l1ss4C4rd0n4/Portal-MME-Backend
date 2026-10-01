@@ -325,25 +325,6 @@ def etl_presupuesto() -> None:
     logger.info("=== presupuesto: completado ===")
 
 
-# ─── ETL Contratos OR ─────────────────────────────────────────────────────────
-
-def etl_contratos_or() -> None:
-    """Carga Seguimiento Completo_CE_Contratos.xlsx → schema contratos_or."""
-    xlsx_path = (BASE_DIR / 'data' / 'base_de_datos_contratos_or' /
-                 'Seguimiento Completo_CE_Contratos.xlsx')
-    logger.info(f"=== ETL CONTRATOS OR: {xlsx_path.name} ===")
-
-    # Header is on row index 1 (row 0 is blank)
-    df = pd.read_excel(xlsx_path, sheet_name='Hoja1', header=1)
-    # Drop the first (empty) column
-    df = df.dropna(axis=1, how='all').dropna(how='all')
-
-    with connection_manager.get_connection() as conn:
-        load_dataframe(conn, 'contratos_or', 'seguimiento', df)
-
-    logger.info("=== contratos_or: completado ===")
-
-
 # ─── ETL Subsidios ────────────────────────────────────────────────────────────
 
 def etl_subsidios() -> None:
@@ -383,7 +364,6 @@ HANDLERS = {
     'supervision': etl_supervision,
     'comunidades': etl_comunidades,
     'presupuesto': etl_presupuesto,
-    'contratos_or': etl_contratos_or,
     'subsidios': etl_subsidios,
 }
 
