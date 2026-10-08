@@ -1174,6 +1174,44 @@ def _interpretar_zscore_amigable(zscore: float) -> tuple:
         return "Muy inusual (muy bajo)", "#C62828"
 
 
+def _proyeccion_tendencia_html(
+    tendencia: Dict[str, Any], unidad: str, font_size: str = '6.5pt'
+) -> str:
+    """
+    Línea "Proy." de las fichas de tendencia.
+
+    Devuelve '' cuando la extrapolación no es publicable. El handler
+    (anomalias_handler._calcular_tendencia_lineal) ya calcula r_squared y
+    confianza_tendencia, pero el informe no los consultaba: imprimía la
+    recta de 7 días como si fuera un pronóstico, y con datos parciales de
+    XM llegó a mostrar "Proy: -56 %" de embalses en la página 1.
+
+    Criterios para publicarla:
+      - R² >= 0.4 (confianza_tendencia 'media' o 'alta'): por debajo de eso
+        la recta no describe la serie y contradice al modelo ENSEMBLE que
+        aparece en las páginas de predicciones.
+      - La proyección no quedó acotada por el límite físico de la métrica:
+        si hubo que recortarla, el valor crudo era imposible y el recorte
+        no lo vuelve informativo.
+
+    Se rotula explícitamente como extrapolación lineal para que no se
+    confunda con la predicción del modelo.
+    """
+    if not tendencia:
+        return ''
+    proy = tendencia.get('proyeccion_7dias')
+    if proy is None:
+        return ''
+    if tendencia.get('proyeccion_acotada'):
+        return ''
+    if tendencia.get('confianza_tendencia') == 'baja':
+        return ''
+    return (
+        f'<div style="font-size:{font_size};opacity:0.85;margin-top:1px;">'
+        f'Proy. lineal 7d: {proy:.0f} {unidad}</div>'
+    )
+
+
 def _build_analisis_multidimensional_html(analisis_multidimensional: List[Dict[str, Any]]) -> str:
     """
     Construye el análisis multidimensional con diseño consistente a los KPI boxes del PDF.
@@ -1205,7 +1243,6 @@ def _build_analisis_multidimensional_html(analisis_multidimensional: List[Dict[s
         if t:
             desc = t.get('descripcion', 'Sin tendencia')
             direccion = t.get('direccion', 'estable')
-            proy = t.get('proyeccion_7dias')
             
             # Flecha según dirección
             if 'alcista' in direccion:
@@ -1218,7 +1255,7 @@ def _build_analisis_multidimensional_html(analisis_multidimensional: List[Dict[s
                 flecha = '▶'
                 subcolor = '#ffffff'
             
-            proy_line = f'<div style="font-size:6.5pt;opacity:0.85;margin-top:1px;">Proy: {proy:.0f} {unidad}</div>' if proy else ''
+            proy_line = _proyeccion_tendencia_html(t, unidad, '6.5pt')
             
             kpis_html.append(
                 f'<td style="width:25%;padding:3px;">'
@@ -1375,7 +1412,6 @@ def _build_ficha_principal_vertical(
     if t:
         desc = t.get('descripcion', 'Sin tendencia')
         direccion = t.get('direccion', 'estable')
-        proy = t.get('proyeccion_7dias')
         
         if 'alcista' in direccion:
             flecha = '▲'
@@ -1387,7 +1423,7 @@ def _build_ficha_principal_vertical(
             flecha = '▶'
             subcolor = '#ffffff'
         
-        proy_line = f'<div style="font-size:6pt;opacity:0.9;margin-top:2px;">Proy: {proy:.0f} {unidad}</div>' if proy else ''
+        proy_line = _proyeccion_tendencia_html(t, unidad, '6pt')
         
         sub_fichas.append(
             f'<div style="background:{color_base};border-radius:3px;padding:5px 4px;margin-bottom:4px;color:#fff;text-align:center;">'
@@ -1705,6 +1741,79 @@ def _build_mercado_vars_vertical(variables_mercado: Dict[str, Any], fichas: List
     return f'<div style="padding:0 5px;">{cards}</div>'
 
 
+def _variacion_absoluta_metrica(conn, metrica: str, dias: int) -> Optional[float]:
+    """
+    Variación absoluta de una métrica: último valor disponible menos el valor
+    de ~`dias` días antes (el más cercano hacia atrás).
+
+    Devuelve None si no hay con qué comparar, para que quien llame muestre
+    "N/D" en vez de un número inventado. Sustituye a las constantes
+    hardcodeadas var_escasez/-9.21, var_ppp_card/-136.08 y var_max/-145.52,
+    que se imprimían idénticas en todos los informes.
+    """
+    import pandas as pd
+    try:
+        df = pd.read_sql(
+            """
+            WITH serie AS (
+                SELECT fecha, AVG(valor_gwh) AS valor
+                FROM metrics
+                WHERE metrica = %(m)s
+                  AND fecha >= CURRENT_DATE - (%(d)s + 10) * INTERVAL '1 day'
+                  AND valor_gwh > 0
+                GROUP BY fecha
+            ),
+            ultimo AS (SELECT fecha, valor FROM serie ORDER BY fecha DESC LIMIT 1),
+            previo AS (
+                SELECT s.valor
+                FROM serie s, ultimo u
+                WHERE s.fecha <= u.fecha - %(d)s * INTERVAL '1 day'
+                ORDER BY s.fecha DESC
+                LIMIT 1
+            )
+            SELECT (SELECT valor FROM ultimo) AS actual,
+                   (SELECT valor FROM previo) AS previo
+            """,
+            conn, params={'m': metrica, 'd': dias},
+        )
+        if df.empty:
+            return None
+        actual, previo = df.iloc[0]['actual'], df.iloc[0]['previo']
+        if actual is None or previo is None or pd.isna(actual) or pd.isna(previo):
+            return None
+        return float(actual) - float(previo)
+    except Exception as e:
+        logger.warning(f"[REPORT] Error calculando variación de {metrica} ({dias}d): {e}")
+        return None
+
+
+def _variacion_tarjeta_html(var: Optional[float], etiqueta: str) -> str:
+    """
+    Bloque "Variación X" de las tarjetas de precio, con flecha y color según
+    el signo real. Antes la flecha y el color estaban fijos en ▼ rojo, así
+    que un alza se mostraba igual que una caída.
+    """
+    if var is None:
+        valor_html = '<div style="font-size:11pt;opacity:0.75;">N/D</div>'
+    else:
+        if var > 0.005:
+            flecha, color = '&#9650;', '#c8ffc8'
+        elif var < -0.005:
+            flecha, color = '&#9660;', '#ffc8c8'
+        else:
+            flecha, color = '&#9654;', '#ffffff'
+        valor_html = (
+            f'<div style="font-size:11pt;color:{color};">'
+            f'{flecha} {abs(var):.2f}</div>'
+        )
+    return (
+        '<div style="padding:8px 12px;text-align:center;'
+        'border-bottom:1px solid rgba(255,255,255,0.2);">'
+        f'<div style="font-size:7pt;opacity:0.9;">{etiqueta}</div>'
+        f'{valor_html}</div>'
+    )
+
+
 def _build_variables_mercado_xm(
     chart_paths: List[str],
     variables_mercado: Dict[str, Any],
@@ -1731,10 +1840,13 @@ def _build_variables_mercado_xm(
     fecha_ppp = variables_mercado.get('ppp_bolsa', {}).get('fecha', '')
     fecha_max_var = variables_mercado.get('precio_max_oferta', {}).get('fecha', '')
     
-    # Variaciones para las tarjetas (placeholder - se calcularían de la BD)
-    var_escasez = -9.21
-    var_ppp_card = -136.08  # Variación para la tarjeta
-    var_max = -145.52
+    # Variaciones reales de las tarjetas (se calculan junto con el resto de
+    # las consultas de precios, más abajo). None => la tarjeta muestra "N/D".
+    var_escasez = None
+    var_ppp_card = None
+    var_max = None
+    dias_sobre_escasez = None
+    dias_comparados_escasez = None
     
     # Calcular variación del PPP vs semana pasada y fecha del máximo para el texto
     ppp_semana_pasada = None
@@ -1775,6 +1887,45 @@ def _build_variables_mercado_xm(
                 LIMIT 1
             """, conn)
             
+            # ¿Hubo en el mes días con precio máximo de oferta por encima del
+            # Precio de Escasez? El informe afirmaba incondicionalmente que no,
+            # sin comparar nunca MaxPrecOferNal contra PrecEsca. Es una
+            # afirmación sobre las obligaciones del Cargo por Confiabilidad.
+            try:
+                df_esc = pd.read_sql("""
+                    WITH maxima AS (
+                        SELECT fecha, MAX(valor_gwh) AS v FROM metrics
+                        WHERE metrica = 'MaxPrecOferNal'
+                          AND fecha >= CURRENT_DATE - INTERVAL '30 days'
+                          AND valor_gwh > 0
+                        GROUP BY fecha
+                    ),
+                    escasez AS (
+                        SELECT fecha, MAX(valor_gwh) AS v FROM metrics
+                        WHERE metrica = 'PrecEsca'
+                          AND fecha >= CURRENT_DATE - INTERVAL '40 days'
+                          AND valor_gwh > 0
+                        GROUP BY fecha
+                    )
+                    SELECT COUNT(*) FILTER (WHERE m.v > e.v) AS dias_sobre,
+                           COUNT(*) AS dias_comparados
+                    FROM maxima m
+                    JOIN LATERAL (
+                        SELECT v FROM escasez
+                        WHERE fecha <= m.fecha ORDER BY fecha DESC LIMIT 1
+                    ) e ON TRUE
+                """, conn)
+                if not df_esc.empty and df_esc.iloc[0]['dias_comparados'] > 0:
+                    dias_sobre_escasez = int(df_esc.iloc[0]['dias_sobre'])
+                    dias_comparados_escasez = int(df_esc.iloc[0]['dias_comparados'])
+            except Exception as e:
+                logger.warning(f"[REPORT] Error comparando máximo vs Precio de Escasez: {e}")
+
+            # Variaciones de las 3 tarjetas, con el periodo que cada una rotula
+            var_escasez = _variacion_absoluta_metrica(conn, 'PrecEsca', 30)
+            var_ppp_card = _variacion_absoluta_metrica(conn, 'PPPrecBolsNaci', 7)
+            var_max = _variacion_absoluta_metrica(conn, 'MaxPrecOferNal', 30)
+
             if not df_max.empty:
                 fecha_max = df_max.iloc[0]['fecha']
                 # Formatear fecha (ej: "1 de abril")
@@ -1785,8 +1936,10 @@ def _build_variables_mercado_xm(
                 }
                 fecha_max_precio = f"{fecha_max.day} de {meses.get(fecha_max.month, 'mes')}"
     except Exception as e:
-        # Si falla la query, usar valores por defecto
-        pass
+        logger.warning(
+            f"[REPORT] Error consultando precios para variables de mercado: {e}. "
+            "Las tarjetas de variación mostrarán N/D."
+        )
     
     # Construir texto de variación PPP
     if var_ppp_texto is not None and ppp_semana_pasada is not None:
@@ -1802,6 +1955,29 @@ def _build_variables_mercado_xm(
     else:
         texto_max = f"El máximo precio mensual es de ${precio_max:.2f}."
     
+    # Viñeta del Cargo por Confiabilidad, derivada del dato real
+    if dias_sobre_escasez is None:
+        texto_confiabilidad = (
+            "No fue posible comparar el precio m&aacute;ximo de oferta contra el "
+            "Precio de Escasez en el mes, por lo que no se concluye nada sobre las "
+            "obligaciones del <strong>Cargo por Confiabilidad</strong>."
+        )
+    elif dias_sobre_escasez == 0:
+        texto_confiabilidad = (
+            f"En los &uacute;ltimos {dias_comparados_escasez} d&iacute;as comparados no se "
+            "evidencian precios diarios m&aacute;ximos por encima del Precio de Escasez, "
+            "lo que no activa las obligaciones del <strong>Cargo por Confiabilidad</strong>, "
+            "mecanismo mediante el cual los generadores deben entregar energ&iacute;a "
+            "comprometida para garantizar el suministro en condiciones cr&iacute;ticas del sistema."
+        )
+    else:
+        texto_confiabilidad = (
+            f"<strong>{dias_sobre_escasez}</strong> de {dias_comparados_escasez} d&iacute;as del mes "
+            "registraron un precio m&aacute;ximo de oferta por encima del Precio de Escasez, "
+            "condici&oacute;n asociada a las obligaciones del <strong>Cargo por Confiabilidad</strong> "
+            "(entrega de la energ&iacute;a firme comprometida)."
+        )
+
     # Texto explicativo con viñetas (completo)
     fecha_ppp_larga = _format_fecha_larga(str(fecha_ppp)[:10]) if fecha_ppp else ''
     texto_vinetas = f"""
@@ -1810,10 +1986,7 @@ def _build_variables_mercado_xm(
         <div style="margin-bottom:8px;">• El <strong>Precio Promedio Ponderado (PPP)</strong> diario 
         (${ppp_bolsa:.2f}) {texto_ppp}.</div>
         <div style="margin-bottom:8px;">• {texto_max}</div>
-        <div>• En el mes no se evidencian precios diarios máximos por encima del Precio de Escasez, 
-        lo que no activa las obligaciones del Cargo por Confiabilidad, mecanismo mediante el cual los 
-        generadores deben entregar energía comprometida para garantizar el suministro en condiciones 
-        críticas del sistema.</div>
+        <div>• {texto_confiabilidad}</div>
     </div>
     """
     
@@ -1828,10 +2001,7 @@ def _build_variables_mercado_xm(
                         <div style="font-size:16pt;font-weight:bold;margin-top:2px;">{precio_escasez:.2f} <span style="font-size:9pt;">$/kWh</span></div>
                         {_fecha_corte_html(fecha_escasez, 'white')}
                     </div>
-                    <div style="padding:8px 12px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.2);">
-                        <div style="font-size:7pt;opacity:0.9;">Variación Mensual</div>
-                        <div style="font-size:11pt;color:#ffc8c8;">▼ {var_escasez:.2f}</div>
-                    </div>
+                    {_variacion_tarjeta_html(var_escasez, 'Variaci&oacute;n Mensual')}
                     <div style="padding:8px 12px;font-size:6.5pt;line-height:1.4;opacity:0.9;">
                         <strong>Precio umbral definido por CREG</strong> (Res. 071/2006). Nivel máximo reconocido en situaciones críticas.
                         <div style="margin-top:4px;font-style:italic;opacity:0.8;">Valor vs mes anterior</div>
@@ -1845,10 +2015,7 @@ def _build_variables_mercado_xm(
                         <div style="font-size:16pt;font-weight:bold;margin-top:2px;">{ppp_bolsa:.2f} <span style="font-size:9pt;">$/kWh</span></div>
                         {_fecha_corte_html(fecha_ppp, 'white')}
                     </div>
-                    <div style="padding:8px 12px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.2);">
-                        <div style="font-size:7pt;opacity:0.9;">Variación Semanal</div>
-                        <div style="font-size:11pt;color:#ffc8c8;">▼ {var_ppp_card:.2f}</div>
-                    </div>
+                    {_variacion_tarjeta_html(var_ppp_card, 'Variaci&oacute;n Semanal')}
                     <div style="padding:8px 12px;font-size:6.5pt;line-height:1.4;opacity:0.9;">
                         Precio horario en mercado spot, determinado por oferta y demanda del día anterior.
                         <div style="margin-top:4px;font-style:italic;opacity:0.8;">Valor vs semana anterior</div>
@@ -1862,10 +2029,7 @@ def _build_variables_mercado_xm(
                         <div style="font-size:16pt;font-weight:bold;margin-top:2px;">{precio_max:.2f} <span style="font-size:9pt;">$/kWh</span></div>
                         {_fecha_corte_html(fecha_max_var, 'white')}
                     </div>
-                    <div style="padding:8px 12px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.2);">
-                        <div style="font-size:7pt;opacity:0.9;">Variación Mensual</div>
-                        <div style="font-size:11pt;color:#ffc8c8;">▼ {var_max:.2f}</div>
-                    </div>
+                    {_variacion_tarjeta_html(var_max, 'Variaci&oacute;n Mensual')}
                     <div style="padding:8px 12px;font-size:6.5pt;line-height:1.4;opacity:0.9;">
                         Mayor precio ofertado en el mercado durante el mes. Techo de precios alcanzado.
                         <div style="margin-top:4px;font-style:italic;opacity:0.8;">Valor vs mes anterior</div>
@@ -1895,6 +2059,27 @@ def _build_variables_mercado_xm(
 
 # ═══════════════════════════════════════════════════════════════
 
+def _variacion_demanda_html(var: Optional[float], periodo: str = 'Semanal') -> str:
+    """
+    Línea de variación de las tarjetas de Composición de la Demanda, con
+    flecha y color según el signo real. Antes la flecha ▼ y el color
+    #C62828 estaban fijos, así que un alza de demanda se dibujaba en rojo
+    con flecha hacia abajo.
+    """
+    if var is None:
+        return f'<div style="font-size:8pt;color:#8d8d8d;">N/D {periodo}</div>'
+    if var > 0.005:
+        flecha, color = '&#9650;', '#2E7D32'
+    elif var < -0.005:
+        flecha, color = '&#9660;', '#C62828'
+    else:
+        flecha, color = '&#9654;', '#555555'
+    return (
+        f'<div style="font-size:8pt;color:{color};">'
+        f'{flecha} {abs(var):.2f} {periodo}</div>'
+    )
+
+
 def _build_composicion_demanda_xm(
     chart_paths: List[str],
     variables_mercado: Dict[str, Any]
@@ -1915,13 +2100,27 @@ def _build_composicion_demanda_xm(
     )
     fecha_corte_html = _fecha_corte_html(fecha_corte, 'badge')
     
-    # Porcentajes
-    pct_regulada = (dem_regulada / dem_total * 100) if dem_total > 0 else 69.4
-    pct_no_reg = (dem_no_reg / dem_total * 100) if dem_total > 0 else 30.6
-    
-    # Variaciones (placeholder - en producción vienen de query histórico)
-    var_regulada = -8.60
-    var_no_reg = -3.95
+    # Porcentajes. Sin demanda total no se inventa un reparto: los 69,4/30,6
+    # que había de respaldo se imprimían como dato real del día.
+    hay_demanda = dem_total > 0
+    pct_regulada = (dem_regulada / dem_total * 100) if hay_demanda else None
+    pct_no_reg = (dem_no_reg / dem_total * 100) if hay_demanda else None
+    pct_regulada_str = f'{pct_regulada:.1f}%' if pct_regulada is not None else 'N/D'
+    pct_no_reg_str = f'{pct_no_reg:.1f}%' if pct_no_reg is not None else 'N/D'
+
+    # Variaciones reales vs la semana anterior (antes: -8.60 / -3.95 fijos)
+    try:
+        from infrastructure.database.connection import get_connection
+        with get_connection() as conn:
+            var_regulada = _variacion_absoluta_metrica(conn, 'DemaRealReg', 7)
+            var_no_reg = _variacion_absoluta_metrica(conn, 'DemaRealNoReg', 7)
+    except Exception as e:
+        logger.warning(
+            f"[REPORT] Error calculando variación de demanda: {e}. "
+            "Las tarjetas mostrarán N/D."
+        )
+        var_regulada = None
+        var_no_reg = None
     
     # Gráfica de demandas (placeholder o usar existente)
     demand_chart = _embed_chart(chart_paths, 'demanda_evol')
@@ -1939,12 +2138,12 @@ def _build_composicion_demanda_xm(
                         <table style="width:100%;">
                             <tr>
                                 <td style="vertical-align:top;">
-                                    <div style="font-size:32pt;font-weight:bold;color:#254553;line-height:1;">{pct_regulada:.1f}%</div>
+                                    <div style="font-size:32pt;font-weight:bold;color:#254553;line-height:1;">{pct_regulada_str}</div>
                                 </td>
                                 <td style="vertical-align:top;text-align:right;padding-left:10px;">
                                     <div style="font-size:11pt;font-weight:bold;color:#333;">{dem_regulada:.1f} GWh</div>
                                     <div style="font-size:7pt;color:#666;margin-top:2px;">Variación</div>
-                                    <div style="font-size:8pt;color:#C62828;">▼ {var_regulada:.2f} Semanal</div>
+                                    {_variacion_demanda_html(var_regulada, 'Semanal')}
                                 </td>
                             </tr>
                         </table>
@@ -1961,12 +2160,12 @@ def _build_composicion_demanda_xm(
                         <table style="width:100%;">
                             <tr>
                                 <td style="vertical-align:top;">
-                                    <div style="font-size:32pt;font-weight:bold;color:#254553;line-height:1;">{pct_no_reg:.1f}%</div>
+                                    <div style="font-size:32pt;font-weight:bold;color:#254553;line-height:1;">{pct_no_reg_str}</div>
                                 </td>
                                 <td style="vertical-align:top;text-align:right;padding-left:10px;">
                                     <div style="font-size:11pt;font-weight:bold;color:#333;">{dem_no_reg:.1f} GWh</div>
                                     <div style="font-size:7pt;color:#666;margin-top:2px;">Variación</div>
-                                    <div style="font-size:8pt;color:#C62828;">▼ {var_no_reg:.2f} Semanal</div>
+                                    {_variacion_demanda_html(var_no_reg, 'Semanal')}
                                 </td>
                             </tr>
                         </table>
@@ -2834,7 +3033,7 @@ def _get_embalse_pct_historico(fecha_ref: str, anios_atras: int) -> Optional[flo
                     SELECT valor_gwh FROM sector_energetico.metrics
                     WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema' AND recurso='Sistema'
                       AND fecha BETWEEN %s::date - INTERVAL '3 days' AND %s::date + INTERVAL '3 days'
-                    ORDER BY ABS(fecha - %s::date) ASC
+                    ORDER BY ABS(EXTRACT(EPOCH FROM (fecha - %s::timestamp))) ASC
                     LIMIT 1
                 """, [fecha_hist, fecha_hist, fecha_hist])
                 row = cur.fetchone()

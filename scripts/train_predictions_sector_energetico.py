@@ -861,6 +861,7 @@ METRICAS_CONFIG = {
         'tipo': 'promedio_diario',
         'entidad_filtro': 'Sistema',   # Promedio nacional
         'escala_factor': 100,          # Convertir fracción 0-1 → porcentaje 0-100 (dashboard usa 0-100)
+        'filtrar_parciales': True,     # Descartar días parciales de XM (ver nota en cargar_datos)
         'descripcion': 'Porcentaje volumen útil de embalses',
         'unidad': '%',
         'criticidad': 'CRÍTICA',
@@ -2206,7 +2207,14 @@ def cargar_datos_metrica(metrica_nombre, config, fecha_inicio='2020-01-01'):
         # Cambio: Protege contra datos parciales sin afectar series históricas.
         # Revertir: eliminar este bloque; el filtro valor_gwh > 0 sigue activo.
         tipos_con_filtro_parciales = ('suma_diaria', 'suma_embalses', 'agregado_por_recurso')
-        if config['tipo'] in tipos_con_filtro_parciales and len(df) > 95:
+        # Opt-in explícito por métrica: 'filtrar_parciales' permite activar el filtro
+        # en métricas cuyo 'tipo' no está en la tupla. Necesario para EMBALSES_PCT:
+        # un % de volumen útil no cae de 75% a 0,6% en un día (XM publicó ese valor
+        # parcial el 2026-10-07), pero su tipo es 'promedio_diario' y quedaba fuera.
+        aplicar_filtro = config.get(
+            'filtrar_parciales', config['tipo'] in tipos_con_filtro_parciales
+        )
+        if aplicar_filtro and len(df) > 95:
             mediana_reciente = df['valor'].iloc[-95:-5].median()
             if mediana_reciente > 0:
                 umbral_parcial = mediana_reciente * 0.5
