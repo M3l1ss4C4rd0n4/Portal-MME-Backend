@@ -136,7 +136,16 @@ def evaluar_sincronia() -> "tuple[bool | None, list, str | None]":
         # Los labels visuales tienen su propio texto por idioma/UI en cada
         # lado (ver umbralesOficiales.ts) — se compara el NIVEL de riesgo
         # implícito (normal/sobre-senda/alerta/riesgo), no el string exacto.
-        orden_py = {"NORMAL": 0, "SOBRE SENDA": 1, "BAJO SENDA — ALERTA": 2, "BAJO SENDA — RIESGO": 3}
+        orden_py = {
+            "NORMAL": 0,
+            "SOBRE SENDA": 1,
+            # "BAJO SENDA — ALERTA" se renombró a "— VIGILANCIA" al dejar de
+            # atribuir a la CREG el margen de 5pp, que es criterio propio.
+            # Se acepta el nombre viejo para no romper si se revierte.
+            "BAJO SENDA — ALERTA": 2,
+            "BAJO SENDA — VIGILANCIA": 2,
+            "BAJO SENDA — RIESGO": 3,
+        }
         orden_ts = {"NORMAL": 0, "SOBRE SENDA": 1, "ALERTA — BAJO SENDA": 2, "RIESGO — DESABASTECIMIENTO": 3}
         rango_py = orden_py.get(p["visual_label"])
         rango_ts = orden_ts.get(t["visual_label"])
@@ -153,7 +162,14 @@ def evaluar_sincronia() -> "tuple[bool | None, list, str | None]":
     return (len(discrepancias) == 0), discrepancias, None
 
 
-def main() -> int:
+def main(argv: "list[str] | None" = None) -> int:
+    # El envío a Telegram/correo es OPT-IN. Antes cualquier corrida manual del
+    # script (p. ej. durante una revisión de código) notificaba de verdad a los
+    # destinatarios de alertas en cuanto encontraba una discrepancia. La tarea
+    # agendada es la única que debe pasar --notificar.
+    args = sys.argv[1:] if argv is None else argv
+    notificar = '--notificar' in args
+
     sincronizado, discrepancias, error = evaluar_sincronia()
 
     if sincronizado is None:
@@ -173,6 +189,13 @@ def main() -> int:
         # aquí es exactamente el tipo de bug (Python corregido, TS no) que
         # ya pasó desapercibido semanas — se notifica por el mismo canal
         # (Telegram/email) en vez de quedar solo en el log.
+        if not notificar:
+            logger.error(
+                "[SINCRONIA_UMBRALES] No se notifica (sin --notificar). "
+                "Use --notificar para avisar por Telegram/correo."
+            )
+            return 1
+
         try:
             from domain.services.notification_service import broadcast_alert
             texto = (

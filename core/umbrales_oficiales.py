@@ -58,8 +58,11 @@ Próxima revisión sugerida: trimestral, o ante nueva Resolución CREG.
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
+import logging
 from datetime import date
 from typing import Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECCIÓN 1 — EMBALSES: SENDA DE REFERENCIA CREG E ÍNDICE NE
@@ -92,6 +95,18 @@ from typing import Dict, Optional, Tuple
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Tolerancia de la senda (puntos porcentuales). 0 = comparación estricta.
+#
+# ATENCIÓN: el 0.0 es CORRECTO y deliberado, no una constante sin calibrar.
+# El Estatuto CREG 026/2014 art. 2 lit. B, tal como lo modificó la Res. CREG
+# 101 112/2026, compara el embalse contra la senda SIN banda intermedia: o
+# está en o sobre la senda (Superior) o está por debajo (Inferior). El Índice
+# NE es BINARIO.
+#
+# No subir este valor para "destrabar" una banda ALERTA: hacerlo inventaría
+# una banda regulatoria que la norma no contempla. El gradiente de 4 niveles
+# que sí usa el portal para visualización vive en clasificar_visual_embalse()
+# y en clasificarVisualEmbalse() del frontend, con su propio margen declarado
+# como criterio propio (ver SENDA_MARGEN_VIGILANCIA_PP más abajo).
 SENDA_TOLERANCIA_PP: float = 0.0
 
 # Senda de Referencia oficial publicada por XM/CND.
@@ -159,12 +174,28 @@ def obtener_senda_referencia(fecha: Optional[date] = None) -> float:
         valor_bd = obtener_senda_para_fecha(f)
         if valor_bd is not None:
             return float(valor_bd)
-    except Exception:
-        # Silencioso: si no hay BD disponible, usar respaldo
-        pass
+    except Exception as e:
+        # NO silenciar: el respaldo estático difiere mucho de la senda diaria
+        # (octubre 2026: 65,0 estático vs 77,99 real), y esa diferencia es la
+        # que decide entre "CRÍTICO, reportar a CREG" y "todo normal".
+        logger.warning(
+            f"[UMBRALES] No se pudo leer la senda de referencia diaria de BD "
+            f"para {f}: {e}. Se usa el respaldo mensual estático "
+            f"SENDA_REFERENCIA_2024_2025, que puede cambiar la clasificación "
+            f"del Índice NE."
+        )
 
-    # 2) Fallback: tabla mensual estática
-    return SENDA_REFERENCIA_2024_2025.get(f.month, 50.0)
+    # 2) Fallback: tabla mensual estática.
+    #    Para fechas fuera del rango que cubre la BD (p. ej. backtests
+    #    históricos) esto es lo esperado, así que va en DEBUG. El caso
+    #    peligroso —que la consulta falle por BD caída o permisos— ya se
+    #    registró como WARNING en el except de arriba.
+    valor_fallback = SENDA_REFERENCIA_2024_2025.get(f.month, 50.0)
+    logger.debug(
+        f"[UMBRALES] Senda de referencia para {f} tomada del respaldo mensual "
+        f"estático: {valor_fallback}% (sin dato diario en BD para esa fecha)."
+    )
+    return valor_fallback
 
 
 def clasificar_indice_ne(
@@ -182,9 +213,16 @@ def clasificar_indice_ne(
         nivel_embalse_pct: nivel actual del embalse agregado del SIN (%).
         fecha: fecha de evaluación.
 
+    El Índice NE es BINARIO (ver nota en SENDA_TOLERANCIA_PP): la norma no
+    define una banda intermedia. Hasta esta revisión la función declaraba un
+    tercer nivel 'ALERTA' que, con SENDA_TOLERANCIA_PP = 0, era inalcanzable
+    por construcción — dejaba 8 ramas muertas repartidas por el código y hacía
+    creer que existía un nivel de vigilancia regulatorio. Para el gradiente de
+    vigilancia, de criterio propio, usar clasificar_vigilancia_embalse().
+
     Returns:
         (nivel, descripcion, senda_referencia_pct)
-        nivel: 'SUPERIOR' | 'ALERTA' | 'INFERIOR'
+        nivel: 'SUPERIOR' | 'INFERIOR'
     """
     senda = obtener_senda_referencia(fecha)
 
@@ -193,14 +231,57 @@ def clasificar_indice_ne(
                 f'Embalse {nivel_embalse_pct:.1f}% ≥ senda {senda:.1f}% (Estatuto CREG).',
                 senda)
 
-    umbral_inferior = senda - SENDA_TOLERANCIA_PP
-    if nivel_embalse_pct >= umbral_inferior:
-        return ('ALERTA',
-                f'Embalse {nivel_embalse_pct:.1f}% entre {umbral_inferior:.1f}% y senda {senda:.1f}%.',
+    return ('INFERIOR',
+            f'Embalse {nivel_embalse_pct:.1f}% < senda CREG {senda:.1f}%.',
+            senda)
+
+
+# Margen de vigilancia bajo la senda, en puntos porcentuales.
+#
+# CRITERIO PROPIO DEL PORTAL — no proviene de ninguna resolución de la CREG.
+# Sirve para graduar avisos y colores entre "apenas por debajo de la senda" y
+# "muy por debajo", distinción que el Índice NE oficial no hace. Cualquier
+# texto que use este margen debe decir explícitamente que es criterio propio.
+SENDA_MARGEN_VIGILANCIA_PP: float = 5.0
+
+
+def clasificar_vigilancia_embalse(
+    nivel_embalse_pct: float,
+    fecha: Optional[date] = None,
+) -> Tuple[str, str, float]:
+    """
+    Gradúa qué tan por debajo de la senda está el embalse.
+
+    CRITERIO PROPIO DEL PORTAL, no una clasificación de la CREG. El Índice NE
+    oficial (clasificar_indice_ne) es binario; esta función existe para no
+    tratar igual un embalse 0,1pp por debajo de la senda y uno 30pp por
+    debajo, que es lo que hacía el motor de alertas (61 alertas CRÍTICO y
+    ninguna intermedia en 5 meses, todas pidiendo "reportar a CREG").
+
+    Returns:
+        (nivel, descripcion, senda_referencia_pct)
+        nivel: 'SOBRE_SENDA' | 'VIGILANCIA' | 'DEFICIT'
+    """
+    senda = obtener_senda_referencia(fecha)
+    margen = SENDA_MARGEN_VIGILANCIA_PP
+
+    if nivel_embalse_pct >= senda:
+        return ('SOBRE_SENDA',
+                f'Embalse {nivel_embalse_pct:.1f}% ≥ senda CREG {senda:.1f}%.',
                 senda)
 
-    return ('INFERIOR',
-            f'Embalse {nivel_embalse_pct:.1f}% < senda {senda:.1f}% − {SENDA_TOLERANCIA_PP}pp.',
+    if nivel_embalse_pct >= senda - margen:
+        return ('VIGILANCIA',
+                f'Embalse {nivel_embalse_pct:.1f}% entre {senda - margen:.1f}% y la '
+                f'senda CREG {senda:.1f}% — margen de vigilancia de {margen:.0f}pp '
+                f'[criterio propio del portal, no CREG]. Regulatoriamente es '
+                f'Índice NE Inferior.',
+                senda)
+
+    return ('DEFICIT',
+            f'Embalse {nivel_embalse_pct:.1f}% más de {margen:.0f}pp por debajo de la '
+            f'senda CREG {senda:.1f}% [margen de criterio propio del portal, no CREG]. '
+            f'Índice NE Inferior.',
             senda)
 
 
@@ -375,9 +456,11 @@ def obtener_precios_escasez_vigentes(
                 }
         finally:
             conn.close()
-    except Exception:
-        # BD no disponible, seguir con el siguiente nivel de fallback
-        pass
+    except Exception as e:
+        logger.warning(
+            f"[UMBRALES] No se pudieron leer los precios de escasez de XM "
+            f"para {f}: {e}. Se intenta la tabla mensual de respaldo."
+        )
 
     # 2) Tabla mensual de mantenimiento manual (puede estar desactualizada)
     try:
@@ -422,8 +505,12 @@ def obtener_precios_escasez_vigentes(
                 }
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            f"[UMBRALES] No se pudo leer la tabla mensual de precios de "
+            f"escasez para {f}: {e}. Se usan los valores de referencia de "
+            f"enero 2026, que pueden estar desactualizados."
+        )
 
     # 3) Fallback: valores de referencia enero 2026
     return {
@@ -508,7 +595,7 @@ def determinar_condicion_sistema(
     Determina la condición del sistema según el Estatuto CREG 026/2014 art. 3.
 
     Args:
-        ne_nivel: 'SUPERIOR' | 'ALERTA' | 'INFERIOR'
+        ne_nivel: 'SUPERIOR' | 'INFERIOR' (el Índice NE es binario)
         hsin_nivel: 'NORMAL' | 'VIGILANCIA' | 'DEFICIT_SEVERO' | 'CRITICO'
         pbp_nivel: 'BAJO' | 'ALTO' | 'INDETERMINADO'
 
@@ -526,8 +613,11 @@ def determinar_condicion_sistema(
         return (CONDICION_VIGILANCIA,
                 'NE en nivel inferior — vigilancia preventiva (CREG 026/2014).')
 
-    # Vigilancia: cualquier índice en alerta o HSIN < 90%
-    if ne_nivel == 'ALERTA' or hsin_nivel != 'NORMAL' or pbp_nivel == 'ALTO':
+    # Vigilancia: HSIN fuera de normal o PBP alto.
+    # (Aquí ne_nivel solo puede ser 'SUPERIOR': 'INFERIOR' ya se resolvió en
+    # las dos ramas anteriores. La comparación con 'ALERTA' que había era
+    # inalcanzable y no alteraba el resultado.)
+    if hsin_nivel != 'NORMAL' or pbp_nivel == 'ALTO':
         return (CONDICION_VIGILANCIA,
                 f'Indicador(es) en alerta: NE={ne_nivel}, HSIN={hsin_nivel}, '
                 f'PBP={pbp_nivel} (CREG 026/2014 art. 3).')
@@ -579,7 +669,10 @@ OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT: float = 80.0
 # ──────────────────────────────────────────────────────────────────────────────
 
 UMBRAL_VISUAL_VERDE_EMBALSE: float = 80.0      # Objetivo XM ante El Niño (no regulatorio)
-UMBRAL_VISUAL_AMBAR_EMBALSE_RESPECTO_SENDA: float = 0.0  # ≥ senda
+# La banda ámbar es exactamente "≥ senda", sin margen, así que no necesita
+# constante propia. La que había (UMBRAL_VISUAL_AMBAR_EMBALSE_RESPECTO_SENDA
+# = 0.0) no se usaba en ninguna parte y hacía creer que gobernaba esta banda,
+# cuando el corte real lo pone SENDA_MARGEN_VIGILANCIA_PP más abajo.
 
 
 def clasificar_visual_embalse(
@@ -600,12 +693,20 @@ def clasificar_visual_embalse(
                 f'≥ {UMBRAL_VISUAL_VERDE_EMBALSE:.0f}% (objetivo XM ante El Niño).')
     if nivel_embalse_pct >= senda:
         return ('SOBRE SENDA', '#F59E0B',
-                f'≥ senda CREG {senda:.1f}% — NE Superior (Estatuto CREG 026/2014).')
-    if nivel_embalse_pct >= senda - 5.0:
-        return ('BAJO SENDA — ALERTA', '#F97316',
-                f'< senda CREG {senda:.1f}% — NE Alerta (CREG 026/2014).')
+                f'≥ senda CREG {senda:.1f}% — Índice NE Superior '
+                f'(Estatuto CREG 026/2014).')
+    if nivel_embalse_pct >= senda - SENDA_MARGEN_VIGILANCIA_PP:
+        # Regulatoriamente esto ya es NE Inferior; el desglose en dos bandas es
+        # del portal. Antes esta justificación decía "NE Alerta (CREG
+        # 026/2014)", atribuyendo a la norma una banda que no existe.
+        return ('BAJO SENDA — VIGILANCIA', '#F97316',
+                f'< senda CREG {senda:.1f}%, dentro de '
+                f'{SENDA_MARGEN_VIGILANCIA_PP:.0f}pp [criterio propio del portal, '
+                f'no CREG]. Índice NE Inferior (Estatuto CREG 026/2014).')
     return ('BAJO SENDA — RIESGO', '#EF4444',
-            f'< senda CREG {senda:.1f}% − 5pp — NE Inferior persistente (CREG 026/2014).')
+            f'Más de {SENDA_MARGEN_VIGILANCIA_PP:.0f}pp por debajo de la senda CREG '
+            f'{senda:.1f}% [margen de criterio propio del portal, no CREG]. '
+            f'Índice NE Inferior (Estatuto CREG 026/2014).')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
