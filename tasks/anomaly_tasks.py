@@ -16,6 +16,9 @@ import re as _re
 import sys
 import os
 from datetime import datetime, date, timedelta
+from typing import Optional
+
+from domain.services.notification_service import PORTAL_ENERGETICO_URL
 from celery import shared_task, group, chord
 
 # Asegurar que el directorio raíz del proyecto esté en el path
@@ -29,9 +32,25 @@ logger = logging.getLogger(__name__)
 BOT_BROADCAST_URL = "http://localhost:8001/api/broadcast-alert"
 BOT_TIMEOUT = 60
 
-# ── Cooldown: no reenviar la misma alerta más de una vez por día ──
-ALERT_COOLDOWN_HOURS = 24  # valor de respaldo; en práctica se usa TTL hasta medianoche
+# ── Cooldown por alerta ──
+# Ventana mínima entre reenvíos de la MISMA alerta (misma `clave`), por
+# severidad. Antes el cooldown era un TTL hasta medianoche, de modo que el
+# motor corría 48 veces al día y notificaba exactamente una vez, siempre a
+# las 00:00: una condición crítica detectada a las 00:30 esperaba 23,5 horas.
+# Verificado en 15 días consecutivos de logs.
+# Claves NORMALIZADAS (core.constants.normalizar_severidad): sin tilde y en
+# mayúsculas, para no repetir el bug de 'CRÍTICO' vs 'CRITICO'.
+ALERT_COOLDOWN_HOURS_POR_SEVERIDAD = {
+    'CRITICO': 6,   # coincide con lo que el docstring del módulo ya prometía
+    'ALERTA': 12,
+}
+ALERT_COOLDOWN_HOURS = 24  # respaldo para severidades no listadas
 DAILY_LOCK_TTL_SECONDS = 72000  # 20 horas — expira antes del próximo informe
+
+# Máximo de alertas que se registran y se listan por ciclo. El corte existía
+# como `[[:5]]` repetido en tres puntos, y el log decía siempre "5 alertas
+# registradas" sin revelar que había más.
+MAX_ALERTAS_POR_CICLO = 10
 
 
 def _get_redis():
@@ -148,8 +167,23 @@ def _broadcast_alert_via_bot(message: str, severity: str = "ALERT") -> dict:
         return {"status": "error", "error": str(e)}
 
 
-def _registrar_alerta_bd(alertas: list, enviados: int):
-    """Registra las alertas enviadas en la tabla alertas_historial"""
+def _registrar_alerta_bd(alertas: list, resultado_envio: Optional[dict] = None):
+    """
+    Registra las alertas en `alertas_historial` con el resultado REAL de
+    entrega por canal.
+
+    Antes recibía `enviados: int` y el llamador pasaba `max(1, enviados)`, con
+    el comentario "garantizar flag = TRUE": si el correo y Telegram fallaban
+    los dos, la BD afirmaba igual que la alerta se había entregado. Además el
+    único flag que se escribía era el de WhatsApp, un canal que no envía nada,
+    mientras el correo —el que sí funciona— quedaba en FALSE (1 de 848 filas).
+
+    Args:
+        alertas: lista de dicts de alerta.
+        resultado_envio: dict de notification_service.broadcast_alert, con
+            {'telegram': {'sent': N}, 'email': {'sent': M}}. None significa
+            que no se intentó enviar.
+    """
     try:
         from core.config import settings
         import psycopg2
@@ -166,7 +200,26 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
         conn = psycopg2.connect(**conn_params)
         cur = conn.cursor()
 
-        for alerta in alertas[:5]:
+        # Resultado real por canal. WhatsApp no se escribe: el canal no está
+        # conectado (_broadcast_alert_via_bot no tiene ningún caller), así que
+        # marcarlo TRUE era afirmar una entrega inexistente.
+        _res = resultado_envio or {}
+        _tg_ok = bool(_res.get('telegram', {}).get('sent', 0))
+        _email_ok = bool(_res.get('email', {}).get('sent', 0))
+        _destinatarios_email = _res.get('email', {}).get('destinatarios') or None
+        _ahora = datetime.now()
+
+        if len(alertas) > MAX_ALERTAS_POR_CICLO:
+            _perdidas = [
+                a.get('clave') or a.get('titulo') for a in alertas[MAX_ALERTAS_POR_CICLO:]
+            ]
+            logger.warning(
+                f"⚠️ {len(alertas)} alertas en este ciclo: solo se registran las "
+                f"primeras {MAX_ALERTAS_POR_CICLO}. No se registran {len(_perdidas)}: "
+                f"{_perdidas}"
+            )
+
+        for alerta in alertas[:MAX_ALERTAS_POR_CICLO]:
             try:
                 # Convertir tipos numpy a Python nativos para que psycopg2 los acepte
                 # (pandas devuelve numpy.float64/int64 que psycopg2 no adapta y rompe el INSERT)
@@ -194,18 +247,39 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
                     INSERT INTO alertas_historial
                     (fecha_evaluacion, metrica, severidad, descripcion,
                      valor_promedio, json_completo,
-                     notificacion_whatsapp_enviada)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                     notificacion_telegram_enviada, fecha_notificacion_telegram,
+                     notificacion_email_enviada, fecha_notificacion_email,
+                     destinatarios_email)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT ON CONSTRAINT unique_alerta_fecha_metrica DO UPDATE SET
-                        notificacion_whatsapp_enviada = GREATEST(
-                            alertas_historial.notificacion_whatsapp_enviada,
-                            EXCLUDED.notificacion_whatsapp_enviada
+                        -- El DO UPDATE no refrescaba descripcion ni valor, así
+                        -- que la fila del día se quedaba con el texto del
+                        -- primer ciclo (00:00) por más que la condición
+                        -- cambiara durante el día.
+                        descripcion = EXCLUDED.descripcion,
+                        valor_promedio = EXCLUDED.valor_promedio,
+                        json_completo = EXCLUDED.json_completo,
+                        notificacion_telegram_enviada = GREATEST(
+                            alertas_historial.notificacion_telegram_enviada,
+                            EXCLUDED.notificacion_telegram_enviada
                         ),
-                        fecha_generacion = CASE
-                            WHEN EXCLUDED.notificacion_whatsapp_enviada = TRUE
-                            THEN NOW()
-                            ELSE alertas_historial.fecha_generacion
-                        END
+                        fecha_notificacion_telegram = COALESCE(
+                            EXCLUDED.fecha_notificacion_telegram,
+                            alertas_historial.fecha_notificacion_telegram
+                        ),
+                        notificacion_email_enviada = GREATEST(
+                            alertas_historial.notificacion_email_enviada,
+                            EXCLUDED.notificacion_email_enviada
+                        ),
+                        fecha_notificacion_email = COALESCE(
+                            EXCLUDED.fecha_notificacion_email,
+                            alertas_historial.fecha_notificacion_email
+                        ),
+                        destinatarios_email = COALESCE(
+                            EXCLUDED.destinatarios_email,
+                            alertas_historial.destinatarios_email
+                        ),
+                        fecha_generacion = NOW()
                 """, (
                     date.today(),
                     str(alerta.get('categoria', alerta.get('metrica', 'SISTEMA'))),
@@ -213,7 +287,9 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
                     _descripcion_completa,
                     _valor_py,
                     json.dumps(alerta, ensure_ascii=False, default=str),
-                    enviados > 0
+                    _tg_ok, _ahora if _tg_ok else None,
+                    _email_ok, _ahora if _email_ok else None,
+                    _destinatarios_email,
                 ))
             except Exception as e:
                 logger.warning(f"No se pudo insertar alerta individual: {e}")
@@ -223,7 +299,10 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
         conn.commit()
         cur.close()
         conn.close()
-        logger.info(f"📝 {len(alertas[:5])} alertas registradas en BD")
+        logger.info(
+            f"📝 {len(alertas[:MAX_ALERTAS_POR_CICLO])} de {len(alertas)} alertas "
+            f"registradas en BD (telegram={_tg_ok}, email={_email_ok})"
+        )
     except Exception as e:
         logger.error(f"Error registrando alertas en BD: {e}")
 
@@ -247,16 +326,26 @@ def _check_stale_data():
         conn = psycopg2.connect(**conn_params)
         cur = conn.cursor()
 
-        # Métricas críticas a monitorear por datos congelados
+        # Métricas vigiladas por datos congelados.
+        #
+        # CRITERIO PROPIO DEL PORTAL: estos umbrales de días no provienen de
+        # ninguna resolución CREG ni de XM. Son el número de días idénticos
+        # consecutivos a partir del cual se considera que el ETL o la API de
+        # XM dejaron de actualizar. El segundo valor escala a CRÍTICO: un ETL
+        # congelado muchos días invalida todo lo que publica el informe, así
+        # que tiene que poder notificarse (antes toda esta categoría salía
+        # como ALERTA y por diseño nunca llegaba a nadie — 159 filas desde
+        # febrero, incluida una de 9 días seguidos).
         metricas_criticas = [
-            ('CapaUtilDiarEner', 3),   # Alertar si 3+ días idénticos
-            ('PorcVoluUtilDiar', 3),
-            ('AporEner', 5),
-            ('DemaReal', 2),
-            ('Gene', 2),
+            # (métrica, días para ALERTA, días para CRÍTICO)
+            ('CapaUtilDiarEner', 3, 7),
+            ('PorcVoluUtilDiar', 3, 7),
+            ('AporEner', 5, 10),
+            ('DemaReal', 2, 5),
+            ('Gene', 2, 5),
         ]
 
-        for metrica, max_dias_repetidos in metricas_criticas:
+        for metrica, max_dias_repetidos, dias_criticos in metricas_criticas:
             cur.execute("""
                 WITH daily_totals AS (
                     -- ROUND a 1 decimal evita falsos positivos por precisión binaria
@@ -291,19 +380,37 @@ def _check_stale_data():
             row = cur.fetchone()
             if row and row[0] > max_dias_repetidos:
                 dias_frozen = row[0]
+                es_critico = dias_frozen >= dias_criticos
                 stale_alerts.append({
-                    'categoria': f'DATOS_CONGELADOS',
+                    'categoria': 'DATOS_CONGELADOS',
                     'metrica': metrica,
-                    'severidad': 'ALERTA',
+                    'severidad': 'CRÍTICO' if es_critico else 'ALERTA',
+                    # Clave estable por métrica: sin ella el cooldown usaba el
+                    # título, que incluye el conteo de días y cambia cada día.
+                    'clave': f'DATOS_CONGELADOS_{metrica}',
                     'titulo': f'{metrica}: datos idénticos {dias_frozen} días consecutivos',
-                    'descripcion': f'La métrica {metrica} muestra el mismo valor total '
-                                   f'durante {dias_frozen} días seguidos. Posible problema '
-                                   f'con la API XM o el ETL.',
-                    'valor': dias_frozen
+                    'descripcion': (
+                        f'La métrica {metrica} muestra el mismo valor total durante '
+                        f'{dias_frozen} días seguidos. Posible problema con la API de '
+                        f'XM o con el ETL. Mientras persista, todo indicador del '
+                        f'informe que dependa de {metrica} está desactualizado.'
+                    ),
+                    'valor': dias_frozen,
+                    'umbral': dias_criticos if es_critico else max_dias_repetidos,
+                    'fuente_regulatoria': (
+                        'Criterio propio del portal (sin cita normativa): umbral de '
+                        f'{dias_criticos if es_critico else max_dias_repetidos} días '
+                        'idénticos consecutivos para considerar la serie congelada.'
+                    ),
+                    'recomendacion': (
+                        f'Verificar el ETL de {metrica} y la respuesta de la API de XM. '
+                        f'Revisar logs/etl/ y la última fecha_actualizacion en '
+                        f'sector_energetico.metrics.'
+                    ),
                 })
                 logger.warning(
                     f"⚠️ {metrica}: datos congelados {dias_frozen} días "
-                    f"(umbral: {max_dias_repetidos})"
+                    f"(umbral alerta: {max_dias_repetidos}, crítico: {dias_criticos})"
                 )
 
         cur.close()
@@ -314,11 +421,32 @@ def _check_stale_data():
     return stale_alerts
 
 
+def _cooldown_key(clave: str) -> str:
+    """Clave Redis del cooldown de una alerta."""
+    return 'alert_cooldown:' + clave.replace(' ', '_')[:120]
+
+
+def _horas_cooldown(severidad: str) -> int:
+    """
+    Ventana de cooldown en horas según la severidad.
+
+    Antes el cooldown era un TTL hasta medianoche, idéntico para todo: el
+    motor corría 48 veces al día y notificaba una sola vez, siempre a las
+    00:00 (verificado en 15 días de logs). Una condición crítica nueva a las
+    09:00 esperaba 15 horas. Ahora una CRÍTICO se puede reenviar a las 6
+    horas, que es justo lo que el docstring del módulo ya prometía.
+    """
+    from core.constants import normalizar_severidad
+    return ALERT_COOLDOWN_HOURS_POR_SEVERIDAD.get(
+        normalizar_severidad(severidad), ALERT_COOLDOWN_HOURS
+    )
+
+
 def _alerta_ya_notificada(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> bool:
     """
-    Verifica si una alerta con esta clave ya fue notificada hoy.
+    Verifica si una alerta con esta clave está dentro de su ventana de cooldown.
+
     Usa Redis como fuente de verdad (atómico, compartido por todos los workers).
-    El TTL se calcula hasta medianoche para garantizar máximo 1 envío por día.
 
     `clave` debe ser un identificador ESTABLE del tipo de alerta (ej. 'HSIN_CRITICO'),
     nunca el título formateado con valores en vivo (ej. porcentajes) — de lo contrario
@@ -327,29 +455,37 @@ def _alerta_ya_notificada(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> bool
     try:
         import redis as _redis
         _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
-        _key = 'alert_cooldown:' + clave.replace(' ', '_')[:120]
-        return bool(_r.get(_key))
+        return bool(_r.get(_cooldown_key(clave)))
     except Exception as e:
         logger.warning(f"Error verificando cooldown de alerta (Redis): {e}")
         return False  # En caso de error, permitir enviar
 
 
-def _activar_cooldown_alerta(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> None:
-    """Registra en Redis que esta alerta ya fue notificada hoy (TTL hasta medianoche)."""
+def _activar_cooldown_alerta(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> bool:
+    """
+    Registra en Redis que esta alerta acaba de notificarse.
+
+    El TTL es la ventana de `horas` (antes se ignoraba por completo el
+    parámetro y se usaba un TTL hasta medianoche).
+
+    Returns:
+        True si el cooldown quedó grabado. False si Redis falló: en ese caso
+        el llamador sabe que la próxima corrida podría reenviar, en vez de
+        asumir silenciosamente que quedó grabado.
+    """
     try:
         import redis as _redis
-        from datetime import datetime
         _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
-        _key = 'alert_cooldown:' + clave.replace(' ', '_')[:120]
-        # TTL = segundos restantes hasta las 00:00 del día siguiente
-        _now = datetime.now()
-        _midnight = (_now.replace(hour=0, minute=0, second=0, microsecond=0)
-                     + timedelta(days=1))
-        _ttl = max(int((_midnight - _now).total_seconds()), 3600)
-        _r.setex(_key, _ttl, '1')
-        logger.debug(f"Cooldown activado hasta medianoche: {_key} (TTL={_ttl}s)")
+        _ttl = max(int(horas * 3600), 60)
+        _r.setex(_cooldown_key(clave), _ttl, '1')
+        logger.debug(f"Cooldown activado: {_cooldown_key(clave)} (TTL={_ttl}s / {horas}h)")
+        return True
     except Exception as e:
-        logger.warning(f"Error activando cooldown en Redis: {e}")
+        logger.warning(
+            f"Error activando cooldown en Redis para {clave!r}: {e}. "
+            f"La alerta podría reenviarse en la próxima corrida."
+        )
+        return False
 
 
 @shared_task(name='tasks.anomaly_tasks.check_anomalies', bind=True, max_retries=2)
@@ -386,7 +522,11 @@ def check_anomalies(self):
             sistema.close()
 
         alertas = sistema.alertas
-        alertas_criticas = [a for a in alertas if a.get('severidad') in ('CRÍTICO', 'ALERTA')]
+        from core.constants import normalizar_severidad as _norm_sev
+        alertas_criticas = [
+            a for a in alertas
+            if _norm_sev(a.get('severidad')) in ('CRITICO', 'ALERTA')
+        ]
 
         # ── Detección de datos congelados ──
         staleness_alerts = _check_stale_data()
@@ -472,10 +612,13 @@ def check_anomalies(self):
             logger.warning(f"[ANOMALÍAS] PNT check falló (no crítico): {e}")
 
         # ── FILTRO DE URGENCIA ──
-        # Solo notificar las CRÍTICAS (no las de severidad ALERTA)
+        # Solo notificar las CRÍTICAS (no las de severidad ALERTA).
+        # Se compara por severidad NORMALIZADA: antes era `== 'CRÍTICO'`, una
+        # comparación de string con tilde que cualquier evaluador que emitiera
+        # 'CRITICO' sin tilde habría dejado sin notificar en silencio.
         alertas_urgentes = [
             a for a in alertas_criticas
-            if a.get('severidad') == 'CRÍTICO'
+            if _norm_sev(a.get('severidad')) == 'CRITICO'
         ]
 
         # ── FILTRO DE COOLDOWN ──
@@ -492,9 +635,10 @@ def check_anomalies(self):
                     f"⏳ [ANOMALÍAS] Alerta ya notificada recientemente, omitiendo: {titulo}"
                 )
 
-        # Registrar TODAS las alertas en BD (para el informe diario)
+        # Registrar TODAS las alertas en BD (para el informe diario).
+        # resultado_envio=None => no se intentó enviar: los flags quedan en FALSE.
         if alertas_criticas:
-            _registrar_alerta_bd(alertas_criticas, 0)
+            _registrar_alerta_bd(alertas_criticas, None)
             logger.info(f"📝 [ANOMALÍAS] {len(alertas_criticas)} anomalías registradas en BD")
 
         if alertas_nuevas:
@@ -502,45 +646,80 @@ def check_anomalies(self):
                 f"🚨 [ANOMALÍAS] {len(alertas_nuevas)} anomalías CRÍTICAS NUEVAS → notificando"
             )
 
-            # Construir mensaje
-            alert_lines = []
-            max_severity = "CRITICAL"
-            for a in alertas_nuevas[:5]:
-                categoria = a.get('categoria', 'Sistema')
-                titulo = a.get('titulo', 'Anomalía detectada')
-                icon = '🔴'
-                alert_lines.append(f"{icon} *{categoria}*: {titulo}")
-
-            alert_message = (
-                f"🚨 *ALERTA URGENTE - SISTEMA ELÉCTRICO* 🚨\n\n"
-                f"{chr(10).join(alert_lines)}\n\n"
-                f"📅 Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                f"📊 Total alertas críticas: {len(alertas_nuevas)}\n\n"
-                f"_Portal Energético - Ministerio de Minas y Energía_"
+            from core.constants import normalizar_severidad
+            from domain.services.notification_service import (
+                broadcast_alert as ns_broadcast,
+                build_alert_email_html,
             )
 
-            # Enviar broadcast (Telegram + email)
-            from domain.services.notification_service import broadcast_alert as ns_broadcast
+            # Severidad máxima real. Antes era la constante "CRITICAL",
+            # hardcodeada pero presentada como calculada en el asunto del correo.
+            _severidades = {normalizar_severidad(a.get('severidad')) for a in alertas_nuevas}
+            max_severity = 'CRITICO' if 'CRITICO' in _severidades else (
+                'ALERTA' if 'ALERTA' in _severidades else 'AVISO'
+            )
 
+            # Mensaje de Telegram: título + descripción. La descripción se
+            # descartaba en este canal, así que el destinatario solo veía un
+            # renglón por alerta.
+            alert_lines = []
+            for a in alertas_nuevas[:MAX_ALERTAS_POR_CICLO]:
+                categoria = a.get('categoria', 'Sistema')
+                titulo = a.get('titulo', 'Anomalía detectada')
+                icon = '🔴' if normalizar_severidad(a.get('severidad')) == 'CRITICO' else '🟠'
+                linea = f"{icon} *{categoria}*: {titulo}"
+                _desc = str(a.get('descripcion', '') or '').strip()
+                if _desc:
+                    linea += f"\n   {_desc}"
+                _rec = str(a.get('recomendacion', '') or '').strip()
+                if _rec:
+                    linea += f"\n   _Acción:_ {_rec}"
+                alert_lines.append(linea)
+
+            alert_message = (
+                "🚨 *ALERTA - SISTEMA ELÉCTRICO* 🚨\n\n"
+                + "\n\n".join(alert_lines)
+                + f"\n\n📅 Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                + f"📊 Total alertas: {len(alertas_nuevas)}\n"
+                + f"🔗 {PORTAL_ENERGETICO_URL}\n\n"
+                + "_Portal Energético - Ministerio de Minas y Energía_"
+            )
+
+            # Enviar broadcast (Telegram + email con HTML propio de alertas)
             broadcast_result = ns_broadcast(
                 message=alert_message,
                 severity=max_severity,
                 is_daily=False,
+                email_body_html=build_alert_email_html(alertas_nuevas),
             )
-            enviados = (
-                broadcast_result.get('telegram', {}).get('sent', 0)
-                + broadcast_result.get('email', {}).get('sent', 0)
-            )
+            tg_enviados = broadcast_result.get('telegram', {}).get('sent', 0)
+            email_enviados = broadcast_result.get('email', {}).get('sent', 0)
+            enviados = tg_enviados + email_enviados
 
-            # Actualizar BD con estado de envío (garantizar flag = TRUE)
-            _registrar_alerta_bd(alertas_nuevas, max(1, enviados))
+            # Registrar el resultado REAL por canal (sin max(1, ...))
+            _registrar_alerta_bd(alertas_nuevas, broadcast_result)
 
-            # Activar cooldown Redis para cada alerta enviada (atómico, cross-worker)
-            for _a in alertas_nuevas:
-                _clave_envio = _a.get('clave') or _a.get('titulo', _a.get('descripcion', ''))
-                _activar_cooldown_alerta(_clave_envio)
-
-            logger.info(f"📤 [ANOMALÍAS] Broadcast completado: {enviados} usuarios notificados")
+            if enviados > 0:
+                # El cooldown solo se consume si algo salió de verdad. Antes se
+                # activaba siempre, así que un fallo total de ambos canales
+                # silenciaba la alerta durante toda la ventana.
+                for _a in alertas_nuevas:
+                    _clave_envio = _a.get('clave') or _a.get('titulo', _a.get('descripcion', ''))
+                    _activar_cooldown_alerta(
+                        _clave_envio,
+                        horas=_horas_cooldown(normalizar_severidad(_a.get('severidad'))),
+                    )
+                logger.info(
+                    f"📤 [ANOMALÍAS] Broadcast completado: {enviados} notificaciones "
+                    f"(Telegram={tg_enviados}, email={email_enviados})"
+                )
+            else:
+                logger.error(
+                    f"❌ [ANOMALÍAS] Ningún canal entregó las {len(alertas_nuevas)} "
+                    f"alertas (Telegram={tg_enviados}, email={email_enviados}). "
+                    f"No se activa cooldown: se reintentará en la próxima corrida. "
+                    f"Detalle: {broadcast_result}"
+                )
         elif alertas_criticas:
             logger.info(
                 f"📋 [ANOMALÍAS] {len(alertas_criticas)} anomalías detectadas "
@@ -884,8 +1063,14 @@ def send_daily_generate():
                 """)
                 if not df_anom.empty:
                     # FILTRO: Excluir métricas técnicas (mismo filtro que orquestador)
+                    # DATOS_CONGELADOS salió de esta lista: la categoría
+                    # emitía ALERTA (que no pasa el filtro de notificación) Y
+                    # además se filtraba aquí, así que el diseño garantizaba
+                    # que nadie la viera nunca. Está reportando que un ETL
+                    # dejó de actualizar, lo que invalida el resto del
+                    # informe — es información que el lector necesita.
                     _metricas_tecnicas = {
-                        'TEST', 'DATOS_CONGELADOS', 'STALENESS', 'DATA_QUALITY',
+                        'TEST', 'STALENESS', 'DATA_QUALITY',
                         'CONNECTION_ERROR', 'SYNC_ERROR'
                     }
                     

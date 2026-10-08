@@ -32,6 +32,8 @@ from typing import Any, Dict, List, Optional
 from core.umbrales_oficiales import (
     clasificar_hsin,
     clasificar_indice_ne,
+    clasificar_vigilancia_embalse,
+    SENDA_MARGEN_VIGILANCIA_PP,
     clasificar_visual_embalse,
 )
 
@@ -120,14 +122,22 @@ def _get_impacto_operativo(metrica: str, desviacion_pct: Optional[float], valor_
             nivel_ne, descripcion_ne, senda = clasificar_indice_ne(float(valor_actual))
 
             if nivel_ne == 'INFERIOR':
+                # El Índice NE es binario, pero no da lo mismo estar 1pp o
+                # 30pp por debajo de la senda. El desglose es criterio propio
+                # (clasificar_vigilancia_embalse) y se declara como tal.
+                nivel_vig, _desc_vig, _ = clasificar_vigilancia_embalse(float(valor_actual))
+                if nivel_vig == 'VIGILANCIA':
+                    return (
+                        f"Índice NE Inferior: embalse {valor_actual:.1f}% bajo senda CREG "
+                        f"{senda:.1f}%, dentro de {SENDA_MARGEN_VIGILANCIA_PP:.0f}pp "
+                        f"[margen de criterio propio del portal, no CREG]. "
+                        f"Vigilar evolución semanal."
+                    )
                 return (
-                    f"Índice NE INFERIOR: embalse {valor_actual:.1f}% bajo senda CREG {senda:.1f}%. "
-                    f"Riesgo de desabastecimiento — activar mecanismo de sostenimiento (CREG 026/2014 art. 7)."
-                )
-            if nivel_ne == 'ALERTA':
-                return (
-                    f"Índice NE ALERTA: embalse {valor_actual:.1f}% bajo senda CREG {senda:.1f}%. "
-                    f"Vigilar evolución semanal; si persiste → nivel INFERIOR."
+                    f"Índice NE Inferior: embalse {valor_actual:.1f}% más de "
+                    f"{SENDA_MARGEN_VIGILANCIA_PP:.0f}pp bajo la senda CREG {senda:.1f}%. "
+                    f"Riesgo de desabastecimiento — activar mecanismo de sostenimiento "
+                    f"(CREG 026/2014 art. 7)."
                 )
             if valor_actual > 95:
                 return (

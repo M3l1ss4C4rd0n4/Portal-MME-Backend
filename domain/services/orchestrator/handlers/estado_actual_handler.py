@@ -18,6 +18,8 @@ from core.umbrales_oficiales import (
     OBJETIVO_XM_EMBALSE_ANTE_NINO_PCT,
     obtener_senda_referencia,
     clasificar_indice_ne,
+    clasificar_vigilancia_embalse,
+    SENDA_MARGEN_VIGILANCIA_PP,
     clasificar_hsin,
     HSIN_UMBRAL_NORMAL,
 )
@@ -321,14 +323,19 @@ class EstadoActualHandlerMixin:
                     f"≥ senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014, Res. CREG 101 112/2026).",
                     prom_referencia,
                 )
-        elif nivel_ne == 'ALERTA':
+        elif clasificar_vigilancia_embalse(nivel_pct)[0] == 'VIGILANCIA':
+            # NE Inferior, pero dentro del margen de vigilancia propio del
+            # portal. Antes esta rama comparaba con nivel_ne == 'ALERTA',
+            # inalcanzable, así que todo lo que bajaba de la senda salía como
+            # el caso más grave.
             return (
-                "🟡 NE Alerta — bajo senda CREG",
-                f"< senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014). "
-                f"Si persiste 2 verificaciones semanales → NE Inferior.",
+                "🟡 NE Inferior — bajo senda CREG (vigilancia)",
+                f"< senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014), dentro de "
+                f"{SENDA_MARGEN_VIGILANCIA_PP:.0f}pp [margen de criterio propio del "
+                f"portal, no CREG].",
                 prom_referencia,
             )
-        else:  # INFERIOR
+        else:  # INFERIOR, más allá del margen de vigilancia
             return (
                 "🔴 NE Inferior — riesgo de desabastecimiento",
                 f"< senda CREG {senda_pct:.1f}% (Estatuto CREG 026/2014 art. 3). "
@@ -743,10 +750,10 @@ class EstadoActualHandlerMixin:
                 # Niveles: SUPERIOR / ALERTA / INFERIOR.
                 # Adicional: criterio operativo CND para vertimientos (>95%).
                 if valor is not None:
-                    nivel_ne, _, _senda = clasificar_indice_ne(valor)
-                    if valor > 95 or nivel_ne == 'INFERIOR':
+                    nivel_vig, _, _senda = clasificar_vigilancia_embalse(valor)
+                    if valor > 95 or nivel_vig == 'DEFICIT':
                         estado = "Crítico"
-                    elif valor > 80 or nivel_ne == 'ALERTA':
+                    elif valor > 80 or nivel_vig == 'VIGILANCIA':
                         estado = "Alerta"
                 _anom_key = 'Embalses'
 
@@ -853,10 +860,14 @@ class EstadoActualHandlerMixin:
             # Para semáforo regional aplicamos el mismo marco regulatorio,
             # comparando el nivel promedio regional contra la senda CREG.
             # Adicional: criterio operativo CND para alto nivel (vertimientos).
-            nivel_ne_reg, _, _senda_reg = clasificar_indice_ne(pct_prom)
-            if pct_prom > 95 or nivel_ne_reg == 'INFERIOR':
+            # Semáforo con el gradiente de vigilancia (criterio propio del
+            # portal): el Índice NE oficial es binario y, al comparar contra
+            # 'ALERTA' —rama inalcanzable—, toda región bajo senda salía
+            # 'Crítico'.
+            nivel_vig_reg, _, _senda_reg = clasificar_vigilancia_embalse(pct_prom)
+            if pct_prom > 95 or nivel_vig_reg == 'DEFICIT':
                 estado = 'Crítico'
-            elif pct_prom > 80 or nivel_ne_reg == 'ALERTA':
+            elif pct_prom > 80 or nivel_vig_reg == 'VIGILANCIA':
                 estado = 'Alerta'
             else:
                 estado = 'Normal'

@@ -10,7 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from domain.schemas.orchestrator import ErrorDetail
 from domain.services.orchestrator.utils.decorators import handle_service_error
-from core.umbrales_oficiales import clasificar_indice_ne
+from core.umbrales_oficiales import (
+    clasificar_indice_ne,
+    clasificar_vigilancia_embalse,
+    SENDA_MARGEN_VIGILANCIA_PP,
+)
 from core.utils.prediction_bounds import get_physical_bounds, clamp_intervalo_prediccion
 
 logger = get_logger(__name__)
@@ -608,18 +612,22 @@ class PrediccionesHandlerMixin:
                         if not df_embalses_pred.empty:
                             embalse_pct_prom = float(df_embalses_pred['valor_gwh_predicho'].mean())
                             nivel_ne, _desc_ne, senda = clasificar_indice_ne(embalse_pct_prom, fecha_fin)
-                            if nivel_ne == 'INFERIOR':
+                            nivel_vig, _, _ = clasificar_vigilancia_embalse(embalse_pct_prom, fecha_fin)
+                            if nivel_vig == 'DEFICIT':
                                 recomendaciones.append(
                                     f"🔴 El embalse pronosticado para este horizonte ({embalse_pct_prom:.1f}%) "
-                                    f"estaría por debajo de la senda de referencia CREG ({senda:.1f}%) — "
-                                    f"Índice NE en nivel INFERIOR (Res. CREG 209/2020 + 101 112/2026). "
+                                    f"estaría más de {SENDA_MARGEN_VIGILANCIA_PP:.0f}pp por debajo de la senda "
+                                    f"de referencia CREG ({senda:.1f}%) — Índice NE Inferior "
+                                    f"(Res. CREG 209/2020 + 101 112/2026). "
                                     f"Verificar disponibilidad de respaldo térmico."
                                 )
-                            elif nivel_ne == 'ALERTA':
+                            elif nivel_ne == 'INFERIOR':
                                 recomendaciones.append(
                                     f"🟡 El embalse pronosticado para este horizonte ({embalse_pct_prom:.1f}%) "
-                                    f"estaría cerca de la senda de referencia CREG ({senda:.1f}%) — "
-                                    f"Índice NE en ALERTA (Res. CREG 209/2020 + 101 112/2026)."
+                                    f"estaría por debajo de la senda de referencia CREG ({senda:.1f}%), dentro "
+                                    f"de {SENDA_MARGEN_VIGILANCIA_PP:.0f}pp [margen de criterio propio del "
+                                    f"portal, no CREG] — Índice NE Inferior "
+                                    f"(Res. CREG 209/2020 + 101 112/2026)."
                                 )
                             else:
                                 recomendaciones.append(
