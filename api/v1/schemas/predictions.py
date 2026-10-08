@@ -132,9 +132,12 @@ class PredictionResponse(BaseModel):
             point = PredictionPoint(
                 date=row["Date"] if isinstance(row["Date"], pd.Timestamp) else pd.to_datetime(row["Date"]),
                 value=float(row["Value"]) if pd.notna(row["Value"]) else 0.0,
-                lower=float(row.get("Lower", row["Value"] * 0.9)) if pd.notna(row.get("Lower")) else row["Value"] * 0.9,
-                upper=float(row.get("Upper", row["Value"] * 1.1)) if pd.notna(row.get("Upper")) else row["Value"] * 1.1,
-                confidence=confidence_level
+                # Sin intervalo real no se fabrica uno: antes se devolvía
+                # Value*0.9 / Value*1.1 etiquetado con confidence=0.95, un
+                # intervalo inventado presentado como intervalo del modelo.
+                lower=float(row["Lower"]) if pd.notna(row.get("Lower")) else None,
+                upper=float(row["Upper"]) if pd.notna(row.get("Upper")) else None,
+                confidence=confidence_level if pd.notna(row.get("Lower")) else None
             )
             prediction_points.append(point)
         

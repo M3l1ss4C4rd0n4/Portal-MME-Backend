@@ -660,34 +660,79 @@ class InformeHandlerMixin:
                 f"[INFORME_IA_POST] Texto limpio ({len(texto)} chars, {n_sections} secciones). Sin correcciones."
             )
 
-        MAX_CHARS = 3200
         texto = texto.strip()
-        if len(texto) > MAX_CHARS:
-            _sec5_match = _re.search(r'\n(## 5\..*)', texto, _re.DOTALL)
-            if _sec5_match:
-                _sec5_text = _sec5_match.group(1).strip()
-                _before_sec5 = texto[:_sec5_match.start()]
-                _budget = MAX_CHARS - len(_sec5_text) - 4
-                if _budget > MAX_CHARS * 0.5:
-                    cutoff = _before_sec5[:_budget].rfind('\n\n')
-                    if cutoff > _budget * 0.5:
-                        _before_sec5 = _before_sec5[:cutoff].rstrip()
-                    else:
-                        _before_sec5 = _before_sec5[:_budget].rstrip()
-                    texto = _before_sec5 + '\n\n' + _sec5_text
-                else:
-                    texto = texto[:MAX_CHARS].rstrip()
-            else:
-                cutoff = texto[:MAX_CHARS].rfind('\n\n')
-                if cutoff > MAX_CHARS * 0.5:
-                    texto = texto[:cutoff].rstrip()
-                else:
-                    texto = texto[:MAX_CHARS].rstrip()
-            logger.info(
-                f"[INFORME_IA_POST] Texto truncado de {original_len} a {len(texto)} chars para caber en 1 página PDF"
+        texto = self._ajustar_longitud_informe(texto, original_len)
+        return texto
+
+    # ── Helper: recortar la narrativa por secciones, no a la mitad ──
+
+    # La narrativa de la IA se renderiza en el capítulo "Análisis Ejecutivo del
+    # Sector", que ocupa dos páginas del PDF. El límite anterior (3.200) estaba
+    # dimensionado para UNA página y recortaba el texto de corrido desde el
+    # principio: como las secciones 3 y 4 son las últimas antes de la 5, se
+    # perdían enteras todos los días, que es justamente lo accionable
+    # (riesgos y recomendaciones), mientras sobrevivía el relleno de la 2.
+    MAX_CHARS_INFORME_IA = 5200
+
+    # Orden en que se sacrifican las secciones cuando no cabe todo. Se descarta
+    # primero el detalle cualitativo y se conservan contexto, riesgos,
+    # recomendaciones y calificación.
+    PRIORIDAD_DESCARTE_SECCIONES = ('2.2', '2.1', '2.', '1.')
+
+    def _ajustar_longitud_informe(self, texto: str, original_len: int) -> str:
+        """
+        Recorta la narrativa para que quepa en el capítulo del PDF, quitando
+        secciones completas en orden de prioridad en vez de cortar a la mitad.
+        """
+        max_chars = self.MAX_CHARS_INFORME_IA
+        if len(texto) <= max_chars:
+            return texto
+
+        # Partir en secciones por encabezado markdown ("## 3. Riesgos ...").
+        partes = _re.split(r'\n(?=##\s*\d)', texto)
+        if len(partes) < 2:
+            # Sin estructura reconocible: recorte simple en frontera de párrafo.
+            cutoff = texto[:max_chars].rfind('\n\n')
+            recortado = texto[:cutoff].rstrip() if cutoff > max_chars * 0.5 else texto[:max_chars].rstrip()
+            logger.warning(
+                f"[INFORME_IA_POST] Narrativa sin secciones reconocibles; "
+                f"recortada de {original_len} a {len(recortado)} chars."
+            )
+            return recortado
+
+        def _numero(parte: str) -> str:
+            m = _re.match(r'##\s*([\d.]+)', parte.strip())
+            return m.group(1) if m else ''
+
+        descartadas = []
+        for prefijo in self.PRIORIDAD_DESCARTE_SECCIONES:
+            if sum(len(p) for p in partes) <= max_chars:
+                break
+            for i, parte in enumerate(partes):
+                num = _numero(parte)
+                if num and num.startswith(prefijo) and parte is not None:
+                    descartadas.append(num)
+                    partes[i] = ''
+                    if sum(len(p) for p in partes) <= max_chars:
+                        break
+
+        resultado = '\n'.join(p for p in partes if p).strip()
+
+        if len(resultado) > max_chars:
+            cutoff = resultado[:max_chars].rfind('\n\n')
+            resultado = (
+                resultado[:cutoff].rstrip() if cutoff > max_chars * 0.5
+                else resultado[:max_chars].rstrip()
             )
 
-        return texto
+        # WARNING, no INFO: perder una sección del análisis que lee el Despacho
+        # no es un evento rutinario y antes pasaba inadvertido todos los días.
+        logger.warning(
+            f"[INFORME_IA_POST] Narrativa recortada de {original_len} a "
+            f"{len(resultado)} chars (límite {max_chars}). "
+            f"Secciones descartadas: {', '.join(descartadas) if descartadas else 'ninguna'}."
+        )
+        return resultado
 
     # ── Helper: Llamar a la IA (Groq/OpenRouter) ──
 

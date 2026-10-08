@@ -381,13 +381,24 @@ async def get_predictions_dashboard(
             # Fase 41 (2026-08-26), extendida a las 4 métricas del bucle:
             # MAPE riguroso (out-of-sample real de main_backtest()/
             # main_backtest_directo()) cuando existe, igual que EMBALSES_PCT.
+            # El backtest se ata al MODELO que de hecho sirve las predicciones.
+            # Sin ese filtro, PRECIO_BOLSA (hoy LGBM_PRECIO_v1.0, sin backtest)
+            # heredaba el de RANDOMFOREST_v1.0 — 34,94% y modelo_robusto=false —
+            # y se publicaba como "mape_es_riguroso": true.
+            modelo_en_produccion = (meta or {}).get("modelo")
             backtest_meta = pred_repo.execute_query_one(
                 "SELECT mape_expost, cobertura_ci_95, anio_corte, n_dias_test, "
-                "fecha_test_inicio, fecha_test_fin "
-                "FROM predictions_backtest_history WHERE fuente = %s "
+                "fecha_test_inicio, fecha_test_fin, modelo, modelo_robusto "
+                "FROM predictions_backtest_history WHERE fuente = %s AND modelo = %s "
                 "ORDER BY anio_corte DESC LIMIT 1",
-                (metric_id,)
-            )
+                (metric_id, modelo_en_produccion)
+            ) if modelo_en_produccion else None
+            if modelo_en_produccion and not backtest_meta:
+                logger.warning(
+                    f"[PREDICCIONES] {metric_id}: el modelo en producción "
+                    f"{modelo_en_produccion} no tiene backtest out-of-sample; "
+                    f"se publica el MAPE de holdout y mape_es_riguroso=false."
+                )
 
             # Predicción a 7 días
             pred_7d = df_pred.iloc[min(6, len(df_pred) - 1)] if len(df_pred) >= 7 else df_pred.iloc[-1]
