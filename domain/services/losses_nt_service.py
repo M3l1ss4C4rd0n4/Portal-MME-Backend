@@ -140,6 +140,27 @@ _NT_MAX_THRESHOLD = 10.0   # P_NT > 10% → anomalía (excesivo para promedio na
 _STN_MIN_THRESHOLD = -1.0  # P_STN < -1% → anomalía (DemaReal >> Gene)
 _STN_MAX_THRESHOLD = 5.0   # P_STN > 5% → anomalía (pérdidas STN excesivas)
 
+# P_STN por encima de este valor no es una anomalía del sistema: es el día de
+# XM todavía incompleto. P_STN = (Gene - DemaReal)/Gene, así que un 20%
+# implica DemaReal < 80% de Gene, imposible en el SIN (las pérdidas STN reales
+# rondan 1,4%). Ocurría a diario: la fila se escribía con la demanda parcial
+# (~50 GWh contra ~245 reales), el PNT salía negativo, y el filtro
+# `perdidas_no_tecnicas_pct > -5` de _get_series_pnt la descartaba después —
+# dejando al Isolation Forest sin datos desde abril de 2026.
+_STN_PARTIAL_DAY_PCT = 20.0
+
+# Desviación mínima del PNT diario respecto a la mediana de la ventana, en
+# puntos porcentuales, para que un día pueda escalar a ALERTA o CRITICO.
+#
+# CRITERIO PROPIO DEL PORTAL — no proviene de la CREG ni de la SSPD.
+# Isolation Forest con `contamination` fija etiqueta un porcentaje fijo de
+# puntos como anómalos aunque la serie sea plana, y la severidad se derivaba
+# solo de percentiles del score: sobre un PNT estable en 3,34%, un día de
+# 3,37% salía "CRITICO". El score dice "forma inusual"; estos umbrales
+# exigen además que la desviación sea material antes de escalarla.
+_PNT_DESVIACION_ALERTA_PP = 1.0
+_PNT_DESVIACION_CRITICO_PP = 2.0
+
 # Umbrales de confianza
 _CONF_ALTA = "alta"
 _CONF_MEDIA = "media"
@@ -233,6 +254,18 @@ class LossesNTService:
                     return None
 
                 gene_gwh = float(row[0])
+                dema_gwh_raw = float(row[1])
+                if gene_gwh > 0:
+                    p_stn_preliminar = (gene_gwh - dema_gwh_raw) / gene_gwh * 100.0
+                    if p_stn_preliminar > _STN_PARTIAL_DAY_PCT:
+                        logger.warning(
+                            "%s Día %s descartado por datos parciales: DemaReal=%.1f GWh "
+                            "contra Gene=%.1f GWh (P_STN=%.1f%% > %.1f%%). XM aún no "
+                            "publicó el día completo; se recalculará cuando lo haga.",
+                            _PREFIX, fecha_str, dema_gwh_raw, gene_gwh,
+                            p_stn_preliminar, _STN_PARTIAL_DAY_PCT,
+                        )
+                        return None
                 dema_real_gwh = float(row[1])
                 precio_bolsa = float(row[2]) if row[2] is not None else None
 
@@ -436,7 +469,25 @@ class LossesNTService:
                         %(costo_perdidas_total_mcop)s, %(costo_perdidas_tecnicas_mcop)s, %(costo_no_tecnicas_mcop)s,
                         %(fuentes_ok)s, %(confianza)s, %(anomalia_detectada)s, %(metodo_estimacion)s, %(notas)s
                     )
-                    ON CONFLICT (fecha) DO NOTHING
+                    ON CONFLICT (fecha) DO UPDATE SET
+                        generacion_gwh = EXCLUDED.generacion_gwh,
+                        demanda_gwh = EXCLUDED.demanda_gwh,
+                        perdidas_total_gwh = EXCLUDED.perdidas_total_gwh,
+                        perdidas_tecnicas_gwh = EXCLUDED.perdidas_tecnicas_gwh,
+                        perdidas_no_tecnicas_gwh = EXCLUDED.perdidas_no_tecnicas_gwh,
+                        perdidas_total_pct = EXCLUDED.perdidas_total_pct,
+                        perdidas_tecnicas_pct = EXCLUDED.perdidas_tecnicas_pct,
+                        perdidas_no_tecnicas_pct = EXCLUDED.perdidas_no_tecnicas_pct,
+                        perdidas_stn_pct = EXCLUDED.perdidas_stn_pct,
+                        precio_bolsa_cop_kwh = EXCLUDED.precio_bolsa_cop_kwh,
+                        costo_perdidas_total_mcop = EXCLUDED.costo_perdidas_total_mcop,
+                        costo_perdidas_tecnicas_mcop = EXCLUDED.costo_perdidas_tecnicas_mcop,
+                        costo_no_tecnicas_mcop = EXCLUDED.costo_no_tecnicas_mcop,
+                        fuentes_ok = EXCLUDED.fuentes_ok,
+                        confianza = EXCLUDED.confianza,
+                        anomalia_detectada = EXCLUDED.anomalia_detectada,
+                        metodo_estimacion = EXCLUDED.metodo_estimacion,
+                        notas = EXCLUDED.notas
                     """,
                     result,
                 )
@@ -531,7 +582,25 @@ class LossesNTService:
                         %(costo_perdidas_total_mcop)s, %(costo_perdidas_tecnicas_mcop)s, %(costo_no_tecnicas_mcop)s,
                         %(fuentes_ok)s, %(confianza)s, %(anomalia_detectada)s, %(metodo_estimacion)s, %(notas)s
                     )
-                    ON CONFLICT (fecha) DO NOTHING
+                    ON CONFLICT (fecha) DO UPDATE SET
+                        generacion_gwh = EXCLUDED.generacion_gwh,
+                        demanda_gwh = EXCLUDED.demanda_gwh,
+                        perdidas_total_gwh = EXCLUDED.perdidas_total_gwh,
+                        perdidas_tecnicas_gwh = EXCLUDED.perdidas_tecnicas_gwh,
+                        perdidas_no_tecnicas_gwh = EXCLUDED.perdidas_no_tecnicas_gwh,
+                        perdidas_total_pct = EXCLUDED.perdidas_total_pct,
+                        perdidas_tecnicas_pct = EXCLUDED.perdidas_tecnicas_pct,
+                        perdidas_no_tecnicas_pct = EXCLUDED.perdidas_no_tecnicas_pct,
+                        perdidas_stn_pct = EXCLUDED.perdidas_stn_pct,
+                        precio_bolsa_cop_kwh = EXCLUDED.precio_bolsa_cop_kwh,
+                        costo_perdidas_total_mcop = EXCLUDED.costo_perdidas_total_mcop,
+                        costo_perdidas_tecnicas_mcop = EXCLUDED.costo_perdidas_tecnicas_mcop,
+                        costo_no_tecnicas_mcop = EXCLUDED.costo_no_tecnicas_mcop,
+                        fuentes_ok = EXCLUDED.fuentes_ok,
+                        confianza = EXCLUDED.confianza,
+                        anomalia_detectada = EXCLUDED.anomalia_detectada,
+                        metodo_estimacion = EXCLUDED.metodo_estimacion,
+                        notas = EXCLUDED.notas
                     """,
                     result,
                 )
@@ -824,10 +893,24 @@ class LossesNTService:
         threshold_critico = float(df["anomaly_score"].quantile(0.05))   # peor 5%
         threshold_alerta  = float(df["anomaly_score"].quantile(0.15))   # peor 5-15%
 
+        # Desviación absoluta respecto al nivel típico de la ventana. Sin esto
+        # la severidad era puramente relativa y siempre marcaba un 5% de los
+        # días como CRITICO, incluso con la serie plana.
+        mediana_pnt = float(df["pnt_pct"].median())
+        df["desviacion_pp"] = (df["pnt_pct"] - mediana_pnt).abs()
+
         def _severidad(row):
             if row["anomaly"] == 1:
                 return "NORMAL"
-            return "CRITICO" if row["anomaly_score"] <= threshold_critico else "ALERTA"
+            desviacion = row["desviacion_pp"]
+            if desviacion < _PNT_DESVIACION_ALERTA_PP:
+                # Forma inusual para el modelo, pero sin desviación material:
+                # no se escala a una severidad que dispare notificaciones.
+                return "NORMAL"
+            if (row["anomaly_score"] <= threshold_critico
+                    and desviacion >= _PNT_DESVIACION_CRITICO_PP):
+                return "CRITICO"
+            return "ALERTA"
 
         df["severidad"] = df.apply(_severidad, axis=1)
         return df[["fecha", "pnt_pct", "anomaly", "anomaly_score", "severidad"]]
