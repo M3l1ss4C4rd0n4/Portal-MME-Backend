@@ -32,7 +32,7 @@ import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 
 from interface.components.chart_card import crear_page_header, crear_filter_bar, crear_chart_card_custom
@@ -100,16 +100,16 @@ def modelo_legible(modelo_bd: str) -> str:
 
 # Metadatos visuales por fuente (icono, color, nombre completo del modelo, features)
 FUENTES_META = {
-    'EMBALSES':         {'icono': '🏞️', 'color': '#1abc9c', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
-    'EMBALSES_PCT':     {'icono': '💧', 'color': '#16a085', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
-    'PRECIO_ESCASEZ':   {'icono': '⚡', 'color': '#e67e22', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
-    'GENE_TOTAL':       {'icono': '⚡', 'color': '#2ecc71', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
-    'DEMANDA':          {'icono': '📊', 'color': '#e74c3c', 'modelo_real': 'LightGBM 4.6.0 — Horizonte Dual (corto+largo)', 'features': 'Lags 1/7d, festivos Colombia (Ley 51+Emiliani), día semana'},
-    'Hidráulica':       {'icono': '💧', 'color': '#2980b9', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
-    'Biomasa':          {'icono': '🌿', 'color': '#8e44ad', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
-    'PERDIDAS':         {'icono': '📉', 'color': '#95a5a6', 'modelo_real': 'Prophet 1.1.5 + SARIMA(2,1,2)(1,0,1)[7] — Ensemble', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'EMBALSES':         {'icono': '🏞️', 'color': '#1abc9c', 'modelo_real': 'Ensemble Prophet 1.1.5 + SARIMAX (orden estimado por auto_arima en cada corrida)', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'EMBALSES_PCT':     {'icono': '💧', 'color': '#16a085', 'modelo_real': 'Ensemble Prophet 1.1.5 + SARIMAX (orden estimado por auto_arima en cada corrida)', 'features': 'Serie histórica 2000-2026, estacionalidad bimodal andina, 7 regresores (ONI, ONI lag90, SOI, PDO, GMST, precipitación IDEAM, aportes lag7)'},
+    'PRECIO_ESCASEZ':   {'icono': '⚡', 'color': '#e67e22', 'modelo_real': 'Ensemble Prophet 1.1.5 + SARIMAX (orden estimado por auto_arima en cada corrida)', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'GENE_TOTAL':       {'icono': '⚡', 'color': '#2ecc71', 'modelo_real': 'Ensemble Prophet 1.1.5 + SARIMAX (orden estimado por auto_arima en cada corrida)', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'DEMANDA':          {'icono': '📊', 'color': '#e74c3c', 'modelo_real': 'Ensemble Prophet + SARIMAX — ENSEMBLE_SECTOR_v1.0 (el horizonte dual LightGBM no está sirviendo hoy)', 'features': 'Lags 1/7d, festivos Colombia (Ley 51+Emiliani), día semana'},
+    'Hidráulica':       {'icono': '💧', 'color': '#2980b9', 'modelo_real': 'Ensemble Prophet 1.1.5 + SARIMAX (orden estimado por auto_arima en cada corrida)', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'Biomasa':          {'icono': '🌿', 'color': '#8e44ad', 'modelo_real': 'Ensemble Prophet 1.1.5 + SARIMAX (orden estimado por auto_arima en cada corrida)', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
+    'PERDIDAS':         {'icono': '📉', 'color': '#95a5a6', 'modelo_real': 'Ensemble Prophet 1.1.5 + SARIMAX (orden estimado por auto_arima en cada corrida)', 'features': 'Serie histórica 2020-2026, estacionalidad anual/semanal'},
     'Térmica':          {'icono': '🔥', 'color': '#e74c3c', 'modelo_real': 'LightGBM 4.6.0 — Directo con lags', 'features': 'Lags 1/7/14d, temperatura, precio bolsa histórico'},
-    'PRECIO_BOLSA':     {'icono': '💰', 'color': '#f39c12', 'modelo_real': 'RandomForest 300 árboles (sklearn 1.4)', 'features': 'Embalses %, Demanda GWh, Aportes hídricos, rolling mean 7d'},
+    'PRECIO_BOLSA':     {'icono': '💰', 'color': '#f39c12', 'modelo_real': 'LightGBM — LGBM_PRECIO_v1.0 (RandomForest quedó como respaldo)', 'features': 'Embalses %, Demanda GWh, Aportes hídricos, rolling mean 7d'},
     'Solar':            {'icono': '☀️', 'color': '#f1c40f', 'modelo_real': 'LightGBM 4.6.0 + NASA POWER CERES satélite', 'features': 'Irradiancia NASA POWER (Costa Caribe, La Guajira), lags 7/14d'},
     'APORTES_HIDRICOS': {'icono': '🌊', 'color': '#3498db', 'modelo_real': 'LightGBM 4.6.0 + NASA POWER precipitación', 'features': 'Precipitación NASA POWER 9 cuencas, embalses, lags 7d'},
     'Eólica':           {'icono': '💨', 'color': '#27ae60', 'modelo_real': 'LightGBM 4.6.0 + IDEAM velocidad viento', 'features': 'Vel. viento IDEAM La Guajira, lags 7/14d, calendario'},
@@ -340,7 +340,7 @@ def layout():
         html.Div(
             html.Small([
                 html.I(className="fas fa-brain me-1 text-muted"),
-                "Predicciones actualizadas semanalmente (domingos 2:00 AM). "
+                "Predicciones actualizadas cada 3 días (02:30) y los domingos, miércoles y sábados (02:00). "
                 "Modelos: Prophet, LightGBM, RandomForest, SARIMA.",
             ], className="text-muted fst-italic"),
             className="text-center my-4"
@@ -547,12 +547,25 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
     unidad = cfg.get('unidad', '')
     color_metrica = COLORES_METRICAS.get(fuente, '#3498db')
 
-    # 1. Cargar predicciones (filtrar por horizonte seleccionado)
+    # 1. Cargar predicciones y recortar al horizonte elegido.
+    #
+    # Antes se filtraba por la columna `horizonte_dias` de la tabla, con dos
+    # fallos encadenados: la consulta no la seleccionaba (así que la condición
+    # `'horizonte_dias' in df_pred.columns` era siempre falsa y el selector no
+    # hacía nada), y aunque la hubiera traído, el valor es 90 en las 1.978
+    # filas de la tabla —incluidas las 342 de EMBALSES_PCT que cubren 342
+    # días—, de modo que las opciones de 30 y 365 no existían en los datos.
+    # Se filtra por días reales de proyección desde hoy, que es lo que el
+    # usuario entiende al elegir el horizonte.
     df_pred = cargar_predicciones_metrica(fuente)
-    if not df_pred.empty and horizonte_dias and 'horizonte_dias' in df_pred.columns:
-        mask = df_pred['horizonte_dias'] == horizonte_dias
+    dias_graficados = None
+    if not df_pred.empty and horizonte_dias:
+        import pandas as _pd
+        limite = _pd.Timestamp(date.today()) + _pd.Timedelta(days=int(horizonte_dias))
+        mask = df_pred['fecha'] <= limite
         if mask.any():
             df_pred = df_pred[mask]
+        dias_graficados = int(horizonte_dias)
     if df_pred.empty:
         alerta = dbc.Alert(f"No hay predicciones para {label}.", color="warning")
         return html.Div(alerta)
@@ -654,7 +667,9 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
                 'unidad': '%',
                 'icono': 'fas fa-graduation-cap',
                 'color': 'blue',
-                'subtexto': '30d histórico',
+                # El holdout no es de 30 días: cada métrica define el suyo
+                # (EMBALSES_PCT usa dias_validacion=180).
+                'subtexto': 'validación holdout',
             },
             {
                 'titulo': 'RMSE Ex-Post',
@@ -765,7 +780,13 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
     grafica_pred_vs_real = html.Div([
         crear_chart_card_custom(
             titulo=f"Predicción vs Realidad — {label}",
-            subtitulo=f"Modelo: {modelo} · Horizonte {horizonte_dias} días",
+            # Mostrar los días realmente graficados, no lo que el usuario
+            # eligió: si el modelo no llega tan lejos, el subtítulo mentía.
+            subtitulo=(
+                f"Modelo: {modelo} · {len(df_pred)} días proyectados"
+                + (f" (horizonte solicitado: {dias_graficados} días)"
+                   if dias_graficados and len(df_pred) < dias_graficados else "")
+            ),
             children=dcc.Graph(figure=fig, config={'displayModeBar': True}),
         ),
         # Nota explicativa sobre el abanico de incertidumbre
@@ -776,9 +797,11 @@ def mostrar_detalle_metrica(fuente, periodo_dias, horizonte_dias):
                 style={'fontWeight': '600', 'color': '#2c3e50'},
             ),
             html.Span(
-                "Cuanto más lejos del último dato conocido, mayor la incertidumbre. "
-                "A 7 días: ±3%. A 90 días: ±15%. A 365 días: ±30%+. "
-                "No es un error: es una propiedad matemática inevitable de toda predicción estadística. "
+                "Cuanto más lejos del último dato conocido, mayor la incertidumbre: "
+                "no es un error, es una propiedad inevitable de toda predicción "
+                "estadística. El ancho real depende de la métrica y no está fijado "
+                "de antemano — en embalses el intervalo ronda los 40 puntos "
+                "porcentuales ya desde el primer día. "
                 "Pase el cursor sobre los puntos para ver el intervalo exacto de cada día.",
                 style={'color': '#5d6d7e', 'fontSize': '0.78rem'},
             ),
@@ -915,7 +938,7 @@ def cargar_historial_calidad(_):
     if df.empty:
         return dbc.Alert(
             [html.I(className="fas fa-info-circle me-2"),
-             "No hay evaluaciones de calidad ex-post registradas. Se generan automáticamente cada domingo."],
+             "No hay evaluaciones de calidad ex-post registradas. Se generan automáticamente todos los días a las 22:00."],
             color="info"
         )
     

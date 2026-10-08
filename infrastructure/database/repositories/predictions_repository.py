@@ -308,10 +308,48 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
             df = self.execute_dataframe(query, params)
             if not df.empty:
                 df['fecha'] = pd.to_datetime(df['fecha'])
+                df = self._descartar_dias_parciales(df, metrica)
             return df
         except Exception as e:
             logger.error(f"[PREDICTIONS_REPO] Error cargando reales {metrica}: {e}")
             return pd.DataFrame()
+
+    # Fracción de la mediana reciente por debajo de la cual un día final se
+    # considera publicación parcial de XM, no un valor real.
+    # CRITERIO PROPIO DEL PORTAL — mismo umbral que ya usa el filtro de datos
+    # parciales del entrenamiento (scripts/train_predictions_sector_energetico).
+    _UMBRAL_DIA_PARCIAL = 0.5
+
+    def _descartar_dias_parciales(self, df: pd.DataFrame, metrica: str) -> pd.DataFrame:
+        """
+        Quita los últimos días cuyo valor es implausiblemente bajo frente a la
+        mediana reciente.
+
+        XM publica el día en curso de forma incremental, así que las últimas
+        filas pueden traer una fracción del total. Esta serie alimenta la línea
+        "Real (datos XM)" del tablero y el KPI de MAPE real: sin este filtro,
+        un día parcial (p. ej. embalses en 0,59% cuando el real era 74,9%)
+        aparecía como una caída vertical en el gráfico y contaminaba el error
+        mostrado. Solo se evalúan los últimos días: un valor bajo en mitad de
+        la serie es dato histórico legítimo.
+        """
+        if len(df) < 15:
+            return df
+        referencia = float(df['valor'].iloc[:-5].median())
+        if not referencia or referencia <= 0:
+            return df
+        umbral = referencia * self._UMBRAL_DIA_PARCIAL
+        cola = df.tail(5)
+        parciales = cola[cola['valor'] < umbral]
+        if parciales.empty:
+            return df
+        fechas = [f.date().isoformat() for f in parciales['fecha']]
+        logger.warning(
+            f"[PREDICTIONS_REPO] {metrica}: {len(parciales)} día(s) descartado(s) "
+            f"por publicación parcial de XM ({', '.join(fechas)}; "
+            f"umbral={umbral:.3f}, mediana reciente={referencia:.3f})."
+        )
+        return df[~df['fecha'].isin(parciales['fecha'])]
     
     def get_real_generation_by_type(self, tipo_catalogo: str, fecha_desde: str,
                                      fecha_hasta: str) -> pd.DataFrame:
