@@ -49,6 +49,8 @@ from core.umbrales_oficiales import (
     # Umbrales oficiales (CREG 026/2014, mod. Res. CREG 101 112/2026) — Índice NE / Senda de Referencia
     obtener_senda_referencia,
     clasificar_indice_ne,
+    clasificar_vigilancia_embalse,
+    SENDA_MARGEN_VIGILANCIA_PP,
     # Umbrales oficiales (CREG 026/2014) — Índice HSIN
     HSIN_UMBRAL_NORMAL,
     HSIN_UMBRAL_DEFICIT_SEVERO,
@@ -112,9 +114,14 @@ UMBRALES = {
     'DEMANDA': {
         'ALERTA': 248,              # GWh/día — p75 histórico XM
         'CRITICO': 253,             # GWh/día — p99 histórico XM
+        # Fracciones de persistencia: CRITERIO PROPIO DEL PORTAL, sin fuente
+        # normativa ni de XM. Son el disparador real de la alerta (el nivel
+        # 248/253 solo decide qué días cuentan), así que todo texto que las
+        # use debe declararlas.
         'DIAS_CRITICO_PCT': 0.60,   # fracción del horizonte para disparar CRÍTICO
         'DIAS_ALERTA_PCT': 0.50,    # fracción del horizonte para disparar ALERTA
         'fuente': 'Criterio operativo CND derivado de percentiles XM histórico',
+        'fuente_persistencia': 'Criterio propio del portal (sin cita normativa)',
     },
     # ─── EMBALSES — ÍNDICE NE OFICIAL (Res. CREG 026/2014, mod. Res. CREG ──
     # ─── 101 112/2026, vigente desde 17-jun-2026) ───────────────────────────
@@ -122,10 +129,12 @@ UMBRALES = {
     # XM/CND. NO existe un umbral fijo único; el umbral varía por mes según
     # la senda CREG. Ver core/umbrales_oficiales.SENDA_REFERENCIA_2024_2025.
     #
-    # Niveles oficiales del Índice NE:
+    # Niveles oficiales del Índice NE (BINARIO — la norma no define banda
+    # intermedia; ver nota en core/umbrales_oficiales.SENDA_TOLERANCIA_PP):
     #   SUPERIOR: embalse ≥ senda
-    #   ALERTA:   senda − X ≤ embalse < senda
-    #   INFERIOR: embalse < senda − X  (X = 0 en práctica reciente)
+    #   INFERIOR: embalse < senda
+    # El desglose vigilancia/déficit que usa esta alerta para graduar la
+    # severidad es CRITERIO PROPIO del portal (SENDA_MARGEN_VIGILANCIA_PP).
     #
     # La regla alternativa "SUPERIOR si embalse ≥ 70%" (Res. CREG 210/2021)
     # fue derogada por la Res. CREG 101 112/2026 — ya no se evalúa (ver
@@ -146,9 +155,11 @@ UMBRALES = {
         'UMBRAL_DEFICIT_SEVERO': HSIN_UMBRAL_DEFICIT_SEVERO,  # 70%
         'UMBRAL_CRITICO_HISTORICO': HSIN_UMBRAL_CRITICO_HISTORICO,  # 60% — referencia 2020
         'VENTANA_SEMANAS': HSIN_VENTANA_SEMANAS,            # 4 semanas (CREG art. 2)
+        # Criterio propio del portal, igual que en DEMANDA (ver nota arriba).
         'DIAS_CRITICO_PCT': 0.60,
         'DIAS_ALERTA_PCT':  0.50,
         'fuente': 'Resolución CREG 026 de 2014 art. 2 — Índice HSIN',
+        'fuente_persistencia': 'Criterio propio del portal (sin cita normativa)',
     },
     # ─── PRECIO BOLSA — ÍNDICE PBP OFICIAL (Res. CREG 026/2014 + 101 066/2024)
     # PBP nivel BAJO: PBP < Precio Escasez Activación durante 4 de 7 días.
@@ -176,9 +187,11 @@ UMBRALES = {
     'ESTRES_TERMICO': {
         'CRITICO': 35.0,             # > 35 % sostenido → riesgo estructural
         'ALERTA':  20.0,             # 20–35 % sostenido → vigilancia
+        # Criterio propio del portal, igual que en DEMANDA (ver nota arriba).
         'DIAS_CRITICO_PCT': 0.70,    # fracción del horizonte
         'DIAS_ALERTA_PCT':  0.60,
         'fuente': 'Criterio operativo CND derivado del Boletín XM 10-abril-2026',
+        'fuente_persistencia': 'Criterio propio del portal (sin cita normativa)',
     },
 }
 
@@ -349,6 +362,11 @@ class SistemaAlertasEnergeticas:
                 'valor': maximo,
                 'umbral': umbral_crit,
                 'dias_afectados': dias_criticos,
+                'fuente_regulatoria': (
+                    'Criterio operativo CND (percentiles XM). La fracción de '
+                    'persistencia que dispara esta severidad es criterio propio '
+                    'del portal, sin cita normativa.'
+                ),
                 'recomendacion': 'Revisar disponibilidad de respaldo térmico. Validar margen operativo.'
             })
             print(f"  🚨 CRÍTICO: {dias_criticos}/{total} días ({dias_criticos/total*100:.0f}%) con demanda > {umbral_crit} GWh")
@@ -357,6 +375,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'DEMANDA',
                 'severidad': 'ALERTA',
+                'clave': 'DEMANDA_ALERTA',
                 'titulo': f'Demanda elevada: {dias_alerta}/{total} días > {umbral_alert} GWh [criterio operativo CND, no CREG]',
                 'descripcion': f'Promedio: {promedio:.1f} GWh/día. Máximo: {maximo:.1f} GWh/día.',
                 'valor': promedio,
@@ -374,6 +393,14 @@ class SistemaAlertasEnergeticas:
         Marco regulatorio: Resolución CREG 026 de 2014 — Artículo 2.
         HSIN = aportes acumulados últimas 4 semanas / promedio histórico × 100
 
+        La ventana de 4 semanas es parte de la DEFINICIÓN del índice, no un
+        parámetro ajustable: `horizonte` se ignora para el cálculo. Antes
+        `ventana = horizonte or 28` dejaba que check_anomalies (que pasa
+        horizonte=7) calculara el HSIN sobre 8 días, de modo que el mismo
+        código publicaba valores distintos según quién lo invocara — medido
+        el 2026-10-08: 59,34% (alertas, 7d) vs 58,35% (manual, 28d) vs
+        56,09% (portal). El parámetro se conserva por compatibilidad de firma.
+
         Niveles oficiales:
             NORMAL:         HSIN ≥ 90%
             VIGILANCIA:     HSIN < 90%  (Estatuto CREG art. 2)
@@ -385,7 +412,12 @@ class SistemaAlertasEnergeticas:
         """
         print("💧 Evaluando ÍNDICE HSIN (CREG 026/2014 art. 2)...")
 
-        ventana = horizonte or (HSIN_VENTANA_SEMANAS * 7)
+        ventana = HSIN_VENTANA_SEMANAS * 7  # 28 días, definición CREG art. 2
+        if horizonte is not None and horizonte != ventana:
+            print(
+                f"  ℹ️  horizonte={horizonte} ignorado: el HSIN se calcula "
+                f"siempre sobre {ventana} días (CREG 026/2014 art. 2)."
+            )
         df = self.cargar_datos_reales('AporEner', dias=ventana)
         if len(df) == 0:
             return
@@ -436,24 +468,53 @@ class SistemaAlertasEnergeticas:
             print(f"  🚨 HSIN CRÍTICO: {hsin_pct:.1f}% ≤ 60% (nivel histórico)")
 
         elif nivel_hsin in ('VIGILANCIA', 'DEFICIT_SEVERO'):
-            self.alertas.append({
-                'categoria': 'HIDROLOGIA',
-                'severidad': 'ALERTA',
-                'titulo': f'Índice HSIN {nivel_hsin}: {hsin_pct:.1f}% de media histórica',
-                'descripcion': (
-                    f'HSIN = {hsin_pct:.1f}% < 90% — condición de vigilancia (CREG 026/2014 art. 2). '
-                    f'Aportes promedio {promedio_aportes:.1f} GWh/día. '
-                    f'Media histórica XM: {media_hist:.1f} GWh/día. '
-                    f'Si persiste por 2 verificaciones semanales, se confirma vigilancia.'
-                ),
-                'valor': hsin_pct,
-                'umbral': HSIN_UMBRAL_NORMAL,
-                'dias_afectados': total,
-                'fuente_regulatoria': 'Resolución CREG 026 de 2014 art. 2 — Índice HSIN',
-                'recomendacion': (
+            # El texto describía ambos niveles como "condición de vigilancia",
+            # subvalorando el déficit severo (< 70%, referencia CREG 209/2020).
+            if nivel_hsin == 'DEFICIT_SEVERO':
+                encabezado = (
+                    f'HSIN = {hsin_pct:.1f}% — DÉFICIT SEVERO, por debajo del '
+                    f'{HSIN_UMBRAL_DEFICIT_SEVERO:.0f}% de la media histórica '
+                    f'(referencia CREG 209/2020).'
+                )
+                cierre = (
+                    'Condición de déficit severo: si persiste, el sistema se acerca '
+                    'al nivel histórico de crisis.'
+                )
+                recomendacion = (
+                    'Optimizar uso de embalses y maximizar despacho térmico. '
+                    'Preparar reporte a CREG si el déficit persiste.'
+                )
+            else:
+                encabezado = (
+                    f'HSIN = {hsin_pct:.1f}% < {HSIN_UMBRAL_NORMAL:.0f}% — condición de '
+                    f'vigilancia (CREG 026/2014 art. 2).'
+                )
+                cierre = (
+                    'Si persiste por 2 verificaciones semanales, se confirma vigilancia.'
+                )
+                recomendacion = (
                     'Optimizar uso de embalses. Aumentar generación térmica. '
                     'Vigilar evolución semanal del HSIN.'
                 )
+            self.alertas.append({
+                'categoria': 'HIDROLOGIA',
+                'severidad': 'ALERTA',
+                'clave': f'HSIN_{nivel_hsin}',
+                'titulo': f'Índice HSIN {nivel_hsin}: {hsin_pct:.1f}% de media histórica',
+                'descripcion': (
+                    f'{encabezado} '
+                    f'Aportes promedio {promedio_aportes:.1f} GWh/día. '
+                    f'Media histórica XM: {media_hist:.1f} GWh/día. '
+                    f'Ventana: {total} días (CREG 026/2014 art. 2). {cierre}'
+                ),
+                'valor': hsin_pct,
+                'umbral': (
+                    HSIN_UMBRAL_DEFICIT_SEVERO
+                    if nivel_hsin == 'DEFICIT_SEVERO' else HSIN_UMBRAL_NORMAL
+                ),
+                'dias_afectados': total,
+                'fuente_regulatoria': 'Resolución CREG 026 de 2014 art. 2 — Índice HSIN',
+                'recomendacion': recomendacion,
             })
             print(f"  ⚠️  HSIN {nivel_hsin}: {hsin_pct:.1f}% < {HSIN_UMBRAL_NORMAL}%")
         else:
@@ -465,10 +526,16 @@ class SistemaAlertasEnergeticas:
         Marco regulatorio: Resolución CREG 209 de 2020, mod. Res. CREG 101 112
         de 2026 (deroga la regla absoluta del 70%, vigente desde 17-jun-2026).
         El nivel real del embalse del SIN se compara EXCLUSIVAMENTE con la
-        SENDA DE REFERENCIA mensual publicada por XM/CND. Niveles del Índice NE:
-            SUPERIOR: embalse ≥ senda
-            ALERTA:   senda − X ≤ embalse < senda
-            INFERIOR: embalse < senda − X
+        SENDA DE REFERENCIA mensual publicada por XM/CND. El Índice NE es
+        BINARIO: SUPERIOR (≥ senda) o INFERIOR (< senda).
+
+        La severidad de la alerta se gradúa con clasificar_vigilancia_embalse,
+        que es CRITERIO PROPIO del portal, no de la CREG: no da lo mismo estar
+        0,1pp o 30pp por debajo de la senda. Antes esta función decidía el
+        CRÍTICO con el MÍNIMO de la ventana y la rama intermedia comparaba
+        contra nivel_ne == 'ALERTA', inalcanzable — resultado medido: 61
+        alertas CRÍTICO y ninguna intermedia en 5 meses, todas pidiendo
+        "reportar a CREG" incluso con el embalse 0,1pp bajo la senda.
 
         Usa PorcVoluUtilDiar (% de capacidad útil diaria, almacenado como
         fracción 0-1 en la BD → se multiplica por 100).
@@ -487,54 +554,76 @@ class SistemaAlertasEnergeticas:
         pct_min = float(df['valor_gwh'].min())
         tendencia = pct_actual - pct_inicio  # positivo = llenando
 
-        # Clasificación oficial Índice NE
+        # Clasificación oficial (binaria) + gradación propia de severidad.
+        # El nivel evaluado es el ACTUAL: usar el mínimo de la ventana hacía
+        # que un solo día malo (o un dato parcial de XM) dejara la alerta en
+        # CRÍTICO durante todo el horizonte.
         nivel_ne, descripcion_ne, senda = clasificar_indice_ne(pct_actual)
-        nivel_ne_min, _, _ = clasificar_indice_ne(pct_min)
+        nivel_vig, descripcion_vig, _ = clasificar_vigilancia_embalse(pct_actual)
         self.nivel_ne = nivel_ne
 
-        if nivel_ne_min == 'INFERIOR':
+        contexto_comun = (
+            f'Nivel actual: {pct_actual:.1f}%. Mínimo de los últimos '
+            f'{horizonte} días: {pct_min:.1f}%. '
+            f'Senda de Referencia CREG para este mes: {senda:.1f}%. '
+            f'Tendencia últimos {horizonte} días: {tendencia:+.1f} pp. '
+            f'Marco regulatorio: Estatuto CREG 026/2014 + Res. 209/2020, '
+            f'mod. Res. CREG 101 112/2026.'
+        )
+
+        if nivel_vig == 'DEFICIT':
             self.alertas.append({
                 'categoria': 'EMBALSES',
                 'severidad': 'CRÍTICO',
                 'clave': 'EMBALSES_NE_INFERIOR',
-                'titulo': f'Índice NE INFERIOR: embalses {pct_min:.1f}% < senda CREG {senda:.1f}%',
-                'descripcion': (
-                    f'Nivel mínimo reciente: {pct_min:.1f}%. Actual: {pct_actual:.1f}%. '
-                    f'Senda de Referencia CREG para este mes: {senda:.1f}%. '
-                    f'Tendencia últimos {horizonte} días: {tendencia:+.1f}%. '
-                    f'Marco regulatorio: Estatuto CREG 026/2014 + Res. 209/2020.'
+                'titulo': (
+                    f'Índice NE Inferior: embalses {pct_actual:.1f}%, más de '
+                    f'{SENDA_MARGEN_VIGILANCIA_PP:.0f}pp bajo la senda CREG {senda:.1f}%'
                 ),
-                'valor': pct_min,
+                'descripcion': (
+                    contexto_comun + ' ' + descripcion_vig
+                ),
+                'valor': pct_actual,
                 'umbral': senda,
                 'dias_afectados': horizonte,
-                'fuente_regulatoria': 'Resolución CREG 209 de 2020 — Índice NE',
+                'fuente_regulatoria': (
+                    'Resolución CREG 209 de 2020 — Índice NE. El corte de '
+                    f'{SENDA_MARGEN_VIGILANCIA_PP:.0f}pp que separa esta severidad de la '
+                    'anterior es criterio propio del portal, no CREG.'
+                ),
                 'recomendacion': (
                     'CRÍTICO: Activar mecanismo de sostenimiento (CREG 026/2014 art. 7). '
                     'Maximizar respaldos térmicos. Reportar a CREG la condición de riesgo.'
                 )
             })
-            print(f"  🚨 NE INFERIOR: nivel mínimo {pct_min:.1f}% < senda CREG {senda:.1f}%")
+            print(f"  🚨 NE Inferior (déficit): {pct_actual:.1f}% vs senda CREG {senda:.1f}%")
 
-        elif nivel_ne == 'ALERTA':
+        elif nivel_ne == 'INFERIOR':
             self.alertas.append({
                 'categoria': 'EMBALSES',
                 'severidad': 'ALERTA',
-                'titulo': f'Índice NE ALERTA: embalses {pct_actual:.1f}% bajo senda CREG {senda:.1f}%',
+                'clave': 'EMBALSES_NE_VIGILANCIA',
+                'titulo': (
+                    f'Índice NE Inferior: embalses {pct_actual:.1f}% bajo senda CREG '
+                    f'{senda:.1f}% (dentro de {SENDA_MARGEN_VIGILANCIA_PP:.0f}pp)'
+                ),
                 'descripcion': (
-                    f'Nivel actual: {pct_actual:.1f}%. Senda CREG: {senda:.1f}%. '
-                    f'Tendencia últimos {horizonte} días: {tendencia:+.1f}%. '
-                    f'Si persiste por 2 verificaciones semanales → nivel INFERIOR.'
+                    contexto_comun + ' ' + descripcion_vig
                 ),
                 'valor': pct_actual,
                 'umbral': senda,
                 'dias_afectados': horizonte,
-                'fuente_regulatoria': 'Resolución CREG 209 de 2020 — Índice NE',
+                'fuente_regulatoria': (
+                    'Resolución CREG 209 de 2020 — Índice NE (nivel Inferior). El '
+                    f'margen de {SENDA_MARGEN_VIGILANCIA_PP:.0f}pp que gradúa esta '
+                    'severidad es criterio propio del portal, no CREG.'
+                ),
                 'recomendacion': (
                     'Conservar agua. Maximizar térmicas y renovables no hidráulicas. '
                     'Vigilar evolución semanal.'
                 )
             })
-            print(f"  ⚠️  NE ALERTA: nivel actual {pct_actual:.1f}% < senda {senda:.1f}%")
+            print(f"  ⚠️  NE Inferior (vigilancia): {pct_actual:.1f}% < senda {senda:.1f}%")
         else:
             print(f"  ✅ NE SUPERIOR: {pct_actual:.1f}% ≥ senda CREG {senda:.1f}% "
                   f"(tendencia {tendencia:+.1f}% / {horizonte}d)")
@@ -646,6 +735,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'PRECIO_MERCADO',
                 'severidad': 'ALERTA',
+                'clave': 'PBP_ALTO',
                 'titulo': (f'Índice PBP ALTO: {dias_alto}/{n_ventana} días sobre PE '
                            f'{pe_vigente:.0f} COP/kWh'),
                 'descripcion': (
@@ -762,6 +852,7 @@ class SistemaAlertasEnergeticas:
             self.alertas.append({
                 'categoria': 'ESTRES_TERMICO',
                 'severidad': 'ALERTA',
+                'clave': 'ESTRES_TERMICO_ALERTA',
                 'titulo': f'Estrés térmico moderado: {participacion_prom:.1f}% participación [criterio operativo CND, no CREG]',
                 'descripcion': (
                     f'{dias_alerta}/{total} días con participación térmica > {umb["ALERTA"]}%. '

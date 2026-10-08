@@ -599,19 +599,37 @@ class AnomaliaHandlerMixin:
             # Obtener serie de datos según tipo de métrica
             if fuente_pred == 'EMBALSES_PCT':
                 query = """
-                    WITH embalses_diarios AS (
-                        SELECT fecha,
-                               SUM(CASE WHEN metrica='VoluUtilDiarEner' THEN valor_gwh ELSE 0 END) /
-                               NULLIF(SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END), 0) * 100 as pct
+                    WITH pares AS (
+                        -- El cociente debe calcularse sobre embalses que
+                        -- reportaron AMBAS métricas ese día: un numerador
+                        -- parcial contra un denominador completo hunde el
+                        -- porcentaje. El 2026-10-07 XM publicó
+                        -- CapaUtilDiarEner para 36 embalses y
+                        -- VoluUtilDiarEner solo para 24, y el cociente daba
+                        -- 48,8 en vez de 74,9 (por ciento).
+                        SELECT fecha, recurso,
+                               MAX(CASE WHEN metrica='VoluUtilDiarEner' THEN valor_gwh END) AS vol,
+                               MAX(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh END) AS cap
                         FROM metrics
                         WHERE metrica IN ('VoluUtilDiarEner', 'CapaUtilDiarEner')
                           AND entidad = 'Embalse'
                           AND fecha >= %s AND fecha <= %s
+                        GROUP BY fecha, recurso
+                    ),
+                    embalses_diarios AS (
+                        SELECT fecha,
+                               SUM(vol) / NULLIF(SUM(cap), 0) * 100 AS pct,
+                               COUNT(*) AS n_embalses
+                        FROM pares
+                        WHERE vol IS NOT NULL AND cap IS NOT NULL AND cap > 0
                         GROUP BY fecha
-                        HAVING SUM(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh ELSE 0 END) > 0
                     )
+                    -- Además, descarta días con cobertura baja de embalses,
+                    -- mismo criterio de completitud >= 80 por ciento que usa
+                    -- report_service._build_hidrologia_detalle_table.
                     SELECT fecha, pct as valor
                     FROM embalses_diarios
+                    WHERE n_embalses >= 0.8 * (SELECT MAX(n_embalses) FROM embalses_diarios)
                     ORDER BY fecha ASC
                 """
                 params = (fecha_inicio, fecha_fin)
@@ -674,8 +692,24 @@ class AnomaliaHandlerMixin:
                 emoji = '➡️'
                 descripcion = "Sin tendencia clara"
             
-            # Proyección a 7 días
-            proyeccion_7d = y[-1] + (m * 7)
+            # Proyección a 7 días, acotada al rango físico de la métrica.
+            # Sin el clamp una pendiente extrema producía valores imposibles
+            # (p. ej. "Proy: -56 %" de embalses impreso en el informe diario).
+            from core.utils.prediction_bounds import get_physical_bounds
+            proyeccion_cruda = float(y[-1] + (m * 7))
+            piso, techo = get_physical_bounds(fuente_pred or metric_id or '')
+            proyeccion_7d = proyeccion_cruda
+            if piso is not None:
+                proyeccion_7d = max(proyeccion_7d, piso)
+            if techo is not None:
+                proyeccion_7d = min(proyeccion_7d, techo)
+            proyeccion_acotada = abs(proyeccion_7d - proyeccion_cruda) > 1e-9
+            if proyeccion_acotada:
+                logger.warning(
+                    f"[TENDENCIA] Proyección de {fuente_pred or metric_id} acotada "
+                    f"al rango físico: {proyeccion_cruda:.2f} -> {proyeccion_7d:.2f} "
+                    f"(piso={piso}, techo={techo})"
+                )
             
             # R² (coeficiente de determinación)
             ss_res = np.sum((y - (m * x + b)) ** 2)
@@ -689,6 +723,7 @@ class AnomaliaHandlerMixin:
                 'emoji': emoji,
                 'descripcion': descripcion,
                 'proyeccion_7dias': round(float(proyeccion_7d), 2),
+                'proyeccion_acotada': proyeccion_acotada,
                 'r_squared': round(float(r_squared), 3),
                 'dias_analizados': len(df),
                 'confianza_tendencia': 'alta' if r_squared > 0.7 else 'media' if r_squared > 0.4 else 'baja'

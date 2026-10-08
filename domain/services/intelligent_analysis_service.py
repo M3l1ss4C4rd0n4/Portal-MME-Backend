@@ -27,6 +27,8 @@ from core.umbrales_oficiales import (
     # Resolución CREG 026/2014, mod. Res. CREG 101 112/2026 — Índice NE
     obtener_senda_referencia,
     clasificar_indice_ne,
+    clasificar_vigilancia_embalse,
+    SENDA_MARGEN_VIGILANCIA_PP,
     # Resolución CREG 026/2014 art. 2 — Índice HSIN
     HSIN_UMBRAL_NORMAL,
     HSIN_UMBRAL_DEFICIT_SEVERO,
@@ -423,13 +425,16 @@ class IntelligentAnalysisService:
 
                 # ── ÍNDICE NE OFICIAL — Resolución CREG 209/2020 ──
                 # Compara el nivel real contra la Senda de Referencia mensual
-                # publicada por XM/CND. Tres niveles oficiales: SUPERIOR, ALERTA, INFERIOR.
+                # publicada por XM/CND. El Índice NE oficial es BINARIO
+                # (SUPERIOR | INFERIOR); el desglose en vigilancia/déficit es
+                # criterio propio del portal.
                 nivel_ne, descripcion_ne, senda_pct = clasificar_indice_ne(reserva_pct)
+                nivel_vig, _desc_vig, _ = clasificar_vigilancia_embalse(reserva_pct)
                 status.kpis['indice_ne'] = nivel_ne
                 status.kpis['senda_referencia_pct'] = round(senda_pct, 1)
                 status.kpis['fuente_regulatoria_embalses'] = 'Resolución CREG 209 de 2020 — Índice NE'
 
-                if nivel_ne == 'INFERIOR':
+                if nivel_vig == 'DEFICIT':
                     status.anomalias.append(Anomalia(
                         sector="hidrologia",
                         metric_name="indice_ne_inferior",
@@ -437,21 +442,23 @@ class IntelligentAnalysisService:
                         current_value=reserva_pct,
                         expected_value=senda_pct,
                         description=(
-                            f"Índice NE INFERIOR: embalses {reserva_pct:.1f}% < "
-                            f"senda CREG {senda_pct:.1f}%. {descripcion_ne}"
+                            f"Índice NE Inferior: embalses {reserva_pct:.1f}% más de "
+                            f"{SENDA_MARGEN_VIGILANCIA_PP:.0f}pp bajo la senda CREG "
+                            f"{senda_pct:.1f}%. {descripcion_ne}"
                         )
                     ))
-                elif nivel_ne == 'ALERTA':
+                elif nivel_ne == 'INFERIOR':
                     status.anomalias.append(Anomalia(
                         sector="hidrologia",
-                        metric_name="indice_ne_alerta",
+                        metric_name="indice_ne_vigilancia",
                         severity=SeverityLevel.ALERT,
                         current_value=reserva_pct,
                         expected_value=senda_pct,
                         description=(
-                            f"Índice NE ALERTA: embalses {reserva_pct:.1f}% "
-                            f"bajo senda CREG {senda_pct:.1f}%. Si persiste 2 verificaciones "
-                            f"semanales → nivel INFERIOR."
+                            f"Índice NE Inferior: embalses {reserva_pct:.1f}% bajo senda "
+                            f"CREG {senda_pct:.1f}%, dentro de "
+                            f"{SENDA_MARGEN_VIGILANCIA_PP:.0f}pp [margen de criterio propio "
+                            f"del portal, no CREG]."
                         )
                     ))
 

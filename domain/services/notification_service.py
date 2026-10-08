@@ -28,7 +28,16 @@ import httpx
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
-from core.constants import MODEL_DISPLAY_NAMES, MAPE_THRESHOLDS, mape_quality, ANOMALY_SEVERITY_EMOJIS, ANOMALY_SEVERITY_COLORS, METRIC_ICONS_HTML
+from core.constants import (
+    MODEL_DISPLAY_NAMES,
+    MAPE_THRESHOLDS,
+    mape_quality,
+    ANOMALY_SEVERITY_EMOJIS,
+    METRIC_ICONS_HTML,
+    SEVERITY_COLORS_NORMALIZED,
+    SEVERITY_LABELS,
+    normalizar_severidad,
+)
 
 # Cargar .env para que os.getenv() encuentre SMTP y otras vars
 # (en producción las vars vienen del EnvironmentFile de systemd; en terminal/tests
@@ -39,6 +48,20 @@ logger = logging.getLogger(__name__)
 
 SMTP_TIMEOUT_SECONDS = int(os.getenv('SMTP_TIMEOUT', '30'))
 EMAIL_MAX_PARALLEL_WORKERS = 6
+
+# URLs que aparecen en los correos (antes repetidas como literales en 6 sitios)
+PORTAL_ENERGETICO_URL = 'https://portalenergetico.minenergia.gov.co/'
+TELEGRAM_BOT_URL = 'https://t.me/MinEnergiaColombia_bot'
+
+
+def severidad_colores(severidad: str) -> tuple:
+    """(color_texto, color_fondo) de una severidad, tolerante a tildes y caso."""
+    return SEVERITY_COLORS_NORMALIZED[normalizar_severidad(severidad)]
+
+
+def etiqueta_severidad(severidad: str) -> str:
+    """Etiqueta visible de una severidad, tolerante a tildes y caso."""
+    return SEVERITY_LABELS[normalizar_severidad(severidad)]
 
 
 # ─────────────────── Configuración ───────────────────
@@ -517,20 +540,31 @@ def broadcast_email_alert(
         emails = emails_override
     else:
         recipients = get_email_recipients(alertas=alertas, diario=diario)
-        if not recipients:
-            logger.info("No hay destinatarios de email para este tipo de notificación")
-            return {"sent": 0, "failed": 0}
         emails = [r['correo'] for r in recipients]
 
     if not emails:
-        logger.info("No hay destinatarios de email para este tipo de notificación")
-        return {"sent": 0, "failed": 0}
+        # WARNING, no INFO: quedarse sin destinatarios es una condición que
+        # alguien debe ver. Es indistinguible de un fallo de BD en
+        # get_email_recipients(), que también devuelve lista vacía, y deja el
+        # resultado en {"sent": 0} — que el llamador trataba como éxito.
+        logger.warning(
+            f"⚠️ No hay destinatarios de email (alertas={alertas}, diario={diario}). "
+            f"Revisar sector_energetico.alert_recipients: la notificación NO se envió."
+        )
+        return {
+            "sent": 0, "failed": 0, "destinatarios": [],
+            "reason": "no_recipients",
+        }
 
     logger.info(
         f"📧 Enviando a {len(emails)} destinatarios "
         f"(alertas={alertas}, diario={diario}, override={emails_override is not None})"
     )
-    return send_email(emails, subject, body_html, pdf_path)
+    resultado = send_email(emails, subject, body_html, pdf_path)
+    # Devolver a quién se intentó enviar, para que alertas_historial pueda
+    # registrar `destinatarios_email` en vez de dejarlo siempre NULL.
+    resultado['destinatarios'] = emails
+    return resultado
 
 
 # ─────────────────── Persistencia Telegram ───────────────────
@@ -630,6 +664,11 @@ def broadcast_alert(
             emails_override=email_override,
         )
         result["email"] = em
+        if em.get('reason'):
+            # `reason` (p. ej. smtp_not_configured / no_recipients) se perdía
+            # aquí: check_anomalies nunca podía distinguir "no había a quién
+            # enviar" de "se envió correctamente a nadie".
+            logger.warning(f"⚠️ Email no entregado — motivo: {em['reason']}")
     except Exception as e:
         logger.error(f"Error en broadcast email: {e}")
 
@@ -935,6 +974,134 @@ def _inline_md(text: str) -> str:
     return text
 
 
+def build_alert_email_html(
+    alertas: List[Dict[str, Any]],
+    fecha_hora: Optional[str] = None,
+) -> str:
+    """
+    Cuerpo HTML del correo de ALERTA.
+
+    Hasta esta revisión las alertas no tenían constructor propio: caían en
+    `_plain_to_html()` sobre el mismo texto que se manda a Telegram, así que
+    el destinatario recibía dos renglones (categoría + título), sin enlaces al
+    portal, sin la `descripcion` y sin la `recomendacion` que cada evaluador
+    sí construye y guarda en BD. El arreglo de 2026-08-25 que concatenó
+    título+descripción solo tocó la columna de BD, no este canal.
+
+    Estructura: cabecera institucional, una tarjeta por alerta con severidad,
+    descripción, recomendación y fuente regulatoria, y pie con enlaces.
+    """
+    fecha_hora = fecha_hora or datetime.now().strftime('%Y-%m-%d %H:%M')
+
+    tarjetas = []
+    for a in alertas:
+        sev = str(a.get('severidad', 'ALERTA'))
+        color, bg = severidad_colores(sev)
+        etiqueta = etiqueta_severidad(sev)
+        categoria = str(a.get('categoria', a.get('metrica', 'Sistema')))
+        titulo = str(a.get('titulo', 'Anomalía detectada'))
+        descripcion = str(a.get('descripcion', '') or '')
+        recomendacion = str(a.get('recomendacion', '') or '')
+        fuente = str(a.get('fuente_regulatoria', '') or '')
+
+        bloques = [
+            f'<div style="font-size:15px;font-weight:bold;color:#1A1A2E;'
+            f'margin:0 0 6px;">{titulo}</div>'
+        ]
+        if descripcion:
+            bloques.append(
+                f'<div style="font-size:13px;color:#333;line-height:1.55;'
+                f'margin:0 0 8px;">{descripcion}</div>'
+            )
+        if recomendacion:
+            bloques.append(
+                f'<div style="font-size:13px;color:#1A1A2E;line-height:1.5;'
+                f'background:#ffffff;border-left:3px solid {color};'
+                f'padding:8px 10px;margin:0 0 8px;">'
+                f'<b>Acción recomendada:</b> {recomendacion}</div>'
+            )
+        if fuente:
+            bloques.append(
+                f'<div style="font-size:11px;color:#666;font-style:italic;">'
+                f'Fuente del umbral: {fuente}</div>'
+            )
+
+        tarjetas.append(f"""
+        <tr><td style="padding:0 0 14px;">
+          <table width="100%" cellpadding="0" cellspacing="0"
+                 style="background:{bg};border-radius:8px;">
+            <tr><td style="padding:14px 16px;">
+              <table width="100%" cellpadding="0" cellspacing="0"><tr>
+                <td>
+                  <span style="display:inline-block;background:{color};color:#fff;
+                               font-size:10px;font-weight:bold;letter-spacing:1px;
+                               padding:3px 9px;border-radius:3px;">{etiqueta}</span>
+                  <span style="font-size:11px;color:#555;font-weight:bold;
+                               letter-spacing:1px;margin-left:8px;">
+                    {categoria.upper()}</span>
+                </td>
+              </tr></table>
+              <div style="margin-top:10px;">{''.join(bloques)}</div>
+            </td></tr>
+          </table>
+        </td></tr>""")
+
+    n = len(alertas)
+    plural = 'alerta' if n == 1 else 'alertas'
+
+    return f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:20px 0;background:#f0f2f5;
+                   font-family:Arial,Helvetica,sans-serif;">
+<table align="center" width="680" cellpadding="0" cellspacing="0"
+       style="width:680px;max-width:680px;background:#ffffff;border-radius:12px;
+              box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
+  <tr><td style="background:#8C1D18;padding:22px 24px;text-align:center;">
+    <div style="color:#ffd9d6;font-size:11px;letter-spacing:3px;">
+      REP&Uacute;BLICA DE COLOMBIA</div>
+    <div style="color:#ffffff;font-size:22px;font-weight:bold;margin-top:6px;">
+      Alerta del Sector El&eacute;ctrico</div>
+    <div style="color:#ffd9d6;font-size:12px;margin-top:4px;">
+      Ministerio de Minas y Energ&iacute;a</div>
+  </td></tr>
+  <tr><td style="background:#A6342E;padding:9px 24px;color:#ffffff;font-size:12px;
+                 text-align:center;">
+    {fecha_hora} &nbsp;&bull;&nbsp; {n} {plural} que requieren atenci&oacute;n
+  </td></tr>
+  <tr><td style="padding:20px 24px 6px;">
+    <table width="100%" cellpadding="0" cellspacing="0">{''.join(tarjetas)}</table>
+  </td></tr>
+  <tr><td style="padding:4px 24px 20px;">
+    <table width="100%" cellpadding="0" cellspacing="0"
+           style="background:#F5F7FA;border-radius:8px;">
+      <tr><td style="padding:14px 16px;text-align:center;">
+        <div style="font-size:12px;color:#555;margin-bottom:10px;">
+          Consulte el detalle, la serie hist&oacute;rica y las proyecciones en:</div>
+        <a href="{PORTAL_ENERGETICO_URL}"
+           style="display:inline-block;background:#1565C0;color:#ffffff;
+                  font-size:12px;font-weight:bold;text-decoration:none;
+                  padding:9px 18px;border-radius:5px;margin:0 4px;">
+          Portal Energ&eacute;tico</a>
+        <a href="{TELEGRAM_BOT_URL}"
+           style="display:inline-block;background:#0088cc;color:#ffffff;
+                  font-size:12px;font-weight:bold;text-decoration:none;
+                  padding:9px 18px;border-radius:5px;margin:0 4px;">
+          Bot de Telegram</a>
+      </td></tr>
+    </table>
+  </td></tr>
+  <tr><td style="background:#1A1A2E;padding:16px 24px;text-align:center;">
+    <div style="color:#ffffff;font-size:12px;font-weight:bold;">
+      Ministerio de Minas y Energ&iacute;a</div>
+    <div style="color:#9aa0b5;font-size:11px;margin-top:4px;">
+      Alerta autom&aacute;tica del Portal Energ&eacute;tico &mdash; generada el {fecha_hora}</div>
+    <div style="color:#9aa0b5;font-size:10px;margin-top:6px;">
+      Documento informativo de apoyo a la gesti&oacute;n. No constituye
+      comunicaci&oacute;n oficial del Ministerio.</div>
+  </td></tr>
+</table>
+</body></html>"""
+
+
 def build_daily_email_html(
     informe_texto: str,
     noticias: list | None = None,
@@ -1222,12 +1389,10 @@ def build_daily_email_html(
             sev = anom.get('severidad', 'ALERTA')
             desc = anom.get('descripcion', '')
             metrica = anom.get('metrica', '')
-            r_color, r_bg = ANOMALY_SEVERITY_COLORS.get(sev, ('#F9A825', '#FFFDE7'))
-            r_label = (
-                'CR' + chr(205) + 'TICO' if sev in ('CRITICA', 'CRITICO', 'CRITICAL')
-                else sev.upper() if sev.upper() in ('ALERTA',)
-                else 'AVISO'
-            )
+            # La BD guarda 'CRÍTICO' con tilde: comparar con literales hacía
+            # que una alerta crítica saliera como badge amarillo "AVISO".
+            r_color, r_bg = severidad_colores(sev)
+            r_label = etiqueta_severidad(sev)
             risk_items += (
                 '<tr><td style="padding:12px 14px;border-bottom:1px solid #f5f5f5;">'
                 '<table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'

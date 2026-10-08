@@ -277,19 +277,27 @@ def _registrar_alerta_bd(alertas: list, enviados: int):
 # Configuración de tareas programadas (Beat Schedule)
 # ═══════════════════════════════════════════════════════════
 
-app.conf.beat_schedule = {
-    'check-anomalies-every-30-minutes': {
-        'task': 'tasks.check_anomalies',
-        'schedule': crontab(minute='*/30'),  # Cada 30 minutos
-    },
-    'send-daily-summary-7am': {
-        'task': 'tasks.send_daily_summary',
-        'schedule': crontab(hour=7, minute=0),  # Diario a las 7 AM
-    },
-    'cleanup-old-data-daily': {
-        'task': 'tasks.cleanup_old_data',
-        'schedule': crontab(hour=2, minute=0),  # Diario a las 2 AM
-    },
-}
+# ⚠️ NO ACTIVAR ESTE SCHEDULE — NO ES EL MOTOR REAL (verificado 2026-10-08)
+#
+# El scheduler en producción es `celery-beat.service`, que arranca con
+# `celery -A tasks beat` y por tanto carga ÚNICAMENTE `tasks/__init__.py`.
+# Este beat_schedule pertenece a otra app Celery que nadie arranca: no tiene
+# importadores y `whatsapp-bot.service` levanta uvicorn, no un beat.
+#
+# Activarlo rompería el pipeline de alertas en silencio, porque las tareas a
+# las que apunta están rotas:
+#   • `tasks.check_anomalies` (línea 85 de este archivo) importa
+#     `AlertasEnergeticas`, clase que no existe — la real es
+#     `SistemaAlertasEnergeticas` (scripts/alertas_energeticas.py) — y llama a
+#     `ejecutar_evaluacion_completa()`, método inexistente. El ImportError lo
+#     traga el `except` de la línea 146.
+#   • `_registrar_alerta_bd` inserta en `destinatarios_notificados`, columna
+#     que no existe en `sector_energetico.alertas_historial`.
+#   • La clave 'check-anomalies-every-30-minutes' es la MISMA que usa el
+#     schedule real, y 'send-daily-summary-7am' contradice la hora vigente del
+#     informe ejecutivo (8:30, no 7:00).
+#
+# El motor real vive en `tasks/anomaly_tasks.py` + `tasks/__init__.py`.
+app.conf.beat_schedule = {}
 
 app.conf.timezone = 'America/Bogota'

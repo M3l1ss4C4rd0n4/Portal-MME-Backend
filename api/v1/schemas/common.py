@@ -84,19 +84,29 @@ class PredictionPoint(BaseModel):
     Attributes:
         date: Fecha de la predicción (ISO 8601: YYYY-MM-DD)
         value: Valor predicho
-        lower: Límite inferior del intervalo de confianza
-        upper: Límite superior del intervalo de confianza
-        confidence: Nivel de confianza (0.0 - 1.0)
+        lower: Límite inferior del intervalo de confianza (None si el modelo no lo entrega)
+        upper: Límite superior del intervalo de confianza (None si el modelo no lo entrega)
+        confidence: Nivel de confianza (0.0 - 1.0), None cuando no hay intervalo
+
+    Nota: lower/upper/confidence son opcionales a propósito. Antes eran
+    obligatorios y, cuando el modelo no devolvía intervalo, la capa de
+    serialización lo fabricaba como value*0.9 / value*1.1 y lo etiquetaba
+    confidence=0.95 — un intervalo inventado presentado como del modelo.
+    Es preferible que el consumidor vea que no hay intervalo.
     """
     date: DateType = Field(..., description="Fecha de la predicción")
     value: float = Field(..., description="Valor predicho")
-    lower: float = Field(..., description="Límite inferior del intervalo de confianza")
-    upper: float = Field(..., description="Límite superior del intervalo de confianza")
-    confidence: float = Field(
-        default=0.95,
+    lower: Optional[float] = Field(
+        default=None, description="Límite inferior del intervalo de confianza"
+    )
+    upper: Optional[float] = Field(
+        default=None, description="Límite superior del intervalo de confianza"
+    )
+    confidence: Optional[float] = Field(
+        default=None,
         ge=0.0,
         le=1.0,
-        description="Nivel de confianza (0.0 - 1.0)"
+        description="Nivel de confianza (0.0 - 1.0); None si no hay intervalo"
     )
     
     class Config:

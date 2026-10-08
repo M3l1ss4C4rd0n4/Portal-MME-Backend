@@ -361,18 +361,45 @@ ANOMALY_SEVERITY_EMOJIS: dict[str, str] = {
     'NORMAL':   '🟢',
 }
 
-# Colores HTML de severidad para email (color_texto, bg)
-ANOMALY_SEVERITY_COLORS: dict[str, tuple[str, str]] = {
-    'crítico':  ('#C62828', '#FFEBEE'),
-    'critico':  ('#C62828', '#FFEBEE'),
-    'CRITICA':  ('#C62828', '#FFEBEE'),
-    'CRITICO':  ('#C62828', '#FFEBEE'),
-    'CRITICAL': ('#C62828', '#FFEBEE'),
-    'alerta':   ('#E65100', '#FFF3E0'),
-    'ALERTA':   ('#E65100', '#FFF3E0'),
-    'normal':   ('#F9A825', '#FFFDE7'),
-    'NORMAL':   ('#F9A825', '#FFFDE7'),
+def normalizar_severidad(severidad: str) -> str:
+    """
+    Normaliza una severidad a 'CRITICO' | 'ALERTA' | 'AVISO'.
+
+    Existe porque la BD guarda 'CRÍTICO' (con tilde) y los diccionarios de
+    colores/emojis listaban 'crítico', 'critico', 'CRITICA', 'CRITICO' y
+    'CRITICAL' pero NO 'CRÍTICO'. El resultado era un doble fallo por el mismo
+    carácter: el `.get()` caía al color amarillo de 'normal' y la cadena de
+    condicionales terminaba en 'AVISO', así que una alerta CRÍTICO aparecía en
+    el correo del informe diario como un badge amarillo "AVISO".
+
+    Comparar siempre a través de esta función, nunca con literales.
+    """
+    import unicodedata
+    if not severidad:
+        return 'AVISO'
+    base = unicodedata.normalize('NFKD', str(severidad))
+    base = ''.join(c for c in base if not unicodedata.combining(c)).upper().strip()
+    if base in ('CRITICO', 'CRITICA', 'CRITICAL'):
+        return 'CRITICO'
+    if base in ('ALERTA', 'ALERT', 'WARNING'):
+        return 'ALERTA'
+    return 'AVISO'
+
+
+# Colores por severidad NORMALIZADA (usar con normalizar_severidad)
+SEVERITY_COLORS_NORMALIZED: dict[str, tuple[str, str]] = {
+    'CRITICO': ('#C62828', '#FFEBEE'),
+    'ALERTA':  ('#E65100', '#FFF3E0'),
+    'AVISO':   ('#F9A825', '#FFFDE7'),
 }
+
+# Etiqueta visible por severidad normalizada
+SEVERITY_LABELS: dict[str, str] = {
+    'CRITICO': 'CR\u00cdTICO',
+    'ALERTA':  'ALERTA',
+    'AVISO':   'AVISO',
+}
+
 
 # Iconos (HTML entities) de métricas para email y Telegram (emoji equivalente)
 METRIC_ICONS_HTML: dict[str, str] = {
