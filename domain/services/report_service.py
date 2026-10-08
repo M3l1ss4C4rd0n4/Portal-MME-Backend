@@ -2858,6 +2858,34 @@ def _build_hidrologia_detalle_table() -> str:
         from infrastructure.database.connection import get_connection
         import pandas as pd
 
+        # XM publica el MISMO embalse con dos nombres (el largo y el código
+        # abreviado) y además dos filas agregadas. Sin canonicalizar, la tabla
+        # sumaba cada embalse dos veces: aparecían "EL QUIMBO" en Centro y
+        # "ELQUIMBO" en Otro con valores idénticos (1.060,5 GWh cada uno), y
+        # el TOTAL SIN quedaba inflado. Verificado contra metrics: los pares
+        # traen exactamente el mismo valor.
+        embalse_alias = {
+            'ALTOANCH': 'ALTOANCHICAYA',
+            'ELQUIMBO': 'EL QUIMBO',
+            'ESMERALD': 'ESMERALDA',
+            'MIRAFLOR': 'MIRAFLORES',
+            'PORCE2': 'PORCE II',
+            'PORCE3': 'PORCE III',
+            'RIOGRAN2': 'RIOGRANDE2',
+            'SALVAJIN': 'SALVAJINA',
+            'SANLOREN': 'SAN LORENZO',
+            'TOPOCORO': 'SOGAMOSO',   # misma presa, dos nombres en XM
+            'MIEL1': 'AMANI',         # presa Miel I / embalse Amaní
+            'AGREGADO': 'AGREGADO BOGOTA',  # mismo valor exacto que AGREGADO BOGOTA
+        }
+        # 'AGREGADO BOGOTA' NO se excluye: es la única representación de la
+        # cadena del río Bogotá y sí es un componente del SIN. Verificado
+        # contra el dato oficial: con este conjunto canónico la suma da
+        # 13.186 / 17.594 GWh = 74,947%, exactamente el PorcVoluUtilDiar del
+        # Sistema que publica XM para el 2026-10-06. Incluyendo los alias
+        # duplicados daba 19.940 GWh (51% de más) y 73,75%.
+        embalses_agregados: set = set()
+
         embalse_region = {
             k.upper(): v.upper() for k, v in {
                 'PENOL': 'ANTIOQUIA', 'RIOGRANDE2': 'ANTIOQUIA', 'PORCE II': 'ANTIOQUIA',
@@ -2922,7 +2950,11 @@ def _build_hidrologia_detalle_table() -> str:
             sin_row = pd.read_sql("""
                 SELECT valor_gwh * 100 AS pct_sin,
                        (SELECT SUM(valor_gwh) FROM metrics
-                        WHERE metrica='VoluUtilDiarEner' AND entidad='Embalse' AND fecha = %s) AS vol_sin
+                        WHERE metrica='VoluUtilDiarEner' AND entidad='Embalse' AND fecha = %s
+                          AND recurso NOT IN ('AGREGADO','ELQUIMBO','ESMERALD','MIRAFLOR',
+                                              'PORCE2','PORCE3','RIOGRAN2','SALVAJIN',
+                                              'SANLOREN','TOPOCORO','MIEL1','ALTOANCH')
+                        ) AS vol_sin
                 FROM metrics
                 WHERE metrica='PorcVoluUtilDiar' AND entidad='Sistema' AND fecha = %s
                 LIMIT 1
@@ -2932,7 +2964,22 @@ def _build_hidrologia_detalle_table() -> str:
             return ''
 
         rio_aporte = {r['rio']: r for _, r in rios.iterrows()}
-        df['region'] = df['embalse'].str.upper().map(embalse_region).fillna('OTRO')
+
+        # Canonicalizar antes de agrupar: descartar agregados y unificar alias.
+        df['embalse'] = df['embalse'].str.upper().str.strip()
+        n_antes = len(df)
+        df = df[~df['embalse'].isin(embalses_agregados)]
+        df['embalse'] = df['embalse'].replace(embalse_alias)
+        df = df.drop_duplicates(subset='embalse', keep='first')
+        if len(df) != n_antes:
+            logger.info(
+                f"[REPORT] Tabla de embalses: {n_antes} filas de XM -> {len(df)} "
+                f"embalses únicos (se descartaron agregados y alias duplicados)."
+            )
+        if df.empty:
+            return ''
+
+        df['region'] = df['embalse'].map(embalse_region).fillna('OTRO')
         df['delta_m'] = df['vol'] - df['vol_mes'].fillna(df['vol'])
         df['delta_s'] = df['vol'] - df['vol_sem'].fillna(df['vol'])
         df['delta_porc_m'] = df['pct'] - df['pct_mes'].fillna(df['pct'])
