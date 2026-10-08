@@ -1131,12 +1131,28 @@ def send_daily_generate():
         try:
             from whatsapp_bot.services.informe_charts import generate_all_informe_charts
             charts = generate_all_informe_charts()
-            for key in ('generacion', 'embalses', 'precios', 'demanda', 'precio_multi', 'aportes_hidricos',
-                        'despacho_termica', 'capacidad_embalse', 'aportes_demanda'):
+            claves_graficos = (
+                'generacion', 'embalses', 'precios', 'demanda', 'precio_multi',
+                'aportes_hidricos', 'despacho_termica', 'capacidad_embalse',
+                'aportes_demanda', 'prediccion_embalses',
+            )
+            faltantes = []
+            for key in claves_graficos:
                 path = charts.get(key, (None,))[0]
                 if path and os.path.isfile(path):
                     chart_paths.append(path)
-            logger.info(f"[RESUMEN DIARIO] Gráficos sector: {len(chart_paths)}")
+                else:
+                    faltantes.append(key)
+            logger.info(
+                f"[RESUMEN DIARIO] Gráficos sector: {len(chart_paths)} de "
+                f"{len(claves_graficos)}"
+            )
+            if faltantes:
+                # Antes un gráfico que no se generaba desaparecía del PDF sin
+                # dejar rastro de cuál faltó.
+                logger.warning(
+                    f"[RESUMEN DIARIO] Gráficos no disponibles: {faltantes}"
+                )
         except Exception as e:
             logger.warning(f"[RESUMEN DIARIO] Error generando gráficos sector: {e}")
 

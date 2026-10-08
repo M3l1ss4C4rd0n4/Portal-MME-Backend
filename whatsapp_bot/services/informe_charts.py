@@ -1318,13 +1318,165 @@ def get_aportes_demanda_kpis() -> dict:
 # Generador combinado
 # ═══════════════════════════════════════════════════════════
 
+def generate_prediccion_embalses_chart(
+    dias_historico: int = 90,
+    dias_prediccion: int = 30,
+) -> Tuple[Optional[str], str, str]:
+    """
+    Embalses: histórico reciente + predicción del modelo con banda de
+    intervalo de confianza, senda de referencia CREG y marca de "hoy".
+
+    Es el gráfico que el tablero de predicciones muestra en el portal
+    (PredictionLineChart), trasladado al PDF del informe diario. Dos
+    diferencias deliberadas respecto del tablero:
+
+    - El tablero dibuja el IC como dos líneas punteadas; aquí es una banda
+      rellena, que en papel se lee mejor.
+    - El tablero grafica el horizonte completo (~340 días, hasta sep-2027).
+      Aquí se corta a 30 días: el backtest de `predictions_backtest_history`
+      da 1-30d entre 1% y 3% de error, pero 91-180d sube a 30% (corte 2023)
+      y a 50% en el corte de El Niño 2014. Publicar 11 meses en un informe
+      ejecutivo presentaría como pronóstico un tramo que el propio backtest
+      no sostiene.
+
+    El histórico excluye los días parciales de XM exigiendo completitud de
+    embalses, igual que report_service._build_hidrologia_detalle_table.
+    """
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from infrastructure.database.connection import get_connection
+        from core.umbrales_oficiales import obtener_senda_referencia
+
+        with get_connection() as conn:
+            hist_df = pd.read_sql("""
+                WITH pares AS (
+                    -- El cociente debe calcularse sobre embalses que reportaron
+                    -- AMBAS métricas ese día. Sumar un numerador parcial contra
+                    -- un denominador completo hunde el porcentaje: el 2026-10-07
+                    -- XM publicó CapaUtilDiarEner para 36 embalses y
+                    -- VoluUtilDiarEner solo para 24, y el cociente daba 48,8
+                    -- en vez de 74,9 por ciento.
+                    SELECT fecha, recurso,
+                           MAX(CASE WHEN metrica='VoluUtilDiarEner' THEN valor_gwh END) AS vol,
+                           MAX(CASE WHEN metrica='CapaUtilDiarEner' THEN valor_gwh END) AS cap
+                    FROM metrics
+                    WHERE metrica IN ('VoluUtilDiarEner','CapaUtilDiarEner')
+                      AND entidad='Embalse'
+                      AND fecha >= CURRENT_DATE - %s * INTERVAL '1 day'
+                    GROUP BY fecha, recurso
+                ),
+                diarios AS (
+                    SELECT fecha,
+                           SUM(vol) / NULLIF(SUM(cap), 0) * 100 AS pct,
+                           COUNT(*) AS n_emb
+                    FROM pares
+                    WHERE vol IS NOT NULL AND cap IS NOT NULL AND cap > 0
+                    GROUP BY fecha
+                )
+                -- Además, descartar días con cobertura baja de embalses.
+                SELECT fecha, pct
+                FROM diarios
+                WHERE n_emb >= 0.8 * (SELECT MAX(n_emb) FROM diarios)
+                ORDER BY fecha
+            """, conn, params=(dias_historico,))
+
+            pred_df = pd.read_sql("""
+                SELECT DISTINCT ON (fecha_prediccion)
+                       fecha_prediccion AS fecha,
+                       valor_gwh_predicho AS pct,
+                       intervalo_inferior AS lo,
+                       intervalo_superior AS hi
+                FROM sector_energetico.predictions
+                WHERE fuente='EMBALSES_PCT'
+                  AND modelo='ENSEMBLE_SECTOR_v1.0'
+                  AND fecha_prediccion >= CURRENT_DATE
+                  AND fecha_prediccion <= CURRENT_DATE + %s * INTERVAL '1 day'
+                ORDER BY fecha_prediccion, fecha_generacion DESC
+            """, conn, params=(dias_prediccion,))
+
+        if hist_df.empty and pred_df.empty:
+            logger.warning("[CHARTS] Predicción embalses: sin datos históricos ni de predicción")
+            return None, "", ""
+
+        for df in (hist_df, pred_df):
+            if not df.empty:
+                df['fecha'] = pd.to_datetime(df['fecha'])
+
+        hoy = pd.Timestamp(date.today())
+        senda = obtener_senda_referencia(date.today())
+
+        # Alto contenido: en el PDF este gráfico comparte página con la tabla
+        # de detalle diario de 30 filas y con las notas de precisión.
+        fig, ax = plt.subplots(figsize=(11, 3.2))
+
+        if not hist_df.empty:
+            ax.plot(hist_df['fecha'], hist_df['pct'], color='#254553', lw=1.8,
+                    label=f'Real XM (últimos {dias_historico} d)', zorder=4)
+
+        if not pred_df.empty:
+            ax.fill_between(pred_df['fecha'], pred_df['lo'], pred_df['hi'],
+                            color='#3B82F6', alpha=0.15, lw=0,
+                            label='Intervalo de confianza', zorder=2)
+            ax.plot(pred_df['fecha'], pred_df['pct'], color='#3B82F6', lw=1.8,
+                    ls='--', label=f'Proyección ENSEMBLE ({dias_prediccion} d)', zorder=4)
+            # Unir el último real con el primer proyectado para que no se vea
+            # un corte artificial entre las dos series.
+            if not hist_df.empty:
+                ax.plot(
+                    [hist_df['fecha'].iloc[-1], pred_df['fecha'].iloc[0]],
+                    [hist_df['pct'].iloc[-1], pred_df['pct'].iloc[0]],
+                    color='#3B82F6', lw=1.0, ls=':', alpha=0.6, zorder=3,
+                )
+
+        ax.axhline(senda, color='#C62828', lw=1.3, ls='-.',
+                   label=f'Senda de referencia CREG ({senda:.1f}%)', zorder=5)
+        ax.axvline(hoy, color='#8d8d8d', lw=1.0, ls=':', zorder=1)
+        ax.annotate('hoy', xy=(hoy, 1.005), xycoords=('data', 'axes fraction'),
+                    ha='center', va='bottom', fontsize=6.5, color='#555')
+
+        ax.set_ylabel('% volumen útil del SIN', fontsize=7.5)
+        ax.set_ylim(0, 100)
+        ax.tick_params(axis='both', labelsize=6.5)
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=10))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.16), ncol=4,
+                  frameon=False, fontsize=6.5)
+        ax.grid(True, axis='y', alpha=0.2)
+        plt.tight_layout()
+
+        filepath = str(CHARTS_DIR / f'prediccion_embalses_{date.today().isoformat()}.png')
+        fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+
+        fecha_corte = (
+            hist_df['fecha'].max() if not hist_df.empty else pred_df['fecha'].min()
+        )
+        logger.info(
+            f"[CHARTS] Predicción embalses: {filepath} "
+            f"({len(hist_df)} reales, {len(pred_df)} proyectados, senda={senda:.1f})"
+        )
+        return (
+            filepath,
+            f"Proyección de Embalses — corte {fecha_corte.strftime('%d/%m/%Y')}",
+            fecha_corte.strftime('%Y-%m-%d'),
+        )
+    except Exception as e:
+        logger.error(f"Error predicción embalses: {e}", exc_info=True)
+        return None, "", ""
+
+
 def generate_all_informe_charts() -> dict:
     """
     Genera todos los gráficos del informe ejecutivo.
 
     Returns
     -------
-    dict con claves de gráficos existentes + despacho_termica, capacidad_embalse, aportes_demanda.
+    dict con claves de gráficos existentes + despacho_termica,
+    capacidad_embalse, aportes_demanda, prediccion_embalses.
     """
     results = {}
     for key, fn in [
@@ -1337,6 +1489,7 @@ def generate_all_informe_charts() -> dict:
         ('despacho_termica', generate_despacho_termica_chart),
         ('capacidad_embalse', generate_capacidad_embalse_chart),
         ('aportes_demanda', generate_aportes_demanda_chart),
+        ('prediccion_embalses', generate_prediccion_embalses_chart),
     ]:
         try:
             results[key] = fn()

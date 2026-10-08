@@ -597,6 +597,18 @@ body {
     padding: 4px 8px;
     border-bottom: 1px solid #e0e0e0;
 }
+/* Variante compacta: 30 filas de detalle diario + promedio + notas deben
+   caber en media página, debajo del gráfico de proyección. */
+.pred-tbl-compacta {
+    font-size: 6.5pt;
+}
+.pred-tbl-compacta th {
+    padding: 2px 5px;
+    font-size: 6pt;
+}
+.pred-tbl-compacta td {
+    padding: 1px 5px;
+}
 .trend-up { color: #2E7D32; font-weight: bold; }
 .trend-dn { color: #C62828; font-weight: bold; }
 .trend-st { color: #555; font-weight: bold; }
@@ -3053,6 +3065,227 @@ def _get_embalse_pct_historico(fecha_ref: str, anios_atras: int) -> Optional[flo
         return None
 
 
+def _clasificar_oni(oni: Optional[float]) -> tuple:
+    """
+    Etiqueta y color del índice ONI (El Niño / La Niña).
+
+    Espejo de `classifyOni` en portal-direccion-mme/src/lib/oni.ts, para que
+    el PDF y el tablero no nombren distinto la misma señal climática.
+    """
+    if oni is None:
+        return ('N/D', '#8d8d8d')
+    if oni >= 1.5:
+        return ('El Niño fuerte', '#C62828')
+    if oni >= 0.5:
+        return ('El Niño', '#E65100')
+    if oni <= -1.5:
+        return ('La Niña fuerte', '#0277BD')
+    if oni <= -0.5:
+        return ('La Niña', '#0288D1')
+    return ('Neutral', '#607D8B')
+
+
+def _build_prediccion_embalses_tabla(dias: int = 30) -> str:
+    """
+    Tabla de detalle diario de la proyección de embalses para el PDF.
+
+    Es la tabla "Detalle Diario de Proyección" del tablero de predicciones
+    del portal, acotada a `dias` filas y a las columnas que caben en media
+    página: Fecha, % Proyectado, IC Inferior, IC Superior, ONI y Señal ENSO.
+    Se omiten PDO, SOI y GMST, que el tablero muestra porque tiene scroll.
+
+    Al pie va el etiquetado honesto del error: en la BD coexisten tres cifras
+    distintas para EMBALSES_PCT (holdout 12,62%, monitor ex-post 8,71% y
+    backtest 6,42%) y el endpoint del portal publica la más optimista.
+    """
+    try:
+        import pandas as pd
+        from infrastructure.database.connection import get_connection
+        from core.umbrales_oficiales import obtener_senda_referencia
+
+        with get_connection() as conn:
+            df = pd.read_sql(
+                """
+                SELECT DISTINCT ON (p.fecha_prediccion)
+                       p.fecha_prediccion AS fecha,
+                       p.valor_gwh_predicho AS pct,
+                       p.intervalo_inferior AS lo,
+                       p.intervalo_superior AS hi,
+                       p.modelo,
+                       p.mape,
+                       p.fecha_generacion
+                FROM sector_energetico.predictions p
+                WHERE p.fuente = 'EMBALSES_PCT'
+                  AND p.modelo = 'ENSEMBLE_SECTOR_v1.0'
+                  AND p.fecha_prediccion >= CURRENT_DATE
+                  AND p.fecha_prediccion < CURRENT_DATE + %(d)s * INTERVAL '1 day'
+                ORDER BY p.fecha_prediccion, p.fecha_generacion DESC
+                """,
+                conn, params={'d': dias},
+            )
+            oni_df = pd.read_sql(
+                """
+                SELECT fecha, valor_gwh - 5.0 AS oni
+                FROM sector_energetico.metrics
+                WHERE metrica = 'ONI_Index' AND recurso = 'Sistema'
+                ORDER BY fecha
+                """,
+                conn,
+            )
+            # Error realmente medido contra los datos publicados de XM, no el
+            # MAPE que el modelo se autoasigna.
+            err_df = pd.read_sql(
+                """
+                SELECT mape_expost, fecha_evaluacion, modelo
+                FROM sector_energetico.predictions_quality_history
+                WHERE fuente = 'EMBALSES_PCT' AND mape_expost IS NOT NULL
+                ORDER BY fecha_evaluacion DESC
+                LIMIT 1
+                """,
+                conn,
+            )
+            bt_df = pd.read_sql(
+                """
+                SELECT mape_expost, anio_corte, n_dias_test
+                FROM sector_energetico.predictions_backtest_history
+                WHERE fuente = 'EMBALSES_PCT' AND mape_expost IS NOT NULL
+                ORDER BY anio_corte DESC
+                """,
+                conn,
+            )
+
+        if df.empty:
+            logger.warning("[REPORT] Sin predicciones de embalses para la tabla")
+            return ''
+
+        df['fecha'] = pd.to_datetime(df['fecha'])
+        if not oni_df.empty:
+            oni_df['fecha'] = pd.to_datetime(oni_df['fecha'])
+            oni_serie = (
+                oni_df.set_index('fecha')['oni']
+                .reindex(df['fecha'], method='ffill')
+                .tolist()
+            )
+        else:
+            oni_serie = [None] * len(df)
+
+        senda = obtener_senda_referencia(datetime.now().date())
+
+        filas = []
+        for (_, r), oni in zip(df.iterrows(), oni_serie):
+            pct = float(r['pct'])
+            lo = float(r['lo']) if r['lo'] is not None else None
+            hi = float(r['hi']) if r['hi'] is not None else None
+            oni_val = None if oni is None or pd.isna(oni) else float(oni)
+            enso_label, enso_color = _clasificar_oni(oni_val)
+            # Color del valor proyectado según su posición frente a la senda
+            color_pct = '#2E7D32' if pct >= senda else (
+                '#E65100' if pct >= senda - SENDA_MARGEN_VIGILANCIA_PP else '#C62828'
+            )
+            lo_str = f'{lo:.1f}%' if lo is not None else 'N/D'
+            hi_str = f'{hi:.1f}%' if hi is not None else 'N/D'
+            oni_str = f'{oni_val:+.2f}' if oni_val is not None else 'N/D'
+            filas.append(
+                f'<tr>'
+                f'<td>{r["fecha"].strftime("%d/%m/%Y")}</td>'
+                f'<td style="text-align:right;font-weight:bold;color:{color_pct};">{pct:.1f}%</td>'
+                f'<td style="text-align:right;color:#555;">{lo_str}</td>'
+                f'<td style="text-align:right;color:#555;">{hi_str}</td>'
+                f'<td style="text-align:center;">{oni_str}</td>'
+                f'<td style="text-align:center;color:{enso_color};font-weight:bold;">'
+                f'{enso_label}</td>'
+                f'</tr>'
+            )
+
+        prom = float(df['pct'].mean())
+        prom_lo = float(df['lo'].mean()) if df['lo'].notna().any() else None
+        prom_hi = float(df['hi'].mean()) if df['hi'].notna().any() else None
+        ancho_ic = (prom_hi - prom_lo) if (prom_lo is not None and prom_hi is not None) else None
+        prom_lo_str = f'{prom_lo:.1f}%' if prom_lo is not None else 'N/D'
+        prom_hi_str = f'{prom_hi:.1f}%' if prom_hi is not None else 'N/D'
+
+        fila_prom = (
+            f'<tr style="background:#eef2f5;font-weight:bold;">'
+            f'<td>PROMEDIO {len(df)} d&iacute;as</td>'
+            f'<td style="text-align:right;">{prom:.1f}%</td>'
+            f'<td style="text-align:right;">{prom_lo_str}</td>'
+            f'<td style="text-align:right;">{prom_hi_str}</td>'
+            f'<td colspan="2"></td>'
+            f'</tr>'
+        )
+
+        # ── Pie honesto ──
+        modelo = str(df.iloc[0]['modelo'])
+        gen = pd.to_datetime(df.iloc[0]['fecha_generacion'])
+        mape_holdout = df.iloc[0]['mape']
+        notas = []
+        notas.append(
+            f'Modelo <b>{modelo}</b>, entrenado el {gen.strftime("%d/%m/%Y %H:%M")}.'
+        )
+        if not err_df.empty and err_df.iloc[0]['mape_expost'] is not None:
+            m = float(err_df.iloc[0]['mape_expost']) * 100
+            fe = pd.to_datetime(err_df.iloc[0]['fecha_evaluacion'])
+            notas.append(
+                f'Error medido contra datos publicados de XM: <b>{m:.1f}%</b> '
+                f'(evaluaci&oacute;n del {fe.strftime("%d/%m/%Y")}).'
+            )
+        if not bt_df.empty:
+            mn = float(bt_df['mape_expost'].min()) * 100
+            mx = float(bt_df['mape_expost'].max()) * 100
+            extra = ''
+            if mape_holdout is not None:
+                extra = (
+                    f' El propio modelo se autoasigna {float(mape_holdout) * 100:.1f}%, '
+                    f'la cifra m&aacute;s optimista de las tres.'
+                )
+            notas.append(
+                f'En validaci&oacute;n fuera de muestra el error va de <b>{mn:.1f}%</b> a '
+                f'<b>{mx:.1f}%</b> seg&uacute;n el a&ntilde;o; los a&ntilde;os de El Ni&ntilde;o '
+                f'est&aacute;n en el extremo alto.{extra}'
+            )
+        aviso_ic = ''
+        if ancho_ic is not None:
+            aviso_ic = (
+                f' El intervalo mide en promedio <b>{ancho_ic:.0f} puntos porcentuales</b> '
+                f'de ancho: la proyecci&oacute;n indica direcci&oacute;n, no un nivel preciso.'
+            )
+        notas.append(
+            f'Se publican {len(df)} d&iacute;as y no el horizonte completo del modelo '
+            f'(hasta sep-2027): m&aacute;s all&aacute; de 90 d&iacute;as la validaci&oacute;n '
+            f'muestra errores de 30% a 50%.{aviso_ic}'
+        )
+        notas.append(
+            f'Senda de referencia CREG {senda:.1f}% (publicaci&oacute;n XM/CND). El color de '
+            f'cada fila usa adem&aacute;s un margen de {SENDA_MARGEN_VIGILANCIA_PP:.0f}pp que '
+            f'es criterio propio del portal, no CREG.'
+        )
+
+        pie = '<br>'.join(f'&bull; {n}' for n in notas)
+
+        return f"""
+        <div style="margin:0 10px;">
+        <table class="pred-tbl pred-tbl-compacta" style="width:100%;">
+          <tr>
+            <th>Fecha</th>
+            <th style="text-align:right;">% Proyectado</th>
+            <th style="text-align:right;">IC Inferior</th>
+            <th style="text-align:right;">IC Superior</th>
+            <th style="text-align:center;">ONI (&deg;C)</th>
+            <th style="text-align:center;">Se&ntilde;al ENSO</th>
+          </tr>
+          {''.join(filas)}
+          {fila_prom}
+        </table>
+        <div style="font-size:6.5pt;color:#666;margin-top:4px;line-height:1.45;">
+          {pie}
+        </div>
+        </div>
+        """
+    except Exception as e:
+        logger.warning(f"[REPORT] Error construyendo tabla de predicción de embalses: {e}")
+        return ''
+
+
 def _build_page_hidrologia(
     logo_b64: str,
     fecha_label: str,
@@ -3411,6 +3644,20 @@ def _build_page_hidrologia(
           {pred_html}
         """
 
+    # ── Página de proyección de embalses: gráfico + detalle diario ──
+    # Es el contenido del tablero de predicciones del portal, llevado al PDF
+    # para que el informe y el tablero no cuenten cosas distintas.
+    pred_emb_chart = _embed_chart(chart_paths, 'prediccion_embalses')
+    pred_emb_tabla = _build_prediccion_embalses_tabla()
+    page_pred_embalses = ''
+    if pred_emb_chart or pred_emb_tabla:
+        page_pred_embalses = _wrap_report_page(logo_b64, fecha_label, f"""
+          {_section_hdr('Proyecci&oacute;n de Embalses', '#287270')}
+          {pred_emb_chart or ''}
+          {_section_hdr('Detalle Diario de Proyecci&oacute;n', '#287270') if pred_emb_tabla else ''}
+          {pred_emb_tabla}
+        """)
+
     page_hydro_detalle_map = _wrap_report_page(logo_b64, fecha_label, f"""
       {aportes_section}
       {detalle_section}
@@ -3422,7 +3669,12 @@ def _build_page_hidrologia(
       {proyecciones_block}
     """)
 
-    return page_hydro_cap + page_hydro_aportes + page_hydro_detalle_map
+    return (
+        page_hydro_cap
+        + page_hydro_aportes
+        + page_hydro_detalle_map
+        + page_pred_embalses
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
