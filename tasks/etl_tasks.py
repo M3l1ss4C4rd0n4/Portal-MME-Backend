@@ -841,3 +841,55 @@ def actualizar_pdo_soi(self):
     except Exception as exc:
         logger.error("[PDO_SOI] Error actualizando PDO/SOI: %s", exc)
         raise self.retry(exc=exc)
+
+
+@app.task(
+    bind=True,
+    max_retries=1,
+    default_retry_delay=900,
+    name='tasks.etl_tasks.verificar_sincronia_umbrales',
+)
+def verificar_sincronia_umbrales(self):
+    """
+    Compara el espejo de umbrales regulatorios Python ↔ TypeScript.
+
+    `scripts/verificar_sincronia_umbrales.py` existía desde la Fase 39 y fue la
+    herramienta que encontró que el frontend se había corregido y el backend no,
+    pero nunca estuvo agendado: no aparecía en crontab ni en ningún
+    beat_schedule, así que solo corría si alguien lo invocaba a mano. Una
+    divergencia entre `core/umbrales_oficiales.py` y `umbralesOficiales.ts`
+    significa que el portal y el informe clasifican el mismo día de forma
+    distinta, que es exactamente lo que se quiere detectar temprano.
+
+    Pasa --notificar: en la tarea agendada el aviso por Telegram/correo sí es
+    el comportamiento deseado (las corridas manuales no notifican).
+    """
+    import subprocess
+    import sys as _sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parent.parent / 'scripts' / 'verificar_sincronia_umbrales.py'
+    try:
+        proc = subprocess.run(
+            [_sys.executable, str(script), '--notificar'],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.error("[SINCRONIA_UMBRALES] La verificación excedió el tiempo límite")
+        raise self.retry(exc=exc)
+
+    # 0 = sincronizado, 1 = discrepancias (ya notificadas por el script),
+    # 2 = no se pudo evaluar (p. ej. el runner de TypeScript no arrancó).
+    if proc.returncode == 2:
+        logger.error(
+            "[SINCRONIA_UMBRALES] No se pudo evaluar la sincronía: %s",
+            (proc.stderr or proc.stdout or '').strip()[-500:],
+        )
+    elif proc.returncode == 1:
+        logger.error("[SINCRONIA_UMBRALES] Discrepancias detectadas y notificadas")
+    else:
+        logger.info("[SINCRONIA_UMBRALES] Python y TypeScript sincronizados")
+
+    return {'returncode': proc.returncode}

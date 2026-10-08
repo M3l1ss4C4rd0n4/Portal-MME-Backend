@@ -241,14 +241,22 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
         Carga todas las predicciones de una métrica específica.
         Reemplaza cargar_predicciones_metrica() en seguimiento_predicciones.py.
         """
+        # DISTINCT ON por fecha con la misma preferencia determinística que usa
+        # get_predictions(): algunas fuentes (Hidráulica, Biomasa) tienen a la
+        # vez ENSEMBLE_v1.0 y PROPHET_LARGO_PLAZO_v1.0, y sin este filtro
+        # salían 278 filas sobre 188 fechas — fechas duplicadas en la tabla del
+        # tablero y doble trazo en el gráfico.
         query = """
-        SELECT fecha_prediccion as fecha, valor_gwh_predicho as predicho,
-               intervalo_inferior, intervalo_superior, 
+        SELECT DISTINCT ON (fecha_prediccion)
+               fecha_prediccion as fecha, valor_gwh_predicho as predicho,
+               intervalo_inferior, intervalo_superior,
                modelo, confianza, mape as mape_train, rmse as rmse_train,
                fecha_generacion
         FROM predictions
         WHERE fuente = %s
-        ORDER BY fecha_prediccion
+        ORDER BY fecha_prediccion,
+                 (modelo = 'PROPHET_LARGO_PLAZO_v1.0') ASC,
+                 fecha_generacion DESC
         """
         try:
             df = self.execute_dataframe(query, (fuente,))
@@ -328,7 +336,7 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
             logger.error(f"[PREDICTIONS_REPO] Error cargando generación {tipo_catalogo}: {e}")
             return pd.DataFrame()
     
-    def get_quality_history(self) -> pd.DataFrame:
+    def get_quality_history(self, limite: int = 500) -> pd.DataFrame:
         """
         Carga historial de evaluaciones de calidad ex-post.
         Reemplaza cargar_quality_history() en seguimiento_predicciones.py.
@@ -339,9 +347,12 @@ class PredictionsRepository(BaseRepository, IPredictionsRepository):
                modelo, notas
         FROM predictions_quality_history
         ORDER BY fecha_evaluacion DESC, fuente
+        LIMIT %s
         """
         try:
-            return self.execute_dataframe(query)
+            # Sin LIMIT cargaba la tabla entera (13.924 filas y creciendo ~70 al
+            # día) para alimentar un AG Grid que pagina de 15 en 15.
+            return self.execute_dataframe(query, (limite,))
         except Exception as e:
             logger.error(f"[PREDICTIONS_REPO] Error cargando quality history: {e}")
             return pd.DataFrame()

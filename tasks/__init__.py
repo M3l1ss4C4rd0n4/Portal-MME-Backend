@@ -152,6 +152,15 @@ app.conf.beat_schedule = {
         'task': 'tasks.ontologia_tasks.verificar_vistas_ontologia',
         'schedule': crontab(minute='*/5'),
     },
+    # Espejo de umbrales regulatorios Python ↔ TypeScript.
+    # scripts/verificar_sincronia_umbrales.py existía desde la Fase 39 pero no
+    # estaba agendado en ninguna parte: solo corría si alguien lo invocaba a
+    # mano. Una divergencia significa que el portal y el informe clasifican el
+    # mismo día de forma distinta. Lunes 06:00, antes de la jornada.
+    'verificar-sincronia-umbrales-semanal': {
+        'task': 'tasks.etl_tasks.verificar_sincronia_umbrales',
+        'schedule': crontab(hour=6, minute=0, day_of_week='1'),
+    },
 }
 
 if __name__ == '__main__':
