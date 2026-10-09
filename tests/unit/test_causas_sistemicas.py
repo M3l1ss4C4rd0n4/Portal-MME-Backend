@@ -232,3 +232,83 @@ class TestGuardaCentralDeCompletitud:
         dq.limpiar_cache()
         with patch.object(dq, "entidad_desagregada", lambda m: None):
             assert dq.ultimo_dia_completo("MetricaRara") is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Latidos del sistema
+# ══════════════════════════════════════════════════════════════════════
+
+class TestLatidos:
+    """
+    Cada falla de la lista duró meses porque "el proceso corre" y "el proceso
+    produce" se veían igual. Un latido mide lo segundo.
+    """
+
+    @staticmethod
+    def _latido(nombre="x", horas=24, critico=False):
+        from domain.services.latidos_service import Latido
+        return Latido(nombre, f"vigila {nombre}", horas, critico)
+
+    def test_una_tabla_congelada_se_detecta(self):
+        from domain.services import latidos_service as ls
+        congelada = datetime_fijo = __import__("datetime").datetime(2026, 4, 29)
+        with patch.object(ls, "_consultar_marca", return_value=congelada):
+            res = ls.revisar_tablas()
+        anomalies = [r for r in res if r.latido.nombre == "anomalies"][0]
+        assert anomalies.ok is False
+        assert anomalies.rezago_horas > 24 * 100
+
+    def test_todo_sano_no_genera_mensaje(self):
+        from domain.services.latidos_service import construir_mensaje, Resultado
+        res = [Resultado(self._latido(), 1.0, "al día", True)]
+        assert construir_mensaje(res) is None
+
+    def test_un_fallo_genera_mensaje_con_lo_que_vigila(self):
+        from domain.services.latidos_service import construir_mensaje, Resultado
+        res = [
+            Resultado(self._latido("anomalies", critico=True), 3900.0,
+                      "último dato 2026-04-29", False),
+            Resultado(self._latido("sano"), 1.0, "al día", True),
+        ]
+        msg = construir_mensaje(res)
+        assert msg is not None
+        assert "vigila anomalies" in msg
+        assert "2026-04-29" in msg
+
+    def test_la_senda_no_se_mide_por_actualizado_en(self):
+        """
+        La tarea semanal re-inserta 3 valores semilla de 2024, lo que mantiene
+        `actualizado_en` fresco y enmascaró 68 días de fallo de la ingesta
+        real. El latido tiene que mirar la fecha de publicación.
+        """
+        import inspect
+        from domain.services import latidos_service as ls
+
+        fuente = inspect.getsource(ls)
+        bloque = fuente[fuente.index("LATIDOS_TABLA"):fuente.index("LATIDOS_LOG")]
+        assert "MAX(fecha_publicacion)" in bloque
+        assert "MAX(actualizado_en) FROM sector_energetico.senda_referencia" not in bloque
+
+    def test_vigila_que_una_serie_no_se_agote(self):
+        """
+        Cuando la senda se acaba, obtener_senda_para_fecha devuelve el último
+        valor para siempre, sin error. Eso congela la clasificación del
+        Índice NE en silencio.
+        """
+        from domain.services import latidos_service as ls
+        import datetime as _dt
+
+        futuro_corto = _dt.datetime.now() + _dt.timedelta(days=5)
+        with patch.object(ls, "_consultar_marca", return_value=futuro_corto):
+            res = ls.revisar_cobertura()
+        assert res[0].ok is False
+        assert "congela" in res[0].detalle
+
+    def test_un_servicio_con_codigo_viejo_se_detecta(self):
+        from domain.services import latidos_service as ls
+        res = ls.revisar_servicios()
+        # No se afirma el estado concreto (depende del despliegue del momento),
+        # sí que el chequeo existe para cada servicio vigilado.
+        nombres = {r.latido.nombre for r in res}
+        for s in ls.SERVICIOS_VIGILADOS:
+            assert f"servicio_{s}" in nombres
