@@ -134,15 +134,53 @@ def _insert_anomalies(df, conn) -> tuple[int, int]:
     return inserted, skipped
 
 
-def run(desde: date, hasta: date) -> None:
+def _registrar_lineage(pipeline: str, paso: str, estado: str,
+                       filas: int = 0, detalle: str = '') -> None:
+    """
+    Deja constancia de la corrida en `ontologia.etl_lineage`.
+
+    Sin esto, una corrida que evalúa datos y no inserta nada es indistinguible
+    en el log de una que no pudo evaluar nada: ambas terminaban con un "✅" en
+    nivel INFO y código de salida 0. Así pasaron 5,5 meses con la tabla
+    `anomalies` congelada mientras el cron corría cada 6 horas.
+    """
+    try:
+        with connection_manager.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ontologia.etl_lineage
+                        (pipeline, paso, iniciado_en, finalizado_en,
+                         filas_afectadas, estado, detalle)
+                    VALUES (%s, %s, now(), now(), %s, %s, %s)
+                    """,
+                    (pipeline, paso, filas, estado, detalle[:1000]),
+                )
+            conn.commit()
+    except Exception as exc:
+        logger.warning(f"No se pudo registrar linaje de la corrida: {exc}")
+
+
+def run(desde: date, hasta: date) -> int:
+    """
+    Devuelve el código de salida: 0 si la corrida fue válida, 1 si no se pudo
+    evaluar. Antes devolvía None siempre y el proceso salía 0 pasara lo que
+    pasara, así que ningún supervisor podía notar el fallo.
+    """
     logger.info(f"🔍 Iniciando detección anomalías PNT: {desde} → {hasta}")
 
     svc = LossesNTService()
     df = svc.detect_anomalies_isolation_forest(desde, hasta)
 
     if df is None or df.empty:
-        logger.warning("⚠️  DataFrame vacío — datos insuficientes para Isolation Forest (mínimo 12 registros)")
-        return
+        msg = (
+            "No se pudo evaluar: la serie de PNT vino vacía "
+            f"({desde} → {hasta}). Se necesitan al menos 12 registros en "
+            "losses_detailed con perdidas_no_tecnicas_pct válido."
+        )
+        logger.error(f"❌ {msg}")
+        _registrar_lineage('anomalies_pnt', 'deteccion', 'error', 0, msg)
+        return 1
 
     total = len(df)
     n_anomalos = int((df['anomaly'] == -1).sum())
@@ -156,7 +194,22 @@ def run(desde: date, hasta: date) -> None:
     with connection_manager.get_connection() as conn:
         inserted, skipped = _insert_anomalies(df, conn)
 
-    logger.info(f"✅ Insertados: {inserted} | Ya existían (omitidos): {skipped}")
+    # El mensaje distingue los dos casos que antes se veían idénticos.
+    if inserted == 0 and n_criticos == 0 and n_alertas == 0:
+        logger.info(
+            f"✅ Corrida válida: {total} registros evaluados, ninguno supera el "
+            f"umbral de materialidad. Nada que insertar (esto es lo esperado "
+            f"cuando el PNT está estable)."
+        )
+    else:
+        logger.info(f"✅ Insertados: {inserted} | Ya existían (omitidos): {skipped}")
+
+    _registrar_lineage(
+        'anomalies_pnt', 'deteccion', 'exito', inserted,
+        f"evaluados={total} anomalos={n_anomalos} criticos={n_criticos} "
+        f"alertas={n_alertas} insertados={inserted} omitidos={skipped}",
+    )
+    return 0
 
 
 if __name__ == '__main__':
@@ -186,4 +239,6 @@ if __name__ == '__main__':
         hasta_val = hasta_default
         desde_val = hasta_val - timedelta(days=30)
 
-    run(desde_val, hasta_val)
+    # sys.exit con el código real: el cron y cualquier supervisor necesitan
+    # poder distinguir una corrida sana de una que no pudo evaluar nada.
+    sys.exit(run(desde_val, hasta_val))

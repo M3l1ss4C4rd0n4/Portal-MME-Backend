@@ -2711,6 +2711,15 @@ def _get_aportes_rios_table() -> str:
         
         with get_connection() as conn:
             # Obtener aportes por río (campo recurso) del día más reciente
+            # Último día COMPLETO: con MAX(fecha) crudo esta tabla llegó a
+            # mostrar 1 río en vez de 42, el día que XM publicó parcialmente.
+            from core.data_quality import ultimo_dia_completo
+
+            fecha_ok = ultimo_dia_completo('AporCaudal', 'Rio')
+            if fecha_ok is None:
+                return ('<div style="font-size:7pt;color:#999;text-align:center;'
+                        'padding:10px;">Sin un día completo reciente de aportes</div>')
+
             df = pd.read_sql("""
                 SELECT 
                     recurso as rio,
@@ -2719,10 +2728,10 @@ def _get_aportes_rios_table() -> str:
                     fecha
                 FROM metrics 
                 WHERE metrica = 'AporCaudal'
-                  AND fecha = (SELECT MAX(fecha) FROM metrics WHERE metrica = 'AporCaudal')
+                  AND fecha::date = %(f)s
                 ORDER BY valor_gwh DESC
                 LIMIT 15
-            """, conn)
+            """, conn, params={"f": fecha_ok})
             
             if df.empty:
                 return '<div style="font-size:7pt;color:#999;text-align:center;padding:10px;">No hay datos de aportes</div>'

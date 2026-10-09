@@ -1102,6 +1102,47 @@ def build_alert_email_html(
 </body></html>"""
 
 
+def _estado_latidos_html() -> str:
+    """
+    Una línea con el estado del vigilante de latidos para el pie del informe.
+
+    Si el vigilante dejó de correr, esta línea es la única señal que llega a
+    un humano sin que nadie tenga que acordarse de mirar un log.
+    """
+    from datetime import datetime as _dt
+    try:
+        from infrastructure.database.connection import get_connection
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT finalizado_en, estado, detalle
+                    FROM ontologia.etl_lineage
+                    WHERE pipeline = 'latidos'
+                    ORDER BY iniciado_en DESC LIMIT 1
+                    """
+                )
+                fila = cur.fetchone()
+        if not fila:
+            return ('Vigilancia de latidos: sin registro todavía.')
+        marca, estado, detalle = fila
+        # La columna puede venir con zona horaria; se normaliza antes de restar.
+        if marca.tzinfo is not None:
+            marca = marca.replace(tzinfo=None)
+        horas = (_dt.now() - marca).total_seconds() / 3600
+        if horas > 24:
+            return (f'&#9888; Vigilancia de latidos SIN EJECUTARSE desde '
+                    f'{marca:%Y-%m-%d %H:%M} ({horas/24:.1f} d&iacute;as).')
+        if estado == 'error':
+            return (f'&#9888; Vigilancia de latidos {marca:%d/%m %H:%M}: '
+                    f'{(detalle or "")[:120]}')
+        return (f'Vigilancia de latidos {marca:%d/%m %H:%M}: '
+                f'{(detalle or "sin novedad")[:120]}')
+    except Exception as e:
+        logger.warning(f"No se pudo leer el estado de latidos: {e}")
+        return 'Vigilancia de latidos: estado no disponible.'
+
+
 def build_daily_email_html(
     informe_texto: str,
     noticias: list | None = None,
@@ -1618,8 +1659,13 @@ def build_daily_email_html(
     p.append('<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:12px;">'
              'Sistema automatizado de informes del Portal Energ' + chr(233)
              + 'tico &mdash; Generado el ' + fecha + ' a las ' + hora + '</div>')
+    # Estado del vigilante de latidos. Va en el informe porque un vigilante
+    # que muere en silencio es el mismo problema que vino a resolver: si el
+    # latido dejó de correr, el informe lo dice aquí.
     p.append('<div style="border-top:1px solid rgba(255,255,255,0.1);'
              'padding-top:12px;font-size:11px;color:rgba(255,255,255,0.3);">'
+             + _estado_latidos_html() + '</div>')
+    p.append('<div style="padding-top:8px;font-size:11px;color:rgba(255,255,255,0.3);">'
              'Este mensaje es informativo. Para consultas, utilice los canales de contacto indicados.</div>')
     p.append('</td></tr></table></td></tr>')
 

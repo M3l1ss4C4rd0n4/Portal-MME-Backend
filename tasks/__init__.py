@@ -26,7 +26,14 @@ app = Celery(
     'portal_mme',
     broker='redis://localhost:6379/0',
     backend='redis://localhost:6379/1',
-    include=['tasks.etl_tasks', 'tasks.anomaly_tasks', 'tasks.push_tasks', 'tasks.homeslider_diagnosticos_tasks', 'tasks.ontologia_tasks']
+    include=[
+        'tasks.etl_tasks',
+        'tasks.anomaly_tasks',
+        'tasks.push_tasks',
+        'tasks.homeslider_diagnosticos_tasks',
+        'tasks.ontologia_tasks',
+        'tasks.latidos_tasks',
+    ]
 )
 
 # Configuración adicional
@@ -151,6 +158,14 @@ app.conf.beat_schedule = {
     'verificar-vistas-ontologia-cada-5-min': {
         'task': 'tasks.ontologia_tasks.verificar_vistas_ontologia',
         'schedule': crontab(minute='*/5'),
+    },
+    # Latidos del sistema: detecta lo que dejó de producir. Tres veces al día
+    # (06:10, 14:10, 22:10) para que una parada no espere 24h a ser vista.
+    # Ver domain/services/latidos_service para la lista de fallas que lo
+    # motivaron, todas de meses de duración.
+    'revisar-latidos-del-sistema': {
+        'task': 'tasks.latidos_tasks.revisar_latidos',
+        'schedule': crontab(hour='6,14,22', minute=10),
     },
     # Espejo de umbrales regulatorios Python ↔ TypeScript.
     # scripts/verificar_sincronia_umbrales.py existía desde la Fase 39 pero no

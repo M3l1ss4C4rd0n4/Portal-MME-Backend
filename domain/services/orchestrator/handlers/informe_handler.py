@@ -44,6 +44,47 @@ class InformeHandlerMixin:
     """
 
     @handle_service_error
+    # ── Helper: ejecutar un constructor de sección sin ocultar el fallo ──
+
+    def _registrar_fallo_seccion(self, nombre, exc, fallidas):
+        """
+        Registra el fallo de una sección que no puede usar _construir_seccion
+        (porque hace logging propio dentro del try o usa await).
+
+        Mismo criterio: ERROR, no warning "(no crítico)". Que el informe siga
+        saliendo no vuelve inocuo que le falte una sección.
+        """
+        fallidas.append({'seccion': nombre, 'error': f"{type(exc).__name__}: {exc}"})
+        logger.error(
+            f"[INFORME] La sección '{nombre}' falló y saldrá vacía del informe: "
+            f"{type(exc).__name__}: {exc}",
+            exc_info=True,
+        )
+
+    def _construir_seccion(self, nombre, constructor, vacio, fallidas):
+        """
+        Ejecuta el constructor de una sección del informe y, si falla, lo
+        registra en `fallidas` en vez de dejarlo pasar como ruido.
+
+        Las 10 secciones del contexto repetían el mismo try/except con
+        `logger.warning(... "(no crítico)")`, y eso convirtió un fallo real en
+        algo invisible: un NameError en `_build_embalses_regionales` borró la
+        sección "Nivel por Región Hidrológica" del informe diario durante dos
+        días sin que nada lo señalara. Un fallo de sección es ERROR —aunque el
+        informe siga saliendo— y además queda listado para que el propio
+        informe pueda decir qué le faltó.
+        """
+        try:
+            return constructor()
+        except Exception as e:
+            fallidas.append({'seccion': nombre, 'error': f"{type(e).__name__}: {e}"})
+            logger.error(
+                f"[INFORME] La sección '{nombre}' falló y saldrá vacía del "
+                f"informe: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            return vacio() if callable(vacio) else vacio
+
     async def _handle_informe_ejecutivo(
         self,
         parameters: Dict[str, Any]
@@ -307,29 +348,27 @@ class InformeHandlerMixin:
             _fichas = contexto['estado_actual']['fichas']
             _anomalias_lista = contexto['anomalias'].get('lista', [])
 
+            # Secciones que fallaron, para que el informe no las pierda en silencio
+
+            secciones_fallidas: List[Dict[str, Any]] = []
+
             try:
                 contexto['generacion_por_fuente'] = await self._build_generacion_por_fuente()
             except Exception as e:
-                logger.warning(f"[INFORME] generacion_por_fuente falló (no crítico): {e}")
+                self._registrar_fallo_seccion('generacion_por_fuente', e, secciones_fallidas)
                 contexto['generacion_por_fuente'] = {"error": str(e)}
 
-            try:
-                contexto['embalses_detalle'] = self._build_embalses_detalle(_fichas)
-            except Exception as e:
-                logger.warning(f"[INFORME] embalses_detalle falló (no crítico): {e}")
-                contexto['embalses_detalle'] = {"error": str(e)}
+            contexto['embalses_detalle'] = self._construir_seccion(
+                'embalses_detalle', lambda: self._build_embalses_detalle(_fichas), {"error": "sección no disponible"}, secciones_fallidas
+            )
 
-            try:
-                contexto['variables_mercado'] = self._build_variables_mercado()
-            except Exception as e:
-                logger.warning(f"[INFORME] variables_mercado falló (no crítico): {e}")
-                contexto['variables_mercado'] = {}
+            contexto['variables_mercado'] = self._construir_seccion(
+                'variables_mercado', lambda: self._build_variables_mercado(), {}, secciones_fallidas
+            )
 
-            try:
-                contexto['embalses_regionales'] = self._build_embalses_regionales()
-            except Exception as e:
-                logger.warning(f"[INFORME] embalses_regionales falló (no crítico): {e}")
-                contexto['embalses_regionales'] = {}
+            contexto['embalses_regionales'] = self._construir_seccion(
+                'embalses_regionales', lambda: self._build_embalses_regionales(), {}, secciones_fallidas
+            )
 
             try:
                 contexto['predicciones_mes_resumen'] = self._build_predicciones_mes_resumen(
@@ -337,7 +376,7 @@ class InformeHandlerMixin:
                     contexto.get('predicciones_mes', {}),
                 )
             except Exception as e:
-                logger.warning(f"[INFORME] predicciones_mes_resumen falló (no crítico): {e}")
+                self._registrar_fallo_seccion('predicciones_mes_resumen', e, secciones_fallidas)
                 contexto['predicciones_mes_resumen'] = {"error": str(e)}
 
             try:
@@ -346,7 +385,7 @@ class InformeHandlerMixin:
                     _anomalias_lista,
                 )
             except Exception as e:
-                logger.warning(f"[INFORME] tabla_indicadores_clave falló (no crítico): {e}")
+                self._registrar_fallo_seccion('tabla_indicadores_clave', e, secciones_fallidas)
                 contexto['tabla_indicadores_clave'] = []
             
             # (f) ÍNDICES COMPUESTOS DE ESTRÉS Y SOSTENIBILIDAD
@@ -358,7 +397,7 @@ class InformeHandlerMixin:
                 )
                 logger.info(f"[INFORME] Índices compuestos calculados: {contexto['indices_compuestos']}")
             except Exception as e:
-                logger.warning(f"[INFORME] indices_compuestos falló (no crítico): {e}")
+                self._registrar_fallo_seccion('indices_compuestos', e, secciones_fallidas)
                 contexto['indices_compuestos'] = self._indices_fallback()
 
             # (e) Anomalías recientes de BD (solo alertas reales del SIN, no técnicas)
@@ -436,7 +475,7 @@ class InformeHandlerMixin:
                             f"({len(_df_alertas)} total, {len(_df_alertas) - len(_alertas_bd)} técnicas excluidas)"
                         )
             except Exception as e:
-                logger.warning(f"[INFORME] alertas_historial falló (no crítico): {e}")
+                self._registrar_fallo_seccion('alertas_historial', e, secciones_fallidas)
 
             contexto['anomalias']['total_anomalias'] = len(
                 contexto['anomalias'].get('lista', [])
@@ -494,7 +533,17 @@ class InformeHandlerMixin:
                         f"cu={'sí' if _cu else 'no'}, pnt={'sí' if _pnt else 'no'}"
                     )
             except Exception as e:
-                logger.warning(f"[INFORME] cu_pnt falló (no crítico): {e}")
+                self._registrar_fallo_seccion('cu_pnt', e, secciones_fallidas)
+
+            # El contexto lleva qué secciones faltaron, para que el informe y
+            # el latido diario puedan decirlo en vez de salir incompleto en
+            # silencio (así desapareció "Nivel por Región Hidrológica").
+            contexto['secciones_fallidas'] = secciones_fallidas
+            if secciones_fallidas:
+                logger.error(
+                    f"[INFORME] {len(secciones_fallidas)} sección(es) del informe "
+                    f"fallaron: {', '.join(f['seccion'] for f in secciones_fallidas)}"
+                )
 
             logger.info(
                 f"[INFORME_EJECUTIVO_IA] Contexto enriquecido: "
