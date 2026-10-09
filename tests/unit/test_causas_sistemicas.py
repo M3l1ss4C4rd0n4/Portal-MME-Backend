@@ -249,14 +249,31 @@ class TestLatidos:
         from domain.services.latidos_service import Latido
         return Latido(nombre, f"vigila {nombre}", horas, critico)
 
-    def test_una_tabla_congelada_se_detecta(self):
+    def test_una_fuente_congelada_se_detecta(self):
         from domain.services import latidos_service as ls
-        congelada = datetime_fijo = __import__("datetime").datetime(2026, 4, 29)
+        congelada = __import__("datetime").datetime(2026, 4, 29)
         with patch.object(ls, "_consultar_marca", return_value=congelada):
             res = ls.revisar_tablas()
-        anomalies = [r for r in res if r.latido.nombre == "anomalies"][0]
-        assert anomalies.ok is False
-        assert anomalies.rezago_horas > 24 * 100
+        assert res, "debe haber latidos de tabla configurados"
+        assert all(not r.ok for r in res), (
+            "con todas las fuentes congeladas en abril, ningún latido debe pasar"
+        )
+        assert max(r.rezago_horas for r in res) > 24 * 100
+
+    def test_el_pnt_vigila_las_corridas_del_etl_no_la_tabla(self):
+        """
+        `anomalies` solo recibe filas cuando hay anomalías materiales, así que
+        una tabla sin novedades es el estado sano. Medir su frescura daría
+        alarma permanente. La señal correcta es el linaje del ETL: si deja de
+        escribirlo, dejó de correr o de poder evaluar.
+        """
+        import inspect
+        from domain.services import latidos_service as ls
+
+        fuente = inspect.getsource(ls)
+        bloque = fuente[fuente.index("LATIDOS_TABLA"):fuente.index("LATIDOS_LOG")]
+        assert "pipeline = 'anomalies_pnt'" in bloque
+        assert "MAX(fecha_deteccion) FROM sector_energetico.anomalies" not in bloque
 
     def test_todo_sano_no_genera_mensaje(self):
         from domain.services.latidos_service import construir_mensaje, Resultado

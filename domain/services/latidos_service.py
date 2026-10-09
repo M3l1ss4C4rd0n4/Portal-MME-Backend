@@ -57,8 +57,15 @@ class Resultado:
 # El rezago esperado sale del ritmo real de cada fuente, no de un número
 # redondo. Donde XM publica con retraso, el margen lo contempla.
 LATIDOS_TABLA = [
-    (Latido('anomalies', 'Detección de anomalías PNT (Isolation Forest)', 36, critico=True),
-     "SELECT MAX(fecha_deteccion) FROM sector_energetico.anomalies"),
+    # OJO: se vigila que el ETL CORRA Y EVALÚE, no que la tabla crezca.
+    # `anomalies` solo recibe filas cuando hay anomalías materiales, así que
+    # una tabla sin novedades es el estado normal y sano. Medir su frescura
+    # daría una alarma permanente. La señal correcta es el registro de linaje
+    # del propio ETL: si deja de escribirlo, es que dejó de correr o de poder
+    # evaluar — que es lo que pasó durante 5,5 meses.
+    (Latido('etl_anomalias_pnt', 'Corridas del ETL de anomalías PNT', 12, critico=True),
+     "SELECT MAX(finalizado_en) FROM ontologia.etl_lineage "
+     "WHERE pipeline = 'anomalies_pnt' AND estado = 'exito'"),
     (Latido('alertas_historial', 'Motor de alertas (Celery Beat cada 30 min)', 3, critico=True),
      "SELECT MAX(fecha_generacion) FROM sector_energetico.alertas_historial"),
     (Latido('metrics_xm', 'ETL de métricas de XM', 12, critico=True),
@@ -67,7 +74,10 @@ LATIDOS_TABLA = [
      "SELECT MAX(fecha_generacion) FROM sector_energetico.predictions"),
     (Latido('predictions_quality', 'Monitor ex-post de predicciones (diario 22:00)', 30),
      "SELECT MAX(fecha_evaluacion) FROM sector_energetico.predictions_quality_history"),
-    (Latido('losses_detailed', 'Cálculo de pérdidas no técnicas', 96),
+    # 6 días: depende de DemaReal, que medimos completo recién en D-5 (XM la
+    # publica parcial hasta 4 días). Un umbral más corto daría rojo permanente
+    # por un retraso que es de la fuente, no del sistema.
+    (Latido('losses_detailed', 'Cálculo de pérdidas no técnicas', 144),
      "SELECT MAX(fecha)::timestamp FROM sector_energetico.losses_detailed"),
     # OJO: no se usa `actualizado_en`. La tarea semanal re-inserta 3 valores
     # semilla de 2024 y eso mantiene esa columna fresca, enmascarando que la

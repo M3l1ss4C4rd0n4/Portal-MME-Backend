@@ -1,0 +1,21 @@
+# Regla sudoers propuesta para el despliegue del backend del Portal MME.
+#
+# Instalar con:  sudo visudo -f /etc/sudoers.d/portal-mme
+# (visudo valida la sintaxis; editar el archivo a mano puede dejar sudo roto.)
+#
+# POR QUÉ: hoy `admonctrlxm` puede reiniciar portal-api, celery-beat,
+# celery-worker, telegram-polling y whatsapp-bot sin contraseña, pero NO
+# dashboard-mme, celery-worker@1/@2 ni celery-flower. Por eso el tablero del
+# puerto 8050 estuvo desde el 2026-09-30 sirviendo código de hace 12 commits:
+# no existía ninguna forma desatendida de reiniciarlo.
+#
+# Nota: el `kill -HUP` que el RUNBOOK §3.2 documenta como "hot-reload sin
+# downtime" NO recarga el código. Con `preload_app = True` en
+# gunicorn_config.py y la caché de sys.modules, arbiter.reload() solo relee la
+# configuración. Hace falta reinicio real.
+
+admonctrlxm ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dashboard-mme.service
+admonctrlxm ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart celery-worker@1.service
+admonctrlxm ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart celery-worker@2.service
+admonctrlxm ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart celery-flower.service
+admonctrlxm ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload
