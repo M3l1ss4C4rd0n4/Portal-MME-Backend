@@ -864,7 +864,17 @@ class EstadoActualHandlerMixin:
             # portal): el Índice NE oficial es binario y, al comparar contra
             # 'ALERTA' —rama inalcanzable—, toda región bajo senda salía
             # 'Crítico'.
-            nivel_vig_reg, _, _senda_reg = clasificar_vigilancia_embalse(pct_prom)
+            # Dos clasificaciones distintas, y hay que llevarlas separadas:
+            #  - `indice_ne`: el nivel OFICIAL del Estatuto CREG, binario.
+            #  - `nivel_vigilancia`: el gradiente de criterio propio del portal,
+            #    que es el que gradúa el semáforo para no pintar de rojo una
+            #    región que está 0,1pp bajo la senda.
+            # Antes este bloque referenciaba `nivel_ne_reg`, una variable que
+            # dejó de asignarse al introducir el gradiente: el NameError se lo
+            # tragaba informe_handler como "no crítico" y la sección "Nivel por
+            # Región Hidrológica" desapareció entera del informe diario.
+            nivel_ne_reg, _desc_ne_reg, _senda_reg = clasificar_indice_ne(pct_prom)
+            nivel_vig_reg, _, _ = clasificar_vigilancia_embalse(pct_prom)
             if pct_prom > 95 or nivel_vig_reg == 'DEFICIT':
                 estado = 'Crítico'
             elif pct_prom > 80 or nivel_vig_reg == 'VIGILANCIA':
@@ -878,6 +888,7 @@ class EstadoActualHandlerMixin:
                 'embalses': sorted(grp['recurso'].tolist()),
                 'estado': estado,
                 'indice_ne': nivel_ne_reg,
+                'nivel_vigilancia': nivel_vig_reg,
                 'fuente_regulatoria': 'CREG 209/2020',
             })
 

@@ -402,8 +402,13 @@ async def health_check(request: Request) -> Dict[str, Any]:
     
     # ── 4. Data freshness ──
     try:
+        # Excluir fechas futuras: `metrics` guarda pronósticos (ONI de NOAA
+        # llega hasta 2027-09), así que un MAX(fecha) crudo devolvía 2027-09-15
+        # y daba hours_since_update = -8171. Con la comparación `< 48` eso hacía
+        # el chequeo MATEMÁTICAMENTE INCAPAZ DE FALLAR: si el ETL de XM muriera
+        # hoy, /health seguiría diciendo "healthy" hasta septiembre de 2027.
         df_fresh = db_manager.query_df(
-            "SELECT MAX(fecha) as ultima FROM metrics"
+            "SELECT MAX(fecha) as ultima FROM metrics WHERE fecha <= CURRENT_DATE"
         )
         if not df_fresh.empty and df_fresh.iloc[0]['ultima'] is not None:
             from datetime import datetime as _dt
@@ -445,7 +450,9 @@ async def health_check(request: Request) -> Dict[str, Any]:
         http_code = 503
     elif degraded:
         overall = "degraded"
-        http_code = 200
+        # 503, no 200: scripts/monitor_api.sh usa `curl -f`, que solo falla con
+        # código >= 400. Con 200 el monitoreo nunca veía un estado degradado.
+        http_code = 503
     else:
         overall = "healthy"
         http_code = 200

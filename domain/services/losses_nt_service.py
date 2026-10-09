@@ -149,17 +149,30 @@ _STN_MAX_THRESHOLD = 5.0   # P_STN > 5% → anomalía (pérdidas STN excesivas)
 # dejando al Isolation Forest sin datos desde abril de 2026.
 _STN_PARTIAL_DAY_PCT = 20.0
 
-# Desviación mínima del PNT diario respecto a la mediana de la ventana, en
-# puntos porcentuales, para que un día pueda escalar a ALERTA o CRITICO.
+# Criterios para escalar un día del PNT a ALERTA o CRITICO.
 #
 # CRITERIO PROPIO DEL PORTAL — no proviene de la CREG ni de la SSPD.
+#
 # Isolation Forest con `contamination` fija etiqueta un porcentaje fijo de
 # puntos como anómalos aunque la serie sea plana, y la severidad se derivaba
 # solo de percentiles del score: sobre un PNT estable en 3,34%, un día de
-# 3,37% salía "CRITICO". El score dice "forma inusual"; estos umbrales
-# exigen además que la desviación sea material antes de escalarla.
-_PNT_DESVIACION_ALERTA_PP = 1.0
-_PNT_DESVIACION_CRITICO_PP = 2.0
+# 3,37% salía "CRITICO". El score dice "forma inusual"; hace falta además que
+# la desviación sea real y material.
+#
+# Un umbral ABSOLUTO en puntos porcentuales no sirve: la primera versión usó
+# 1,0pp y resultó inalcanzable, porque la serie real tiene un rango de 0,13pp
+# (3,24-3,37). Ese umbral no era conservador: era inerte, y dejaba el detector
+# produciendo cero inserciones de forma indistinguible de estar muerto.
+#
+# Se usan dos condiciones que deben cumplirse a la vez, ambas sin escala fija:
+#  1. z robusto (Iglewicz & Hoaglin): 0.6745·|x − mediana| / MAD. Responde
+#     "¿es inusual PARA ESTA serie?". El corte de 3.5 es el estándar.
+#  2. Materialidad relativa al nivel de la serie. Responde "¿es lo bastante
+#     grande para importar?". Evita que un MAD diminuto convierta ruido de
+#     0,05pp en alerta.
+_PNT_Z_ROBUSTO_ALERTA = 3.5
+_PNT_Z_ROBUSTO_CRITICO = 5.0
+_PNT_MATERIALIDAD_REL = 0.10   # 10% del nivel mediano de la ventana
 
 # Umbrales de confianza
 _CONF_ALTA = "alta"
@@ -893,26 +906,40 @@ class LossesNTService:
         threshold_critico = float(df["anomaly_score"].quantile(0.05))   # peor 5%
         threshold_alerta  = float(df["anomaly_score"].quantile(0.15))   # peor 5-15%
 
-        # Desviación absoluta respecto al nivel típico de la ventana. Sin esto
-        # la severidad era puramente relativa y siempre marcaba un 5% de los
-        # días como CRITICO, incluso con la serie plana.
+        # Desviación robusta respecto al nivel típico de la ventana.
         mediana_pnt = float(df["pnt_pct"].median())
         df["desviacion_pp"] = (df["pnt_pct"] - mediana_pnt).abs()
+
+        # MAD (desviación absoluta mediana): medida de dispersión que no se
+        # deja arrastrar por los propios atípicos, a diferencia de la std.
+        mad = float((df["pnt_pct"] - mediana_pnt).abs().median())
+        if mad > 0:
+            df["z_robusto"] = 0.6745 * df["desviacion_pp"] / mad
+        else:
+            # Serie constante: ninguna desviación es estadísticamente inusual.
+            df["z_robusto"] = 0.0
+
+        materialidad_min = abs(mediana_pnt) * _PNT_MATERIALIDAD_REL
 
         def _severidad(row):
             if row["anomaly"] == 1:
                 return "NORMAL"
-            desviacion = row["desviacion_pp"]
-            if desviacion < _PNT_DESVIACION_ALERTA_PP:
-                # Forma inusual para el modelo, pero sin desviación material:
-                # no se escala a una severidad que dispare notificaciones.
+            # Ambas condiciones: inusual para la serie Y material en magnitud.
+            if (row["z_robusto"] < _PNT_Z_ROBUSTO_ALERTA
+                    or row["desviacion_pp"] < materialidad_min):
                 return "NORMAL"
             if (row["anomaly_score"] <= threshold_critico
-                    and desviacion >= _PNT_DESVIACION_CRITICO_PP):
+                    and row["z_robusto"] >= _PNT_Z_ROBUSTO_CRITICO):
                 return "CRITICO"
             return "ALERTA"
 
         df["severidad"] = df.apply(_severidad, axis=1)
+        logger.info(
+            "%s Severidad PNT: mediana=%.3f%% MAD=%.4f materialidad_min=%.3fpp "
+            "→ %s",
+            _PREFIX, mediana_pnt, mad, materialidad_min,
+            df["severidad"].value_counts().to_dict(),
+        )
         return df[["fecha", "pnt_pct", "anomaly", "anomaly_score", "severidad"]]
 
     # ================================================================
