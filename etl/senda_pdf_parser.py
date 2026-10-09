@@ -24,6 +24,7 @@ No se depende de leer ninguna etiqueta rotada de fecha ni de valor.
 from __future__ import annotations
 
 import io
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -48,6 +49,9 @@ _RE_ANCLA_DIFERENCIA = re.compile(
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class ExtraccionSendaError(Exception):
     """Fallo al extraer o calibrar la gráfica de senda — no escribir datos derivados."""
 
@@ -59,16 +63,47 @@ class AnclaTextual:
     valor_senda: float
 
 
+def _normalizar_espacios(texto: str) -> str:
+    """
+    Colapsa todo bloque de espacios en blanco a un solo espacio.
+
+    El texto que sale de un PDF conserva los saltos de línea de la maquetación,
+    y esa maquetación cambia. El 2026-08-03 XM movió el corte de línea de la
+    frase del ancla: pasó de "...y la senda de referencia" a "...y la \nsenda
+    de referencia". El patrón, que esperaba un espacio literal, dejó de
+    coincidir y el ETL falló 68 días seguidos sin que nadie lo notara.
+
+    Normalizar antes de buscar vuelve los tres patrones inmunes a dónde caiga
+    el salto de línea.
+    """
+    return re.sub(r"\s+", " ", texto)
+
+
 def extraer_ancla_textual(texto_pagina: str, fecha_referencia: date) -> Optional[AnclaTextual]:
     """Ancla exacta (fecha, valor real, valor senda) desde el texto real del PDF.
 
     Devuelve None (no excepción) si el patrón no matchea — un cambio menor de
     redacción de XM no debe tumbar toda la corrida, solo esa parte.
     """
+    texto_pagina = _normalizar_espacios(texto_pagina)
     m_fecha = _RE_ANCLA_FECHA.search(texto_pagina)
     m_nivel = _RE_ANCLA_NIVEL.search(texto_pagina)
     m_dif = _RE_ANCLA_DIFERENCIA.search(texto_pagina)
     if not (m_fecha and m_nivel and m_dif):
+        # Decir CUÁL patrón falló: "no se pudo extraer el ancla" obligó a
+        # descargar el PDF a mano para averiguar qué se había movido.
+        faltantes = [
+            nombre for nombre, m in (
+                ('fecha', m_fecha), ('nivel de embalse', m_nivel),
+                ('diferencia vs senda', m_dif),
+            ) if not m
+        ]
+        logger.warning(
+            "No coincidió el patrón de %s en el texto del PDF. "
+            "Probable cambio de redacción de XM; revisar los patrones en "
+            "etl/senda_pdf_parser.py contra el texto real.",
+            " y ".join(faltantes),
+        )
         return None
 
     mes_abr, dia_str = m_fecha.group(1).lower(), m_fecha.group(2)

@@ -329,3 +329,115 @@ class TestLatidos:
         nombres = {r.latido.nombre for r in res}
         for s in ls.SERVICIOS_VIGILADOS:
             assert f"servicio_{s}" in nombres
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Candado del watcher de informes XM
+# ══════════════════════════════════════════════════════════════════════
+
+class TestCandadoAutoSanable:
+    """
+    El candado "auto-sanable" que se introdujo tras el incidente de agosto
+    tenía un fallo que lo volvía inservible: `open(LOCK_FILE, "w")` TRUNCA el
+    archivo antes de intentar el flock. Cuando el flock fallaba, el PID del
+    dueño ya estaba borrado, así que en los intentos siguientes no había PID
+    que comprobar y el candado no se podía reclamar jamás.
+
+    Consecuencia real: un watcher colgado el 2026-08-11 retuvo el candado 59
+    días, con 0 verificaciones y un WARNING cada 5 minutos que nadie leía.
+    """
+
+    def test_un_intento_fallido_no_borra_el_pid_del_dueno(self, tmp_path):
+        import fcntl
+        from etl import etl_informes_diarios_watcher as w
+
+        lock = tmp_path / "test.lock"
+        with patch.object(w, "LOCK_FILE", lock):
+            # El "dueño" toma el candado y escribe su PID.
+            assert w._acquire_lock() is True
+            pid_dueno = lock.read_text().strip()
+            assert pid_dueno.isdigit()
+
+            # Un segundo intento, desde otro descriptor, debe fallar...
+            fd = open(lock, "r+")
+            try:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    ya_estaba_libre = True
+                except OSError:
+                    ya_estaba_libre = False
+            finally:
+                fd.close()
+            assert ya_estaba_libre is False
+
+            # ...y sobre todo, NO debe haber borrado el PID del dueño.
+            assert lock.read_text().strip() == pid_dueno, (
+                "un intento fallido truncó el archivo y destruyó la única "
+                "evidencia de quién tiene el candado"
+            )
+            w._release_lock()
+
+    def test_candado_de_proceso_inexistente_se_reclama(self, tmp_path):
+        from etl import etl_informes_diarios_watcher as w
+
+        lock = tmp_path / "test.lock"
+        lock.write_text("999999")  # PID que no existe
+        with patch.object(w, "LOCK_FILE", lock):
+            assert w._acquire_lock() is True
+            w._release_lock()
+
+    def test_candado_sin_pid_y_viejo_se_elimina(self, tmp_path):
+        import os as _os
+        import time as _t
+        from etl import etl_informes_diarios_watcher as w
+
+        lock = tmp_path / "test.lock"
+        lock.write_text("")  # exactamente el estado en que quedó en producción
+        viejo = _t.time() - (w.LOCK_EDAD_MAXIMA_SEG + 600)
+        _os.utime(lock, (viejo, viejo))
+        with patch.object(w, "LOCK_FILE", lock):
+            w._reclamar_si_colgado()
+            assert not lock.exists(), (
+                "un candado vacío y antiguo es justo el estado que dejó el "
+                "bug de truncado; debe poder reclamarse"
+            )
+
+    def test_hay_un_limite_de_edad_para_el_dueno(self):
+        from etl import etl_informes_diarios_watcher as w
+        # Una verificación tarda segundos; el límite debe ser holgado pero
+        # finito. Sin él, un proceso colgado retiene el candado para siempre.
+        assert 0 < w.LOCK_EDAD_MAXIMA_SEG <= 2 * 3600
+
+
+class TestAnclaDeLaSendaToleraLaMaquetacion:
+    """
+    El ETL de la senda falló 68 días seguidos porque XM movió un salto de
+    línea: la frase pasó de "...y la senda de referencia" a "...y la \\nsenda
+    de referencia", y el patrón esperaba un espacio literal.
+    """
+
+    def test_el_patron_sobrevive_a_un_salto_de_linea(self):
+        from datetime import date as _d
+        from etl.senda_pdf_parser import extraer_ancla_textual
+
+        texto = (
+            "Para ago-05 el nivel de embalse del SIN llegó al 78.91%, "
+            "aumentando en un 0.2%\n(35.34GWh) de su volumen total.\n"
+            "Para ayer ago-05 se presentó una diferencia de -3.31 puntos "
+            "entre el volumen útil y la \nsenda de referencia.\n"
+        )
+        ancla = extraer_ancla_textual(texto, _d(2026, 8, 6))
+        assert ancla is not None, "el salto de línea no debe tumbar la extracción"
+        assert ancla.valor_real == 78.91
+        assert abs(ancla.valor_senda - 82.22) < 0.01
+
+    def test_sigue_funcionando_sin_salto_de_linea(self):
+        from datetime import date as _d
+        from etl.senda_pdf_parser import extraer_ancla_textual
+
+        texto = (
+            "Para ago-05 el nivel de embalse del SIN llegó al 78.91%. "
+            "Para ayer ago-05 se presentó una diferencia de -3.31 puntos "
+            "entre el volumen útil y la senda de referencia."
+        )
+        assert extraer_ancla_textual(texto, _d(2026, 8, 6)) is not None

@@ -18,6 +18,8 @@ import json
 import logging
 import os
 import fcntl
+import signal
+import time
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -47,30 +49,110 @@ logger.propagate = False
 sys.path.insert(0, str(BASE_DIR))
 
 
+# Si el dueño del candado lleva más de esto corriendo, está colgado: una
+# verificación normal tarda segundos. Se le reclama el candado.
+LOCK_EDAD_MAXIMA_SEG = 30 * 60
+
+
+def _pid_del_lock() -> int | None:
+    try:
+        contenido = LOCK_FILE.read_text(encoding="utf-8").strip()
+        return int(contenido) if contenido.isdigit() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _edad_proceso_seg(pid: int) -> float | None:
+    """Segundos que lleva vivo un proceso, leídos de /proc."""
+    try:
+        import time as _t
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            campos = fh.read().rsplit(") ", 1)[1].split()
+        arranque_ticks = int(campos[19])
+        hz = os.sysconf("SC_CLK_TCK")
+        with open("/proc/uptime", encoding="utf-8") as fh:
+            uptime = float(fh.read().split()[0])
+        return uptime - (arranque_ticks / hz)
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _reclamar_si_colgado() -> None:
+    """
+    Libera el candado si lo retiene un proceso muerto o colgado.
+
+    ATENCIÓN al orden de las operaciones. La versión anterior hacía
+    `open(LOCK_FILE, "w")`, que TRUNCA el archivo antes de intentar el flock.
+    Cuando el flock fallaba, el PID del dueño ya había quedado borrado, así que
+    en los intentos siguientes `pid_str` venía vacío, la comprobación de
+    huérfano nunca se ejecutaba y el candado no se podía reclamar jamás.
+    El resultado real: un watcher colgado el 2026-08-11 retuvo el candado
+    **59 días**, con 0 verificaciones y una línea de WARNING cada 5 minutos que
+    nadie leía. Aquí nunca se trunca antes de tener el candado.
+    """
+    if not LOCK_FILE.exists():
+        return
+
+    pid = _pid_del_lock()
+    if pid is None:
+        # Sin PID legible no se puede decidir por dueño; se decide por edad del
+        # archivo, que es el único rastro que queda.
+        try:
+            edad = time.time() - LOCK_FILE.stat().st_mtime
+        except OSError:
+            return
+        if edad > LOCK_EDAD_MAXIMA_SEG:
+            logger.warning(
+                "⚠️  Candado sin PID y con %.0f min de antigüedad — se elimina.",
+                edad / 60,
+            )
+            LOCK_FILE.unlink(missing_ok=True)
+        return
+
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        logger.warning("⚠️  Candado huérfano (PID %d no activo) — eliminando", pid)
+        LOCK_FILE.unlink(missing_ok=True)
+        return
+
+    edad = _edad_proceso_seg(pid)
+    if edad is not None and edad > LOCK_EDAD_MAXIMA_SEG:
+        logger.error(
+            "🔪 El watcher PID %d lleva %.1f horas corriendo (una verificación "
+            "tarda segundos): está colgado. Se termina y se reclama el candado.",
+            pid, edad / 3600,
+        )
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(3)
+            os.kill(pid, 0)
+            os.kill(pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        LOCK_FILE.unlink(missing_ok=True)
+
+
 def _acquire_lock() -> bool:
     global _lock_fd
-    if LOCK_FILE.exists():
-        try:
-            pid_str = LOCK_FILE.read_text(encoding="utf-8").strip()
-            if pid_str.isdigit():
-                stale_pid = int(pid_str)
-                try:
-                    os.kill(stale_pid, 0)
-                except (OSError, ProcessLookupError):
-                    logger.warning("⚠️  Lock huérfano (PID %d no activo) — eliminando", stale_pid)
-                    LOCK_FILE.unlink(missing_ok=True)
-        except OSError:
-            pass
+    _reclamar_si_colgado()
     try:
-        fd = open(LOCK_FILE, "w")
+        # O_CREAT sin O_TRUNC: el contenido solo se reemplaza DESPUÉS de tener
+        # el candado, nunca antes (ver _reclamar_si_colgado).
+        fd_num = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+        fd = os.fdopen(fd_num, "r+")
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd.seek(0)
+        fd.truncate()
         fd.write(str(os.getpid()))
         fd.flush()
         _lock_fd = fd
         return True
     except (IOError, OSError):
-        if 'fd' in locals():
+        try:
             fd.close()
+        except (NameError, OSError):
+            pass
         return False
 
 

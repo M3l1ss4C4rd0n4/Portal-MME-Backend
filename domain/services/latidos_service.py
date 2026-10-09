@@ -98,6 +98,16 @@ LATIDOS_LOG = [
     (Latido('anomalies_pnt_log', 'Log del ETL de anomalías PNT', 12), 'logs/etl/anomalies_pnt_cron.log'),
     (Latido('senda_log', 'Log del ETL de la senda CREG', 36), 'logs/etl/senda_referencia_pdf_cron.log'),
     (Latido('quality_log', 'Log del monitor de predicciones', 30), 'logs/etl/quality_monitor.log'),
+    # OJO: para los watchers NO se mira el log, se mira el archivo de estado.
+    # El log se escribe cada 5 minutos aunque el watcher esté bloqueado (una
+    # línea de "otra instancia ya está corriendo"), así que su mtime siempre
+    # parece fresco. El estado solo se toca cuando una verificación REAL corre.
+    # Con esta distinción se habrían visto los 59 días que el watcher de
+    # informes estuvo colgado reteniendo su candado.
+    (Latido('watcher_informes_xm', 'Verificaciones reales del watcher de informes XM',
+            6, critico=True), 'etl/.informes_diarios_watcher_state.json'),
+    (Latido('watcher_sharepoint', 'Verificaciones reales del watcher de SharePoint',
+            12), 'etl/.sp_watcher_state.json'),
 ]
 
 # ── Servicios que deben correr el código desplegado ──────────────────────
