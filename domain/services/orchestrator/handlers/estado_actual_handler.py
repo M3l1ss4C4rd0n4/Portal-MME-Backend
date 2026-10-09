@@ -827,6 +827,16 @@ class EstadoActualHandlerMixin:
         from infrastructure.database.manager import db_manager
         from whatsapp_bot.services.informe_charts import EMBALSE_REGION
 
+        # Último día COMPLETO, no el último día a secas: con MAX(fecha) crudo
+        # esta consulta llegó a devolver 1 región de 9 (el día que XM había
+        # publicado un solo embalse), y el informe lo imprimía como si fuera
+        # el panorama nacional.
+        from core.data_quality import ultimo_dia_completo
+
+        fecha_ok = ultimo_dia_completo('PorcVoluUtilDiar', 'Embalse')
+        if fecha_ok is None:
+            return {"error": "Sin un día completo reciente de PorcVoluUtilDiar"}
+
         df = db_manager.query_df(
             """
             SELECT recurso,
@@ -835,12 +845,9 @@ class EstadoActualHandlerMixin:
             FROM metrics
             WHERE metrica = 'PorcVoluUtilDiar'
               AND recurso NOT IN ('Sistema', 'Embalse')
-              AND fecha::date = (
-                  SELECT MAX(fecha)::date FROM metrics
-                  WHERE metrica = 'PorcVoluUtilDiar'
-                    AND recurso NOT IN ('Sistema', 'Embalse')
-              )
-            """
+              AND fecha::date = %(f)s
+            """,
+            {"f": fecha_ok},
         )
 
         if df.empty:

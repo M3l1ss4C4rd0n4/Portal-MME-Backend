@@ -6,7 +6,7 @@ mismo. Cada bloque cita el caso real para que, si alguien revierte el arreglo,
 el test diga exactamente qué se rompió.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 import numpy as np
@@ -144,3 +144,91 @@ class TestEmbalsesRegionalesDevuelveAmbasClasificaciones:
         assert "'nivel_vigilancia': nivel_vig_reg" in fuente
         # La variable del campo oficial tiene que asignarse de verdad.
         assert "nivel_ne_reg, _desc_ne_reg, _senda_reg = clasificar_indice_ne(" in fuente
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Guarda central de completitud (core/data_quality)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestGuardaCentralDeCompletitud:
+    """
+    XM publica el día de forma incremental y no expone completitud. Antes cada
+    consumidor resolvía esto a su manera: 11 criterios incompatibles, con
+    umbrales 0,15× / 0,2× / 0,4× / 0,5× / 0,8×, pisos de 60/100/150 GWh y
+    rezagos fijos de 2 o 3 días.
+    """
+
+    @staticmethod
+    def _df_conteos(pares):
+        """pares: [(fecha, n_recursos), ...] más reciente primero."""
+        return pd.DataFrame(
+            {"fecha": [p[0] for p in pares], "n": [p[1] for p in pares]}
+        )
+
+    def _con_conteos(self, pares, metrica="DemaReal", entidad="Agente"):
+        from core import data_quality as dq
+        dq.limpiar_cache()
+        return patch.multiple(
+            dq,
+            entidad_desagregada=lambda m: entidad,
+            _conteos=lambda m, e: self._df_conteos(pares),
+        )
+
+    def test_reconoce_el_dia_parcial_real_medido(self):
+        # Caso real: DemaReal/Agente cayó a 93 y 95 agentes de 140 los días
+        # 2026-10-06 y 10-05, mientras DemaReal/Sistema marcaba 53 GWh de 250.
+        from core import data_quality as dq
+        pares = [(date(2026, 10, 6), 93), (date(2026, 10, 5), 95)] + [
+            (date(2026, 10, 4) - timedelta(days=i), 140) for i in range(20)
+        ]
+        with self._con_conteos(pares):
+            assert dq.completitud_del_dia("DemaReal", date(2026, 10, 6)).completo is False
+            assert dq.completitud_del_dia("DemaReal", date(2026, 10, 5)).completo is False
+            assert dq.completitud_del_dia("DemaReal", date(2026, 10, 4)).completo is True
+
+    def test_retrocede_hasta_el_ultimo_dia_completo(self):
+        from core import data_quality as dq
+        pares = [(date(2026, 10, 6), 93), (date(2026, 10, 5), 95)] + [
+            (date(2026, 10, 4) - timedelta(days=i), 140) for i in range(20)
+        ]
+        with self._con_conteos(pares):
+            assert dq.ultimo_dia_completo("DemaReal") == date(2026, 10, 4)
+
+    def test_un_dia_completo_no_se_descarta(self):
+        from core import data_quality as dq
+        pares = [(date(2026, 10, 6) - timedelta(days=i), 140) for i in range(25)]
+        with self._con_conteos(pares):
+            assert dq.ultimo_dia_completo("DemaReal") == date(2026, 10, 6)
+
+    def test_el_baseline_excluye_la_cola_reciente(self):
+        # Con varios parciales seguidos, incluirlos en el baseline los
+        # "normalizaría" y volverían a pasar como completos.
+        from core import data_quality as dq
+        pares = [(date(2026, 10, 6) - timedelta(days=i), 90) for i in range(5)] + [
+            (date(2026, 10, 1) - timedelta(days=i), 140) for i in range(20)
+        ]
+        with self._con_conteos(pares):
+            assert dq.completitud_del_dia("DemaReal", date(2026, 10, 6)).completo is False
+
+    def test_no_usa_el_valor_de_la_metrica(self):
+        """
+        Blindaje contra la regresión más probable: volver a un criterio de
+        valor relativo. `< 0.5 × mediana` marcaría como parciales ~40 días
+        buenos de PPPrecBolsNaci y 8 de AporEner, porque esas series sí caen a
+        la mitad legítimamente. La completitud se mide por estructura.
+        """
+        import inspect
+        from core import data_quality as dq
+
+        fuente = inspect.getsource(dq)
+        assert "COUNT(DISTINCT recurso)" in fuente
+        assert "valor_gwh" not in fuente, (
+            "data_quality no debe mirar el valor de la métrica: un precio que "
+            "cae 50% es dato legítimo, no un dato incompleto."
+        )
+
+    def test_metrica_sin_desagregacion_devuelve_none_en_vez_de_mentir(self):
+        from core import data_quality as dq
+        dq.limpiar_cache()
+        with patch.object(dq, "entidad_desagregada", lambda m: None):
+            assert dq.ultimo_dia_completo("MetricaRara") is None
