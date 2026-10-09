@@ -182,8 +182,14 @@ def revisar_servicios() -> List[Resultado]:
     out = []
     ahora = datetime.now()
     try:
-        r = subprocess.run(['git', 'log', '-1', '--format=%cI'], cwd=RAIZ,
-                           capture_output=True, text=True, timeout=10)
+        # Último commit que tocó CÓDIGO, no simplemente HEAD: un merge sin
+        # cambios o un commit de documentación no deja obsoleto a nadie, y
+        # compararse contra ellos produce falsos positivos que enseñan a
+        # ignorar el aviso — que es como mueren los monitoreos.
+        r = subprocess.run(
+            ['git', 'log', '-1', '--no-merges', '--format=%cI', '--', '*.py'],
+            cwd=RAIZ, capture_output=True, text=True, timeout=10,
+        )
         fecha_commit = datetime.fromisoformat(r.stdout.strip()).replace(tzinfo=None)
     except Exception as e:
         return [Resultado(
