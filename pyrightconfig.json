@@ -1,9 +1,6 @@
 {
-    "venvPath": "/home/admonctrlxm/server",
-    "venv": "venv",
     "pythonVersion": "3.12",
     "pythonPlatform": "Linux",
-
     "include": [
         "core",
         "domain",
@@ -27,7 +24,6 @@
         "ejemplos",
         "api"
     ],
-
     "reportMissingImports": "warning",
     "reportMissingModuleSource": "none",
     "reportUnknownVariableType": "none",
@@ -37,9 +33,7 @@
     "reportMissingTypeArgument": "none",
     "reportPrivateUsage": "none",
     "reportUntypedFunctionDecorator": "none",
-
     "typeCheckingMode": "off",
-
     "reportPossiblyUnbound": "error",
     "reportOptionalCall": "error"
 }

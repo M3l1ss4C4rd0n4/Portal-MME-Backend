@@ -195,7 +195,10 @@ whatsapp_bot/informes/
 # OneDrive test files
 data/onedrive/test_*
 data/onedrive/Test_*
-.pyright-baseline
+# .pyright-baseline y pyrightconfig.json SÍ se versionan: son el contrato
+# del chequeo de tipos y CI los necesita para dar el mismo resultado que
+# el gancho local. Antes estaban ignorados porque la config llevaba rutas
+# absolutas de una máquina; ya no.
 
 # Python cache
 __pycache__/
@@ -204,7 +207,6 @@ __pycache__/
 
 # Pyright / type checking runtime
 .pyright-current-errors
-pyrightconfig.json
 
 # Logs (rotar con logrotate, no rastrear)
 logs/*.log
