@@ -1,0 +1,99 @@
+name: Backend — pruebas y tipos
+
+# Verificación, no despliegue. El servidor del Ministerio está detrás del WAF y
+# no es alcanzable desde GitHub: desplegar sigue siendo manual con
+# scripts/deploy-backend.sh. Lo que este flujo garantiza es que nada llegue a
+# main sin que las 577 pruebas y el chequeo de tipos hayan pasado.
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    name: pytest (Python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      # La suite corre sin PostgreSQL ni Redis — verificado: 577 pasan con la
+      # base inalcanzable. Se apunta a un puerto muerto para que, si alguien
+      # añade una prueba que dependa de la base, falle aquí y no en producción.
+      PGHOST: 127.0.0.1
+      PGPORT: "59999"
+      PGDATABASE: ci_sin_base
+      PGUSER: ci
+      # No se definen REDIS_HOST/REDIS_PORT a propósito: hay una prueba que
+      # verifica los valores por defecto y sobrescribirlos la haría fallar.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'   # la misma del venv de producción
+          cache: pip
+
+      - name: Librerías del sistema
+        # weasyprint enlaza pango/cairo al importarse, no al instalarse.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libpango-1.0-0 libpangoft2-1.0-0 libcairo2
+
+      - name: Instalar dependencias
+        # requirements.txt se reconcilió contra el venv real en octubre de 2026:
+        # antes declaraba 39 versiones que no eran las de producción y omitía 15
+        # paquetes que el código importa. Si esto falla, el archivo volvió a
+        # divergir y hay que reconciliarlo, no parchear el flujo.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Pruebas
+        run: pytest -q --cov=. --cov-report=xml --cov-report=term
+
+      - name: Publicar cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-backend
+          path: coverage.xml
+          retention-days: 14
+
+  tipos:
+    name: pyright
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyright
+
+      - name: Chequeo de tipos contra la línea base
+        # Mismo criterio que el gancho local de pre-commit: no se exige cero
+        # errores (el repositorio arrastra deuda), se exige que no aumenten.
+        run: |
+          BASE=$(cat .pyright-baseline 2>/dev/null || echo 0)
+          ACTUAL=$(pyright --outputjson 2>/dev/null \
+            | python -c "import json,sys; d=json.load(sys.stdin); print(sum(1 for x in d.get('generalDiagnostics',[]) if x.get('severity')=='error'))" \
+            || echo 0)
+          echo "línea base: $BASE · actual: $ACTUAL"
+          if [ "$ACTUAL" -gt "$BASE" ]; then
+            echo "::error::El chequeo de tipos subió de $BASE a $ACTUAL errores."
+            exit 1
+          fi

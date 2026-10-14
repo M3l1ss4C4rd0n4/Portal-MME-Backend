@@ -1,73 +1,73 @@
 # Dependencias core del Dashboard MME
-dash==2.17.1
-plotly==5.17.0
-pandas==2.2.2
-dash-bootstrap-components==1.5.0
+dash==4.0.0
+plotly==6.5.2
+pandas==2.3.3
+dash-bootstrap-components==2.0.4
 
 # API y datos
-pydataxm==2.1.1
-requests==2.31.0
+pydataxm==0.3.16
+requests==2.32.5
 
 # Utilidades
-python-dateutil==2.8.2
-openpyxl==3.1.2
-numpy==1.26.4
-scipy==1.11.4  # Para análisis estadístico avanzado
+python-dateutil==2.9.0.post0
+openpyxl==3.1.5
+numpy==2.4.2
+scipy==1.17.1  # Para análisis estadístico avanzado
 geopy==2.4.1
 
 # Servidor de producción
-gunicorn==21.2.0
-flask==3.0.0
+gunicorn==25.1.0
+flask==3.1.3
 
 # Monitoreo
-psutil==5.9.8
-prometheus-client==0.20.0
+psutil==7.1.3
+prometheus-client==0.24.1
 
 # Base de datos (SQLite nativo)
-python-dotenv==1.0.0
+python-dotenv==1.2.1
 
 # IA y Agente Inteligente (Chat IA)
-openai==1.61.0  # Actualizado para soporte Groq/OpenRouter
+openai==2.17.0  # Actualizado para soporte Groq/OpenRouter
 google-genai==1.74.0  # Fase 19 — Gemini Live API (voz en tiempo real), protocolo WebSocket nativo, no pasa por el endpoint compatible con OpenAI
 
 # RAG — embeddings locales para búsqueda semántica (ontologia.contratos_texto_embeddings)
 sentence-transformers==5.6.1
 
 # Machine Learning para Predicciones (FASE 2)
-prophet==1.1.6
-pmdarima==2.0.4
-statsmodels==0.14.4
-scikit-learn==1.5.2
-joblib==1.3.2
+prophet==1.3.0
+pmdarima==2.1.1
+statsmodels==0.14.6
+scikit-learn==1.8.0
+joblib==1.5.3
 
 # API RESTful (FastAPI)
-fastapi==0.109.2
+fastapi==0.128.2
 uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+python-multipart==0.0.22
 slowapi==0.1.9  # Rate limiting
 redis==5.0.8  # FASE 19: API predictions cache
-httpx==0.27.2  # Cliente HTTP para tests (pinned — 0.28+ breaks starlette TestClient)
+httpx==0.28.1  # Cliente HTTP para tests (pinned — 0.28+ breaks starlette TestClient)
 
 # Validación y configuración
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic==2.12.5
+pydantic-settings==2.12.0
 
 # Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
-pytest-cov==4.1.0
+pytest==9.0.2
+# pytest-asyncio==0.23.3   # no instalado en producción
+pytest-cov==7.0.0
 
 # Base de datos (PostgreSQL preparado)
-psycopg2-binary==2.9.9
-SQLAlchemy==2.0.25
+psycopg2-binary==2.9.11
+SQLAlchemy==2.0.46
 
 # PDF generation
-weasyprint>=60.0
-pdfplumber>=0.11.0
-Pillow>=12.0.0
+weasyprint==68.1
+pdfplumber==0.11.9
+Pillow==12.1.1
 
 # Extracción de texto de informes (RAG SharePoint — Fase 8)
-python-pptx>=1.0.0
+python-pptx==1.0.2
 
 # Extracción de texto completo de artículos de noticias (Fase 32)
 trafilatura==2.2.0
@@ -77,12 +77,37 @@ xgboost==3.2.0
 optuna==4.2.1
 
 # Serialización rápida (Dash lo detecta automáticamente)
-orjson>=3.9.0
-cryptography>=41.0.7  # Requerido por core/security/vault.py
+orjson==3.11.7
+cryptography==46.0.5  # Requerido por core/security/vault.py
 
 # Agregado en corrección quirúrgica 2026-03-31
-celery>=5.3.0
+celery==5.6.2
 
 # Push diario EnergIA (FCM + narración)
-groq>=0.9.0
-firebase-admin>=6.5.0
+groq==1.1.2
+firebase-admin==7.4.0
+
+# ── Dependencias que el código importa y el archivo no declaraba ──────────
+# Detectadas al montar CI: un entorno construido desde este archivo no
+# levantaba los ETL ni los informes. Versiones tomadas del venv de producción.
+aiohttp==3.13.3
+beautifulsoup4==4.14.3
+flask-caching==2.3.1
+gtts==2.5.4
+lightgbm==4.6.0
+mlflow==3.10.0
+playwright==1.60.0
+pymupdf==1.27.1
+python-docx==1.2.0
+reportlab==5.0.0
+starlette==0.50.0
+tabulate==0.10.0
+urllib3==2.6.3
+# neuralforecast: lo importa scripts/ pero NO está instalado en producción.
+# Ese camino de código está roto hoy; no se declara hasta decidir si se usa.
+
+# ── Microsoft Graph y XMLA ──
+# autenticación con Microsoft Graph (pipeline SharePoint y cubos SICOM)
+msal==1.36.0
+# parseo del MDDataSet de los cubos OLAP de SICOM
+lxml==6.1.1
