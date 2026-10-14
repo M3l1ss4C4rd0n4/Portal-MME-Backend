@@ -113,6 +113,15 @@ MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET", "")
 #   etl_handler   → función ETL a ejecutar tras la descarga (ver ETL_HANDLERS)
 #   activo        → False para desactivar sin borrar
 
+# Link de compartir de la carpeta "Datos de hidrocarburos" (OneDrive de la
+# Dirección de Hidrocarburos). Sirve de referencia para resolver el drive_id;
+# los archivos concretos se direccionan con `graph_path`.
+SICOM_FOLDER_SHARE_URL = (
+    "https://minenergiacol-my.sharepoint.com/:f:/g/personal/"
+    "mjcardona_minenergia_gov_co/"
+    "IgCFshfY99GiSIEl2d2OxHXyAXg5reWt3F-Dnm8jMf9pBRg?e=z3MhAq"
+)
+
 SHAREPOINT_FILES = [
     {
         "nombre": "Matriz_General_Reparto",
@@ -195,6 +204,31 @@ SHAREPOINT_FILES = [
         "directorio": "onedrive",
         "etl_handler": "etl_hidrocarburos",
         "activo": True,
+    },
+    # ── Bases SICOM (combustibles líquidos) — Dirección de Hidrocarburos ──────
+    # Carpeta compartida "Datos de hidrocarburos" en el OneDrive de la Dirección.
+    # Se usa `graph_path` (ruta dentro del drive) en vez de un link :x: por
+    # archivo: la carpeta es el recurso compartido y los Excel se reemplazan
+    # dentro de ella en cada corte, lo que invalidaría un link por archivo.
+    {
+        "nombre": "SICOM_Agentes",
+        "url": SICOM_FOLDER_SHARE_URL,
+        "graph_path": "/Datos de hidrocarburos/Cubos de datos Agentes SICOM 3.xlsx",
+        "archivo_local": "SICOM_Agentes.xlsx",
+        "directorio": "onedrive",
+        "etl_handler": "etl_sicom_agentes",
+        "activo": True,
+    },
+    {
+        "nombre": "SICOM_Cubos4",
+        "url": SICOM_FOLDER_SHARE_URL,
+        "graph_path": "/Datos de hidrocarburos/Cubos 4 SICOM.xlsx",
+        "archivo_local": "SICOM_Cubos4.xlsx",
+        "directorio": "onedrive",
+        "etl_handler": "etl_sicom_cubos",
+        "activo": True,
+        "timeout_descarga": (60, 1800),  # 40 MB
+        "etl_timeout": 1800,             # 1,2M filas → COPY + índices
     },
 ]
 
@@ -1676,6 +1710,31 @@ def handler_etl_hidrocarburos(xlsx_path: Path, fecha_fuente: datetime | None = N
     return run_etl(xlsx_path)
 
 
+def handler_etl_sicom_agentes(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
+    """
+    Carga el cubo de Agentes SICOM → hidrocarburos.sicom_agentes.
+    Ver etl/etl_hidrocarburos_sicom.py: separa la fila "Total general",
+    concilia el detalle contra ella y detecta truncamiento de Excel.
+    """
+    sys.path.insert(0, str(BASE_DIR))
+    from etl.etl_hidrocarburos_sicom import run_etl_agentes
+
+    logger.info("  ETL SICOM agentes: %s", xlsx_path.name)
+    return run_etl_agentes(xlsx_path, fecha_fuente)
+
+
+def handler_etl_sicom_cubos(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
+    """
+    Carga Cubos 4 SICOM → sicom_capacidad, sicom_compras, sicom_compras_eds
+    (las tres hojas en una sola transacción).
+    """
+    sys.path.insert(0, str(BASE_DIR))
+    from etl.etl_hidrocarburos_sicom import run_etl_cubos
+
+    logger.info("  ETL SICOM cubos: %s", xlsx_path.name)
+    return run_etl_cubos(xlsx_path, fecha_fuente)
+
+
 # Mapa handler_name → función
 ETL_HANDLERS = {
     "etl_subsidios": handler_etl_subsidios,
@@ -1688,6 +1747,8 @@ ETL_HANDLERS = {
     "etl_colombia_solar": handler_etl_colombia_solar,
     "etl_comunidades": handler_etl_comunidades,
     "etl_hidrocarburos": handler_etl_hidrocarburos,
+    "etl_sicom_agentes": handler_etl_sicom_agentes,
+    "etl_sicom_cubos": handler_etl_sicom_cubos,
 }
 
 
