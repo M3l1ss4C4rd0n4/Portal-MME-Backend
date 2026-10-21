@@ -89,6 +89,11 @@ def _match_valores_base_general(
 _PREFIJO_NUMERO_RE = re.compile(r"^\d+\s*-\s*")
 
 
+def _f(v):
+    """Convierte a float respetando los nulos (Decimal/None de psycopg2)."""
+    return float(v) if v is not None else None
+
+
 def _match_avances_resumen(
     proyectos: List[Dict[str, Any]], filas_gj: List[Dict[str, Any]]
 ) -> Dict[str, Dict[str, Any]]:
@@ -123,11 +128,12 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
     por proyecto + por desembolso.
 
     Replica exactamente la lógica ya probada en producción por
-    api/v1/routes/contratos_or.py::get_contratos_or_dashboard — incluida la
-    fórmula de avance físico global, que NO es un promedio simple: promedia
-    primero `avance` dentro de cada `ejecutor` en seguimiento_avance_fisico,
-    y luego promedia esos subtotales entre sí (así lo calcula el Excel
-    origen, ver comentario histórico en la ruta REST).
+    api/v1/routes/contratos_or.py::get_contratos_or_dashboard. El avance
+    físico global se lee de la hoja Resumen del Excel origen; el desglose por
+    proyecto sale de la columna `avance_contractual` de
+    seguimiento_avance_fisico (hasta el 2026-10-20 esa columna se llamaba
+    `avance`: el Excel cambió el encabezado y el ETL recrea la tabla a partir
+    de él, así que un cambio de encabezado en origen rompe estas queries).
     """
     # KPIs por proyecto (avance documental/financiero, desde seguimiento_avance_documental)
     cur.execute(
@@ -188,6 +194,7 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
             MAX(CASE WHEN unnamed_0 = 'Numero de Contratos' THEN unnamed_1 END) AS n_contratos,
             MAX(CASE WHEN unnamed_0 = 'Avance Financiero' THEN unnamed_1 END)   AS avance_financiero,
             MAX(CASE WHEN unnamed_0 = 'Avance Documental' THEN unnamed_1 END)   AS avance_general,
+            MAX(CASE WHEN unnamed_0 = 'Avance Fisico' THEN unnamed_1 END)       AS avance_fisico,
             MAX(CASE WHEN unnamed_0 = 'Pagos Realizados' THEN unnamed_1 END)    AS pagos_realizados,
             MAX(CASE WHEN unnamed_0 = 'Total Pagos' THEN unnamed_1 END)        AS total_pagos,
             MAX(CASE WHEN unnamed_0 = '% Pagos' THEN unnamed_1 END)            AS pct_pagos
@@ -199,30 +206,40 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
     cur.execute("SELECT MAX(fecha_carga) AS max FROM contratos_or.resumen")
     ts_or = (cur.fetchone() or {}).get("max")
 
-    # Avance Físico global — replica Resumen!B11 del Excel: promedia primero
-    # dentro de cada ejecutor, luego promedia esos subtotales entre sí.
-    # ejecutor IS NOT NULL excluye la fila "Promedio Avance" que deja el Excel.
-    cur.execute(
-        """
-        SELECT ROUND(AVG(avance_ejecutor) * 100, 1) AS avance_fisico
-        FROM (
-            SELECT ejecutor, AVG(avance) AS avance_ejecutor
-            FROM contratos_or.seguimiento_avance_fisico
-            WHERE avance IS NOT NULL AND ejecutor IS NOT NULL
-            GROUP BY ejecutor
-        ) por_ejecutor
-        """
-    )
-    af = (cur.fetchone() or {}).get("avance_fisico")
+    # Avance Físico global — se toma tal cual lo publica la hoja Resumen
+    # ('Avance Fisico', fracción 0-1), igual que Avance Financiero y Avance
+    # Documental. Antes se recalculaba promediando por ejecutor para imitar
+    # Resumen!B11; esa réplica ya no reproduce el Excel (daba 48,3 % contra
+    # 49,1 % del origen) porque los subtotales por ejecutor que usa la hoja
+    # no salen de promediar todas las filas visibles. Leer el número
+    # publicado es a la vez más simple y más fiel a la fuente.
+    af = _f(g.get("avance_fisico"))
+    af = af * 100 if af is not None else None
+
+    if af is None:
+        # Respaldo si la hoja Resumen dejara de traer la etiqueta: se vuelve
+        # a la réplica histórica (promedio por ejecutor, luego entre ellos).
+        cur.execute(
+            """
+            SELECT ROUND(AVG(avance_ejecutor) * 100, 1) AS avance_fisico
+            FROM (
+                SELECT ejecutor, AVG(avance_contractual) AS avance_ejecutor
+                FROM contratos_or.seguimiento_avance_fisico
+                WHERE avance_contractual IS NOT NULL AND ejecutor IS NOT NULL
+                GROUP BY ejecutor
+            ) por_ejecutor
+            """
+        )
+        af = (cur.fetchone() or {}).get("avance_fisico")
 
     # Avance físico por proyecto, con fallback por (ejecutor, departamento,
     # municipio) para filas del Excel sin "Nombre proyecto + ID" (ej. ENAM).
     cur.execute(
         """
         SELECT nombre_proyecto_id, ejecutor, departamento, municipio,
-               ROUND(AVG(avance) * 100, 1) AS avance_fisico
+               ROUND(AVG(avance_contractual) * 100, 1) AS avance_fisico
         FROM contratos_or.seguimiento_avance_fisico
-        WHERE avance IS NOT NULL
+        WHERE avance_contractual IS NOT NULL
           AND (nombre_proyecto_id IS NULL OR nombre_proyecto_id != 'Promedio Avance')
         GROUP BY nombre_proyecto_id, ejecutor, departamento, municipio
         """
@@ -290,9 +307,6 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
     )
     totales_base_general = cur.fetchone() or {}
 
-    def _f(v):
-        return float(v) if v is not None else None
-
     n_contratos = int(g.get("n_contratos") or 0)
     avance_financiero = (_f(g.get("avance_financiero")) or 0.0) * 100
     avance_general = (_f(g.get("avance_general")) or 0.0) * 100
@@ -338,7 +352,7 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
         "n_contratos": n_contratos,
         "avance_general": round(avance_general, 1),
         "avance_financiero": round(avance_financiero, 1),
-        "avance_fisico": avance_fisico,
+        "avance_fisico": round(avance_fisico, 1),
         "pagos_realizados": pagos_real,
         "pagos_posibles": pagos_pos,
         "pct_pagos_realizados": round(pagos_real / pagos_pos * 100, 1) if pagos_pos else 0.0,

@@ -110,7 +110,11 @@ class EmpresaRepository(BaseRepository, IEmpresaRepository):
         """
         query = """
             SELECT DISTINCT saf.nombre_proyecto_id, saf.departamento, saf.municipio,
-                   saf.avance, pa.proyecto_id, ea.metodo AS metodo_empresa,
+                   -- el Excel origen renombró la columna el 2026-10-20
+                   -- (avance -> avance_contractual); se expone con el nombre
+                   -- de siempre para no romper a los consumidores.
+                   saf.avance_contractual AS avance,
+                   pa.proyecto_id, ea.metodo AS metodo_empresa,
                    ea.confianza AS confianza_empresa
             FROM ontologia.empresa_alias ea
             JOIN contratos_or.seguimiento_avance_fisico saf
