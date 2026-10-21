@@ -42,6 +42,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -53,6 +54,15 @@ import requests
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data"
+
+# Historial de versiones de las fuentes: cada vez que llega un archivo distinto
+# se guarda una copia fechada aquí, para no depender de que la fuente siga
+# existiendo ni de la única copia que el ETL sobrescribe en cada descarga.
+HISTORICO_DIR = DATA_DIR / "historico_fuentes"
+
+# Cuántas versiones conservar por fuente. Se puede ajustar por entrada de
+# SHAREPOINT_FILES con "versiones_a_conservar" (0 = conservar todas).
+VERSIONES_A_CONSERVAR = 10
 # Estado unificado: usa .sp_watcher_state.json (compartido con watcher)
 HASH_CACHE_FILE = Path(__file__).resolve().parent / ".sp_watcher_state.json"
 LOCK_FILE = Path("/tmp/etl_sharepoint_sync.lock")
@@ -132,6 +142,7 @@ SHAREPOINT_FILES = [
         "activo": True,
         "timeout_descarga": (60, 3600),  # 83 MB — connect 60s, read 60min (red lenta ~85KB/s necesita ~16min)
         "etl_timeout": 1800,            # 83 MB — subprocess timeout 30min
+        "versiones_a_conservar": 5,     # 83 MB por copia: menos historial que el resto
     },
     {
         "nombre": "Acuerdos_Gestion_DEE_2026",
@@ -229,6 +240,7 @@ SHAREPOINT_FILES = [
         "activo": True,
         "timeout_descarga": (60, 1800),  # 40 MB
         "etl_timeout": 1800,             # 1,2M filas → COPY + índices
+        "versiones_a_conservar": 5,      # 40 MB por copia: menos historial que el resto
     },
 ]
 
@@ -561,6 +573,60 @@ def _file_hash(path: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             sha.update(chunk)
     return sha.hexdigest()
+
+
+def _archivar_version(destino: Path, nombre: str, conservar: int = VERSIONES_A_CONSERVAR) -> Path | None:
+    """Guarda una copia fechada de `destino` en HISTORICO_DIR/<nombre>/.
+
+    Se llama cuando el hash cambió, así que cada copia es una versión distinta
+    de la fuente; descargas idénticas no generan archivos nuevos.
+
+    El archivado nunca debe tumbar la sincronización: cualquier fallo se
+    registra como aviso y la función devuelve None.
+
+    Args:
+        destino:   Archivo recién descargado.
+        nombre:    Nombre de la fuente en SHAREPOINT_FILES.
+        conservar: Versiones a mantener; 0 o menos conserva todas.
+
+    Returns:
+        La ruta de la copia creada, o None si no se pudo archivar.
+    """
+    try:
+        carpeta = HISTORICO_DIR / nombre
+        carpeta.mkdir(parents=True, exist_ok=True)
+        marca = datetime.now().strftime("%Y%m%d_%H%M%S")
+        copia = carpeta / f"{destino.stem}_{marca}{destino.suffix}"
+        shutil.copy2(destino, copia)
+        logger.info("  🗃️  Versión archivada: %s", copia.relative_to(BASE_DIR))
+        _podar_versiones(carpeta, destino, conservar)
+        return copia
+    except Exception as err:
+        logger.warning("  ⚠️  No se pudo archivar la versión de %s: %s", nombre, err)
+        return None
+
+
+def _podar_versiones(carpeta: Path, destino: Path, conservar: int) -> int:
+    """Borra las copias más viejas de `carpeta`, dejando las `conservar` últimas.
+
+    Solo considera archivos con el patrón `<stem>_<marca><suffix>`, para no
+    tocar nada que alguien haya dejado ahí a mano. Devuelve cuántas borró.
+    """
+    if conservar <= 0:
+        return 0
+    versiones = sorted(carpeta.glob(f"{destino.stem}_*{destino.suffix}"))
+    sobrantes = versiones[:-conservar] if len(versiones) > conservar else []
+    borradas = 0
+    for vieja in sobrantes:
+        try:
+            vieja.unlink()
+            borradas += 1
+        except OSError as err:
+            logger.warning("  ⚠️  No se pudo borrar la versión antigua %s: %s", vieja.name, err)
+    if borradas:
+        logger.info("  🧹 %d versión(es) antigua(s) eliminada(s); se conservan %d",
+                    borradas, conservar)
+    return borradas
 
 
 def _load_hash_cache() -> dict:
@@ -1780,6 +1846,7 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
         "descargado": False,
         "etl_ejecutado": False,
         "hash_cambio": False,
+        "version_archivada": None,
         "resultado_etl": None,
         "error": None,
     }
@@ -1821,6 +1888,10 @@ def sincronizar_archivo(cfg: dict, forzar: bool = False, solo_descarga: bool = F
         if hash_actual != hash_previo:
             logger.info("  📝 Hash cambió → archivo actualizado en disco")
             result["hash_cambio"] = True
+            copia = _archivar_version(
+                destino, nombre, cfg.get("versiones_a_conservar", VERSIONES_A_CONSERVAR)
+            )
+            result["version_archivada"] = str(copia) if copia else None
         elif forzar:
             logger.info("  🔁 Sin cambios pero --forzar activo → ejecutando ETL")
         else:

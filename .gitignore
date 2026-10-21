@@ -221,6 +221,10 @@ gunicorn.ctl
 htmlcov/
 
 # Archivos de datos sensibles (no commitear)
+# Historial con fecha de las fuentes de SharePoint (copias de respaldo del ETL):
+# son los mismos archivos de data/onedrive, versionados en disco, no código.
+data/historico_fuentes/
+
 data/onedrive/*.xlsx
 data/onedrive/*.csv
 data/onedrive/*.json
