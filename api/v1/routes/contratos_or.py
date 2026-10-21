@@ -49,6 +49,7 @@ async def get_contratos_or_dashboard(request: Request, api_key: str = Depends(ge
             "pctPagosRealizados": r["pct_pagos_realizados"],
             "avanceFisico":      r["avance_fisico"],
             "valorTotal":        r["valor_total"],
+            "cesTotal":          r["ces_total"],
             "usuariosTotal":     r["usuarios_total"],
             "potenciaMwpTotal":  r["potencia_mwp_total"],
             "desembolsos": [

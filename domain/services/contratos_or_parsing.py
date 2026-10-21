@@ -300,7 +300,7 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
 
     cur.execute(
         """
-        SELECT valor, usuarios, potencia_mwp
+        SELECT valor, n_ce, usuarios, potencia_mwp
         FROM colombia_solar.base_general_or_inicial
         WHERE departamento IS NULL
         """
@@ -346,6 +346,7 @@ def fetch_contratos_or_kpis(cur) -> Dict[str, Any]:
 
     return {
         "valor_total": _f(totales_base_general.get("valor")) or 0.0,
+        "ces_total": int(totales_base_general.get("n_ce") or 0),
         "usuarios_total": int(totales_base_general.get("usuarios") or 0),
         "potencia_mwp_total": _f(totales_base_general.get("potencia_mwp")) or 0.0,
         "fecha_corte": ts_or.strftime("%d/%m/%Y, %H:%M") if ts_or else None,
