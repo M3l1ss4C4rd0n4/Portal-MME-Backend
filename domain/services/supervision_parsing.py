@@ -66,15 +66,25 @@ def sql_parse_int(column: str) -> str:
     """
 
 
-def sql_parse_cop_guarded(column: str, max_valid: float = 1e11) -> str:
+def sql_parse_cop_guarded(column: str, max_valid: float = 1e14) -> str:
     """Como `sql_parse_cop()`, pero descarta valores con escala incorrecta
     (> `max_valid`) como anómalos → NULL.
 
-    Mismo criterio de la corrección de datos de 2026-06-20 en
-    `api/v1/routes/supervision_portal.py` (valores por desembolsar de ~49
-    cuatrillones por errores de captura en Excel) — generalizado aquí para que
-    también lo use `domain/services/orchestrator/handlers/supervision_handler.py`,
-    que antes usaba `sql_parse_cop()` sin este guardrail.
+    Red de seguridad contra una corrupción catastrófica de la fuente, no un
+    filtro de contratos grandes.
+
+    El umbral era 1e11 desde la corrección del 2026-06-20, cuando aparecieron
+    "valores por desembolsar de ~49 cuatrillones". Aquellos valores absurdos no
+    venían del Excel: los fabricaba `_parse_cop_currency` en el ETL, que le
+    quitaba el punto decimal a montos que ya eran numéricos (corregido el
+    2026-10-21). Con la causa resuelta, 1e11 pasó a esconder contratos reales:
+    anulaba 3 filas que valen el 44 % de la cartera, entre ellas
+    GGC-2061-2025 ($322.709.746.890) y GGC-2071-2025 ($121.589.085.878),
+    verificadas una a una contra la matriz de Contratos OR.
+
+    1e14 deja pasar el contrato legítimo más grande (4,2 billones, la
+    administración de recursos del fondo ESPECIAL GECELCA) y sigue atrapando
+    los errores de escala del orden de 1e15 que motivaron el guardrail.
     """
     parsed = sql_parse_cop(column)
     return f"""

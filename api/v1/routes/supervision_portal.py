@@ -5,7 +5,7 @@ GET /v1/supervision/detalle   → filas para exportación Excel
 
 CORRECCIONES DE DATOS (2026-06-20):
 - _PARSE_FIN: filtra valores > 1 (100%) como anómalos → NULL
-- _PARSE_AR/AU/AV: filtra valores con escala incorrecta (> 1e15) como anómalos → NULL
+- _PARSE_AR/AU/AV: filtra valores con escala incorrecta (> 1e14) como anómalos → NULL
 - Esto corrige el problema de valores como 4626.0 en % desembolsos y
   valores por desembolsar de ~49 cuatrillones por errores de entrada en Excel.
 """
@@ -42,8 +42,10 @@ _cm = PostgreSQLConnectionManager()
 _PARSE_FIN = sql_parse_pct("porcentaje_de_desembolsos")
 
 # _PARSE_AR/AU/AV: vía sql_parse_cop_guarded (domain/services/supervision_parsing.py)
-# — descartan valores con escala incorrecta (> 1e11) como anómalos; antes cada
-# uno tenía su propia copia del CASE de guardia aquí mismo.
+# — descartan valores con escala incorrecta (> 1e14) como anómalos; antes cada
+# uno tenía su propia copia del CASE de guardia aquí mismo. El umbral subió de
+# 1e11 a 1e14 el 2026-10-21: lo que parecían montos absurdos los fabricaba el
+# ETL, y 1e11 escondía contratos reales (ver supervision_parsing.py).
 _PARSE_AR = sql_parse_cop_guarded("valor_por_proyecto_informacion_apoyos_tecnicos")
 _PARSE_AU = sql_parse_cop_guarded("valor_desembolsado_informacion_apoyos_financieros")
 _PARSE_AV = sql_parse_cop_guarded("valor_por_desembolsar")

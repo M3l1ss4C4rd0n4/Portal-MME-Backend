@@ -1376,15 +1376,36 @@ def handler_etl_fenoge_seguimiento(xlsx_path: Path, fecha_fuente: datetime | Non
 
 
 def _parse_cop_currency(series):
-    """Parsea formato moneda COP: ' $ 6.800.000,00' → 6800000.0"""
+    """Parsea montos en pesos de una columna que trae dos formas revueltas.
+
+    En el mismo Excel conviven:
+      - texto con formato colombiano, ' $ 6.800.000,00': el punto separa miles
+        y la coma es el decimal;
+      - números que pandas ya leyó como tales, 9412430990.09.
+
+    Solo se interpreta el texto. **Un valor que ya es numérico se deja intacto.**
+
+    Antes se convertía toda la columna con `astype(str)` y se le quitaba el
+    punto: `str(9412430990.09)` → "9412430990.09" → "941243099009", cien veces
+    el valor real. El factor era 10^(nº de decimales), así que solo se notaba en
+    las filas con decimales y pasó inadvertido. Corregido el 2026-10-21; ver la
+    sobreestimación que causaba en el tablero de Supervisión.
+    """
+    import numbers
     import pandas as pd
-    return (
+
+    def _ya_es_numero(v) -> bool:
+        return isinstance(v, numbers.Number) and not isinstance(v, bool) and pd.notna(v)
+
+    es_numero = series.map(_ya_es_numero)
+    como_texto = (
         series.astype(str)
         .str.replace(r"[\$\s]", "", regex=True)   # quitar $ y espacios
-        .str.replace(".", "", regex=False)          # quitar separador miles
+        .str.replace(".", "", regex=False)          # quitar separador de miles
         .str.replace(",", ".", regex=False)         # coma decimal → punto
         .pipe(pd.to_numeric, errors="coerce")
     )
+    return pd.to_numeric(series, errors="coerce").where(es_numero, como_texto)
 
 
 def handler_etl_fenoge_comunidades(xlsx_path: Path, fecha_fuente: datetime | None = None) -> dict:
