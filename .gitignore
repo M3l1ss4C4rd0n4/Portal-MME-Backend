@@ -247,3 +247,8 @@ data/local-maven-temp.zip
 
 # Graphify — grafo de conocimiento, regenerable con `graphify update .`, no necesita versionarse
 graphify-out/
+
+# Artefactos de runtime que se versionaron por error: los reescriben los propios
+# procesos en cada corrida, así que ensucian el diff sin aportar nada.
+cache/boletines/latest.meta.json
+etl/.sp_watcher_state.json
