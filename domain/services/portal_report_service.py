@@ -2416,6 +2416,21 @@ def _de_estado(estado: str) -> str:
     return re.sub(r"^[a-z]\.\s*", "", estado or "")
 
 
+def _de_empresas(fila: dict) -> str:
+    """Empresas de la fila, con «+N» cuando la fuente trae cuentas repetidas.
+
+    El corte guarda una cuenta por empresa, trimestre y fondo, así que las dos
+    cifras coinciden en 153 de las 197 filas con validación. Llevarlas en dos
+    columnas las hacía parecer duplicadas; solo se marca la diferencia.
+    """
+    empresas = fila.get("empresas") or 0
+    cuentas = fila.get("validaciones") or 0
+    extra = max(0, cuentas - empresas)
+    if not extra:
+        return _fmt_num(empresas)
+    return f"{_fmt_num(empresas)} <span style='color:#D97706;font-size:7px'>+{extra}</span>"
+
+
 def _de_resoluciones(fila: dict) -> str:
     """«186» si es una, «186 – 235» si son varias, «–» si el grupo no tiene pagos."""
     lo, hi = fila.get("resMin"), fila.get("resMax")
@@ -2497,8 +2512,7 @@ async def _build_detalle_empresas(captures: dict | None = None, params: dict | N
         f"<td>T{r.get('trimestre','')}</td>"
         f"<td>{escape(str(r.get('fondo') or '–'))}</td>"
         f"<td>{escape(_de_estado(r.get('estado','')))}</td>"
-        f"<td style='text-align:right'>{_fmt_num(r.get('empresas') or 0)}</td>"
-        f"<td style='text-align:right'>{_fmt_num(r.get('validaciones') or 0)}</td>"
+        f"<td style='text-align:right'>{_de_empresas(r)}</td>"
         f"<td style='text-align:right'>{_fmt_num(r.get('resoluciones') or 0)}</td>"
         f"<td style='text-align:right'>{_de_resoluciones(r)}</td>"
         f"<td style='text-align:right'>{_fmt_cop(r.get('valorResolucion') or 0)}</td>"
@@ -2509,15 +2523,18 @@ async def _build_detalle_empresas(captures: dict | None = None, params: dict | N
         for r in filas
     )
 
-    total_val  = sum(r.get("validaciones") or 0 for r in resumen)
+    # Las empresas no se suman: una misma aparece en varios períodos y estados.
+    total_emp  = len({
+        e.get("empresaKey") for e in (data.get("detalle") or []) if e.get("empresaKey")
+    })
     total_asig = sum(r.get("valorResolucion") or 0 for r in resumen)
     total_pag  = sum(r.get("valorPagado") or 0 for r in resumen)
     total_sal  = sum(r.get("saldoPendiente") or 0 for r in resumen)
     # Las resoluciones no se suman: una misma paga a empresas en estados
     # distintos, así que aparece en varias filas.
     pie = (
-        f'<tr class="tr-total"><td colspan="5">Total</td>'
-        f"<td style='text-align:right'>{_fmt_num(total_val)}</td>"
+        f'<tr class="tr-total"><td colspan="4">Total</td>'
+        f"<td style='text-align:right'>{_fmt_num(total_emp)}</td>"
         f"<td style='text-align:right'>–</td><td style='text-align:right'>–</td>"
         f"<td style='text-align:right'>{_fmt_cop(total_asig)}</td>"
         f"<td style='text-align:right'>{_fmt_cop(total_pag)}</td>"
@@ -2544,7 +2561,6 @@ async def _build_detalle_empresas(captures: dict | None = None, params: dict | N
       <thead><tr>
         <th>Año</th><th>Trimestre</th><th>Fondo</th><th>Estado de validación</th>
         <th style="text-align:right">Empresas</th>
-        <th style="text-align:right">Cuentas</th>
         <th style="text-align:right">Resoluciones</th>
         <th style="text-align:right">N.º de resolución</th>
         <th style="text-align:right">Valor asignado</th>
