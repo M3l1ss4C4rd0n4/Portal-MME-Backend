@@ -2492,7 +2492,7 @@ async def _build_detalle_empresas(captures: dict | None = None, params: dict | N
     </div>
     <div class="kpi-grid-2">
       {_kpi("Cuentas", _fmt_num(kpis_d.get("totalValidaciones") or 0), "", "#3B82F6",
-            f"última carga del corte{f': {carga[:10]}' if carga else ''}")}
+            "empresa · trimestre · fondo · mercado")}
       {_kpi("Saldo pendiente", _fmt_cop(kpis_d.get("saldoPendiente") or 0), "", "#EF4444")}
     </div>"""
 
@@ -2552,9 +2552,12 @@ async def _build_detalle_empresas(captures: dict | None = None, params: dict | N
     {_section("RESUMEN POR PERÍODO")}
     <div style="font-size:8px;color:#64748B;margin-bottom:4px">
       Los valores de validación corresponden a la última carga del corte
-      {escape(carga[:10]) if carga else "seleccionado"}. La fila «Sin validación» recoge los pagos
-      del período que no cruzan con ninguna validación de ese corte; sin ella el total de la tabla
-      no cuadraría con los indicadores. Las resoluciones no se suman hacia abajo: una misma puede
+      {escape(carga[:10]) if carga else "seleccionado"}. Una <b>cuenta</b> es cada registro de la
+      hoja de validaciones: una empresa, en un trimestre, un fondo y un mercado —SIN o ZNI—, con el
+      estado al que llegó; casi siempre hay una por empresa, y cuando alguna tiene cuentas de más la
+      columna lo marca con «+N». La fila «Sin validación» recoge los pagos del período que no cruzan
+      con ninguna cuenta de ese corte; sin ella el total de la tabla no cuadraría con los
+      indicadores. Las resoluciones no se suman hacia abajo: una misma puede
       pagar a empresas en estados distintos.
     </div>
     <table>
