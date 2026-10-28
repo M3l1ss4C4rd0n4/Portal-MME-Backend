@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 from datetime import datetime
 from typing import Any
 
@@ -2394,6 +2395,169 @@ async def _build_validaciones(captures: dict | None = None, params: dict | None 
     return _full_html("Validaciones de Cuentas — Subsidios", body, ts)
 
 
+# ── Detalle Empresas (Subsidios) ─────────────────────────────────────────────
+
+# Tope de filas de la tabla. Hoy el tablero completo son 286 y no se recorta;
+# está para que un filtro raro no produzca un informe de cien páginas.
+_DE_MAX_FILAS = 400
+
+
+def _de_periodo(indice: Any) -> str:
+    """«2026 T1» a partir del índice de trimestre que mueve el deslizador."""
+    try:
+        i = int(indice)
+    except (TypeError, ValueError):
+        return ""
+    return f"{i // 4} T{i % 4 + 1}"
+
+
+def _de_estado(estado: str) -> str:
+    """Quita el prefijo de orden: 'e. VF' -> 'VF'."""
+    return re.sub(r"^[a-z]\.\s*", "", estado or "")
+
+
+def _de_resoluciones(fila: dict) -> str:
+    """«186» si es una, «186 – 235» si son varias, «–» si el grupo no tiene pagos."""
+    lo, hi = fila.get("resMin"), fila.get("resMax")
+    if lo is None or hi is None:
+        return "–"
+    return _fmt_num(lo) if lo == hi else f"{_fmt_num(lo)} – {_fmt_num(hi)}"
+
+
+async def _build_detalle_empresas(captures: dict | None = None, params: dict | None = None) -> str:
+    from html import escape
+
+    captures = captures or {}
+    params = params or {}
+
+    # Los nombres de filtro del tablero son los que espera empresas-detalle,
+    # así que pasan tal cual. `empresa` puede venir repetido.
+    _de_params: dict = {}
+    for k, v in params.items():
+        if v and v not in ("", "all", "TODOS"):
+            if "," in v:
+                vals = [x.strip() for x in v.split(",") if x.strip()]
+                _de_params[k] = vals if len(vals) > 1 else vals[0]
+            else:
+                _de_params[k] = v
+
+    data = await _fetch_nextjs("/api/subsidios/empresas-detalle", params=_de_params or None)
+
+    kpis_d  = data.get("kpis", {})
+    resumen = data.get("resumen", []) or []
+    carga   = data.get("cargaValidaciones") or ""
+
+    # Banner de filtros activos: sin esto el informe no dice sobre qué se armó.
+    partes = []
+    nombres = {e.get("key"): e.get("nombre") for e in data.get("filtrosOpciones", {}).get("empresas", [])}
+    empresas_filtro = params.get("empresa")
+    if empresas_filtro:
+        etiquetas = [nombres.get(k, k) for k in str(empresas_filtro).split(",")]
+        partes.append("Empresa: " + ", ".join(etiquetas))
+    if params.get("desde") or params.get("hasta"):
+        partes.append(f"Período: {_de_periodo(params.get('desde'))} – {_de_periodo(params.get('hasta'))}")
+    if params.get("corte"):
+        partes.append(f"Corte: {params['corte']}")
+    filtros_txt = " · ".join(p for p in partes if p)
+    banner = (
+        f'<div style="background:#DCFCE7;border-left:3px solid #22C55E;padding:6px 10px;'
+        f'font-size:9px;color:#14532D;margin-bottom:8px">'
+        f'Filtros aplicados: <strong style="color:#166534">{escape(filtros_txt)}</strong></div>'
+        if filtros_txt else ""
+    )
+
+    body = banner + f"""
+    {_section("INDICADORES GENERALES")}
+    <div class="kpi-grid">
+      {_kpi("Empresas",     _fmt_num(kpis_d.get("totalEmpresas") or 0))}
+      {_kpi("Resoluciones", _fmt_num(kpis_d.get("totalPagos") or 0), "", "", "números distintos por año")}
+      {_kpi("Valor pagado", _fmt_cop(kpis_d.get("valorPagado") or 0), "", "#22C55E")}
+      {_kpi("% ejecución",  _pct(kpis_d.get("pctEjecucion") or 0), "", "#F59E0B",
+            f'sobre {_fmt_cop(kpis_d.get("valorResolucion") or 0)} asignados')}
+    </div>
+    <div class="kpi-grid-2">
+      {_kpi("Validaciones", _fmt_num(kpis_d.get("totalValidaciones") or 0), "", "#3B82F6",
+            f"última carga del corte{f': {carga[:10]}' if carga else ''}")}
+      {_kpi("Saldo pendiente", _fmt_cop(kpis_d.get("saldoPendiente") or 0), "", "#EF4444")}
+    </div>"""
+
+    bar_val = captures.get("bar_validacion")
+    bar_pag = captures.get("bar_pagos")
+    if bar_val and bar_pag:
+        body += f'<div class="chart-row">{_chart(bar_val)}{_chart(bar_pag)}</div>'
+    else:
+        body += _chart(bar_val) + _chart(bar_pag)
+
+    # La tabla va en HTML y no como captura: así pagina, el texto queda
+    # seleccionable y no depende de que Playwright haya podido fotografiarla.
+    filas = resumen[:_DE_MAX_FILAS]
+    cuerpo = "".join(
+        f"<tr>"
+        f"<td>{r.get('anio','')}</td>"
+        f"<td>T{r.get('trimestre','')}</td>"
+        f"<td>{escape(str(r.get('fondo') or '–'))}</td>"
+        f"<td>{escape(_de_estado(r.get('estado','')))}</td>"
+        f"<td style='text-align:right'>{_fmt_num(r.get('empresas') or 0)}</td>"
+        f"<td style='text-align:right'>{_fmt_num(r.get('validaciones') or 0)}</td>"
+        f"<td style='text-align:right'>{_fmt_num(r.get('resoluciones') or 0)}</td>"
+        f"<td style='text-align:right'>{_de_resoluciones(r)}</td>"
+        f"<td style='text-align:right'>{_fmt_cop(r.get('valorResolucion') or 0)}</td>"
+        f"<td style='text-align:right;color:#22C55E'>{_fmt_cop(r.get('valorPagado') or 0)}</td>"
+        f"<td style='text-align:right;color:#EF4444'>{_fmt_cop(r.get('saldoPendiente') or 0)}</td>"
+        f"<td style='text-align:right'>{_pct(r.get('pctEjecucion') or 0)}</td>"
+        f"</tr>"
+        for r in filas
+    )
+
+    total_val  = sum(r.get("validaciones") or 0 for r in resumen)
+    total_asig = sum(r.get("valorResolucion") or 0 for r in resumen)
+    total_pag  = sum(r.get("valorPagado") or 0 for r in resumen)
+    total_sal  = sum(r.get("saldoPendiente") or 0 for r in resumen)
+    # Las resoluciones no se suman: una misma paga a empresas en estados
+    # distintos, así que aparece en varias filas.
+    pie = (
+        f'<tr class="tr-total"><td colspan="5">Total</td>'
+        f"<td style='text-align:right'>{_fmt_num(total_val)}</td>"
+        f"<td style='text-align:right'>–</td><td style='text-align:right'>–</td>"
+        f"<td style='text-align:right'>{_fmt_cop(total_asig)}</td>"
+        f"<td style='text-align:right'>{_fmt_cop(total_pag)}</td>"
+        f"<td style='text-align:right'>{_fmt_cop(total_sal)}</td>"
+        f"<td style='text-align:right'>{_pct(total_pag / total_asig * 100 if total_asig else 0)}</td></tr>"
+    )
+
+    if cuerpo:
+        recorte = (
+            f'<div style="font-size:8px;color:#64748B;margin-top:4px">'
+            f"Se muestran las primeras {_DE_MAX_FILAS} de {len(resumen)} filas.</div>"
+            if len(resumen) > _DE_MAX_FILAS else ""
+        )
+        body += f"""
+    {_section("RESUMEN POR PERÍODO")}
+    <div style="font-size:8px;color:#64748B;margin-bottom:4px">
+      Los valores de validación corresponden a la última carga del corte
+      {escape(carga[:10]) if carga else "seleccionado"}. La fila «Sin validación» recoge los pagos
+      del período que no cruzan con ninguna validación de ese corte; sin ella el total de la tabla
+      no cuadraría con los indicadores. Las resoluciones no se suman hacia abajo: una misma puede
+      pagar a empresas en estados distintos.
+    </div>
+    <table>
+      <thead><tr>
+        <th>Año</th><th>Trimestre</th><th>Fondo</th><th>Estado validación</th>
+        <th style="text-align:right">Empresas</th>
+        <th style="text-align:right">Validaciones</th>
+        <th style="text-align:right">Resoluciones</th>
+        <th style="text-align:right">N° resolución</th>
+        <th style="text-align:right">valor_resolucion</th>
+        <th style="text-align:right">valor_pagado</th>
+        <th style="text-align:right">saldo_pendiente</th>
+        <th style="text-align:right">% ejecución</th>
+      </tr></thead>
+      <tbody>{cuerpo}{pie}</tbody>
+    </table>{recorte}"""
+
+    return _full_html("Detalle Empresas — Subsidios", body, str(data.get("fechaCarga") or "")[:10])
+
+
 # ── Predicciones SIN ─────────────────────────────────────────────────────────
 
 async def _build_predicciones(captures: dict | None = None, params: dict | None = None) -> str:
@@ -2806,6 +2970,8 @@ async def generate_tablero_pdf(tablero: str, params: dict | None = None) -> byte
         html = await _build_validaciones(captures=captures, params=params)
     elif tablero == "predicciones":
         html = await _build_predicciones(captures=captures, params=params)
+    elif tablero == "detalle-empresas":
+        html = await _build_detalle_empresas(captures=captures, params=params)
     else:
         logger.warning("[PDF] No builder for tablero=%s", tablero)
         html = _full_html(

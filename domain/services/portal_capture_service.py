@@ -222,6 +222,12 @@ _SPECS: dict[str, list[dict]] = {
         {"name": "bar_sin", "title": "SIN — Sistema Interconectado Nacional"},
         {"name": "bar_zni", "title": "ZNI — Zonas No Interconectadas"},
     ],
+    # Por selector y no por título: las dos tarjetas se llaman "Validación" y
+    # "Pagos", demasiado genérico para localizarlas por texto en esa página.
+    "detalle-empresas": [
+        {"name": "bar_validacion", "selector": "#grafico-validacion-trimestre"},
+        {"name": "bar_pagos", "selector": "#grafico-pagos-trimestre"},
+    ],
     "predicciones": [
         {"name": "curva_embalses", "title": "Proyección de Embalses"},
         {"name": "pronostico_oni", "title": "Pronóstico ONI (NOAA)"},
@@ -232,6 +238,7 @@ _SPECS: dict[str, list[dict]] = {
 _TABLERO_URLS: dict[str, str] = {
     "predicciones": f"{FRONTEND_URL}/energia/predicciones",
     "pagos": f"{FRONTEND_URL}/pagos",
+    "detalle-empresas": f"{FRONTEND_URL}/detalle-empresas",
 }
 
 # Timeout networkidle por tablero. Páginas con conexiones persistentes nunca
@@ -239,6 +246,7 @@ _TABLERO_URLS: dict[str, str] = {
 _NETWORKIDLE_TIMEOUT: dict[str, int] = {
     "pagos": 6000,
     "predicciones": 6000,
+    "detalle-empresas": 6000,
 }
 
 

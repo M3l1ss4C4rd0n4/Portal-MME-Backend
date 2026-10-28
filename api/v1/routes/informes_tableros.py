@@ -10,7 +10,7 @@ router = APIRouter(prefix="/informes", tags=["informes-tableros"])
 TABLEROS_VALIDOS = {
     "subsidios", "fenoge", "contratos-or", "supervision",
     "presupuesto", "comunidades", "pagos", "validaciones",
-    "energia", "colombia-solar", "predicciones",
+    "detalle-empresas", "energia", "colombia-solar", "predicciones",
 }
 
 
