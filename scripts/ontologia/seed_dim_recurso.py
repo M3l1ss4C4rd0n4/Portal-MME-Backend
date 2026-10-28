@@ -28,6 +28,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from infrastructure.database.manager import db_manager  # noqa: E402
+
+
+def _o_nulo(valor):
+    """NaN/NaT de pandas → None, para que psycopg2 escriba NULL.
+
+    NaT no es igual a sí mismo, igual que NaN, así que sirve el mismo idioma
+    que ya usa este archivo para `capacidad`. Sin esto un NaT llegaba al
+    INSERT como la cadena 'NaT' y Postgres abortaba el refresh completo con
+    InvalidDatetimeFormat: invalid input syntax for type timestamp: "NaT"
+    (recurso 'ANDR'/ANDROMEDA, columna actualizado_en).
+    """
+    return valor if valor == valor and valor is not None else None
 from infrastructure.logging.logger import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
@@ -80,7 +92,7 @@ def main() -> None:
                 "tipo": r["tipo"],
                 "region": r["region"],
                 "capacidad": capacidad,
-                "actualizado": r["fecha_actualizacion"],
+                "actualizado": _o_nulo(r["fecha_actualizacion"]),
             },
         )
 
