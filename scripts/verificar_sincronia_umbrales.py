@@ -26,8 +26,10 @@ paridad de lógica de clasificación, que es lo que este chequeo evalúa.
 Uso:
     venv/bin/python3 scripts/verificar_sincronia_umbrales.py
 """
+import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import date
@@ -76,12 +78,40 @@ def _resultados_python() -> list:
     return resultados
 
 
+def _entorno_con_node() -> dict:
+    """Entorno con el bin de Node por delante del PATH.
+
+    Cron y systemd no cargan `nvm.sh`, así que bajo la tarea agendada `npx` no
+    está en el PATH y `subprocess` fallaba con FileNotFoundError ANTES de
+    comparar un solo caso. El script devolvía 2 ("no pude evaluar") y
+    refresh_ontologia lo registraba como "con discrepancias" — una alarma
+    regulatoria falsa cada noche. `ts-node` además necesita `node` en el PATH,
+    no basta con resolver la ruta de `npx`: hay que anteponer el directorio.
+    """
+    env = os.environ.copy()
+    if shutil.which("npx", path=env.get("PATH", "")):
+        return env
+    for bin_dir in sorted(glob.glob(os.path.expanduser("~/.nvm/versions/node/*/bin")),
+                          reverse=True):
+        if os.path.exists(os.path.join(bin_dir, "npx")):
+            env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+            return env
+    return env
+
+
 def _resultados_typescript() -> list:
     """Invoca el runner TS (portal-direccion-mme/scripts/sincronia_umbrales_runner.ts)
     vía ts-node, pasando los mismos casos por stdin."""
+    env = _entorno_con_node()
+    if not shutil.which("npx", path=env.get("PATH", "")):
+        raise RuntimeError(
+            "npx no está en el PATH ni en ~/.nvm/versions/node/*/bin — "
+            "no se puede evaluar el lado TypeScript"
+        )
     proc = subprocess.run(
         ["npx", "ts-node", "--compiler-options", '{"module":"commonjs"}', RUNNER_TS],
         cwd=PORTAL_DIR,
+        env=env,
         input=json.dumps(CASOS),
         capture_output=True,
         text=True,

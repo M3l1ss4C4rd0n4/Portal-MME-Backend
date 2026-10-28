@@ -13,6 +13,18 @@ LOCK_FILE="/tmp/etl_sharepoint_watcher.lock"
 MAX_AGE_MIN=30
 
 last_line=$(grep "Resumen:" "$LOG_FILE" 2>/dev/null | tail -1)
+
+# Tras la rotación diaria de las 00:00 el log nuevo todavía no tiene ningún
+# "Resumen:", así que este chequeo gritaba "sin ciclo registrado" a las
+# 00:00:01 TODAS las noches con el watcher perfectamente sano. Una alarma que
+# miente cada noche es una alarma que se aprende a ignorar — que es justo cómo
+# el cuelgue de agosto de 2026 pasó 8 días inadvertido. Si el log vigente aún
+# no tiene ciclos, se mira el rotado: la comprobación de antigüedad de abajo
+# sigue decidiendo si hay que alarmar o no.
+if [ -z "$last_line" ] && [ -f "${LOG_FILE}.1" ]; then
+    last_line=$(grep "Resumen:" "${LOG_FILE}.1" 2>/dev/null | tail -1)
+fi
+
 last_ts=$(echo "$last_line" | grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}")
 
 if [ -z "$last_ts" ]; then

@@ -211,10 +211,18 @@ def main() -> None:
         from scripts.verificar_sincronia_umbrales import main as verificar_sincronia
         with registrar_paso("sincronia_umbrales", "verificar_sincronia_umbrales"):
             rc = verificar_sincronia()
-            if rc != 0:
+            # rc=1 es una discrepancia real entre Python y TS; rc=2 es "no se
+            # pudo evaluar" (p. ej. npx ausente bajo cron). Tratarlos igual
+            # convertía un fallo de entorno en una alarma regulatoria falsa.
+            if rc == 1:
                 logger.error(
-                    f"[ONTOLOGIA] Sincronía Python↔TypeScript con discrepancias "
-                    f"(rc={rc}) — ver detalle en logs con prefijo [SINCRONIA_UMBRALES]."
+                    "[ONTOLOGIA] Sincronía Python↔TypeScript con discrepancias "
+                    "(rc=1) — ver detalle en logs con prefijo [SINCRONIA_UMBRALES]."
+                )
+            elif rc != 0:
+                logger.error(
+                    f"[ONTOLOGIA] No se pudo evaluar la sincronía Python↔TypeScript "
+                    f"(rc={rc}) — NO implica discrepancia; ver [SINCRONIA_UMBRALES]."
                 )
     except Exception as e:
         logger.error(f"[ONTOLOGIA] Chequeo de sincronía Python↔TypeScript falló: {e}")
