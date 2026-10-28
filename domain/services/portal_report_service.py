@@ -2476,7 +2476,7 @@ async def _build_detalle_empresas(captures: dict | None = None, params: dict | N
             f'sobre {_fmt_cop(kpis_d.get("valorResolucion") or 0)} asignados')}
     </div>
     <div class="kpi-grid-2">
-      {_kpi("Validaciones", _fmt_num(kpis_d.get("totalValidaciones") or 0), "", "#3B82F6",
+      {_kpi("Cuentas", _fmt_num(kpis_d.get("totalValidaciones") or 0), "", "#3B82F6",
             f"última carga del corte{f': {carga[:10]}' if carga else ''}")}
       {_kpi("Saldo pendiente", _fmt_cop(kpis_d.get("saldoPendiente") or 0), "", "#EF4444")}
     </div>"""
@@ -2542,15 +2542,15 @@ async def _build_detalle_empresas(captures: dict | None = None, params: dict | N
     </div>
     <table>
       <thead><tr>
-        <th>Año</th><th>Trimestre</th><th>Fondo</th><th>Estado validación</th>
+        <th>Año</th><th>Trimestre</th><th>Fondo</th><th>Estado de validación</th>
         <th style="text-align:right">Empresas</th>
-        <th style="text-align:right">Validaciones</th>
+        <th style="text-align:right">Cuentas</th>
         <th style="text-align:right">Resoluciones</th>
-        <th style="text-align:right">N° resolución</th>
-        <th style="text-align:right">valor_resolucion</th>
-        <th style="text-align:right">valor_pagado</th>
-        <th style="text-align:right">saldo_pendiente</th>
-        <th style="text-align:right">% ejecución</th>
+        <th style="text-align:right">N.º de resolución</th>
+        <th style="text-align:right">Valor asignado</th>
+        <th style="text-align:right">Valor pagado</th>
+        <th style="text-align:right">Saldo pendiente</th>
+        <th style="text-align:right">% de ejecución</th>
       </tr></thead>
       <tbody>{cuerpo}{pie}</tbody>
     </table>{recorte}"""
