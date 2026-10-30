@@ -228,6 +228,12 @@ _SPECS: dict[str, list[dict]] = {
         {"name": "bar_validacion", "selector": "#grafico-validacion-trimestre"},
         {"name": "bar_pagos", "selector": "#grafico-pagos-trimestre"},
     ],
+    # Por id y no por .leaflet-container: esta página tiene DOS mapas y el
+    # selector de clase devolvería siempre el primero.
+    "ipem": [
+        {"name": "mapa_departamental", "selector": "#mapa-ipem-departamental"},
+        {"name": "mapa_municipal", "selector": "#mapa-ipem-municipal"},
+    ],
     "predicciones": [
         {"name": "curva_embalses", "title": "Proyección de Embalses"},
         {"name": "pronostico_oni", "title": "Pronóstico ONI (NOAA)"},
@@ -239,6 +245,7 @@ _TABLERO_URLS: dict[str, str] = {
     "predicciones": f"{FRONTEND_URL}/energia/predicciones",
     "pagos": f"{FRONTEND_URL}/pagos",
     "detalle-empresas": f"{FRONTEND_URL}/detalle-empresas",
+    "ipem": f"{FRONTEND_URL}/energia/ipem",
 }
 
 # Timeout networkidle por tablero. Páginas con conexiones persistentes nunca
@@ -247,6 +254,9 @@ _NETWORKIDLE_TIMEOUT: dict[str, int] = {
     "pagos": 6000,
     "predicciones": 6000,
     "detalle-empresas": 6000,
+    # 1.121 polígonos municipales tardan en pintarse; aun así no conviene esperar
+    # los 30 s por defecto si la página nunca alcanza networkidle.
+    "ipem": 9000,
 }
 
 

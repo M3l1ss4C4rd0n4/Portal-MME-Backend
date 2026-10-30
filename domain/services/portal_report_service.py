@@ -2949,6 +2949,196 @@ async def _build_predicciones(captures: dict | None = None, params: dict | None 
     return _full_html("Predicciones SIN", body, str(generado)[:19])
 
 
+# ── IPEM — Pobreza Energética Multidimensional ───────────────────────────────
+
+_IPEM_MAX_FILAS = 400
+
+# Bandas publicadas en el informe del MME, en porcentaje. Están duplicadas respecto
+# de src/lib/ipem.ts a propósito: el PDF no puede importar TypeScript. Si el informe
+# publica otras, hay que cambiarlas en los dos sitios.
+_IPEM_BANDAS_MUNICIPAL = [
+    ("MUY BAJO", 22.98), ("BAJO", 25.90), ("MEDIO", 29.26),
+    ("ALTO", 35.25), ("MUY ALTO", float("inf")),
+]
+_IPEM_COLOR_QUINTIL = {
+    "MUY BAJO": "#FDE68A", "BAJO": "#FBBF24", "MEDIO": "#F59E0B",
+    "ALTO": "#EA580C", "MUY ALTO": "#B91C1C",
+}
+
+
+def _ipem_norm(texto: Any) -> str:
+    """Minúsculas y sin tildes, igual que el buscador del tablero."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", str(texto or ""))
+    return "".join(c for c in s if unicodedata.category(c) != "Mn").lower().strip()
+
+
+def _ipem_pct(v: Any) -> str:
+    """Fracción 0-1 → «19,17 %», como lo muestra el tablero."""
+    if v is None:
+        return "–"
+    try:
+        return f"{float(v) * 100:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " %"
+    except (ValueError, TypeError):
+        return "–"
+
+
+def _ipem_var(a: Any, b: Any) -> tuple[str, str]:
+    """Variación en puntos porcentuales y su color. Negativo = mejora."""
+    if a is None or b is None:
+        return "–", "#64748B"
+    pp = (float(b) - float(a)) * 100
+    signo = "+" if pp > 0 else ("−" if pp < 0 else "")
+    txt = f"{signo}{abs(pp):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " pp"
+    return txt, ("#EF4444" if pp > 0 else "#22C55E" if pp < 0 else "#64748B")
+
+
+async def _build_ipem(captures: dict | None = None, params: dict | None = None) -> str:
+    from html import escape
+
+    captures = captures or {}
+    params = params or {}
+    anio = "2024" if str(params.get("anio")) == "2024" else "2025"
+
+    data = await _fetch_nextjs("/api/energia/ipem")
+    kpis = (data or {}).get("kpis", {}) or {}
+    municipios = (data or {}).get("municipios", []) or []
+    departamentos = (data or {}).get("departamentos", []) or []
+    region_por_depto = {d.get("codDepartamento"): d.get("region") for d in departamentos}
+
+    # Los mismos cuatro filtros de la tabla del tablero. Se repiten aquí porque el
+    # tablero filtra en el navegador y el informe se arma en el servidor; si cambia
+    # un criterio, hay que tocarlo en TablaMunicipiosIpem.tsx y aquí.
+    f_busqueda = _ipem_norm(params.get("busqueda", ""))
+    f_regiones = {x for x in str(params.get("region", "")).split(",") if x}
+    f_deptos = {x for x in str(params.get("departamento", "")).split(",") if x}
+    f_quintiles = {x for x in str(params.get("quintil", "")).split(",") if x}
+
+    filas = []
+    for m in municipios:
+        region = region_por_depto.get(m.get("codDepartamento")) or "Sin región"
+        if f_regiones and region not in f_regiones:
+            continue
+        if f_deptos and m.get("departamento") not in f_deptos:
+            continue
+        if f_quintiles and (m.get("quintil2025") or "") not in f_quintiles:
+            continue
+        if f_busqueda:
+            if f_busqueda not in _ipem_norm(m.get("municipio")) and f_busqueda not in str(m.get("codMunicipio", "")):
+                continue
+        filas.append({**m, "region": region})
+    filas.sort(key=lambda r: _ipem_norm(r.get("municipio")))
+
+    # Banner de filtros: sin esto el informe no dice sobre qué se armó.
+    partes = [f"Año: {anio}"]
+    if f_regiones:
+        partes.append("Región: " + ", ".join(sorted(f_regiones)))
+    if f_deptos:
+        partes.append("Departamento: " + ", ".join(sorted(f_deptos)))
+    if f_quintiles:
+        partes.append("Quintil 2025: " + ", ".join(sorted(f_quintiles)))
+    if params.get("busqueda"):
+        partes.append(f"Búsqueda: {params['busqueda']}")
+    if len(filas) != len(municipios):
+        partes.append(f"{len(filas)} de {len(municipios)} territorios")
+    banner = (
+        f'<div style="background:#DCFCE7;border-left:3px solid #22C55E;padding:6px 10px;'
+        f'font-size:9px;color:#14532D;margin-bottom:8px">'
+        f'Filtros aplicados: <strong style="color:#166534">{escape(" · ".join(partes))}</strong></div>'
+    )
+
+    prom24 = kpis.get("promedioMunicipal2024")
+    prom25 = kpis.get("promedioMunicipal2025")
+    var_comp = kpis.get("variacionPromedioComparable")
+    var_txt = "–"
+    if var_comp is not None:
+        signo = "+" if var_comp > 0 else ("−" if var_comp < 0 else "")
+        var_txt = f"{signo}{abs(var_comp):.2f}".replace(".", ",") + " pp"
+
+    body = banner + f"""
+    {_section("INDICADORES GENERALES")}
+    <div class="kpi-grid">
+      {_kpi("Promedio municipal 2024", _ipem_pct((prom24 / 100) if prom24 is not None else None), "",
+            "", f'{_fmt_num(kpis.get("municipios") or 0)} territorios')}
+      {_kpi("Promedio municipal 2025", _ipem_pct((prom25 / 100) if prom25 is not None else None), "",
+            "#F59E0B", f'{var_txt} frente a 2024, en los {_fmt_num(kpis.get("comparables") or 0)} comparables')}
+      {_kpi("Municipios que mejoran", _fmt_num(kpis.get("mejoran") or 0), "", "#22C55E",
+            f'de {_fmt_num(kpis.get("comparables") or 0)} comparables')}
+      {_kpi("Municipios que empeoran", _fmt_num(kpis.get("empeoran") or 0), "", "#EF4444",
+            f'de {_fmt_num(kpis.get("comparables") or 0)} comparables')}
+    </div>
+
+    <div style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:6px 10px;
+                font-size:8px;color:#78350F;margin:8px 0;line-height:1.45">
+      <b>Cómo leer este informe.</b> Los quintiles de la fuente son relativos a cada año, no
+      bandas fijas: un municipio puede subir de quintil aunque su IPEM baje, así que los dos
+      años se comparan por la variación y no por el cambio de etiqueta. El índice no tiene
+      umbral de corte —la ausencia ya se considera privación—, de modo que mide niveles de
+      incidencia y no población clasificada como pobre. El dato municipal es una estimación
+      por factor de expansión de la Encuesta de Calidad de Vida del DANE, que no tiene
+      representatividad municipal. Las cifras municipales y departamentales no se agregan
+      entre sí. Un valor más alto significa más privación.
+    </div>"""
+
+    mapa_dep = captures.get("mapa_departamental")
+    mapa_mun = captures.get("mapa_municipal")
+    if mapa_dep and mapa_mun:
+        body += _section(f"DISTRIBUCIÓN TERRITORIAL — {anio}")
+        body += f'<div class="chart-row">{_chart(mapa_dep)}{_chart(mapa_mun)}</div>'
+    else:
+        body += _chart(mapa_dep) + _chart(mapa_mun)
+
+    visibles = filas[:_IPEM_MAX_FILAS]
+    cuerpo = ""
+    for r in visibles:
+        var_celda, var_color = _ipem_var(r.get("ipem2024"), r.get("ipem2025"))
+        q24 = r.get("quintil2024") or "–"
+        q25 = r.get("quintil2025") or "–"
+        c24 = _IPEM_COLOR_QUINTIL.get(q24, "#E2E8F0")
+        c25 = _IPEM_COLOR_QUINTIL.get(q25, "#E2E8F0")
+        cuerpo += (
+            "<tr>"
+            f"<td>{escape(str(r.get('municipio') or ''))}</td>"
+            f"<td>{escape(str(r.get('departamento') or ''))}</td>"
+            f"<td>{escape(str(r.get('region') or ''))}</td>"
+            f"<td style='text-align:right'>{_ipem_pct(r.get('ipem2024'))}</td>"
+            f"<td style='text-align:right'><b>{_ipem_pct(r.get('ipem2025'))}</b></td>"
+            f"<td style='text-align:right;color:{var_color}'>{var_celda}</td>"
+            f"<td style='text-align:center;background:{c24};color:#0F172A'>{escape(q24)}</td>"
+            f"<td style='text-align:center;background:{c25};color:#0F172A'>{escape(q25)}</td>"
+            "</tr>"
+        )
+
+    if cuerpo:
+        recorte = (
+            f'<div style="font-size:8px;color:#64748B;margin-top:4px">'
+            f"Se muestran los primeros {_IPEM_MAX_FILAS} de {len(filas)} territorios filtrados.</div>"
+            if len(filas) > _IPEM_MAX_FILAS else ""
+        )
+        body += f"""
+    {_section("DETALLE MUNICIPAL")}
+    <div style="font-size:8px;color:#64748B;margin-bottom:4px">
+      Ordenado alfabéticamente. Variación negativa (verde) = el índice bajó, es decir
+      mejoró. De los 1.121 territorios, 19 son áreas no municipalizadas marcadas «(CD)»
+      en la fuente y 1.102 son municipios.
+    </div>
+    <table>
+      <thead><tr>
+        <th>Municipio</th><th>Departamento</th><th>Región</th>
+        <th style="text-align:right">IPEM 2024</th>
+        <th style="text-align:right">IPEM 2025</th>
+        <th style="text-align:right">Variación</th>
+        <th style="text-align:center">Quintil 2024</th>
+        <th style="text-align:center">Quintil 2025</th>
+      </tr></thead>
+      <tbody>{cuerpo}</tbody>
+    </table>{recorte}"""
+    else:
+        body += '<p style="padding:12px;font-size:10px;color:#64748B">Ningún territorio coincide con los filtros aplicados.</p>'
+
+    return _full_html("IPEM — Índice de Pobreza Energética Multidimensional", body)
+
+
 async def generate_tablero_pdf(tablero: str, params: dict | None = None) -> bytes:
     """
     Genera PDF para un tablero.
@@ -2992,6 +3182,8 @@ async def generate_tablero_pdf(tablero: str, params: dict | None = None) -> byte
         html = await _build_predicciones(captures=captures, params=params)
     elif tablero == "detalle-empresas":
         html = await _build_detalle_empresas(captures=captures, params=params)
+    elif tablero == "ipem":
+        html = await _build_ipem(captures=captures, params=params)
     else:
         logger.warning("[PDF] No builder for tablero=%s", tablero)
         html = _full_html(

@@ -11,6 +11,7 @@ TABLEROS_VALIDOS = {
     "subsidios", "fenoge", "contratos-or", "supervision",
     "presupuesto", "comunidades", "pagos", "validaciones",
     "detalle-empresas", "energia", "colombia-solar", "predicciones",
+    "ipem",
 }
 
 
