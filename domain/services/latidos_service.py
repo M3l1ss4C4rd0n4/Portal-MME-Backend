@@ -108,6 +108,13 @@ LATIDOS_LOG = [
             6, critico=True), 'etl/.informes_diarios_watcher_state.json'),
     (Latido('watcher_sharepoint', 'Verificaciones reales del watcher de SharePoint',
             12), 'etl/.sp_watcher_state.json'),
+    # Informe Semanal de Dirección de Energía: sale los viernes a las 8:00 y es
+    # el único envío de cadencia semanal, así que un viernes en blanco tardaría
+    # otros siete días en notarse. 192 h = una semana y un día de margen.
+    # Se mira la constancia de ENVÍO, no el PDF: generarlo y no mandarlo a
+    # nadie es justo el fallo que hay que ver.
+    (Latido('informe_semanal_de', 'Envío del Informe Semanal de Dirección de Energía',
+            192, critico=True), 'data/informes_direccion_energia/.ultimo_envio.json'),
 ]
 
 # ── Servicios que deben correr el código desplegado ──────────────────────

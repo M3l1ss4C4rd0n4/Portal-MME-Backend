@@ -122,13 +122,21 @@ def _get_telegram_token() -> str:
 
 # ─────────────────── Telegram ───────────────────
 
-def get_telegram_users() -> List[Dict[str, Any]]:
-    """Devuelve usuarios activos de la tabla telegram_users."""
+def get_telegram_users(tecnicas: bool = False) -> List[Dict[str, Any]]:
+    """Devuelve usuarios activos de la tabla telegram_users.
+
+    Args:
+        tecnicas: si True, solo quienes reciben avisos de salud de la
+            plataforma (latidos, ETL caído, datos congelados). Por defecto
+            nadie los recibe: la columna nace en FALSE.
+    """
     try:
         conn = psycopg2.connect(**_pg_params())
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        filtro = " AND recibir_tecnicas = TRUE" if tecnicas else ""
         cur.execute(
-            "SELECT chat_id, username, nombre FROM telegram_users WHERE activo = TRUE"
+            "SELECT chat_id, username, nombre FROM telegram_users "
+            f"WHERE activo = TRUE{filtro}"
         )
         rows = [dict(r) for r in cur.fetchall()]
         cur.close()
@@ -139,14 +147,23 @@ def get_telegram_users() -> List[Dict[str, Any]]:
         return []
 
 
+DEFAULT_PDF_CAPTION = "📎 Informe Ejecutivo del Sector Eléctrico"
+
+
 def broadcast_telegram(
     message: str,
     pdf_path: Optional[str] = None,
     parse_mode: Optional[str] = None,
     chat_ids: Optional[List[int]] = None,
+    caption: Optional[str] = None,
+    tecnicas: bool = False,
 ) -> Dict[str, int]:
     """
     Envía un mensaje (y opcionalmente un PDF) a usuarios de Telegram.
+
+    `caption` es el pie del PDF adjunto. Por defecto dice "Informe Ejecutivo del
+    Sector Eléctrico", que es el informe de XM: cualquier otro informe que use
+    esta función tiene que pasar el suyo o el adjunto llegará mal rotulado.
 
     Por defecto, a TODOS los usuarios activos registrados en PostgreSQL
     (get_telegram_users()). Si se pasa `chat_ids`, se envía SOLO a esos
@@ -160,7 +177,11 @@ def broadcast_telegram(
         logger.error("TELEGRAM_BOT_TOKEN no configurado — broadcast cancelado")
         return {"sent": 0, "failed": 0}
 
-    users = [{"chat_id": cid} for cid in chat_ids] if chat_ids is not None else get_telegram_users()
+    users = (
+        [{"chat_id": cid} for cid in chat_ids]
+        if chat_ids is not None
+        else get_telegram_users(tecnicas=tecnicas)
+    )
     if not users:
         logger.warning("No hay usuarios de Telegram para broadcast")
         return {"sent": 0, "failed": 0}
@@ -210,7 +231,7 @@ def broadcast_telegram(
                             f"{base}/sendDocument",
                             data={
                                 "chat_id": str(chat_id),
-                                "caption": "📎 Informe Ejecutivo del Sector Eléctrico",
+                                "caption": caption or DEFAULT_PDF_CAPTION,
                             },
                             files={"document": (os.path.basename(pdf_path), f, "application/pdf")},
                         )
@@ -255,13 +276,19 @@ def _smtp_config():
 def get_email_recipients(
     alertas: bool = False,
     diario: bool = False,
+    tecnicas: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Devuelve destinatarios de email activos de la tabla alert_recipients.
 
     Args:
-        alertas: Si True, filtra quienes reciben alertas de anomalías.
-        diario: Si True, filtra quienes reciben el informe diario.
+        alertas: Si True, filtra quienes reciben alertas del estado del SIN.
+        diario: Si True, filtra quienes reciben los informes periódicos.
+        tecnicas: Si True, filtra quienes reciben avisos de salud de la
+            plataforma. Son dos públicos distintos a propósito: un aviso de
+            "celery-worker corre código viejo" solo lo puede atender quien
+            desarrolla, y mezclarlo con las alertas del SIN entrenaba a los
+            demás a ignorar las dos cosas.
     """
     try:
         conn = psycopg2.connect(**_pg_params())
@@ -272,6 +299,8 @@ def get_email_recipients(
             conditions.append("recibir_alertas = TRUE")
         if diario:
             conditions.append("recibir_diario = TRUE")
+        if tecnicas:
+            conditions.append("recibir_tecnicas = TRUE")
 
         cur.execute(
             f"SELECT nombre, correo, rol FROM alert_recipients "
@@ -306,6 +335,15 @@ def _log_email_event(
 
 
 _SMTP_LOCK_KEY = "portal_mme_smtp_send"
+# Reintentos ante un fallo de CONEXIÓN (timeout de handshake TLS, DNS, red).
+# Office365 cortó el handshake a los 30 s con cdvillarreal@minenergia.gov.co el
+# 2026-10-30 y el informe semanal no le llegó: el bucle de reintentos de abajo
+# solo cubría el código 432, y un timeout de red caía al except exterior sin
+# segunda oportunidad. Como el informe sale una vez por semana, ese destinatario
+# se quedaba sin él 7 días.
+SMTP_CONEXION_MAX_REINTENTOS = int(os.getenv("SMTP_CONEXION_MAX_REINTENTOS", "3"))
+SMTP_CONEXION_ESPERA_S = float(os.getenv("SMTP_CONEXION_ESPERA_S", "15"))
+
 SMTP_432_MAX_REINTENTOS = int(os.getenv("SMTP_432_MAX_REINTENTOS", "3"))
 SMTP_432_REINTENTO_ESPERA_S = float(os.getenv("SMTP_432_REINTENTO_ESPERA_S", "8"))
 
@@ -385,16 +423,26 @@ def _send_one_email(
     Envía un email a un único destinatario.
 
     Serializa la conexión SMTP real (advisory lock, ver
-    _acquire_smtp_send_lock()) y reintenta hasta SMTP_432_MAX_REINTENTOS
-    veces, con espera SMTP_432_REINTENTO_ESPERA_S segundos, específicamente
-    ante un 432 de Office365 ("Concurrent connections limit exceeded") —
-    cualquier otro código SMTP o excepción falla de inmediato, sin reintento.
+    _acquire_smtp_send_lock()) y reintenta en dos casos, ambos seguros porque
+    ocurren ANTES de entregar el mensaje al servidor:
+
+    * un 432 de Office365 ("Concurrent connections limit exceeded"),
+    * un fallo de conexión: timeout del handshake TLS, DNS o red.
+
+    **Nunca se reintenta una vez entregado el mensaje.** En cuanto `sendmail`
+    empieza, el servidor puede haberlo aceptado aunque la respuesta se pierda;
+    reintentar ahí mandaría el informe dos veces. Un fallo en ese punto se
+    registra como "entrega incierta" y se devuelve como fallo sin repetir.
+
+    Cualquier otro código SMTP (buzón inexistente, credenciales rechazadas)
+    falla de inmediato: repetirlo no lo arreglaría.
 
     Returns:
         (success, error_message, duration_ms)
     """
     smtp_cfg = cfg or _smtp_config()
     started = time.monotonic()
+    entregado_al_servidor = False
     try:
         msg = MIMEMultipart()
         msg['From'] = f"{smtp_cfg['from_name']} <{smtp_cfg['user']}>"
@@ -412,9 +460,16 @@ def _send_one_email(
                 )
                 msg.attach(part)
 
+        # Un mensaje entregado no se repite nunca. La bandera se levanta justo
+        # antes de sendmail y, si falla a partir de ahí, se renuncia al
+        # reintento: el servidor pudo haberlo aceptado y solo se perdió la
+        # respuesta. Mejor un informe que no llegó que dos iguales.
+        entregado_al_servidor = False
+        maximo = max(SMTP_432_MAX_REINTENTOS, SMTP_CONEXION_MAX_REINTENTOS)
+
         lock_conn = _acquire_smtp_send_lock()
         try:
-            for intento in range(1, SMTP_432_MAX_REINTENTOS + 1):
+            for intento in range(1, maximo + 1):
                 try:
                     context = ssl.create_default_context()
                     with smtplib.SMTP(
@@ -426,6 +481,7 @@ def _send_one_email(
                         server.starttls(context=context)
                         server.ehlo()
                         server.login(smtp_cfg['user'], smtp_cfg['password'])
+                        entregado_al_servidor = True
                         server.sendmail(smtp_cfg['user'], dest, msg.as_string())
 
                     duration_ms = int((time.monotonic() - started) * 1000)
@@ -442,11 +498,26 @@ def _send_one_email(
                         time.sleep(SMTP_432_REINTENTO_ESPERA_S)
                         continue
                     raise
+                except (socket.timeout, TimeoutError, ssl.SSLError, OSError) as e:
+                    if entregado_al_servidor:
+                        # Se cayó con el mensaje ya en vuelo: no se repite.
+                        raise
+                    if intento < SMTP_CONEXION_MAX_REINTENTOS:
+                        logger.warning(
+                            "⏳ Fallo de conexión SMTP enviando a %s (%s: %s) "
+                            "— reintento %s/%s en %ss",
+                            dest, type(e).__name__, e,
+                            intento, SMTP_CONEXION_MAX_REINTENTOS, SMTP_CONEXION_ESPERA_S,
+                        )
+                        time.sleep(SMTP_CONEXION_ESPERA_S)
+                        continue
+                    raise
         finally:
             _release_smtp_send_lock(lock_conn)
     except (socket.timeout, TimeoutError) as e:
         duration_ms = int((time.monotonic() - started) * 1000)
-        err = f"SMTP timeout after {SMTP_TIMEOUT_SECONDS}s: {e}"
+        incierto = " (el mensaje ya iba en camino: NO se reintenta)" if entregado_al_servidor else ""
+        err = f"SMTP timeout after {SMTP_TIMEOUT_SECONDS}s: {e}{incierto}"
         _log_email_event(dest, "fail", duration_ms, error=err)
         logger.error("❌ Timeout enviando email a %s: %s", dest, err)
         return False, err, duration_ms
@@ -527,6 +598,7 @@ def broadcast_email_alert(
     alertas: bool = False,
     diario: bool = False,
     emails_override: Optional[List[str]] = None,
+    tecnicas: bool = False,
 ) -> Dict[str, int]:
     """
     Envía un email a los destinatarios configurados en alert_recipients.
@@ -539,7 +611,9 @@ def broadcast_email_alert(
     if emails_override is not None:
         emails = emails_override
     else:
-        recipients = get_email_recipients(alertas=alertas, diario=diario)
+        recipients = get_email_recipients(
+            alertas=alertas, diario=diario, tecnicas=tecnicas
+        )
         emails = [r['correo'] for r in recipients]
 
     if not emails:
@@ -548,7 +622,8 @@ def broadcast_email_alert(
         # get_email_recipients(), que también devuelve lista vacía, y deja el
         # resultado en {"sent": 0} — que el llamador trataba como éxito.
         logger.warning(
-            f"⚠️ No hay destinatarios de email (alertas={alertas}, diario={diario}). "
+            f"⚠️ No hay destinatarios de email (alertas={alertas}, diario={diario}, "
+            f"tecnicas={tecnicas}). "
             f"Revisar sector_energetico.alert_recipients: la notificación NO se envió."
         )
         return {
@@ -557,8 +632,9 @@ def broadcast_email_alert(
         }
 
     logger.info(
-        f"📧 Enviando a {len(emails)} destinatarios "
-        f"(alertas={alertas}, diario={diario}, override={emails_override is not None})"
+        f"📧 Enviando a {len(emails)} destinatarios (alertas={alertas}, "
+        f"diario={diario}, tecnicas={tecnicas}, "
+        f"override={emails_override is not None})"
     )
     resultado = send_email(emails, subject, body_html, pdf_path)
     # Devolver a quién se intentó enviar, para que alertas_historial pueda
@@ -612,6 +688,7 @@ def broadcast_alert(
     is_daily: bool = False,
     telegram_chat_ids: Optional[List[int]] = None,
     email_override: Optional[List[str]] = None,
+    tecnica: bool = False,
 ) -> Dict[str, Any]:
     """
     Punto de entrada principal para enviar notificaciones por todos los canales.
@@ -628,6 +705,10 @@ def broadcast_alert(
             desarrollador del portal) en vez de todos los usuarios activos.
         email_override: si se pasa, restringe el envío de email a estas
             direcciones exclusivamente, en vez de `alert_recipients`.
+        tecnica: True para un aviso de salud de la PLATAFORMA (latidos, ETL
+            caído, datos congelados, configuración desincronizada). Va solo a
+            quien tenga `recibir_tecnicas`, y el asunto lo dice en claro en vez
+            de disfrazarse de alerta del sector. Falso = alerta del SIN.
 
     Returns:
         Resumen de envíos por canal.
@@ -635,32 +716,46 @@ def broadcast_alert(
     result = {
         "timestamp": datetime.now().isoformat(),
         "severity": severity,
+        "tecnica": tecnica,
         "telegram": {"sent": 0, "failed": 0},
         "email": {"sent": 0, "failed": 0},
     }
 
     # ── Telegram ──
     try:
-        tg = broadcast_telegram(message, pdf_path=pdf_path, chat_ids=telegram_chat_ids)
+        tg = broadcast_telegram(
+            message, pdf_path=pdf_path, chat_ids=telegram_chat_ids, tecnicas=tecnica
+        )
         result["telegram"] = tg
     except Exception as e:
         logger.error(f"Error en broadcast Telegram: {e}")
 
     # ── Email ──
     try:
-        subj = email_subject or (
-            f"⚡ Informe Ejecutivo Diario — {datetime.now().strftime('%Y-%m-%d')}"
-            if is_daily
-            else f"⚠️ Alerta Energética [{severity}] — {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        )
+        # El asunto distingue los tres casos. Antes un latido del sistema
+        # llegaba como "⚠️ Alerta Energética [CRITICO]", idéntico a una alerta
+        # real del SIN: desde la bandeja era imposible saber cuál importaba.
+        _ahora = datetime.now()
+        if email_subject:
+            subj = email_subject
+        elif is_daily:
+            subj = f"⚡ Informe Ejecutivo Diario — {_ahora.strftime('%Y-%m-%d')}"
+        elif tecnica:
+            subj = f"🔧 Aviso técnico del portal — {_ahora.strftime('%Y-%m-%d %H:%M')}"
+        else:
+            subj = (
+                f"⚠️ Alerta Energética [{severity}] — "
+                f"{_ahora.strftime('%Y-%m-%d %H:%M')}"
+            )
         html = email_body_html or _plain_to_html(message)
 
         em = broadcast_email_alert(
             subject=subj,
             body_html=html,
             pdf_path=pdf_path,
-            alertas=not is_daily,
+            alertas=not is_daily and not tecnica,
             diario=is_daily,
+            tecnicas=tecnica,
             emails_override=email_override,
         )
         result["email"] = em

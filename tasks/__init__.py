@@ -33,6 +33,7 @@ app = Celery(
         'tasks.homeslider_diagnosticos_tasks',
         'tasks.ontologia_tasks',
         'tasks.latidos_tasks',
+        'tasks.informe_de_tasks',
     ]
 )
 
@@ -70,6 +71,21 @@ app.conf.beat_schedule = {
     'send-daily-summary-830am': {
         'task': 'tasks.anomaly_tasks.send_daily_generate',
         'schedule': crontab(hour=8, minute=30),
+    },
+    # Informe Semanal de Dirección de Energía — viernes.
+    # Se genera a las 7:00 (después del ETL de métricas de las 6:00, para que
+    # los tableros ya tengan datos) y se envía a las 8:00. Una hora de margen
+    # para que el artefacto esté en disco antes de que salgan los correos.
+    #
+    # Semanal y no diario a propósito: la variación compara contra la foto
+    # anterior del snapshot, así que una corrida diaria la dejaría en un día.
+    'informe-direccion-energia-generar': {
+        'task': 'tasks.informe_de_tasks.generar_informe_direccion_energia',
+        'schedule': crontab(hour=7, minute=0, day_of_week='fri'),
+    },
+    'informe-direccion-energia-enviar': {
+        'task': 'tasks.informe_de_tasks.enviar_informe_direccion_energia',
+        'schedule': crontab(hour=8, minute=0, day_of_week='fri'),
     },
     # Informe EnergIA app: push FCM 5 min después del resumen
     'energia-app-informe-830am': {

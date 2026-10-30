@@ -33,6 +33,7 @@ from api.v1.routes import (
     riesgo,
     voz,
     balance_oferta_demanda,
+    informe_direccion_energia,
 )
 
 # Router principal de v1
@@ -259,3 +260,10 @@ api_router_v1.include_router(
 )
 
 __all__ = ["api_router_v1"]
+
+# Informe Diario de Dirección de Energía (HTML interactivo + PDF)
+api_router_v1.include_router(
+    informe_direccion_energia.router,
+    prefix="/informe-direccion-energia",
+    tags=["📰 Informe Semanal Dirección de Energía"]
+)

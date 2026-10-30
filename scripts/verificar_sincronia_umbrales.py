@@ -236,7 +236,9 @@ def main(argv: "list[str] | None" = None) -> int:
                 + ("\n…" if len(discrepancias) > 10 else "")
                 + "\n\nRevisar si un lado se corrigió y el otro quedó desactualizado."
             )
-            broadcast_alert(texto, severity="WARNING")
+            # tecnica=True: una discrepancia entre core/umbrales_oficiales.py
+            # y umbralesOficiales.ts solo la puede corregir quien desarrolla.
+            broadcast_alert(texto, severity="WARNING", tecnica=True)
         except Exception as e:
             logger.error(f"[SINCRONIA_UMBRALES] Error notificando discrepancia: {e}")
         return 1

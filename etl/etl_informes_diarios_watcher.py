@@ -204,7 +204,9 @@ def _send_incomplete_alert(pendientes: list[str], resumen: dict) -> None:
         f"Portal Energético — Ministerio de Minas y Energía"
     )
 
-    broadcast_alert(message=message, severity="WARNING", is_daily=False)
+    # tecnica=True: que XM no haya publicado sus informes no es el estado del
+    # SIN, es un problema de ingesta. Quien lo atiende es el equipo del portal.
+    broadcast_alert(message=message, severity="WARNING", is_daily=False, tecnica=True)
     logger.info("Alerta enviada: pendientes=%s", pendientes_txt)
 
 

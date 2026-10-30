@@ -45,6 +45,20 @@ ALERT_COOLDOWN_HOURS_POR_SEVERIDAD = {
     'ALERTA': 12,
 }
 ALERT_COOLDOWN_HOURS = 24  # respaldo para severidades no listadas
+
+# Escalado del recordatorio de una MISMA condición que sigue activa.
+# Las ventanas de arriba se pensaron para una condición nueva. El problema que
+# reportaron los destinatarios el 2026-10-29 es otro: DATOS_CONGELADOS y
+# ESTRES_TERMICO llevan días sin resolverse y, con 6 h fijas, el mismo aviso
+# salía hasta 4 veces al día. A partir del segundo recordatorio la ventana se
+# abre: avisar más no hace que alguien actúe antes, solo entrena a ignorar.
+# Una condición NUEVA no se retrasa: estrena racha y usa la ventana corta.
+COOLDOWN_ESCALADO_HORAS = (24, 72)
+COOLDOWN_RACHA_TTL_SEGUNDOS = 15 * 24 * 3600  # la racha se olvida en 15 días
+
+# Avisos que solo puede atender quien desarrolla el portal. No son el estado
+# del SIN: son la salud del sistema que lo mide. Van a `recibir_tecnicas`.
+CATEGORIAS_TECNICAS = frozenset({'DATOS_CONGELADOS'})
 DAILY_LOCK_TTL_SECONDS = 72000  # 20 horas — expira antes del próximo informe
 
 # Máximo de alertas que se registran y se listan por ciclo. El corte existía
@@ -442,6 +456,41 @@ def _horas_cooldown(severidad: str) -> int:
     )
 
 
+def _racha_key(clave: str) -> str:
+    return 'alert_racha:' + clave.replace(' ', '_')[:120]
+
+
+def _horas_con_escalado(clave: str, horas_base: int) -> int:
+    """Ventana efectiva: la base la primera vez, luego cada vez más ancha.
+
+    La racha cuenta recordatorios consecutivos de la MISMA clave. Se olvida
+    sola a los 15 días, así que una condición que se resuelve y vuelve meses
+    después empieza otra vez con la ventana corta.
+    """
+    try:
+        import redis as _redis
+        _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
+        racha = int(_r.get(_racha_key(clave)) or 0)
+    except Exception as e:
+        logger.warning(f"Error leyendo racha de {clave!r}: {e}")
+        return horas_base
+
+    if racha <= 0:
+        return horas_base
+    return COOLDOWN_ESCALADO_HORAS[min(racha, len(COOLDOWN_ESCALADO_HORAS)) - 1]
+
+
+def _incrementar_racha(clave: str) -> None:
+    """Suma un recordatorio a la racha de esta clave y refresca su caducidad."""
+    try:
+        import redis as _redis
+        _r = _redis.Redis(host='localhost', port=6379, db=1, socket_timeout=2)
+        _r.incr(_racha_key(clave))
+        _r.expire(_racha_key(clave), COOLDOWN_RACHA_TTL_SEGUNDOS)
+    except Exception as e:
+        logger.warning(f"Error actualizando racha de {clave!r}: {e}")
+
+
 def _alerta_ya_notificada(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> bool:
     """
     Verifica si una alerta con esta clave está dentro de su ventana de cooldown.
@@ -486,6 +535,94 @@ def _activar_cooldown_alerta(clave: str, horas: int = ALERT_COOLDOWN_HOURS) -> b
             f"La alerta podría reenviarse en la próxima corrida."
         )
         return False
+
+
+def _notificar_lote(alertas: list, *, tecnica: bool) -> None:
+    """Manda un lote de alertas y consume su cooldown si algo salió de verdad.
+
+    Era código en línea dentro de check_anomalies. Se extrajo al partir el
+    envío en dos públicos: duplicarlo habría dejado dos copias de la lógica de
+    cooldown, que es justo donde no se puede permitir una deriva.
+    """
+    from core.constants import normalizar_severidad
+    from domain.services.notification_service import (
+        broadcast_alert as ns_broadcast,
+        build_alert_email_html,
+    )
+
+    # Severidad máxima real. Antes era la constante "CRITICAL", hardcodeada
+    # pero presentada como calculada en el asunto del correo.
+    _severidades = {normalizar_severidad(a.get('severidad')) for a in alertas}
+    max_severity = 'CRITICO' if 'CRITICO' in _severidades else (
+        'ALERTA' if 'ALERTA' in _severidades else 'AVISO'
+    )
+
+    # Mensaje de Telegram: título + descripción. La descripción se descartaba
+    # en este canal, así que el destinatario solo veía un renglón por alerta.
+    alert_lines = []
+    for a in alertas[:MAX_ALERTAS_POR_CICLO]:
+        categoria = a.get('categoria', 'Sistema')
+        titulo = a.get('titulo', 'Anomalía detectada')
+        icon = '🔴' if normalizar_severidad(a.get('severidad')) == 'CRITICO' else '🟠'
+        linea = f"{icon} *{categoria}*: {titulo}"
+        _desc = str(a.get('descripcion', '') or '').strip()
+        if _desc:
+            linea += f"\n   {_desc}"
+        _rec = str(a.get('recomendacion', '') or '').strip()
+        if _rec:
+            linea += f"\n   _Acción:_ {_rec}"
+        alert_lines.append(linea)
+
+    encabezado = (
+        "🔧 *AVISO TÉCNICO DEL PORTAL* 🔧"
+        if tecnica else
+        "🚨 *ALERTA - SISTEMA ELÉCTRICO* 🚨"
+    )
+    alert_message = (
+        encabezado + "\n\n"
+        + "\n\n".join(alert_lines)
+        + f"\n\n📅 Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        + f"📊 Total alertas: {len(alertas)}\n"
+        + f"🔗 {PORTAL_ENERGETICO_URL}\n\n"
+        + "_Portal Energético - Ministerio de Minas y Energía_"
+    )
+
+    broadcast_result = ns_broadcast(
+        message=alert_message,
+        severity=max_severity,
+        is_daily=False,
+        email_body_html=build_alert_email_html(alertas),
+        tecnica=tecnica,
+    )
+    tg_enviados = broadcast_result.get('telegram', {}).get('sent', 0)
+    email_enviados = broadcast_result.get('email', {}).get('sent', 0)
+    enviados = tg_enviados + email_enviados
+
+    # Registrar el resultado REAL por canal (sin max(1, ...))
+    _registrar_alerta_bd(alertas, broadcast_result)
+
+    etiqueta = 'técnicas' if tecnica else 'del SIN'
+    if enviados > 0:
+        # El cooldown solo se consume si algo salió de verdad. Antes se
+        # activaba siempre, así que un fallo total de ambos canales silenciaba
+        # la alerta durante toda la ventana.
+        for _a in alertas:
+            _clave_envio = _a.get('clave') or _a.get('titulo', _a.get('descripcion', ''))
+            _base = _horas_cooldown(normalizar_severidad(_a.get('severidad')))
+            _horas = _horas_con_escalado(_clave_envio, _base)
+            _activar_cooldown_alerta(_clave_envio, horas=_horas)
+            _incrementar_racha(_clave_envio)
+        logger.info(
+            f"📤 [ANOMALÍAS] Broadcast {etiqueta} completado: {enviados} "
+            f"notificaciones (Telegram={tg_enviados}, email={email_enviados})"
+        )
+    else:
+        logger.error(
+            f"❌ [ANOMALÍAS] Ningún canal entregó las {len(alertas)} alertas "
+            f"{etiqueta} (Telegram={tg_enviados}, email={email_enviados}). "
+            f"No se activa cooldown: se reintentará en la próxima corrida. "
+            f"Detalle: {broadcast_result}"
+        )
 
 
 @shared_task(name='tasks.anomaly_tasks.check_anomalies', bind=True, max_retries=2)
@@ -642,84 +779,28 @@ def check_anomalies(self):
             logger.info(f"📝 [ANOMALÍAS] {len(alertas_criticas)} anomalías registradas en BD")
 
         if alertas_nuevas:
+            # Se mandan en DOS tandas con públicos distintos. Mezclarlas era el
+            # motivo de que los destinatarios pidieran dejar de recibir todo:
+            # "la métrica X lleva 5 días congelada" es un problema del ETL que
+            # solo puede atender quien desarrolla, y llegaba con el mismo
+            # asunto que un embalse en nivel crítico.
+            nuevas_tecnicas = [
+                a for a in alertas_nuevas
+                if a.get('categoria') in CATEGORIAS_TECNICAS
+            ]
+            nuevas_sin = [
+                a for a in alertas_nuevas
+                if a.get('categoria') not in CATEGORIAS_TECNICAS
+            ]
             logger.warning(
-                f"🚨 [ANOMALÍAS] {len(alertas_nuevas)} anomalías CRÍTICAS NUEVAS → notificando"
+                f"🚨 [ANOMALÍAS] {len(alertas_nuevas)} anomalías CRÍTICAS NUEVAS "
+                f"→ notificando ({len(nuevas_sin)} del SIN, "
+                f"{len(nuevas_tecnicas)} técnicas)"
             )
 
-            from core.constants import normalizar_severidad
-            from domain.services.notification_service import (
-                broadcast_alert as ns_broadcast,
-                build_alert_email_html,
-            )
-
-            # Severidad máxima real. Antes era la constante "CRITICAL",
-            # hardcodeada pero presentada como calculada en el asunto del correo.
-            _severidades = {normalizar_severidad(a.get('severidad')) for a in alertas_nuevas}
-            max_severity = 'CRITICO' if 'CRITICO' in _severidades else (
-                'ALERTA' if 'ALERTA' in _severidades else 'AVISO'
-            )
-
-            # Mensaje de Telegram: título + descripción. La descripción se
-            # descartaba en este canal, así que el destinatario solo veía un
-            # renglón por alerta.
-            alert_lines = []
-            for a in alertas_nuevas[:MAX_ALERTAS_POR_CICLO]:
-                categoria = a.get('categoria', 'Sistema')
-                titulo = a.get('titulo', 'Anomalía detectada')
-                icon = '🔴' if normalizar_severidad(a.get('severidad')) == 'CRITICO' else '🟠'
-                linea = f"{icon} *{categoria}*: {titulo}"
-                _desc = str(a.get('descripcion', '') or '').strip()
-                if _desc:
-                    linea += f"\n   {_desc}"
-                _rec = str(a.get('recomendacion', '') or '').strip()
-                if _rec:
-                    linea += f"\n   _Acción:_ {_rec}"
-                alert_lines.append(linea)
-
-            alert_message = (
-                "🚨 *ALERTA - SISTEMA ELÉCTRICO* 🚨\n\n"
-                + "\n\n".join(alert_lines)
-                + f"\n\n📅 Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                + f"📊 Total alertas: {len(alertas_nuevas)}\n"
-                + f"🔗 {PORTAL_ENERGETICO_URL}\n\n"
-                + "_Portal Energético - Ministerio de Minas y Energía_"
-            )
-
-            # Enviar broadcast (Telegram + email con HTML propio de alertas)
-            broadcast_result = ns_broadcast(
-                message=alert_message,
-                severity=max_severity,
-                is_daily=False,
-                email_body_html=build_alert_email_html(alertas_nuevas),
-            )
-            tg_enviados = broadcast_result.get('telegram', {}).get('sent', 0)
-            email_enviados = broadcast_result.get('email', {}).get('sent', 0)
-            enviados = tg_enviados + email_enviados
-
-            # Registrar el resultado REAL por canal (sin max(1, ...))
-            _registrar_alerta_bd(alertas_nuevas, broadcast_result)
-
-            if enviados > 0:
-                # El cooldown solo se consume si algo salió de verdad. Antes se
-                # activaba siempre, así que un fallo total de ambos canales
-                # silenciaba la alerta durante toda la ventana.
-                for _a in alertas_nuevas:
-                    _clave_envio = _a.get('clave') or _a.get('titulo', _a.get('descripcion', ''))
-                    _activar_cooldown_alerta(
-                        _clave_envio,
-                        horas=_horas_cooldown(normalizar_severidad(_a.get('severidad'))),
-                    )
-                logger.info(
-                    f"📤 [ANOMALÍAS] Broadcast completado: {enviados} notificaciones "
-                    f"(Telegram={tg_enviados}, email={email_enviados})"
-                )
-            else:
-                logger.error(
-                    f"❌ [ANOMALÍAS] Ningún canal entregó las {len(alertas_nuevas)} "
-                    f"alertas (Telegram={tg_enviados}, email={email_enviados}). "
-                    f"No se activa cooldown: se reintentará en la próxima corrida. "
-                    f"Detalle: {broadcast_result}"
-                )
+            for _lote, _es_tecnica in ((nuevas_sin, False), (nuevas_tecnicas, True)):
+                if _lote:
+                    _notificar_lote(_lote, tecnica=_es_tecnica)
         elif alertas_criticas:
             logger.info(
                 f"📋 [ANOMALÍAS] {len(alertas_criticas)} anomalías detectadas "
