@@ -33,6 +33,21 @@ _lock_fd = None
 TZ = ZoneInfo("America/Bogota")
 ALERT_AFTER_HOUR = 10
 
+# XM dejó de publicar sus informes diarios (confirmado con la Dirección el
+# 2026-10-30; se espera que reanude en algún momento de 2027). Mientras tanto
+# que falten NO es una anomalía: es lo esperado, y el aviso diario solo llenaba
+# el buzón de quien lo recibía.
+#
+# Se apaga SOLO el aviso. El watcher sigue corriendo cada 5 minutos porque de
+# él dependen otras dos cosas: el catálogo que alimenta el botón de informes
+# del portal, y su propio latido `watcher_informes_xm`, que avisaría si el
+# watcher se colgara (ya pasó, 59 días).
+#
+# Para reactivarlo cuando XM vuelva: ALERTA_INFORMES_XM=true en server/.env
+ALERTA_INFORMES_XM = os.getenv("ALERTA_INFORMES_XM", "false").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
 LOG_DIR.mkdir(exist_ok=True)
 
 _handler = logging.StreamHandler(sys.stdout)
@@ -251,11 +266,20 @@ def check_informes_diarios() -> None:
         logger.info("Caché invalidada — portal refrescará catálogo en próxima consulta")
 
     pendientes = resumen.get("pendientes") or []
-    if (
+    hay_que_avisar = (
         now.hour >= ALERT_AFTER_HOUR
         and pendientes
         and state.get("last_incomplete_alert") != today_key
-    ):
+    )
+    if hay_que_avisar and not ALERTA_INFORMES_XM:
+        # Queda en el log, no en el correo: si alguien se pregunta por qué no
+        # llegó el aviso, la respuesta está aquí y no en el silencio.
+        logger.info(
+            "Informes XM pendientes (%s) pero el aviso está apagado "
+            "(ALERTA_INFORMES_XM=false): XM no está publicando.",
+            ", ".join(pendientes),
+        )
+    elif hay_que_avisar:
         try:
             _send_incomplete_alert(pendientes, resumen)
             state["last_incomplete_alert"] = today_key
