@@ -252,3 +252,7 @@ graphify-out/
 # procesos en cada corrida, así que ensucian el diff sin aportar nada.
 cache/boletines/latest.meta.json
 etl/.sp_watcher_state.json
+
+# Informe Semanal de Dirección de Energía: HTML, PDF, JSON y la constancia de
+# envío los produce la tarea del viernes. Son salida, no código.
+data/informes_direccion_energia/

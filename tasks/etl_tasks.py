@@ -115,36 +115,80 @@ def fetch_metric_data(self, metric_code: str, start_date: str, end_date: str):
         
         cur = conn.cursor()
         inserted = 0
-        
+        fallidos = 0
+        primer_error = None
+
         for _, row in df.iterrows():
+            # SAVEPOINT por fila: sin él, el primer error aborta la transacción
+            # y TODAS las filas siguientes fallan con "current transaction is
+            # aborted". En los logs se veía un error real seguido de N errores
+            # arrastrados que escondían cuántas filas estaban mal de verdad.
+            cur.execute("SAVEPOINT fila")
             try:
                 cur.execute("""
                     INSERT INTO metrics (metrica, fecha, entidad, recurso, valor_gwh, unidad)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (metrica, fecha, entidad, COALESCE(recurso, '')) DO UPDATE
+                    ON CONFLICT (fecha, metrica, entidad, recurso) DO UPDATE
                     SET valor_gwh = EXCLUDED.valor_gwh, unidad = EXCLUDED.unidad
                 """, (
                     metric_code,
                     row.get('Date', row.get('fecha')),
                     entity,
-                    row.get('Values_code', row.get('recurso', None)),
+                    # `recurso` nunca va NULL: la tabla usa el nombre de la
+                    # entidad cuando la métrica es de sistema (DemaReal/Sistema
+                    # → recurso 'Sistema'), y un índice UNIQUE no deduplica
+                    # filas con NULL, así que un NULL aquí se acumularía en
+                    # cada corrida en vez de actualizarse.
+                    row.get('Values_code', row.get('recurso')) or entity,
                     row.get('Values', row.get('valor_gwh', row.get('valor'))),
                     'kWh' if 'Prec' in metric_code else 'GWh'
                 ))
+                cur.execute("RELEASE SAVEPOINT fila")
                 inserted += 1
             except Exception as e:
-                logger.error(f"Error insertando registro: {e}")
-                continue
-        
+                cur.execute("ROLLBACK TO SAVEPOINT fila")
+                fallidos += 1
+                if primer_error is None:
+                    primer_error = f"{type(e).__name__}: {e}"
+                    logger.error(f"Error insertando registro: {e}")
+
         conn.commit()
         cur.close()
         conn.close()
-        
-        logger.info(f"✅ {metric_code}: {inserted} registros procesados")
+
+        # Un lote donde no entró NADA no es un éxito. Antes devolvía
+        # status "success" con records 0, así que una incompatibilidad del
+        # ON CONFLICT podía dejar la métrica sin actualizar durante días sin
+        # que ninguna tarea, alerta ni latido se diera por enterado.
+        total = inserted + fallidos
+        if inserted == 0 and total > 0:
+            logger.error(
+                f"❌ {metric_code}: 0 de {total} registros insertados. "
+                f"Primer error: {primer_error}"
+            )
+            return {
+                "status": "error",
+                "metric": metric_code,
+                "records": 0,
+                "failed": fallidos,
+                "error": primer_error,
+                "period": f"{start_date} to {end_date}",
+            }
+
+        if fallidos:
+            logger.warning(
+                f"⚠️ {metric_code}: {inserted} insertados, {fallidos} fallidos. "
+                f"Primer error: {primer_error}"
+            )
+        else:
+            logger.info(f"✅ {metric_code}: {inserted} registros procesados")
+
         return {
-            "status": "success",
+            "status": "partial" if fallidos else "success",
             "metric": metric_code,
             "records": inserted,
+            "failed": fallidos,
+            "error": primer_error,
             "period": f"{start_date} to {end_date}"
         }
         
