@@ -264,3 +264,57 @@ class TestCreateDefaultRules:
         # No debe disparar con uso de memoria < 90%
         no_alert = memory_rule.evaluate({"memory_percent": 80})
         assert no_alert is None
+
+
+class TestDeduplicacionSinIdExplicito:
+    """La deduplicación tiene que funcionar para los llamadores REALES.
+
+    `create_default_rules()` fabrica alertas sin fijar `id`. Con el id por
+    defecto anterior —un timestamp— dos alertas idénticas nunca coincidían y
+    la deduplicación era código muerto. La prueba que la cubría pasaba solo
+    porque le daba el id a mano.
+    """
+
+    def _alerta(self, **kw):
+        from infrastructure.observability.alerts.alert_manager import (
+            Alert, AlertSeverity,
+        )
+        base = dict(title="Error rate alto", description="12%",
+                    severity=AlertSeverity.HIGH, source="monitoring")
+        base.update(kw)
+        return Alert(**base)
+
+    def _gestor(self):
+        from infrastructure.observability.alerts.alert_manager import (
+            AlertManager, LogNotificationChannel,
+        )
+        m = AlertManager()
+        m.add_channel(LogNotificationChannel())
+        return m
+
+    def test_dos_alertas_identicas_se_deduplican_sin_id_a_mano(self):
+        gestor = self._gestor()
+
+        assert gestor.send_alert(self._alerta()) is True
+        assert gestor.send_alert(self._alerta()) is False
+
+    def test_dos_alertas_distintas_no_se_confunden(self):
+        gestor = self._gestor()
+
+        assert gestor.send_alert(self._alerta(title="Error rate alto")) is True
+        assert gestor.send_alert(self._alerta(title="Latencia alta")) is True
+
+    def test_la_misma_condicion_con_otra_severidad_no_se_deduplica(self):
+        from infrastructure.observability.alerts.alert_manager import AlertSeverity
+
+        gestor = self._gestor()
+
+        assert gestor.send_alert(self._alerta(severity=AlertSeverity.MEDIUM)) is True
+        assert gestor.send_alert(self._alerta(severity=AlertSeverity.CRITICAL)) is True
+
+    def test_un_id_propio_sigue_mandando_sobre_el_calculado(self):
+        a = self._alerta(id="mio-123")
+        assert a.id == "mio-123"
+
+    def test_el_id_calculado_es_estable_entre_llamadas(self):
+        assert self._alerta().id == self._alerta().id

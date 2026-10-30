@@ -6,7 +6,8 @@ Sistema de alertas para notificar cuando ocurren condiciones críticas.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
 from enum import Enum
 from typing import Dict, List, Optional, Any, Callable
 import asyncio
@@ -27,8 +28,19 @@ class AlertSeverity(Enum):
 
 @dataclass
 class Alert:
-    """Representa una alerta."""
-    id: str = field(default_factory=lambda: str(datetime.utcnow().timestamp()))
+    """Representa una alerta.
+
+    `id` identifica el CONTENIDO, no el instante. Antes era
+    `str(datetime.utcnow().timestamp())`: un valor distinto en cada llamada,
+    así que la deduplicación de AlertManager comparaba ids que no podían
+    coincidir nunca y no deduplicaba nada. La prueba que la cubría pasaba
+    porque le daba un id explícito a mano — algo que ningún llamador real
+    hace, ya que las reglas de `create_default_rules()` no lo fijan.
+
+    Quien necesite distinguir dos alertas de mismo contenido puede seguir
+    pasando un `id` propio: solo se calcula cuando viene vacío.
+    """
+    id: str = ""
     title: str = ""
     description: str = ""
     severity: AlertSeverity = AlertSeverity.MEDIUM
@@ -39,6 +51,11 @@ class Alert:
     resolved: bool = False
     resolved_at: Optional[datetime] = None
     
+    def __post_init__(self) -> None:
+        if not self.id:
+            semilla = f"{self.source}|{self.title}|{self.severity.value}"
+            self.id = hashlib.sha256(semilla.encode("utf-8")).hexdigest()[:24]
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -190,7 +207,11 @@ class AlertManager:
         for channel in self._channels:
             try:
                 if asyncio.iscoroutinefunction(channel.send):
-                    asyncio.create_task(channel.send(alert))
+                    # Sin bucle de eventos corriendo, create_task lanza
+                    # RuntimeError. Antes `success = True` iba ANTES de saberlo,
+                    # así que un canal que nunca llegó a enviar se contaba como
+                    # entregado.
+                    asyncio.get_running_loop().create_task(channel.send(alert))
                     success = True
                 else:
                     if channel.send(alert):
@@ -249,9 +270,6 @@ class AlertManager:
                 del self._alerts[alert_id]
             return len(old_ids)
 
-
-# Import para clear_old_alerts
-from datetime import timedelta
 
 # Instancia global
 alert_manager = AlertManager()
