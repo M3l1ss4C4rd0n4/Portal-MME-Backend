@@ -36,19 +36,22 @@ Servidor backend multi-propósito para el Portal de Dirección MME. Proporciona:
 - **API REST** (FastAPI): **115 endpoints** en 32 archivos de rutas (`api/v1/routes/`) para consumo del frontend Next.js y de la app móvil EnergIA, incluyendo el tablero de balance oferta-demanda del SIN (5 endpoints, 29-sep)
 - **Dashboard Analítico** (Dash): tableros interactivos legacy
 - **ETL Pipeline**: Extracción automática de datos de XM, IDEAM, OneDrive/SharePoint, despacho diario XM en PDF, hidrocarburos (Excel + scraping de precios WTI/Brent), y normativa CREG/UPME/MME (scraping de gestores normativos oficiales)
-- **Sistema de Alertas**: Notificaciones Telegram/email basadas en anomalías, con marco regulatorio explícito (Índice NE/HSIN/PBP citando resoluciones CREG) y vigilancia automática de cambios normativos
+- **Sistema de Alertas**: Notificaciones Telegram/email basadas en anomalías, con marco regulatorio explícito (Índice NE/HSIN/PBP citando resoluciones CREG) y vigilancia automática de cambios normativos. Desde el 30-oct, los avisos puramente técnicos (latidos, ETL) se enrutan solo a desarrollo (`sql/migrations/050_avisos_tecnicos_solo_a_desarrollo.sql`), separados de las alertas operativas del SIN.
 - **Capa de Ontología** (esquema Postgres `ontologia`): dimensiones de geografía/empresa/proyecto/métrica/recurso, grafo de relaciones multi-hop, y un corpus RAG (búsqueda semántica híbrida vector+full-text) sobre informes de XM/CREG/UPME/MME/SharePoint — ver `docs/FUENTES_RAG.md`
 - **Asistente IA** (`api/v1/routes/chatbot.py` + `domain/services/asistente_ia_service.py`, ~1.440 líneas): agente conversacional con ~45 herramientas (tool-calling), failover automático entre proveedores (Gemini → Groq → OpenRouter), y **voz en tiempo real** (`api/v1/routes/voz.py`, Gemini Live API)
 - **Sistema de predicciones con validación rigurosa**: ensemble Prophet+SARIMAX con backtest out-of-sample real (no solo holdout de entrenamiento) — ver `docs/tecnicos/PREDICCIONES_EMBALSES_VALIDACION_RIGUROSA.md`
 - **CU (Costo Unitario)**: cálculo mayorista y minorista (tarifa usuario final por operador de red), ponderado por demanda real — ver `docs/METODOLOGIA_CU.md`
+- **SICOM Hidrocarburos** (13-oct): extracción directa de los cubos OLAP de SICOM por conexión XMLA (`etl/etl_sicom_olap.py`), en reemplazo de la exportación manual a Excel. El 21-oct el portal ocultó la sección de Hidrocarburos de cara al usuario (ver README del frontend); el ETL y los datos en Postgres siguen activos sin cambios.
+- **IPEM** (28-oct): tablas, carga e invariantes de calidad del Índice de Pobreza Energética Multidimensional 2024-2025 (`sql/migrations/047_ipem_2024_2025.sql`, `048_ipem_invariantes_calidad.sql`, `scripts/cargar_ipem.py`), con informe en PDF propio.
+- **Informe Semanal de Dirección de Energía** (30-oct): resume 10 tableros en 5 secciones y 28 indicadores; se genera cada viernes 7:00 a. m. y se envía por correo y Telegram a las 8:00 a. m. (`domain/services/informe_de_*.py`, `tasks/informe_de_tasks.py`).
 
-### Estadísticas (verificadas 2026-09-30)
+### Estadísticas (verificadas 2026-10-30)
 
-- **464 archivos Python** (excluyendo entornos virtuales)
-- **43 servicios de dominio** (`domain/services/*.py`, nivel raíz — sin contar subcarpetas `orchestrator/`, `report_chapters/`)
-- **115 endpoints REST** en 32 archivos de rutas (incluye el tablero de balance oferta-demanda, agregado el 29-sep)
-- **44 migraciones SQL** (`sql/migrations/`)
-- **438 tests pasando, 0 fallando** (10 deseleccionados; `pytest tests/ -q`)
+- **493 archivos Python** (excluyendo entornos virtuales)
+- **53 servicios de dominio** (`domain/services/*.py`, nivel raíz — sin contar subcarpetas `orchestrator/`, `report_chapters/`)
+- **117 endpoints REST** en 34 archivos de rutas (incluye el Informe de Dirección de Energía, agregado el 30-oct)
+- **50 migraciones SQL** (`sql/migrations/`)
+- **752 tests pasando, 0 fallando** (10 deseleccionados; `pytest tests/ -q`)
 - **17 interfaces de dominio** (`domain/interfaces/`) con inyección de dependencias activa
 
 ### Seguridad (revisión del 10-sep, controles aplicados el 29-sep)
@@ -293,6 +296,8 @@ otro módulo, pero **hoy siguen siendo importados por código en producción** �
 | Simulación | `simulation.py`, `riesgo.py` | Escenarios CREG, riesgo de atraso de contratos OR |
 | Dominios sectoriales | `comunidades.py`, `contratos_or.py`, `fenoge.py`, `subsidios.py`, `presupuesto.py`, `supervision_portal.py` | Comunidades energéticas, contratos OR, FENOGE, subsidios, presupuesto, supervisión |
 | **Balance oferta-demanda** (29-sep) | `balance_oferta_demanda.py` (5 endpoints) | Histórico oferta/demanda/margen de reserva del SIN, demanda no atendida por área, proyectos UPME con retraso, correlación MW retrasados vs. margen, simulador contrafactual |
+| **IPEM** (28-oct) | `energia_dashboard.py` (`/api/energia/ipem`) | Índice de Pobreza Energética Multidimensional 2024-2025, nivel municipal y departamental |
+| **Informe Dirección de Energía** (30-oct) | `informe_direccion_energia.py` | Snapshot semanal (10 tableros, 5 secciones, 28 indicadores), generación HTML/PDF/JSON y envío programado |
 | App móvil / alertas | `energia_app.py`, `energia_dashboard.py`, `whatsapp_alerts.py` | Endpoints para la app EnergIA y alertas de WhatsApp |
 | Observabilidad | `observability.py`, `internal.py` | Health checks internos, métricas de sistema |
 | `/health` | — | Health check general (JSON con clave `services`, no `checks`) |
@@ -511,7 +516,7 @@ Una auditoría completa de ~25 documentos `.md` del proyecto (contra el código 
 - **Archivos con print():** 66 (verificado 2026-09-30)
 - **Archivos con except Exception:** por verificar de nuevo
 - **Tests de integración:** 0 (`tests/integration/` vacío)
-- **Tests unitarios:** 438 pasando, 0 fallando (verificado 2026-09-30)
+- **Tests unitarios:** 752 pasando, 0 fallando (verificado 2026-10-30)
 
 ---
 
