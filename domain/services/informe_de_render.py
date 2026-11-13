@@ -678,7 +678,8 @@ def render(informe: Informe, *, interactivo: bool = True) -> str:
     cada indicador dice contra qué periodo se compara. Un indicador sin histórico es uno que se mide por
     primera vez, no uno que no cambió.<br/>
     Generado automáticamente el {_E(informe.generado_en)}. Fuente: los mismos endpoints
-    que alimentan los tableros del portal.
+    que alimentan los tableros del portal.<br/>
+    Elaboró: Melissa Cardona Navarro.
   </footer>
 </div>
 {script}

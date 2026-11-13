@@ -1097,6 +1097,7 @@ def _build_header_html(logo_b64: str, fecha_label: str) -> str:
         <td class="header-content">
           <div class="header-title">Informe de Variables El&eacute;ctricas</div>
           <div class="header-date">Fecha: {fecha_larga}</div>
+          <div class="header-date">Elabor&oacute;: Melissa Cardona Navarro</div>
         </td>
         <td class="header-logo-cell">{logo_img}</td>
       </tr>
