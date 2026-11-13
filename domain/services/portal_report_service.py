@@ -346,7 +346,7 @@ def _full_html(title: str, body: str, update_time: str = "", orientation: str = 
       <div class="pdf-header-title">{title}</div>
       <div class="pdf-header-sub">Ministerio de Minas y Energía · Dirección de Energización</div>
     </div>
-    <div class="pdf-header-date">Generado: {now}<br/><span style="color:var(--gold)">{upd}</span></div>
+    <div class="pdf-header-date">Generado: {now}<br/><span style="color:var(--gold)">{upd}</span><br/>Elaboró: Melissa Cardona Navarro</div>
   </div>
   {body}
 </body>
