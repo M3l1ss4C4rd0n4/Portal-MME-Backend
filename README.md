@@ -579,7 +579,8 @@ Además de la API REST y el Dashboard, el monolito contiene:
 
 - **Infraestructura:** Equipo TI MinMinas
 - **Repositorio:** `git@github.com:M3l1ss4C4rd0n4/Portal-MME-Backend.git`
-- **Desarrollador Principal:** *(sin completar — no se encontró un dato real verificable para rellenar este campo; se deja marcado en vez de inventar un nombre)*
+- **Desarrollador Principal:** Melissa Cardona Navarro
+- **Elaboró:** Melissa Cardona Navarro
 
 ---
 
