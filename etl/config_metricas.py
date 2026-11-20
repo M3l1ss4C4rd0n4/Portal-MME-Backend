@@ -137,18 +137,8 @@ METRICAS_CONFIG = {
     
     # Métricas de Hidrología
     'metricas_hidrologia': [
-        {
-            'metric': 'ListadoEmbalses',
-            'entity': 'Sistema',
-            'conversion': None,
-            'dias_history': 2
-        },
-        {
-            'metric': 'ListadoRios',
-            'entity': 'Sistema',
-            'conversion': None,
-            'dias_history': 2
-        },
+        # ListadoEmbalses es un catálogo: se carga en la FASE 1 del ETL, no como serie.
+        # ListadoRios es un catálogo: se carga en la FASE 1 del ETL, no como serie.
         {
             'metric': 'AporEner',
             'entity': 'Rio',
@@ -248,18 +238,8 @@ METRICAS_CONFIG = {
     
     # Listados de sistema
     'listados_sistema': [
-        {
-            'metric': 'ListadoRecursos',
-            'entity': 'Sistema',
-            'conversion': None,
-            'dias_history': 7
-        },
-        {
-            'metric': 'ListadoAgentes',
-            'entity': 'Sistema',
-            'conversion': None,
-            'dias_history': 7
-        }
+        # ListadoRecursos y ListadoAgentes son catálogos: se cargan en la FASE 1 del ETL,
+        # no como series (pedirlos aquí fallaba en cada corrida con "Falta columna 'Value'").
     ],
 
     # Métricas de Restricciones (NUEVO - Corregido 2026-01-30)

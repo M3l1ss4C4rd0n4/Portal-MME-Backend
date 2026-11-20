@@ -1589,7 +1589,8 @@ def build_daily_email_html(
     p.append('<td style="padding:10px 16px;color:#B8D0F0;font-size:13px;">'
              '&#128337; ' + hora + '</td>')
     p.append('<td style="padding:10px 16px;color:#B8D0F0;font-size:13px;'
-             'text-align:right;">Despacho del Viceministro</td>')
+             'text-align:right;">Elabor&oacute;: Melissa Cardona Navarro &middot; '
+             'Direcci&oacute;n de Energ&iacute;a</td>')
     p.append('</tr></table></td></tr>')
     p.append('</table></td></tr>')
 

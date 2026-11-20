@@ -38,7 +38,7 @@ from infrastructure.logging.logger import get_logger
 logger = get_logger(__name__)
 
 _BASE_URL = "https://www.minenergia.gov.co"
-_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portalviceministerioenergia.minenergia.gov.co)"
+_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portaldireccionenergia.minenergia.gov.co)"
 
 _RE_PDF = re.compile(r"^/documents/\d+/.*\.pdf$", re.IGNORECASE)
 

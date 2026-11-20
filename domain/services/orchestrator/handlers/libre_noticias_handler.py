@@ -704,11 +704,10 @@ class LibreNoticiasHandlerMixin:
     ) -> Tuple[Dict[str, Any], List[ErrorDetail]]:
         """Handler: Menú principal del chatbot (7 capítulos del portal)."""
         data = {
-            "portal_nombre": "Portal de Dirección de Despacho del Viceministro de Minas y Energía",
+            "portal_nombre": "Portal Dirección de Energía",
             "portal_nombre_corto": "Portal de Dirección MME",
             "mensaje_bienvenida": (
-                "¡Hola! 👋 Soy el asistente del *Portal de Dirección de Despacho "
-                "del Viceministro de Minas y Energía*.\n\n"
+                "¡Hola! 👋 Soy el asistente del *Portal Dirección de Energía*.\n\n"
                 "Consulto los mismos tableros del portal, organizados en capítulos:\n\n"
                 "📊 *Cap. 1 — Gestión del sector (XM):* estado, predicciones y anomalías\n"
                 "🏘️ *Cap. 2 — Comunidades:* implementadas, Contratos OR, Fenoge y Colombia Solar\n"

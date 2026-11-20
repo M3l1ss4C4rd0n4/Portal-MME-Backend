@@ -28,7 +28,7 @@ from infrastructure.logging.logger import get_logger
 
 logger = get_logger(__name__)
 
-_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portalviceministerioenergia.minenergia.gov.co)"
+_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portaldireccionenergia.minenergia.gov.co)"
 
 
 def _extraer_sync(url: str, timeout: float) -> Optional[str]:

@@ -154,6 +154,9 @@ def cuerpo_email(informe: Informe) -> str:
         <div style="font-size:13px;color:{_TINTA_2};">
           {_E(informe.fecha)} · {len(informe.secciones_ok)} secciones · {n_tableros} tableros · {n_kpis} indicadores
         </div>
+        <div style="font-size:13px;color:{_TINTA_2};">
+          Elaboró: Melissa Cardona Navarro · Dirección de Energía
+        </div>
         <p style="margin:12px 0 0;font-size:14px;line-height:1.5;color:{_TINTA};">
           {_E(_resumen_movimiento(informe))}
         </p>
@@ -195,6 +198,7 @@ def mensaje_telegram(informe: Informe) -> str:
     lineas = [
         "INFORME SEMANAL DE DIRECCIÓN DE ENERGÍA",
         informe.fecha,
+        "Elaboró: Melissa Cardona Navarro · Dirección de Energía",
         "",
         _resumen_movimiento(informe),
     ]

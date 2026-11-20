@@ -44,7 +44,7 @@ from infrastructure.logging.logger import get_logger
 
 logger = get_logger(__name__)
 
-_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portalviceministerioenergia.minenergia.gov.co)"
+_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portaldireccionenergia.minenergia.gov.co)"
 
 _RE_PDF_DOCS = re.compile(r"^https://docs\.upme\.gov\.co/.*\.pdf$", re.IGNORECASE)
 

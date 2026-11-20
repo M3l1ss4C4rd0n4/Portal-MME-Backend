@@ -1336,6 +1336,7 @@ def send_daily_generate():
         tg_message += (
             "📎 *El análisis completo con gráficas y predicciones "
             "se encuentra en el PDF adjunto.*\n\n"
+            "Elaboró: Melissa Cardona Navarro · Dirección de Energía\n"
             "Portal Energético — Ministerio de Minas y Energía"
         )
 

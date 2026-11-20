@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 _BASE_URL = "https://api-portalxm.xm.com.co/administracion-archivos"
 _CONTENEDOR = "storageportalxm"
-_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portalviceministerioenergia.minenergia.gov.co)"
+_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portaldireccionenergia.minenergia.gov.co)"
 
 # idTipoContenido observado en vivo: 1=texto plano, 2=carpeta, 4=PDF, 8=zip, 18=xlsm.
 TIPO_CARPETA = 2

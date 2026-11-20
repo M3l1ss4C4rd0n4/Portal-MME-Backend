@@ -46,7 +46,7 @@ from infrastructure.logging.logger import get_logger
 logger = get_logger(__name__)
 
 _BASE_URL = "https://gestornormativo.creg.gov.co/gestor/entorno"
-_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portalviceministerioenergia.minenergia.gov.co)"
+_USER_AGENT = "Mozilla/5.0 (compatible; PortalMME/1.0; +https://portaldireccionenergia.minenergia.gov.co)"
 
 TipoDocumento = str  # 'resoluciones' | 'circulares'
 

@@ -2451,8 +2451,7 @@ def main():
 
         # Descripción del bot (aparece en "What can this bot do?")
         descripcion = (
-            "¡Hola! 👋 Soy el asistente del Portal de Dirección de Despacho "
-            "del Viceministro de Minas y Energía.\n\n"
+            "¡Hola! 👋 Soy el asistente del Portal Dirección de Energía.\n\n"
             "Consulto los capítulos del portal: gestión del sector (XM), "
             "comunidades, subsidios, supervisión, presupuesto e informe PDF.\n\n"
             "📊 Indicadores XM:\n"

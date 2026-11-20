@@ -21,6 +21,12 @@ try:
 except ImportError:
     pass  # python-dotenv no instalado; se depende de EnvironmentFile en systemd
 
+# httpx registra en INFO cada petición con su URL completa; la de Telegram lleva el
+# token del bot en la ruta (/bot<TOKEN>/sendMessage) y terminaba en logs/celery/*.log.
+# En WARNING los errores siguen apareciendo, pero sin escribir el token.
+import logging as _logging
+_logging.getLogger("httpx").setLevel(_logging.WARNING)
+
 # Configuración de Celery
 app = Celery(
     'portal_mme',

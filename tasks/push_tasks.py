@@ -32,6 +32,13 @@ def _get_active_fcm_tokens() -> List[Dict[str, str]]:
     from infrastructure.database.connection import get_connection
     with get_connection() as conn:
         cur = conn.cursor()
+        cur.execute("SELECT to_regclass('energia_app_dispositivos') IS NOT NULL")
+        if not cur.fetchone()[0]:
+            logger.info(
+                "[PUSH-TASK] La tabla energia_app_dispositivos no existe: la app "
+                "EnergIA no tiene dispositivos registrados, se omite el push."
+            )
+            return []
         cur.execute(
             "SELECT usuario_id, fcm_token FROM energia_app_dispositivos WHERE activo = TRUE"
         )
